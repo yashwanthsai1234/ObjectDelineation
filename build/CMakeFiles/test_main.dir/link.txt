@@ -1,0 +1,1 @@
+/Library/Developer/CommandLineTools/usr/bin/c++  -fsanitize=address -g -g -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/test_main.dir/tests/test_main.cpp.o -o test_main  lib/libgtest.a lib/libgtest_main.a libobject_delineation_lib.a lib/libgtest.a

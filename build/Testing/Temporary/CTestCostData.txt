@@ -1,0 +1,6 @@
+ObjectDelineationTest.PerformanceStressTest 0 0
+ObjectDelineationTest.PointOutside 1 0.00334942
+AllTests 0 0
+---
+ObjectDelineationTest.PerformanceStressTest
+AllTests

@@ -1,0 +1,5 @@
+add_test([=[ObjectDelineationTest.RectangularBlock]=]  /Users/sreeyashwanthsaivenkatesh/Documents/Projects/ObjectDelineationCPP/build/tests [==[--gtest_filter=ObjectDelineationTest.RectangularBlock]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ObjectDelineationTest.RectangularBlock]=]  PROPERTIES WORKING_DIRECTORY /Users/sreeyashwanthsaivenkatesh/Documents/Projects/ObjectDelineationCPP/build SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==])
+add_test([=[ObjectDelineationTest.PointOutside]=]  /Users/sreeyashwanthsaivenkatesh/Documents/Projects/ObjectDelineationCPP/build/tests [==[--gtest_filter=ObjectDelineationTest.PointOutside]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ObjectDelineationTest.PointOutside]=]  PROPERTIES WORKING_DIRECTORY /Users/sreeyashwanthsaivenkatesh/Documents/Projects/ObjectDelineationCPP/build SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==])
+set(  tests_TESTS ObjectDelineationTest.RectangularBlock ObjectDelineationTest.PointOutside)
