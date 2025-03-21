@@ -1,0 +1,5 @@
+add_test([=[ObjectDelineationTest.PerformanceStressTest]=]  /Users/sreeyashwanthsaivenkatesh/Documents/Projects/ObjectDelineationCPP/build/test_main_3 [==[--gtest_filter=ObjectDelineationTest.PerformanceStressTest]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ObjectDelineationTest.PerformanceStressTest]=]  PROPERTIES WORKING_DIRECTORY /Users/sreeyashwanthsaivenkatesh/Documents/Projects/ObjectDelineationCPP/build SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==])
+add_test([=[ObjectDelineationTest.PointOutside]=]  /Users/sreeyashwanthsaivenkatesh/Documents/Projects/ObjectDelineationCPP/build/test_main_3 [==[--gtest_filter=ObjectDelineationTest.PointOutside]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[ObjectDelineationTest.PointOutside]=]  PROPERTIES WORKING_DIRECTORY /Users/sreeyashwanthsaivenkatesh/Documents/Projects/ObjectDelineationCPP/build SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==])
+set(  test_main_3_TESTS ObjectDelineationTest.PerformanceStressTest ObjectDelineationTest.PointOutside)

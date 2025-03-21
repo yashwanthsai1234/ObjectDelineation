@@ -1,0 +1,1 @@
+/Library/Developer/CommandLineTools/usr/bin/c++  -fsanitize=address -g -g -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/object_delineation.dir/src/main.cpp.o -o object_delineation  libobject_delineation_lib.a
