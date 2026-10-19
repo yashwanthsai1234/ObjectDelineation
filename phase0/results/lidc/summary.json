@@ -1,0 +1,91 @@
+{
+  "series": 1018,
+  "clusters": 2654,
+  "slices_certified": 40189,
+  "certificate_failures": 0,
+  "exclusion_interiors_drawn": 976,
+  "clusters_4_sessions": 2652,
+  "readers_outlined_hist": {
+    "1": 775,
+    "2": 489,
+    "3": 481,
+    "4": 907
+  },
+  "presence_disagree": {
+    "n": 1745,
+    "of": 2652
+  },
+  "outlined_by_all_4": 907,
+  "multi_reader_clusters": 1877,
+  "split_by_a_reader": {
+    "n": 17,
+    "of": 1877,
+    "pct": 0.91
+  },
+  "min_size_0": {
+    "b0_3d_disagree": {
+      "n": 32,
+      "of": 1877,
+      "pct": 1.7
+    },
+    "hole_any": {
+      "n": 190,
+      "of": 1877,
+      "pct": 10.12
+    },
+    "hole_disagree": {
+      "n": 179,
+      "of": 1877,
+      "pct": 9.54
+    },
+    "multi_slice_disagree": {
+      "n": 70,
+      "of": 1877,
+      "pct": 3.73
+    },
+    "cavity_any": {
+      "n": 81,
+      "of": 1877,
+      "pct": 4.32
+    },
+    "any_topology_disagree": {
+      "n": 225,
+      "of": 1877
+    },
+    "slices_compared": 10916,
+    "slices_topology_disagree": 632
+  },
+  "min_size_5": {
+    "b0_3d_disagree": {
+      "n": 16,
+      "of": 1877,
+      "pct": 0.85
+    },
+    "hole_any": {
+      "n": 65,
+      "of": 1877,
+      "pct": 3.46
+    },
+    "hole_disagree": {
+      "n": 65,
+      "of": 1877,
+      "pct": 3.46
+    },
+    "multi_slice_disagree": {
+      "n": 57,
+      "of": 1877,
+      "pct": 3.04
+    },
+    "cavity_any": {
+      "n": 27,
+      "of": 1877,
+      "pct": 1.44
+    },
+    "any_topology_disagree": {
+      "n": 114,
+      "of": 1877
+    },
+    "slices_compared": 10898,
+    "slices_topology_disagree": 317
+  }
+}
