@@ -1,0 +1,29 @@
+KPI: share of groups with adversary advantage < median honest advantage, 95 % CI over items; PASS = lower CI >= 95 %, pass = point >= 95 %
+reversed-winding ring: skipped (masks carry no orientation; covered by polygon legality in t_polycore)
+items: 1253 (fixtures + full-LIDC train items with size-filtered rater disagreement)
+
+[honest rollouts: rater masks + 1px smooth jitter]
+  adversary      items |                         v1 |                     v3 c=1 |                     v3 c=2 |               v3+guard c=2 | adversary mean terms (IoU_tc, F5, topo) vs honest
+  dilated_union   1002 |    100.0% [100.0%,100.0%]P |    100.0% [100.0%,100.0%]P |    100.0% [100.0%,100.0%]P |    100.0% [100.0%,100.0%]P | adv (0.411, 0.178, 1.00) honest (0.888, 0.963, 1.00)
+      per subset, v3 c=2: lidc/nodule 100.0%, riga/cup 100.0%, riga/disc 100.0% | v3+guard: lidc/nodule 100.0%, riga/cup 100.0%, riga/disc 100.0%
+  hull            1002 |       79.8% [77.8%,81.8%]F |       60.2% [57.5%,62.9%]F |       60.2% [57.4%,62.9%]F |       86.3% [84.4%,88.1%]F | adv (0.900, 0.971, 1.00) honest (0.888, 0.963, 1.00)
+      per subset, v3 c=2: lidc/nodule 37.9%, riga/cup 87.9%, riga/disc 99.7% | v3+guard: lidc/nodule 78.3%, riga/cup 96.7%, riga/disc 100.0%
+  holes_stamped    108 |        5.0% [ 1.7%, 9.2%]F |       52.8% [45.9%,59.8%]F |       53.1% [46.9%,58.7%]F |       52.4% [46.5%,58.5%]F | adv (0.862, 1.000, 0.94) honest (0.883, 0.977, 1.00)
+      per subset, v3 c=2: lidc/nodule 53.1% | v3+guard: lidc/nodule 52.4%
+  band_speck       281 |       88.4% [86.0%,90.7%]F |     100.0% [99.9%,100.0%]P |     100.0% [99.9%,100.0%]P |     100.0% [99.9%,100.0%]P | adv (0.984, 1.000, 0.00) honest (0.954, 0.996, 1.00)
+      per subset, v3 c=2: lidc/nodule 99.9%, riga/cup 100.0%, riga/disc 100.0% | v3+guard: lidc/nodule 99.9%, riga/cup 100.0%, riga/disc 100.0%
+  minority_hole     70 |        0.1% [ 0.0%, 0.4%]F |       46.4% [37.4%,55.6%]F |       45.4% [36.5%,53.3%]F |       44.8% [37.1%,53.5%]F | adv (0.844, 1.000, 1.00) honest (0.883, 0.978, 1.00)
+      per subset, v3 c=2: lidc/nodule 45.4% | v3+guard: lidc/nodule 44.8%
+
+[honest rollouts: rater masks + 0.5tau smooth jitter]
+  adversary      items |                         v1 |                     v3 c=1 |                     v3 c=2 |               v3+guard c=2 | adversary mean terms (IoU_tc, F5, topo) vs honest
+  dilated_union   1002 |      99.9% [99.7%,100.0%]P |      99.9% [99.7%,100.0%]P |      99.9% [99.7%,100.0%]P |      99.9% [99.7%,100.0%]P | adv (0.411, 0.178, 1.00) honest (0.787, 0.881, 1.00)
+      per subset, v3 c=2: lidc/nodule 99.8%, riga/cup 100.0%, riga/disc 100.0% | v3+guard: lidc/nodule 99.8%, riga/cup 100.0%, riga/disc 100.0%
+  hull            1002 |       36.6% [34.4%,38.8%]F |       12.2% [10.7%,13.8%]F |       12.2% [10.7%,13.8%]F |       72.9% [70.5%,75.3%]F | adv (0.900, 0.971, 1.00) honest (0.787, 0.881, 1.00)
+      per subset, v3 c=2: lidc/nodule 20.3%, riga/cup 0.1%, riga/disc 0.0% | v3+guard: lidc/nodule 71.5%, riga/cup 53.4%, riga/disc 96.5%
+  holes_stamped    108 |        1.3% [ 0.1%, 3.0%]F |        8.1% [ 4.7%,11.9%]F |       12.3% [ 8.1%,16.8%]F |       11.3% [ 7.7%,15.2%]F | adv (0.862, 1.000, 0.94) honest (0.673, 0.850, 1.00)
+      per subset, v3 c=2: lidc/nodule 12.3% | v3+guard: lidc/nodule 11.3%
+  band_speck       281 |        7.9% [ 6.8%, 9.0%]F |       45.3% [42.3%,48.3%]F |       94.0% [91.6%,96.1%]F |       88.9% [86.2%,91.5%]F | adv (0.984, 1.000, 0.00) honest (0.708, 0.845, 1.00)
+      per subset, v3 c=2: lidc/nodule 81.1%, riga/cup 98.1%, riga/disc 100.0% | v3+guard: lidc/nodule 73.7%, riga/cup 93.4%, riga/disc 99.4%
+  minority_hole     70 |        0.2% [ 0.0%, 0.6%]F |        6.9% [ 3.3%,11.0%]F |        7.9% [ 4.1%,12.1%]F |        6.9% [ 3.6%,10.9%]F | adv (0.844, 1.000, 1.00) honest (0.708, 0.881, 1.00)
+      per subset, v3 c=2: lidc/nodule 7.9% | v3+guard: lidc/nodule 6.9%

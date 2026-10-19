@@ -1,0 +1,52 @@
+size priors (c, alpha) per fold: [(0.7572283383156029, 0.5540179759430284), (0.41281852777339434, 0.9357828284740244)]
+/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase1_lab/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3862: RuntimeWarning: Mean of empty slice
+  return _methods._mean(a, axis=axis, dtype=dtype,
+/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase1_lab/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)
+/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase1_lab/t_reward/scripts/k8_band.py:129: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  cells.append(f"{lv}: {np.median(v):.2f} (rho {stats.spearmanr(v, a).statistic:+.2f})")
+LOO cases: 4369; tau median 7.62 px, share at floor 0.12
+
+[LOO tau variant: floor]  Spearman rho(score, area) | median score | p10 score
+  F0: ALL rho +0.531 med 0.970 p10 0.741 (n=4369) | riga/disc rho +0.06 med 0.989 | riga/cup rho +0.05 med 0.977 | lidc/nodule rho +0.30 med 0.912
+  F1: ALL rho +0.337 med 0.922 p10 0.442 (n=4369) | riga/disc rho -0.00 med 0.940 | riga/cup rho -0.05 med 0.962 | lidc/nodule rho +0.22 med 0.831
+  F2: ALL rho +0.396 med 0.973 p10 0.424 (n=4369) | riga/disc rho +0.01 med 0.985 | riga/cup rho -0.05 med 0.994 | lidc/nodule rho +0.26 med 0.905
+  F3: ALL rho +0.396 med 0.974 p10 0.635 (n=4369) | riga/disc rho +0.01 med 0.986 | riga/cup rho -0.05 med 0.994 | lidc/nodule rho +0.26 med 0.914
+
+[LOO tau variant: prior]  Spearman rho(score, area) | median score | p10 score
+  F0: ALL rho +0.531 med 0.970 p10 0.741 (n=4369) | riga/disc rho +0.06 med 0.989 | riga/cup rho +0.05 med 0.977 | lidc/nodule rho +0.30 med 0.912
+  F1: ALL rho +0.332 med 0.922 p10 0.521 (n=4369) | riga/disc rho -0.00 med 0.940 | riga/cup rho -0.05 med 0.962 | lidc/nodule rho +0.21 med 0.831
+  F2: ALL rho +0.390 med 0.973 p10 0.577 (n=4369) | riga/disc rho +0.01 med 0.985 | riga/cup rho -0.05 med 0.994 | lidc/nodule rho +0.25 med 0.907
+  F3: ALL rho +0.391 med 0.974 p10 0.703 (n=4369) | riga/disc rho +0.01 med 0.986 | riga/cup rho -0.05 med 0.994 | lidc/nodule rho +0.25 med 0.915
+
+[LOO tau variant: k>=3 only]  Spearman rho(score, area) | median score | p10 score
+  F0: ALL rho +0.463 med 0.974 p10 0.831 (n=4071) | riga/disc rho +0.06 med 0.989 | riga/cup rho +0.05 med 0.977 | lidc/nodule rho +0.15 med 0.931
+  F1: ALL rho +0.228 med 0.931 p10 0.645 (n=4071) | riga/disc rho -0.00 med 0.940 | riga/cup rho -0.05 med 0.962 | lidc/nodule rho +0.06 med 0.877
+  F2: ALL rho +0.298 med 0.978 p10 0.722 (n=4071) | riga/disc rho +0.01 med 0.985 | riga/cup rho -0.05 med 0.994 | lidc/nodule rho +0.12 med 0.936
+  F3: ALL rho +0.298 med 0.978 p10 0.782 (n=4071) | riga/disc rho +0.01 med 0.986 | riga/cup rho -0.05 med 0.994 | lidc/nodule rho +0.12 med 0.940
+
+[synthetic errors vs the full rater set] median score by level; rho(score, area) at each level; share of items where the score is monotone non-increasing in |level|
+  F0:
+    grow       -3: 0.74 (rho +0.86) | -2: 0.85 (rho +0.88) | -1: 0.95 (rho +0.86) | 1: 0.99 (rho +0.83) | 2: 0.90 (rho +0.88) | 3: 0.73 (rho +0.89) | monotone 2004/2004
+    shift      1: 0.98 (rho +0.85) | 2: 0.91 (rho +0.88) | 3: 0.84 (rho +0.89) | 4: 0.73 (rho +0.90) | monotone 996/1002
+    speck_gap  2: nan (rho +nan) | 4: 0.99 (rho +0.93) | 8: 0.99 (rho +0.94) | 16: 1.00 (rho +0.92) | monotone 969/1002
+    hole_area  1: 1.00 (rho +0.98) | 4: 0.99 (rho +1.00) | 9: 0.98 (rho +1.00) | 16: 0.98 (rho +1.00) | monotone 951/951
+    grow_tau   0.25: 1.00 (rho -0.57) | 0.5: 0.97 (rho -0.04) | 1.0: 0.72 (rho +0.50) | 2.0: 0.01 (rho +0.53) | monotone 1002/1002
+  F1:
+    grow       -3: 0.64 (rho +0.73) | -2: 0.78 (rho +0.78) | -1: 0.93 (rho +0.80) | 1: 0.98 (rho +0.80) | 2: 0.85 (rho +0.83) | 3: 0.56 (rho +0.83) | monotone 2004/2004
+    shift      1: 0.97 (rho +0.80) | 2: 0.86 (rho +0.81) | 3: 0.75 (rho +0.81) | 4: 0.59 (rho +0.80) | monotone 996/1002
+    speck_gap  2: nan (rho +nan) | 4: 0.98 (rho +0.89) | 8: 0.98 (rho +0.90) | 16: 1.00 (rho +0.78) | monotone 969/1002
+    hole_area  1: 1.00 (rho +0.91) | 4: 0.98 (rho +0.92) | 9: 0.97 (rho +0.92) | 16: 0.98 (rho +0.90) | monotone 951/951
+    grow_tau   0.25: 1.00 (rho -0.60) | 0.5: 0.93 (rho -0.22) | 1.0: 0.46 (rho +0.17) | 2.0: 0.00 (rho +nan) | monotone 1002/1002
+  F2:
+    grow       -3: 0.79 (rho +0.75) | -2: 0.92 (rho +0.79) | -1: 0.98 (rho +0.80) | 1: 0.99 (rho +0.80) | 2: 0.95 (rho +0.83) | 3: 0.78 (rho +0.83) | monotone 2004/2004
+    shift      1: 0.99 (rho +0.81) | 2: 0.95 (rho +0.81) | 3: 0.88 (rho +0.81) | 4: 0.72 (rho +0.80) | monotone 996/1002
+    speck_gap  2: nan (rho +nan) | 4: 0.98 (rho +0.87) | 8: 0.94 (rho +0.87) | 16: 1.00 (rho +0.69) | monotone 943/1002
+    hole_area  1: 0.99 (rho +0.75) | 4: 0.96 (rho +0.74) | 9: 0.92 (rho +0.73) | 16: 0.92 (rho +0.70) | monotone 949/951
+    grow_tau   0.25: 1.00 (rho -0.60) | 0.5: 0.98 (rho -0.09) | 1.0: 0.66 (rho +0.40) | 2.0: 0.00 (rho -0.00) | monotone 1002/1002
+  F3:
+    grow       -3: 0.83 (rho +0.75) | -2: 0.92 (rho +0.79) | -1: 0.98 (rho +0.80) | 1: 0.99 (rho +0.80) | 2: 0.95 (rho +0.83) | 3: 0.82 (rho +0.83) | monotone 2004/2004
+    shift      1: 0.99 (rho +0.81) | 2: 0.95 (rho +0.81) | 3: 0.89 (rho +0.81) | 4: 0.78 (rho +0.80) | monotone 996/1002
+    speck_gap  2: nan (rho +nan) | 4: 0.98 (rho +0.87) | 8: 0.94 (rho +0.87) | 16: 1.00 (rho +0.69) | monotone 943/1002
+    hole_area  1: 0.99 (rho +0.75) | 4: 0.97 (rho +0.74) | 9: 0.93 (rho +0.73) | 16: 0.92 (rho +0.70) | monotone 949/951
+    grow_tau   0.25: 1.00 (rho -0.60) | 0.5: 0.98 (rho -0.09) | 1.0: 0.74 (rho +0.40) | 2.0: 0.26 (rho +0.22) | monotone 1002/1002

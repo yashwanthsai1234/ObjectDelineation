@@ -1,0 +1,158 @@
+{
+ "summary": {
+  "model": "qwen3-vl-2b",
+  "poly_prompt": "simple",
+  "n": 5,
+  "device": "mps",
+  "load_s": 17.4,
+  "box_parse_rate": 1.0,
+  "box_iou_mean": 0.761,
+  "box_centroid_rate": 1.0,
+  "poly_parse_rate": 1.0,
+  "poly_valid_rate": 0.6,
+  "poly_iou_mean": 0.063,
+  "poly_centroid_rate": 0.2,
+  "centre_box_baseline_iou": 0.078,
+  "sec_per_box": 14.98,
+  "sec_per_poly": 39.24,
+  "peak_rss_gb": 0.56,
+  "mps_driver_gb": 5.1
+ },
+ "rows": [
+  {
+   "key": "MESSIDOR_image251",
+   "gt_box": [
+    347.0,
+    593.0,
+    633.0,
+    911.0
+   ],
+   "box_s": 9.2,
+   "box_reply": "```json\n{\n  \"disc\": {\n    \"bbox_2d\": [348, 596, 627, 875]\n  }\n}\n```",
+   "box_parsed": true,
+   "box": [
+    348.0,
+    596.0,
+    627.0,
+    875.0
+   ],
+   "box_iou": 0.856,
+   "box_has_centroid": true,
+   "poly_s": 29.3,
+   "poly_reply": "```json\n{\n  \"disc\": [\n    [435, 678],\n    [435, 798],\n    [450, 848],\n    [475, 898],\n    [500, 948],\n    [525, 998],\n    [550, 998],\n    [575, 978],\n    [600, 958],\n    [625, 938],\n    [650, 918],\n    [675, 898]\n  ]\n}\n```",
+   "poly_parsed": true,
+   "poly_n": 12,
+   "poly_problems": "ok",
+   "poly_iou": 0.251,
+   "poly_has_centroid": true
+  },
+  {
+   "key": "MESSIDOR_image287",
+   "gt_box": [
+    562.0,
+    622.0,
+    848.0,
+    940.0
+   ],
+   "box_s": 13.4,
+   "box_reply": "```json\n{\n  \"disc\": {\n    \"bbox_2d\": [576, 638, 849, 900]\n  }\n}\n```",
+   "box_parsed": true,
+   "box": [
+    576.0,
+    638.0,
+    849.0,
+    900.0
+   ],
+   "box_iou": 0.781,
+   "box_has_centroid": true,
+   "poly_s": 46.5,
+   "poly_reply": "```json\n{\n  \"disc\": [\n    [635, 708],\n    [639, 750],\n    [645, 790],\n    [650, 830],\n    [655, 870],\n    [660, 910],\n    [665, 950],\n    [670, 990],\n    [675, 1030],\n    [680, 1070],\n    [685, 1110],\n    [690, 1150]\n  ]\n}\n```",
+   "poly_parsed": true,
+   "poly_n": 12,
+   "poly_problems": "out_of_range",
+   "poly_iou": 0.009,
+   "poly_has_centroid": false
+  },
+  {
+   "key": "BinRushed_BinRushed2_image43",
+   "gt_box": [
+    268.0,
+    575.0,
+    564.0,
+    893.0
+   ],
+   "box_s": 14.7,
+   "box_reply": "```json\n{\n  \"disc\": {\n    \"bbox_2d\": [298, 546, 573, 851]\n  }\n}\n```",
+   "box_parsed": true,
+   "box": [
+    298.0,
+    546.0,
+    573.0,
+    851.0
+   ],
+   "box_iou": 0.703,
+   "box_has_centroid": true,
+   "poly_s": 40.0,
+   "poly_reply": "```json\n{\n  \"disc\": [\n    [356, 609],\n    [378, 650],\n    [398, 690],\n    [420, 730],\n    [440, 770],\n    [460, 810],\n    [480, 850],\n    [500, 890],\n    [520, 930],\n    [540, 970],\n    [560, 1010],\n    [580, 1050]\n  ]\n}\n```",
+   "poly_parsed": true,
+   "poly_n": 12,
+   "poly_problems": "out_of_range",
+   "poly_iou": 0.01,
+   "poly_has_centroid": false
+  },
+  {
+   "key": "MESSIDOR_image122",
+   "gt_box": [
+    179.0,
+    125.0,
+    483.0,
+    447.0
+   ],
+   "box_s": 20.2,
+   "box_reply": "```json\n{\n  \"disc\": {\n    \"bbox_2d\": [245, 187, 493, 426]\n  }\n}\n```",
+   "box_parsed": true,
+   "box": [
+    245.0,
+    187.0,
+    493.0,
+    426.0
+   ],
+   "box_iou": 0.567,
+   "box_has_centroid": true,
+   "poly_s": 47.2,
+   "poly_reply": "```json\n{\n  \"disc\": [\n    [275, 189],\n    [306, 204],\n    [325, 219],\n    [344, 234],\n    [360, 250],\n    [375, 265],\n    [390, 280],\n    [405, 295],\n    [420, 310],\n    [435, 325],\n    [450, 340],\n    [465, 355]\n  ]\n}\n```",
+   "poly_parsed": true,
+   "poly_n": 12,
+   "poly_problems": "ok",
+   "poly_iou": 0.027,
+   "poly_has_centroid": false
+  },
+  {
+   "key": "MESSIDOR_image380",
+   "gt_box": [
+    134.0,
+    101.0,
+    436.0,
+    418.0
+   ],
+   "box_s": 17.4,
+   "box_reply": "```json\n{\n  \"disc\": {\n    \"bbox_2d\": [143, 98, 456, 417]\n  }\n}\n```",
+   "box_parsed": true,
+   "box": [
+    143.0,
+    98.0,
+    456.0,
+    417.0
+   ],
+   "box_iou": 0.9,
+   "box_has_centroid": true,
+   "poly_s": 33.2,
+   "poly_reply": "```json\n{\n  \"disc\": [\n    [185, 179],\n    [163, 224],\n    [144, 274],\n    [124, 324],\n    [104, 374],\n    [84, 424],\n    [64, 474],\n    [44, 524],\n    [24, 574],\n    [4, 624],\n    [14, 674],\n    [34, 724]\n  ]\n}\n```",
+   "poly_parsed": true,
+   "poly_n": 12,
+   "poly_problems": "ok",
+   "poly_iou": 0.018,
+   "poly_has_centroid": false
+  }
+ ]
+}

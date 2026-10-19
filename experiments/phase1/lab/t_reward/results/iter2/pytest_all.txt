@@ -1,0 +1,6 @@
+........................................................                 [100%]
+56 passed in 66.63s (0:01:06)
+scripts/topo_gap.py:98:9: B007 Loop control variable `ds` not used within loop body
+scripts/topo_gap.py:105:13: B007 Loop control variable `j` not used within loop body
+Found 2 errors.
+2 unsafe fixes available with `--fix --unsafe-fixes`.

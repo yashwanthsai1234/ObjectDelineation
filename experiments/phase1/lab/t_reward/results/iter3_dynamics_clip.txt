@@ -1,0 +1,19 @@
+setting                                      variant                      TV      invalid  min-mode ret clipped share
+topology only, calibrated SFT                set+dm_loo λ=0.5                0.064±0.009  0.003±0.000   0.862±0.020           nan
+topology only, calibrated SFT                set+dm_loo_clip λ=0.5           0.064±0.009  0.003±0.000   0.862±0.020        0.0000
+topology only, calibrated SFT                set+dm_loo_clip_debias λ=0.5    0.060±0.007  0.003±0.000   0.853±0.016        0.0000
+topology only, calibrated SFT                set+dm_loo λ=1.0                0.093±0.010  0.003±0.000   0.804±0.021           nan
+topology only, calibrated SFT                set+dm_loo_clip λ=1.0           0.093±0.010  0.003±0.000   0.809±0.019        0.0164
+topology only, calibrated SFT                set+dm_loo_clip_debias λ=1.0    0.079±0.010  0.003±0.000   0.812±0.019        0.0310
+topology only, flattened SFT (sharpen 0.5)   set+dm_loo λ=0.5                0.062±0.008  0.003±0.000   0.866±0.019           nan
+topology only, flattened SFT (sharpen 0.5)   set+dm_loo_clip λ=0.5           0.062±0.008  0.003±0.000   0.866±0.019        0.0000
+topology only, flattened SFT (sharpen 0.5)   set+dm_loo_clip_debias λ=0.5    0.059±0.007  0.003±0.000   0.850±0.017        0.0000
+topology only, flattened SFT (sharpen 0.5)   set+dm_loo λ=1.0                0.089±0.009  0.003±0.000   0.814±0.019           nan
+topology only, flattened SFT (sharpen 0.5)   set+dm_loo_clip λ=1.0           0.093±0.010  0.003±0.000   0.808±0.020        0.0167
+topology only, flattened SFT (sharpen 0.5)   set+dm_loo_clip_debias λ=1.0    0.083±0.010  0.003±0.000   0.808±0.020        0.0311
+IoU gap 0.1, calibrated SFT                  set+dm_loo λ=0.5                0.055±0.007  0.006±0.000   0.834±0.024           nan
+IoU gap 0.1, calibrated SFT                  set+dm_loo_clip λ=0.5           0.055±0.007  0.006±0.000   0.834±0.024        0.0000
+IoU gap 0.1, calibrated SFT                  set+dm_loo_clip_debias λ=0.5    0.061±0.007  0.006±0.000   0.795±0.024        0.0000
+IoU gap 0.1, calibrated SFT                  set+dm_loo λ=1.0                0.066±0.009  0.005±0.000   0.838±0.027           nan
+IoU gap 0.1, calibrated SFT                  set+dm_loo_clip λ=1.0           0.067±0.008  0.005±0.000   0.841±0.020        0.0065
+IoU gap 0.1, calibrated SFT                  set+dm_loo_clip_debias λ=1.0    0.064±0.007  0.005±0.000   0.828±0.025        0.0158
