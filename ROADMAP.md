@@ -3,9 +3,9 @@
 Written 2026-10-18, after Phase 0. Revised the same day to match the two research reports.
 
 **Sources**
-- `reports/GPU delineation use case map.md`: the domain tree, and why the pitch is correctness and topology, not speed.
-- `reports/GPU delineation RL mix and match.md`: the reward design, prior art, safe claims, the experiment program, and the secondary ideas.
-- `phase0/RESULTS.md`, `phase0/RESULTS_0b.md`: what Phase 0 measured.
+- `docs/research/reports/GPU delineation use case map.md`: the domain tree, and why the pitch is correctness and topology, not speed.
+- `docs/research/reports/GPU delineation RL mix and match.md`: the reward design, prior art, safe claims, the experiment program, and the secondary ideas.
+- `experiments/phase0/RESULTS.md`, `experiments/phase0/RESULTS_0b.md`: what Phase 0 measured.
 
 ## How this roadmap relates to the research
 
@@ -107,7 +107,7 @@ Access details are from the research notes and must be re-checked before downloa
 
 | # | Phase | What it does | Where | GPU-hours | Done when |
 |---|---|---|---|---|---|
-| 0 ✅ | Census and baselines | checker built; experts disagree; MedSAM makes structure errors IoU misses | Mac | 0 | done (`phase0/RESULTS*.md`) |
+| 0 ✅ | Census and baselines | checker built; experts disagree; MedSAM makes structure errors IoU misses | Mac | 0 | done (`experiments/phase0/RESULTS*.md`) |
 | 1 | Reward and data | missing reward terms (hole matching, graded legality, per-instance matching); scale-aware band; morphological band; splits; SFT polygon targets | Mac | 0 | every term built and tested; targets re-rasterize exactly |
 | 1c | Natural-image census | share of objects with holes or several parts in SA-1B / refCOCO | Mac | 0 | numbers for Track B's enriched split |
 | 2 | **SFT** | pick the smallest VLM that learns polygons; outer-ring tokens (A0) vs hole-aware tokens (A0′) | Vast | ~6 | ≥ 90 % valid; A0′ recovers holes and parts that A0 cannot |
@@ -125,6 +125,11 @@ GPU-hours assume a 2B model on one A100/H100. A SmolVLM cuts them by roughly 2�
 Phases 1c, 7 and 8 do not block training. They run on the Mac, or on a small GPU, while the big runs go.
 
 ### Phase 1: reward and data (Mac)
+
+**Where the code goes** (see `README.md`):
+- new reward terms go in `src/objdel/reward/`;
+- dataset loaders move out of the Phase 0 scripts into a new `src/objdel/data/`, with tests;
+- scripts and results go in `experiments/phase1/`.
 
 **Reward terms**
 - Build the missing terms (graded legality with the fill-rule XOR, per-instance matching, hole matching, boundary-in-band).

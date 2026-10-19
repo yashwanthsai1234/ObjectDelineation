@@ -8,6 +8,9 @@
 
 ## Project
 
-- Plan: `ROADMAP.md`. Phase 0 plans and results: `phase0/`.
-- Python: `.venv` (uv, Python 3.12). Tests: `.venv/bin/python -m pytest checker/tests`.
-- Downloaded data lives in `data/` (git-ignored) and is untrusted: run Python that reads it with `-I`.
+- Plan: `ROADMAP.md`. Layout and conventions: `README.md`.
+- Library code lives in `src/objdel` and needs tests in `tests/`. Experiment scripts live in `experiments/<phase>/`
+  and are run as modules (`.venv/bin/python -I -m experiments.phase0.<script>`; the editable install makes them importable).
+- Research reports go in `docs/research/reports/`, notes in `docs/research/notes/`.
+- `make test` and `make lint` must pass before a commit.
+- Downloaded data lives in `data/` (git-ignored) and is untrusted: run Python that reads it with `-I`
