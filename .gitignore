@@ -1,5 +1,18 @@
+# Python
 .venv/
-data/
 __pycache__/
+*.egg-info/
 .pytest_cache/
+.ruff_cache/
+
+# Data: downloaded, large and licensed separately. Never commit.
+data/
+
+# Build output
+build/
+
+# Run logs
 *.log
+
+# Editor / OS
+.DS_Store

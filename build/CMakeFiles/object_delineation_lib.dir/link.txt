@@ -1,2 +1,0 @@
-/Library/Developer/CommandLineTools/usr/bin/ar qc libobject_delineation_lib.a CMakeFiles/object_delineation_lib.dir/src/ObjectDelineation.cpp.o
-/Library/Developer/CommandLineTools/usr/bin/ranlib libobject_delineation_lib.a
