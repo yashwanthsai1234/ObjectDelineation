@@ -1,0 +1,213 @@
+{
+ "scans": 67,
+ "selection": {
+  "lidc_slices": 30,
+  "multi_file_series": 7,
+  "xml_044_191": 7,
+  "two_scan_patient": 15,
+  "random": 6,
+  "odd_session_count": 2
+ },
+ "pylidc_db": {
+  "scans": 1018,
+  "patients": 1010,
+  "xml_series": 1018,
+  "xml_not_in_db": 0,
+  "db_not_in_xml": 0
+ },
+ "two_scan_patients": {
+  "LIDC-IDRI-0132": [
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.151647338241909635299641922057",
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.254176853278710432756285662989"
+  ],
+  "LIDC-IDRI-0151": [
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.453946099750629491201946672998",
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.768856069922657732839929586657"
+  ],
+  "LIDC-IDRI-0315": [
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.322682676064999314374885526223",
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.406508755509460310384282367044"
+  ],
+  "LIDC-IDRI-0332": [
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.159996104466052855396410079250",
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.316900421002460665752357657094"
+  ],
+  "LIDC-IDRI-0355": [
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.147979688121667984912633630926",
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.170344311940983984999167745197"
+  ],
+  "LIDC-IDRI-0365": [
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.207544473852086582434957174616",
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.802846969823720586279982179144"
+  ],
+  "LIDC-IDRI-0442": [
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.226813447046845316215094488309",
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.335799017122466251265955525941"
+  ],
+  "LIDC-IDRI-0484": [
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.132435134414676494105851714351",
+   "1.3.6.1.4.1.14519.5.2.1.6279.6001.145600217263993824806929968211"
+  ]
+ },
+ "multi_file_series": {
+  "1.3.6.1.4.1.14519.5.2.1.6279.6001.340202188094259402036602717327": [
+   "161-resubmitted-correction-3-9-12.xml",
+   "tcia-lidc-xml/157/161.xml"
+  ],
+  "1.3.6.1.4.1.14519.5.2.1.6279.6001.153646219551578201092527860224": [
+   "tcia-lidc-xml/188/082.xml",
+   "tcia-lidc-xml/188/083.xml",
+   "tcia-lidc-xml/188/084.xml",
+   "tcia-lidc-xml/188/085.xml",
+   "tcia-lidc-xml/188/086.xml"
+  ],
+  "1.3.6.1.4.1.14519.5.2.1.6279.6001.272123398257168239653655006815": [
+   "tcia-lidc-xml/188/087.xml",
+   "tcia-lidc-xml/188/088.xml",
+   "tcia-lidc-xml/188/089.xml",
+   "tcia-lidc-xml/188/090.xml"
+  ],
+  "1.3.6.1.4.1.14519.5.2.1.6279.6001.550599855064600241623943717588": [
+   "tcia-lidc-xml/188/091.xml",
+   "tcia-lidc-xml/188/092.xml",
+   "tcia-lidc-xml/188/093.xml"
+  ],
+  "1.3.6.1.4.1.14519.5.2.1.6279.6001.855232435861303786204450738044": [
+   "tcia-lidc-xml/188/094.xml",
+   "tcia-lidc-xml/188/095.xml",
+   "tcia-lidc-xml/188/096.xml"
+  ],
+  "1.3.6.1.4.1.14519.5.2.1.6279.6001.192256506776434538421891524301": [
+   "tcia-lidc-xml/189/028.xml",
+   "tcia-lidc-xml/189/029.xml",
+   "tcia-lidc-xml/189/030.xml",
+   "tcia-lidc-xml/189/031.xml",
+   "tcia-lidc-xml/189/032.xml",
+   "tcia-lidc-xml/189/033.xml"
+  ],
+  "1.3.6.1.4.1.14519.5.2.1.6279.6001.229343399861261429237689489892": [
+   "tcia-lidc-xml/189/173.xml",
+   "tcia-lidc-xml/189/174.xml"
+  ]
+ },
+ "nodule_count_equal_scans": 67,
+ "partition_equal_scans": 67,
+ "reader_sets_equal_scans": 67,
+ "annotations": {
+  "ours": 582,
+  "pylidc": 582,
+  "pylidc_unmatched_contours": 0,
+  "our_only": 0,
+  "pylidc_only": 0,
+  "pylidc_only_reasons": {},
+  "nodule_id_mismatch": 0,
+  "single_point_rois_in_large_ours": 15,
+  "anns_with_single_point_rois": 8
+ },
+ "pylidc_min_tol_hit_scans": [
+  "396410079250",
+  "414741039150",
+  "648717203667",
+  "666819906758"
+ ],
+ "pylidc_clusters_gt4": 4,
+ "pylidc_clusters_dup_reader": 6,
+ "our_clusters_dup_reader": 6,
+ "z": {
+  "max_mismatch_mm": 3.5,
+  "z_not_on_slice": 2,
+  "scans_dup_slice_z": 0,
+  "scans_z_index_offset_mismatch": [
+   "914241295628",
+   "602362094937",
+   "345478571594",
+   "232534884296",
+   "168187085942",
+   "397541392345"
+  ],
+  "sop_multi_z": 0,
+  "z_multi_sop": 0
+ },
+ "exclusion_contours": {
+  "xml": 226,
+  "pylidc": 225
+ },
+ "slice_masks": {
+  "iou_vs_pylidc_include_contour_points_True": {
+   "n": 3480,
+   "min": 0.0,
+   "p5": 0.7331951640759931,
+   "median": 0.9459459459459459,
+   "mean": 0.9170032819255689,
+   "pct_exact_1": 0.05747126436781609
+  },
+  "iou_vs_pylidc_include_contour_points_False": {
+   "n": 3480,
+   "min": 0.0,
+   "p5": 0.41379310344827586,
+   "median": 0.7052327350167326,
+   "mean": 0.6854847112827775,
+   "pct_exact_1": 0.05747126436781609
+  },
+  "iou_ours_minus_outline_vs_pylidc_False": {
+   "n": 3480,
+   "min": 0.7814207650273224,
+   "p5": 1.0,
+   "median": 1.0,
+   "mean": 0.9997005809252696,
+   "pct_exact_1": 99.42528735632183
+  },
+  "iou_ours_vs_pylidc_True_plus_outline": {
+   "n": 3480,
+   "min": 0.62,
+   "p5": 1.0,
+   "median": 1.0,
+   "mean": 0.9998379477476174,
+   "pct_exact_1": 99.56896551724138
+  },
+  "iou_incl_small_lt50px": {
+   "n": 582,
+   "min": 0.0,
+   "p5": 0.48652113652113654,
+   "median": 0.8863636363636364,
+   "mean": 0.8321166902417902,
+   "pct_exact_1": 0.3436426116838488
+  },
+  "iou_excl_small_lt50px": {
+   "n": 582,
+   "min": 0.0,
+   "p5": 0.18181818181818182,
+   "median": 0.5,
+   "mean": 0.44993167864393036,
+   "pct_exact_1": 0.3436426116838488
+  },
+  "median_area_ours": 140.0,
+  "median_area_ratio_pylTrue_over_ours": 0.9459459459459459,
+  "median_area_ratio_pylFalse_over_ours": 0.7051792828685259,
+  "slices_with_exclusion": 135,
+  "iou_incl_exclusion_slices": {
+   "n": 135,
+   "min": 0.6956521739130435,
+   "p5": 0.7869481321395493,
+   "median": 0.9156829679595279,
+   "mean": 0.902155989727556,
+   "pct_exact_1": 0.0
+  }
+ },
+ "quirks": [
+  "pylidc 0.2.3 cluster_annotations default tol = scan.slice_thickness (mm) applied to distances between contour points in voxel-INDEX units (i, j, k), not mm; docs/notes saying tol=pixel_spacing are wrong for 0.2.3",
+  "pylidc returns a bare list (ignores return_distance_matrix) when a scan has <= 1 annotation",
+  "pylidc needs numpy<2 aliases (np.int/np.bool/np.float) and pkg_resources (setuptools<81); DB-only use (clustering, boolean_mask, slice_zvals, patient_id) works without DICOM",
+  "pylidc boolean_mask(include_contour_points=True) does NOT add outline pixels, it only skips removing them; ours = that OR outline pixels (exact on 99.57% of slices)",
+  "exclusions: ours removes exclusion interior and keeps its outline pixels; pylidc removes interior and the exclusion contour points",
+  "single-point ROIs inside >=3 mm nodules (15 ROIs / 8 annotations in sample, incl. 1 exclusion): pylidc DB drops them, our parser rasterizes them as isolated 1-px blobs (spurious b0 component; census MIN_SIZE_2D=5 hides it)",
+  "6 series appear in 2-6 XML files each (188/082-086, 087-090, 091-093, 094-096, 189/028-033, 173-174): the reading sessions are byte-identical duplicates, so census first-file dedupe loses nothing; 161 has a resubmitted correction (session 1 differs) which census and pylidc both use",
+  "188/011.xml (LIDC-IDRI-0566) has 8 readingSessions; sessions 5-8 hold only <3 mm/non-characterised points at z=-94.4,-71.0 which lie on no slice of this series (max 3.5 mm off, -71.0 beyond the last slice) -> misfiled reads; census counts sessions=8 and excludes it from the 4-session stats",
+  "189/110.xml (LIDC-IDRI-0700) has 3 readingSessions",
+  "our z_index (step = min diff of annotated z) disagrees with true slice-index offsets in 6/67 scans (overlapping recon: slice_thickness 1.25 vs spacing 0.625, or the misfiled 011 z values); 2D masks unaffected, 3D adjacency/betti3d gaps are",
+  "044.xml / 191.xml exist in 4 folders each (8 files); all parse and match pylidc exactly; 186/044 and 188/044 contain only single-point (<3 mm) nodules without characteristics -> 0 contoured nodules on both sides",
+  "servicingRadiologistID is anonymised ('anon'/''/'anonymous'/numeric); no duplicated named IDs within a file; 255 reading sessions contain no nodule at all (readers who marked nothing)",
+  "XML contains no PatientID: series->patient mapping must come from pylidc DB (or DICOM); 1018 series / 1010 patients; 8 patients have two series"
+ ],
+ "scan_mismatches": []
+}

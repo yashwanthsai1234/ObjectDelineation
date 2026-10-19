@@ -1,0 +1,6 @@
+pairs (adversary vs a jittered mask of the minority rater): 836
+  IoU_tc: adversary lower in 60.2%; median diff -0.027
+  F5:     adversary lower in 0.0%; median diff +0.015
+  w_iou 0.3, w_band 0.3: raw weighted sum lower in 53.3%
+  w_iou 0.45, w_band 0.15: raw weighted sum lower in 57.2%
+  w_iou 0.6, w_band 0.0: raw weighted sum lower in 60.2%

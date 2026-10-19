@@ -1,0 +1,44 @@
+items: 251 full-LIDC train items with size-filtered rater topology disagreement; k: {3: 92, 4: 114, 2: 45}; minority share of raters 0.36
+
+1. per-topology gap, production emulation (1-px jittered rater masks vs all raters); gap = matches vote topology - not, mean over items [95% CI]
+   IoU vs vote (v1)                           items 239  mean +0.1296 [+0.1076, +0.1528]  median +0.0998  |gap| median 0.1192
+   IoU_tc (reward)                            items 239  mean -0.0041 [-0.0132, +0.0051]  median -0.0013  |gap| median 0.0260
+   band F5, topology-conditional (reward)     items 239  mean -0.0055 [-0.0069, -0.0042]  median -0.0020  |gap| median 0.0030
+
+2. neutrality [exact rater masks], minority - mode advantage, mean over items [95% CI], half-width
+   v1                                 n=251  -0.535 [-0.709, -0.357]  hw 0.176  minority loses on 64% of items  reject
+   v3 c=1 lam=0.25                    n=251  -0.003 [-0.005, -0.002]  hw 0.001  minority loses on 58% of items  reject
+   v3 c=1 lam=0.5                     n=251  -0.006 [-0.009, -0.003]  hw 0.003  minority loses on 58% of items  reject
+   v3 c=1 lam=1                       n=251  -0.011 [-0.017, -0.005]  hw 0.006  minority loses on 57% of items  reject
+   v3 c=1.5 lam=0.25                  n=251  -0.005 [-0.007, -0.002]  hw 0.002  minority loses on 58% of items  reject
+   v3 c=1.5 lam=0.5                   n=251  -0.009 [-0.014, -0.005]  hw 0.005  minority loses on 58% of items  reject
+   v3 c=1.5 lam=1                     n=251  -0.016 [-0.025, -0.007]  hw 0.009  minority loses on 57% of items  reject
+   v3 c=2 lam=0.25                    n=251  -0.006 [-0.009, -0.003]  hw 0.003  minority loses on 58% of items  reject
+   v3 c=2 lam=0.5                     n=251  -0.012 [-0.018, -0.006]  hw 0.006  minority loses on 58% of items  reject
+   v3 c=2 lam=1                       n=251  -0.022 [-0.034, -0.009]  hw 0.012  minority loses on 57% of items  reject
+   v3 c=3 lam=0.25                    n=251  -0.009 [-0.014, -0.005]  hw 0.005  minority loses on 58% of items  reject
+   v3 c=3 lam=0.5                     n=251  -0.018 [-0.027, -0.009]  hw 0.009  minority loses on 58% of items  reject
+   v3 c=3 lam=1                       n=251  -0.032 [-0.050, -0.014]  hw 0.018  minority loses on 57% of items  reject
+   v3 no-debias c=2 lam=0.5           n=251  +0.056 [+0.048, +0.063]  hw 0.007  minority loses on 16% of items  reject
+   v3 class band c=2 lam=0.5          n=251  -0.012 [-0.018, -0.006]  hw 0.006  minority loses on 58% of items  reject
+   geo only c=0 lam=0.5               n=251  +0.000 [+0.000, +0.000]  hw 0.000  minority loses on 0% of items  ACCEPT
+   geo only, class band c=0 lam=0.5   n=251  +0.000 [+0.000, +0.000]  hw 0.000  minority loses on 0% of items  ACCEPT
+
+2. neutrality [jitter rater masks], minority - mode advantage, mean over items [95% CI], half-width
+   v1                                 n=251  -0.450 [-0.590, -0.316]  hw 0.137  minority loses on 67% of items  reject
+   v3 c=1 lam=0.25                    n=251  +0.012 [-0.015, +0.040]  hw 0.027  minority loses on 46% of items  ACCEPT
+   v3 c=1 lam=0.5                     n=251  +0.010 [-0.018, +0.038]  hw 0.028  minority loses on 45% of items  ACCEPT
+   v3 c=1 lam=1                       n=251  +0.007 [-0.022, +0.036]  hw 0.029  minority loses on 47% of items  ACCEPT
+   v3 c=1.5 lam=0.25                  n=251  +0.013 [-0.017, +0.042]  hw 0.029  minority loses on 46% of items  ACCEPT
+   v3 c=1.5 lam=0.5                   n=251  +0.010 [-0.020, +0.040]  hw 0.030  minority loses on 47% of items  ACCEPT
+   v3 c=1.5 lam=1                     n=251  +0.006 [-0.026, +0.039]  hw 0.032  minority loses on 49% of items  ACCEPT
+   v3 c=2 lam=0.25                    n=251  +0.013 [-0.019, +0.045]  hw 0.032  minority loses on 46% of items  ACCEPT
+   v3 c=2 lam=0.5                     n=251  +0.009 [-0.026, +0.042]  hw 0.034  minority loses on 48% of items  ACCEPT
+   v3 c=2 lam=1                       n=251  +0.004 [-0.031, +0.040]  hw 0.035  minority loses on 51% of items  ACCEPT
+   v3 c=3 lam=0.25                    n=251  +0.015 [-0.024, +0.055]  hw 0.039  minority loses on 47% of items  ACCEPT
+   v3 c=3 lam=0.5                     n=251  +0.009 [-0.032, +0.050]  hw 0.041  minority loses on 50% of items  ACCEPT
+   v3 c=3 lam=1                       n=251  +0.002 [-0.045, +0.045]  hw 0.045  minority loses on 52% of items  ACCEPT
+   v3 no-debias c=2 lam=0.5           n=251  +0.077 [+0.044, +0.110]  hw 0.033  minority loses on 33% of items  reject
+   v3 class band c=2 lam=0.5          n=251  +0.038 [+0.006, +0.070]  hw 0.032  minority loses on 43% of items  reject
+   geo only c=0 lam=0.5               n=251  +0.010 [-0.013, +0.034]  hw 0.024  minority loses on 45% of items  ACCEPT
+   geo only, class band c=0 lam=0.5   n=251  +0.039 [+0.019, +0.059]  hw 0.020  minority loses on 40% of items  reject

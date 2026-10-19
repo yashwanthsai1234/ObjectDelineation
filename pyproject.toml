@@ -38,6 +38,8 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+# Lab prototypes are frozen evidence for experiments/phase1/PLAN.md; production code is linted when promoted.
+extend-exclude = ["experiments/phase1/lab"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

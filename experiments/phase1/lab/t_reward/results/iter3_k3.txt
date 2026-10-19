@@ -1,0 +1,15 @@
+load average before: (6.11279296875, 7.51171875, 7.8017578125) (8-core M3; other jobs share the machine)
+
+[mixed] crop px per rollout: median 1826, max 231684, mean 61682
+  cache build per prompt (single thread): wall median 0.6 ms, p99 52.8 ms | CPU median 0.6 ms, p99 52.8 ms; CPU per 32 prompts 271 ms (wall 272 ms)
+  serial  x1: batch wall median   32.7 ms, max   49.0 ms [K3 PASS] | per-rollout wall p50 0.04 ms, p99 1.04 ms [K4 PASS] | CPU per rollout p50 0.04 p99 1.04 max 2.30 ms, CPU per batch 32 ms
+  thread  x4: batch wall median   37.6 ms, max   65.3 ms [K3 PASS] | per-rollout wall p50 0.43 ms, p99 4.20 ms [K4 PASS] | CPU per rollout p50 0.18 p99 1.75 max 3.81 ms, CPU per batch 67 ms
+  process x4: batch wall median   14.4 ms, max   19.7 ms [K3 PASS] | per-rollout wall p50 0.06 ms, p99 1.10 ms [K4 PASS] | CPU per rollout p50 0.06 p99 1.10 max 2.63 ms, CPU per batch 36 ms
+
+[riga-only] crop px per rollout: median 203888, max 1184020, mean 228732
+  cache build per prompt (single thread): wall median 11.5 ms, p99 84.7 ms | CPU median 11.5 ms, p99 84.7 ms; CPU per 32 prompts 577 ms (wall 578 ms)
+  serial  x1: batch wall median   75.5 ms, max   76.2 ms [K3 PASS] | per-rollout wall p50 0.15 ms, p99 2.05 ms [K4 PASS] | CPU per rollout p50 0.15 p99 2.05 max 4.98 ms, CPU per batch 75 ms
+  thread  x4: batch wall median   54.8 ms, max   55.3 ms [K3 PASS] | per-rollout wall p50 0.66 ms, p99 3.12 ms [K4 PASS] | CPU per rollout p50 0.32 p99 2.44 max 5.59 ms, CPU per batch 123 ms
+  process x4: batch wall median   35.3 ms, max   37.2 ms [K3 PASS] | per-rollout wall p50 0.19 ms, p99 2.27 ms [K4 PASS] | CPU per rollout p50 0.19 p99 2.27 max 6.28 ms, CPU per batch 84 ms
+
+load average after: (5.6064453125, 7.27734375, 7.7080078125)
