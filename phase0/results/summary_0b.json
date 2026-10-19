@@ -1,0 +1,372 @@
+{
+  "medsam_riga_disc": {
+    "n": 698,
+    "iou_median": 0.921,
+    "topology_wrong": {
+      "n": 17,
+      "pct": 2.44
+    },
+    "iou_ge_0.5": {
+      "n": 698,
+      "topology_wrong": 17,
+      "pct_of_all": 2.44,
+      "pct_of_these": 2.44
+    },
+    "iou_ge_0.8": {
+      "n": 685,
+      "topology_wrong": 16,
+      "pct_of_all": 2.29,
+      "pct_of_these": 2.34
+    },
+    "iou_of_topology_wrong_median": 0.904,
+    "error_types": {
+      "extra_holes": 13,
+      "extra_objects": 5
+    },
+    "band_median": 0.985,
+    "band_below_0.9_pct": 0.72
+  },
+  "medsam_riga_cup": {
+    "n": 698,
+    "iou_median": 0.669,
+    "topology_wrong": {
+      "n": 5,
+      "pct": 0.72
+    },
+    "iou_ge_0.5": {
+      "n": 596,
+      "topology_wrong": 4,
+      "pct_of_all": 0.57,
+      "pct_of_these": 0.67
+    },
+    "iou_ge_0.8": {
+      "n": 94,
+      "topology_wrong": 0,
+      "pct_of_all": 0.0,
+      "pct_of_these": 0.0
+    },
+    "iou_of_topology_wrong_median": 0.518,
+    "error_types": {
+      "extra_holes": 3,
+      "extra_objects": 2
+    },
+    "band_median": 0.951,
+    "band_below_0.9_pct": 13.18
+  },
+  "medsam_riga_rim": {
+    "n": 698,
+    "iou_median": 0.783,
+    "topology_wrong": {
+      "n": 21,
+      "pct": 3.01
+    },
+    "iou_ge_0.5": {
+      "n": 691,
+      "topology_wrong": 20,
+      "pct_of_all": 2.87,
+      "pct_of_these": 2.89
+    },
+    "iou_ge_0.8": {
+      "n": 266,
+      "topology_wrong": 5,
+      "pct_of_all": 0.72,
+      "pct_of_these": 1.88
+    },
+    "iou_of_topology_wrong_median": 0.736,
+    "error_types": {
+      "extra_holes": 11,
+      "extra_objects": 9,
+      "missing_holes": 4
+    },
+    "band_median": 0.961,
+    "band_below_0.9_pct": 5.01
+  },
+  "medsam_lidc_all_slices": {
+    "n": 4087,
+    "iou_median": 0.332,
+    "topology_wrong": {
+      "n": 220,
+      "pct": 5.38
+    },
+    "iou_ge_0.5": {
+      "n": 908,
+      "topology_wrong": 70,
+      "pct_of_all": 1.71,
+      "pct_of_these": 7.71
+    },
+    "iou_ge_0.8": {
+      "n": 62,
+      "topology_wrong": 2,
+      "pct_of_all": 0.05,
+      "pct_of_these": 3.23
+    },
+    "reader_iou_median": 0.741,
+    "iou_ge_reader_iou": {
+      "n": 104,
+      "topology_wrong": 9,
+      "pct_of_all": 0.22,
+      "pct_of_these": 8.65
+    },
+    "iou_of_topology_wrong_median": 0.397,
+    "error_types": {
+      "extra_objects": 85,
+      "extra_holes": 115,
+      "missing_objects": 28,
+      "missing_holes": 3
+    },
+    "band_median": 0.003,
+    "band_below_0.9_pct": 98.51
+  },
+  "medsam_lidc_readers_agree": {
+    "n": 3761,
+    "iou_median": 0.331,
+    "topology_wrong": {
+      "n": 183,
+      "pct": 4.87
+    },
+    "iou_ge_0.5": {
+      "n": 822,
+      "topology_wrong": 63,
+      "pct_of_all": 1.68,
+      "pct_of_these": 7.66
+    },
+    "iou_ge_0.8": {
+      "n": 58,
+      "topology_wrong": 2,
+      "pct_of_all": 0.05,
+      "pct_of_these": 3.45
+    },
+    "reader_iou_median": 0.747,
+    "iou_ge_reader_iou": {
+      "n": 69,
+      "topology_wrong": 6,
+      "pct_of_all": 0.16,
+      "pct_of_these": 8.7
+    },
+    "iou_of_topology_wrong_median": 0.416,
+    "error_types": {
+      "extra_objects": 73,
+      "extra_holes": 96,
+      "missing_objects": 16,
+      "missing_holes": 1
+    },
+    "band_median": 0.0,
+    "band_below_0.9_pct": 98.62
+  },
+  "medsam_lidc_readers_disagree": {
+    "n": 326,
+    "iou_median": 0.364,
+    "topology_wrong": {
+      "n": 37,
+      "pct": 11.35
+    },
+    "iou_ge_0.5": {
+      "n": 86,
+      "topology_wrong": 7,
+      "pct_of_all": 2.15,
+      "pct_of_these": 8.14
+    },
+    "iou_ge_0.8": {
+      "n": 4,
+      "topology_wrong": 0,
+      "pct_of_all": 0.0,
+      "pct_of_these": 0.0
+    },
+    "reader_iou_median": 0.659,
+    "iou_ge_reader_iou": {
+      "n": 35,
+      "topology_wrong": 3,
+      "pct_of_all": 0.92,
+      "pct_of_these": 8.57
+    },
+    "iou_of_topology_wrong_median": 0.291,
+    "error_types": {
+      "missing_objects": 12,
+      "extra_objects": 12,
+      "extra_holes": 19,
+      "missing_holes": 2
+    },
+    "band_median": 0.315,
+    "band_below_0.9_pct": 97.24
+  },
+  "vlm_box": {
+    "images": 30,
+    "parsed_pct": 100.0,
+    "valid_disc": {
+      "ok": 30
+    },
+    "valid_cup": {
+      "ok": 30
+    },
+    "disc": {
+      "n": 30,
+      "iou_median": 0.813,
+      "topology_wrong": {
+        "n": 0,
+        "pct": 0.0
+      },
+      "iou_ge_0.5": {
+        "n": 29,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_ge_0.8": {
+        "n": 17,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "band_median": 0.893,
+      "band_below_0.9_pct": 53.33
+    },
+    "cup": {
+      "n": 30,
+      "iou_median": 0.347,
+      "topology_wrong": {
+        "n": 0,
+        "pct": 0.0
+      },
+      "iou_ge_0.5": {
+        "n": 10,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_ge_0.8": {
+        "n": 0,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "band_median": 0.607,
+      "band_below_0.9_pct": 83.33
+    },
+    "rim": {
+      "n": 30,
+      "iou_median": 0.474,
+      "topology_wrong": {
+        "n": 14,
+        "pct": 46.67
+      },
+      "iou_ge_0.5": {
+        "n": 14,
+        "topology_wrong": 3,
+        "pct_of_all": 10.0,
+        "pct_of_these": 21.43
+      },
+      "iou_ge_0.8": {
+        "n": 0,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_of_topology_wrong_median": 0.311,
+      "error_types": {
+        "missing_objects": 4,
+        "missing_holes": 14
+      },
+      "band_median": 0.676,
+      "band_below_0.9_pct": 90.0
+    }
+  },
+  "vlm_polygon": {
+    "images": 30,
+    "parsed_pct": 33.3,
+    "valid_disc": {
+      "unparseable": 20,
+      "self_touching": 4,
+      "out_of_range;self_touching": 4,
+      "fewer_than_3_points": 1,
+      "ok": 1
+    },
+    "valid_cup": {
+      "unparseable": 20,
+      "zero_area;self_touching": 2,
+      "out_of_range;self_touching": 3,
+      "self_touching": 1,
+      "out_of_range;zero_area;self_touching": 1,
+      "fewer_than_3_points": 1,
+      "ok": 2
+    },
+    "disc": {
+      "n": 30,
+      "iou_median": 0.0,
+      "topology_wrong": {
+        "n": 21,
+        "pct": 70.0
+      },
+      "iou_ge_0.5": {
+        "n": 0,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_ge_0.8": {
+        "n": 0,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_of_topology_wrong_median": 0.0,
+      "error_types": {
+        "missing_objects": 21
+      },
+      "band_median": 0.175,
+      "band_below_0.9_pct": 100.0
+    },
+    "cup": {
+      "n": 30,
+      "iou_median": 0.0,
+      "topology_wrong": {
+        "n": 21,
+        "pct": 70.0
+      },
+      "iou_ge_0.5": {
+        "n": 0,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_ge_0.8": {
+        "n": 0,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_of_topology_wrong_median": 0.0,
+      "error_types": {
+        "missing_objects": 21
+      },
+      "band_median": 0.57,
+      "band_below_0.9_pct": 96.67
+    },
+    "rim": {
+      "n": 30,
+      "iou_median": 0.0,
+      "topology_wrong": {
+        "n": 30,
+        "pct": 100.0
+      },
+      "iou_ge_0.5": {
+        "n": 0,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_ge_0.8": {
+        "n": 0,
+        "topology_wrong": 0,
+        "pct_of_all": 0.0,
+        "pct_of_these": 0.0
+      },
+      "iou_of_topology_wrong_median": 0.0,
+      "error_types": {
+        "missing_objects": 26,
+        "missing_holes": 30
+      },
+      "band_median": 0.408,
+      "band_below_0.9_pct": 100.0
+    }
+  }
+}
