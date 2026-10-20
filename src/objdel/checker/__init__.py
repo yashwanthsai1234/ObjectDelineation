@@ -1,10 +1,11 @@
-"""Exact geometry of binary masks: bit-quad invariants, Betti numbers, polygons and certificates.
-
-Depends only on numpy, scipy and pillow so it can run inside any training loop.
-"""
+"""Exact geometry of binary masks (bit-quad invariants, per-instance topology, polygons, certificates; numpy and
+OpenCV only) and of integer polygons (`polycore`, the C++ extension: rasterize, validate, signed area)."""
 from .bitquad import bitquads
 from .certify import certify
 from .polygonize import polygonize
-from .topology import betti, betti3d, size_filter
+from .topology import InstanceTopology, as_mask, betti, instance_topology, min_area, signature, size_filter
 
-__all__ = ["betti", "betti3d", "bitquads", "certify", "polygonize", "size_filter"]
+__all__ = [
+    "InstanceTopology", "as_mask", "betti", "bitquads", "certify", "instance_topology", "min_area", "polygonize",
+    "signature", "size_filter",
+]

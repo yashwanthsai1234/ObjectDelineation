@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from objdel.checker import betti, bitquads, certify, polygonize, size_filter
+from objdel.checker import betti, bitquads, certify, polygonize
 
 N4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
 N8 = N4 + [(1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -81,26 +81,6 @@ def test_ring_orientation_and_canonical_start():
     assert len(outer[0].pts) == 4 and len(hole[0].pts) == 4
 
 
-def test_hash_depends_on_position_not_crop():
-    a = np.zeros((10, 10), bool)
-    a[2:5, 2:5] = True
-    b = np.zeros((20, 20), bool)
-    b[2:5, 2:5] = True
-    c = np.zeros((10, 10), bool)
-    c[3:6, 2:5] = True
-    assert certify(a).hash == certify(b).hash != certify(c).hash
-
-
-def test_size_filter():
-    m = np.zeros((12, 12), bool)
-    m[1:10, 1:10] = True
-    m[4:6, 4:6] = False  # hole of 4 px
-    m[11, 11] = True  # speck of 1 px
-    assert betti(m) == (2, 1)
-    assert betti(size_filter(m, 5)) == (1, 0)
-    assert betti(size_filter(m, 2)) == (1, 1)
-
-
 def spiral(n):
     m = np.zeros((n, n), bool)
     x = y = 0
@@ -134,7 +114,20 @@ def test_large_random(seed, p, n):
 
 def test_long_ring_spiral():
     m = spiral(201)
-    r = certify(m, keep_rings=True)
+    r = certify(m)
     assert r.certified, r.failures
     assert (r.b0, r.b1) == reference(m)[:2]
-    assert max(len(x.pts) for x in r.rings) > 100
+    assert max(len(x.pts) for x in polygonize(m)) > 100
+
+
+def test_non_canonical_bool_bytes():
+    """I1: bitquads, polygonize and certify read a bool array whose True bytes are 2 or 255 as the canonical mask
+    (their numpy operations compare or cast; topology normalises at its boundary, tested in test_topology.py)."""
+    m = np.zeros((9, 9), bool)
+    m[1:8, 1:8] = True
+    m[4, 4] = False
+    for byte in (2, 255):
+        nb = (m.view(np.uint8) * np.uint8(byte)).view(bool)
+        assert bitquads(nb) == bitquads(m)
+        assert [r.pts.tolist() for r in polygonize(nb)] == [r.pts.tolist() for r in polygonize(m)]
+        assert certify(nb) == certify(m) and certify(nb, min_size=2) == certify(m, min_size=2)

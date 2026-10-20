@@ -4,12 +4,16 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
 
 # Data: downloaded, large and licensed separately. Never commit.
-data/
+/data/
 
 # Build output
-build/
+/build/
 
 # Run logs
 *.log

@@ -1,0 +1,55 @@
+"""Prepare the training set once: model frames (PNG), SFT targets and expert caches with hashes (objdel.train.dataset).
+
+    .venv/bin/python -I -m experiments.phase1.prepare_rl [--store data/store] [--out data/prepared] [--procs 3]
+
+Writes <out>/images, <out>/caches, <out>/<dataset>/<split>.jsonl and <out>/manifest.json (git-ignored), then prints
+the per-split counts and the answer-token evidence for issue I5 (targets over each model's max_completion_length).
+Reads untrusted data: run with python -I.
+
+References:
+- objdel.train.dataset.prepare (frames, targets, ExpertCache files, manifest) and impl/M7_train.md (I5 table)
+- transformers AutoTokenizer (add_special_tokens=False counts the answer alone):
+  https://huggingface.co/docs/transformers/main_classes/tokenizer
+- TRL GRPOConfig max_completion_length (generation stops there, the completion is truncated):
+  https://huggingface.co/docs/trl/main/en/grpo_trainer
+"""
+import argparse
+import json
+import time
+
+from objdel.train import dataset as D
+
+
+def token_budget(out):
+    """Issue I5: per model, train targets whose answer (+1 end-of-turn token) exceeds max_completion_length."""
+    from transformers import AutoTokenizer
+
+    from objdel.train.configs import MAX_COMPLETION, MODELS
+    res = {}
+    for m, mid in MODELS.items():
+        tok = AutoTokenizer.from_pretrained(mid)
+        for ds in ("riga", "lidc"):
+            n = [len(tok(t, add_special_tokens=False)["input_ids"]) + 1
+                 for r in D.records(out, ds, "train") for t in r["targets"] if t]
+            over = sorted(x for x in n if x > MAX_COMPLETION[m])
+            res[f"{m}/{ds}"] = {"targets": len(n), "budget": MAX_COMPLETION[m], "over": len(over), "max": max(n),
+                                "over_lengths": over}
+    return res
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--store", default="data/store")
+    ap.add_argument("--out", default="data/prepared")
+    ap.add_argument("--splits", default="train,val")
+    ap.add_argument("--procs", type=int, default=3)
+    a = ap.parse_args()
+    t0 = time.time()
+    m = D.prepare(a.store, a.out, a.splits.split(","), a.procs)
+    print(json.dumps(m["sets"], indent=1), f"\n{time.time() - t0:.0f}s", flush=True)
+    print(json.dumps(m["files"], indent=1))
+    print(json.dumps(token_budget(a.out), indent=1))
+
+
+if __name__ == "__main__":
+    main()
