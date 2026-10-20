@@ -38,7 +38,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-import pydicom
 
 from objdel.data import lidc
 
@@ -75,6 +74,8 @@ def fetch(series, sops, out_dir: Path, tmp_root: Path) -> int:
             if attempt == 3:
                 raise
             time.sleep(10 * (attempt + 1))
+    import pydicom  # [data] extra; imported here so `--help` works without it
+
     slices, meta = {}, {}
     with zipfile.ZipFile(zpath) as zf:
         names = [n for n in zf.namelist() if n.lower().endswith(".dcm")]

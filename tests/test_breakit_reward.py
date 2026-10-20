@@ -92,6 +92,7 @@ def test_b2_1_alarm_rolls_back_to_the_checkpoint_before_the_hacked_evaluation(tm
 
 
 def test_b2_2_alarm_without_a_best_checkpoint_does_not_crash_training(tmp_path):
+    pytest.importorskip("torch")  # the Controller saves checkpoints with torch ([train] extra)
     from objdel.train.callbacks import Controller
     t = fake_trainer(tmp_path)
     ctl = Controller(t, metric="eval_rewards/iou_tc/mean", alarm=lambda m: "duplicates")
@@ -100,6 +101,7 @@ def test_b2_2_alarm_without_a_best_checkpoint_does_not_crash_training(tmp_path):
 
 
 def test_b2_3_malformed_control_file_does_not_crash_training(tmp_path):
+    pytest.importorskip("torch")  # the Controller saves checkpoints with torch ([train] extra)
     from objdel.train.callbacks import Controller
     t = fake_trainer(tmp_path)
     ctl = Controller(t)
