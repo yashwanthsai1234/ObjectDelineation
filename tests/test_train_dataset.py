@@ -1,0 +1,180 @@
+"""objdel.train.dataset: prepare (frames, targets, caches stored once), SFT and GRPO rows, cache loader.
+
+Unit tests run on a tiny synthetic store; the R1 round trip runs on the prepared train set (data/prepared)."""
+import hashlib
+import json
+import shutil
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+pytest.importorskip("pyarrow")
+pytest.importorskip("datasets")
+
+from objdel.data import Item, store  # noqa: E402
+from objdel.geometry import SCHEMAS  # noqa: E402
+from objdel.reward import rater_answers, score_completion  # noqa: E402
+from objdel.train import dataset as D  # noqa: E402
+
+PREPARED = Path(__file__).resolve().parents[1] / "data" / "prepared"
+
+
+@pytest.fixture(scope="module")
+def prepared(tmp_path_factory, synthetic_items):
+    root = tmp_path_factory.mktemp("prep")
+    store.write(synthetic_items(), root / "store")
+    manifest = D.prepare(root / "store", root / "out", splits=("train",), procs=1)
+    return root, manifest
+
+
+def test_prepare_counts_skips_and_layout(prepared):
+    root, m = prepared
+    riga, lidc = m["sets"]["riga/train"], m["sets"]["lidc/train"]
+    assert (riga["items"], riga["targets"], riga["rl_items"], riga["disagreement_items"]) == (1, 3, 1, 0)
+    assert (lidc["items"], lidc["targets"], lidc["rl_items"], lidc["disagreement_items"]) == (2, 3, 1, 1)
+    assert lidc["skipped_no_image"] == 1 and riga["skipped_no_image"] == 0
+    assert lidc["target_errors"] == [] and riga["target_errors"] == []
+    out = root / "out"
+    assert (out / "images" / "riga/MESSIDOR/image001.png").is_file()
+    assert (out / "caches" / "riga/MESSIDOR/image001" / "cup.npz").is_file()
+    assert not (out / "caches" / "lidc/1.2.1/n000/z003").exists()  # one rater: not RL-eligible, no cache
+    assert json.loads((out / "manifest.json").read_text()) == m
+    for rel, entry in m["files"].items():
+        assert hashlib.sha256((out / rel).read_bytes()).hexdigest() == entry["sha256"]
+
+
+def test_records_and_cache_loader(prepared):
+    root, _ = prepared
+    out = root / "out"
+    rec = {r["item_id"]: r for r in D.records(out, "lidc", "train")}
+    assert set(rec) == {"lidc/1.2.1/n000/z001", "lidc/1.2.1/n000/z003"}
+    r = rec["lidc/1.2.1/n000/z001"]
+    assert r["W"] == r["H"] and 1000 % r["W"] == 0 and r["disagreement"] and r["rl"]
+    caches = D.cache_loader(out)("lidc/1.2.1/n000/z001")
+    assert set(caches) == {"nodule"} and caches["nodule"].k == 2
+    assert caches["nodule"].digest == r["caches"]["nodule"]
+    assert caches["nodule"].raters.shape == (2, r["H"], r["W"])
+
+
+def test_cache_loader_rejects_a_swapped_cache(prepared, tmp_path):
+    root, _ = prepared
+    out = tmp_path / "out"
+    shutil.copytree(root / "out", out)
+    c = out / "caches" / "riga/MESSIDOR/image001"
+    (c / "disc.npz").write_bytes((c / "cup.npz").read_bytes())  # a valid cache file, but the wrong one
+    with pytest.raises(ValueError, match="riga/MESSIDOR/image001"):
+        D.cache_loader(out)("riga/MESSIDOR/image001")
+
+
+def test_sft_rows_schema(prepared):
+    root, _ = prepared
+    rows = D.sft_rows(root / "out", "lidc", "train")
+    assert set(rows.column_names) == {"messages", "image", "key", "rater"}
+    assert len(rows) == 3  # 2 raters of z001 + the single rater of z003
+    texts = {(r["key"], r["rater"]): r for r in rows}
+    row = texts[("lidc/1.2.1/n000/z001", "2")]
+    user, assistant = row["messages"]
+    assert user["role"] == "user" and assistant["role"] == "assistant"
+    assert [c["type"] for c in user["content"]] == ["image", "text"] and user["content"][1]["text"] == D.PROMPTS["lidc"]
+    assert assistant["content"] == [{"type": "text", "text": assistant["content"][0]["text"]}]
+    assert row["image"].mode == "RGB" and row["image"].size == (512, 512)  # LIDC model image (frame contract)
+    assert '"holes":[[' in assistant["content"][0]["text"]  # rater 2 drew the ring
+
+
+def test_sft_rows_drop_answers_beyond_the_token_budget(prepared):
+    root, _ = prepared
+    lengths = sorted(len(r["messages"][1]["content"][0]["text"]) for r in D.sft_rows(root / "out", "riga", "train"))
+    tok = lambda text, add_special_tokens=False: {"input_ids": list(text)}  # one token per character
+    kept = D.sft_rows(root / "out", "riga", "train", tokenizer=tok, max_tokens=lengths[1] + 1)  # +1: end of turn
+    assert len(kept) == sum(n <= lengths[1] for n in lengths) < len(lengths)
+
+
+def test_sft_rows_teach_only_voting_raters(tmp_path, disc_mask, synthetic_items):
+    """A rater whose whole mask is below the size filter abstains from the topology vote (B2-4): its own answer can
+    never be topo-any, so SFT does not teach it; RL keeps the item."""
+    rng = np.random.default_rng(1)
+    speck = np.zeros((100, 100), bool)
+    speck[50:52, 50:52] = True  # 4 px < min_area 5
+    item = Item("lidc/1.2.9/n000/z001", "lidc", "LIDC-IDRI-0009", "train",
+                rng.integers(-1000, 400, (100, 100), dtype=np.int16),
+                {"nodule": np.stack([disc_mask(100, 100, 50, 50, 12), disc_mask(100, 100, 50, 50, 11), speck])},
+                ["1", "2", "3"], {})
+    riga = [it for it in synthetic_items() if it.dataset == "riga"]  # prepare reads both datasets
+    store.write([item, *riga], tmp_path / "store")
+    D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1)
+    (rec,) = D.records(tmp_path / "out", "lidc", "train")
+    assert rec["targets"][2] is not None  # certifiable: dropped for abstaining, not for lack of a target
+    assert D.cache_loader(tmp_path / "out")(rec["item_id"])["nodule"].voters == (0, 1)
+    assert sorted(D.sft_rows(tmp_path / "out", "lidc", "train")["rater"]) == ["1", "2"]
+    assert D.grpo_rows(tmp_path / "out", "lidc", "train")["key"] == [rec["item_id"]]
+
+
+def test_grpo_rows_schema_and_oversampling(prepared):
+    root, _ = prepared
+    out = root / "out"
+    rows = D.grpo_rows(out, "lidc", "train")
+    assert set(rows.column_names) == {"prompt", "image", "key", "W", "H", "names"}
+    assert rows["key"] == ["lidc/1.2.1/n000/z001"]  # the one-rater item is not RL-eligible
+    (row,) = rows
+    assert [c["type"] for c in row["prompt"][0]["content"]] == ["image", "text"] and row["names"] == ["nodule"]
+    assert D.grpo_rows(out, "lidc", "train", oversample=3)["key"] == ["lidc/1.2.1/n000/z001"] * 3
+    assert D.grpo_rows(out, "riga", "train", oversample=3)["key"] == ["riga/MESSIDOR/image001"]  # no disagreement
+
+
+def rows_hash(rows):
+    return hashlib.sha256(json.dumps([{k: v for k, v in r.items() if k != "image"} for r in rows],
+                                     sort_keys=True).encode()).hexdigest()
+
+
+def test_prepare_and_rows_are_deterministic(prepared, tmp_path):
+    root, m = prepared
+    again = D.prepare(root / "store", tmp_path, splits=("train",), procs=2)  # 1 vs 2 workers
+    assert again["files"] == m["files"] and again["sets"] == m["sets"]
+    for ds in ("riga", "lidc"):
+        assert rows_hash(D.sft_rows(root / "out", ds, "train")) == rows_hash(D.sft_rows(tmp_path, ds, "train"))
+        assert rows_hash(D.grpo_rows(root / "out", ds, "train", 4)) == rows_hash(D.grpo_rows(tmp_path, ds, "train", 4))
+
+
+def round_trip(root, dataset, split):
+    """Every SFT target of every RL item (voting raters, B2-4), scored against its own item's caches (R1); returns
+    (scored, abstaining raters' targets, failures)."""
+    load = D.cache_loader(root)
+    bad, n, abstained = [], 0, 0
+    for r in D.records(root, dataset, split):
+        if not r["rl"]:
+            continue
+        caches = load(r["item_id"])
+        voting = {i for rs in rater_answers(caches, SCHEMAS[dataset]).values() for i in rs}
+        for i, (rater, text) in enumerate(zip(r["raters"], r["targets"], strict=True)):
+            if text is None:
+                continue
+            if i not in voting:
+                abstained += 1
+                continue
+            s = score_completion(text, False, SCHEMAS[dataset], caches, r["W"], r["H"])
+            n += 1
+            if not (s["format_ok"] == 1 and s["legal"] == 1 and s["iou_tc"] >= 0.99 and s["topo_any"] == 1):
+                bad.append((r["item_id"], rater, s))
+    return n, abstained, bad
+
+
+def test_targets_score_as_perfect_answers(prepared):
+    root, _ = prepared
+    for ds in ("riga", "lidc"):
+        n, _, bad = round_trip(root / "out", ds, "train")
+        assert n and not bad
+
+
+@pytest.mark.data
+@pytest.mark.parametrize("dataset", ["riga", "lidc"])
+def test_r1_round_trip_on_the_prepared_train_set(dataset):
+    if not (PREPARED / "manifest.json").is_file():
+        pytest.skip(f"no prepared set at {PREPARED} (run experiments/phase1/prepare_rl.py)")
+    m = json.loads((PREPARED / "manifest.json").read_text())
+    rel = f"{dataset}/train.jsonl"
+    assert hashlib.sha256((PREPARED / rel).read_bytes()).hexdigest() == m["files"][rel]["sha256"]
+    n, abstained, bad = round_trip(PREPARED, dataset, "train")
+    assert n + abstained == m["sets"][f"{dataset}/train"]["rl_targets"] and not bad[:5]
+    rl = {r["item_id"] for r in D.records(PREPARED, dataset, "train") if r["rl"]}
+    assert sum(k in rl for k in D.sft_rows(PREPARED, dataset, "train")["key"]) == n  # SFT teaches exactly these

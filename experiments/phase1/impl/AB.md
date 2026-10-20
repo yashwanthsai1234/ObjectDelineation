@@ -1,0 +1,58 @@
+# Phase 1 A/B tests (EXECUTION §8)
+
+One row per A/B. Numbers are copied from the source note unless the row says "measured by D1". D1 measured AB1
+(no Phase 0 vs polycore numbers existed; M1 compared the lab polycore with the new one) and the token part of AB5
+(M5 had a vertex-count preview only). Scripts and raw output: `scratchpad/impl/D1/` (`ab1.py`, `ab1_out.json`,
+`ab5.py`, `ab5_out.json`). Both read `data/`, so they were run with `-I`. Timings are from the shared Mac
+(Apple M3, load average 18–21), so treat them as ratios, not as absolute numbers.
+
+| ID | A | B | Measure | Numbers | Decision | Source note |
+|---|---|---|---|---|---|---|
+| AB1 | Phase 0 PIL rasterizer (`polygon_io.rasterize` at `faaacc4`: `ImageDraw.polygon(fill=1, outline=1)`, one ring) | `objdel.checker.polycore` (exact pixel-centre winding, top-left tie rule) | wrong pixels against `tests/oracles/raster_oracle.py` (even-odd); ms per batch of 256 | **Measured by D1.** K1 single-ring corpus (`k1_case`, seed 4242, 3,000 shapes; 7 families, 252 M px): PIL 1,021,460 wrong px, 99.5 % of shapes wrong, 340 px per shape = 4.3 % of the true area (shifting vertices by −½ px to the PIL centre convention: 5.3 %); polycore **0**. Production targets (hole-free outer rings): RIGA val 696 rings, PIL 237 px per ring = 1.3 % of area; LIDC val (every 5th item) 688 rings, PIL 24 px per ring = **14.7 %** of area; polycore 0 on both. Batch of 256 (K3 mix, 12–40-vertex rings, 50–500 px): PIL raster 16.3 ms, PIL + Phase 0 `ring_problems` 502 ms; polycore `rasterize` 8.2 ms, `rasterize` + `validate` 9.9 ms, `score_batch` (1 thread, with gt) 10.2 ms. M1 also: new polycore vs the lab polycore 0 mismatches on 10,256 cases, p50 / p99 17.1 / 50.1 µs vs 26.0 / 109.8 µs per rollout | **B (polycore)**: plan D1. PIL over-fills every boundary pixel it touches, which biases IoU and area most on small nodules. polycore is exact and 2× faster on the raster alone, 50× with validity. `polygon_io.py` was deleted by M2 | `impl/M1_polycore.md` "Sandbox alternatives and numbers", "Gate results" (K1); this file (D1 run); `docs/research/notes/Phase 1 stack and algorithms/polygon_algorithms.md` (PIL vs centre sampling) |
+| AB2 | Phase 0 reward (`AnnotatorSet`: vote IoU, `topo_near`) / reward v2 | reward v4 | adversary suite (R3), neutrality R4, K9 | M6 gate run (251 items; columns phase0 / v2 / v4). K9 fixtures + composites 97.0 / 99.4 / **99.9 %**; full-LIDC 90.7 / 96.2 / **98.9 %**. R3 real, below the honest median: dilated union 100 / 100 / 100 %; in-band speck 52.8 / 94.9 / **96.4 %**; hull 73.4 / 51.1 / 65.7 %; union 55.9 / 36.5 / 49.8 %; core 25.7 / 40.2 / 55.8 %. Holes-stamped win 99.9 / 60.4 / 62.7 %. R4 (minority − mode): exact −0.563 / +0.056 / −0.009; 1 px −0.458 / +0.014 / **+0.007 accept**; realistic −0.178 / +0.111 / +0.056. v4 after F2 (239 items, B2-4 abstain): K9 99.3 % [98.5, 99.9], R4 realistic +0.033 [−0.013, +0.078] accept, holes stamped 61.6 % | **B (v4)**, confirmed. Phase 0 loses the in-band speck and is strongly majority-biased. v2 fails realistic neutrality and lets hedges win more often. v2 is slightly better only on hole adversaries (I15) | `impl/M6_reward.md` "A/B decisions" and gate tables (K9, R3, R4); `impl/fixes/F2.md` "Gate re-run" |
+| AB3 | reward v4 | v4 + hole-matching term (M6 spike: topology-conditional `v4_hole_tc` or all-rater `v4_hole_all` consensus holes) | stamped-holes win rate, R4 | Holes-stamped win (real honest rollouts): v4 62.7 %; hole_tc 66.4 %; hole_all 62.7 %. Minority hole: 54.5 / 58.4 / 54.5 %. R4 v4 / hole_tc / hole_all: exact −0.009 / −0.004 / −0.294; 1 px +0.007 / **−0.130 reject** / −0.275; realistic +0.056 / −0.054 / **−0.225**. K9 full LIDC 98.9 / 99.1 / 99.1 % | **A (v4)**: the hole term was rejected. It raises hole wins (tc) or leaves them unchanged (all), and it breaks R4. It survives only in `tests/oracles/reward_variants.py`. Residual: I15 / I16 | `impl/M6_reward.md` "A/B decisions", R3 and R4 tables |
+| AB4 | g_area with zero tolerance (rater area range) | τ·P tolerance | leave-one-rater-out g_area; R3; R4 | LOO g_area median / p10 (zero tol.): RIGA fixtures 1.000 / 0.895, LIDC fixtures 0.991 / 0.757, full-LIDC 0.971 / 0.637 (F2, 239 items: 0.972 / 0.658). With τ·P: 1.000 / 1.000 on all three (97–100 % of held-out raters pass). R3 below median, hull / union / core: v4 65.7 / 49.8 / 55.8 % vs τ·P 51.0 / 36.5 / 40.2 %. R4 realistic +0.056 vs +0.048 (both reject in that draw); 1 px +0.007 vs −0.028 | **A (zero tolerance)**: the registered switch rule (median < 0.9) does not fire; τ·P also lets every hedge through | `impl/M6_reward.md` "AB4" table, R3 / R4 tables; `impl/fixes/F2.md` gate re-run (AB4 row) |
+| AB5 | lossless DSS targets (`BuildConfig(tau=0, step=1, iou_min=1)`) | production `minseg_hybrid` ladder (τ = 3 → 0.25 step → lossless, IoU ≥ 0.99, size-filtered signature) | tokens per tokenizer; IoU; topology | **Tokens measured by D1** on the production frames (`data/prepared` caches, production `min_areas`; hybrid texts equal the prepared records 1,760 / 1,760). RIGA val (58 items, 348 targets), median / p95 / max tokens, hybrid vs lossless: Qwen3-VL 309 / 362 / 973 vs 1,157 / 1,733 / 3,021; SmolVLM 316 / 369 / 980 vs 1,164 / 1,740 / 3,028; LFM2.5-VL 207 / 240 / 622 vs 737 / 1,097 / 1,902: **3.5–3.7× tokens**; lossless answers above 1,536 Qwen tokens: 46 / 348 (13 %), hybrid 0. RIGA train (every 6th item, 552 targets): same ratio (3.5–3.7×), 63 lossless answers over budget (max 5,365), hybrid 0. LIDC val (every 4th item, 860 targets): identical texts (crops ≤ 125 px, so every admissible shortcut is lossless). IoU min: hybrid 0.990 (disc and cup), lossless 1.0. Size-filtered signature kept: 100 % both; raw signature kept: hybrid 99.4 % (val) / 99.8 % (train), lossless 100 %. Vertices (disc median): 19 vs 91. M5 preview on fixtures: 3.66× vertices | **B (hybrid)**: lossless RIGA answers do not fit the 1,536-token completion budget. The hybrid keeps K5 (size-filtered topology) at 100 % and IoU ≥ 0.99 | `impl/M5_targets.md` "AB5 preview", "Gates on the full train/val store" (K5, K7); this file (D1 run) |
+| AB6 | scipy labeling (`ndimage.label`, same two-labeling algorithm; and the per-component oracle) | OpenCV Spaghetti (8-conn fg) + Spaghetti4C (4-conn bg) | equality; time | Equality: 0 mismatches against the scipy oracle on 10,000 random masks, 2,400 RIGA, 1,969 LIDC and 35,124 full-LIDC masks (each mask and its complement); production = lab on 78,986 masks. Median µs, production vs scipy (same algorithm) vs scipy per component: LIDC 6.7 / 22.6 / 31.1; RIGA 61.5 / 209 / 856; RIGA complement 833 / 1,631 / 1,628; 1024² blob 1,162 / 4,160 / 6,285: **1.2–3.6×** faster than scipy with the same algorithm, 2–14× faster than per-component (the lab's "5–24×" is not confirmed). Caveat (I14): M3 set `setNumThreads(1)`, which is a no-op on macOS, so its "single thread" OpenCV timings may have used 8 threads | **B (OpenCV Spaghetti)**: the fastest exact option that also returns hole pixel counts. The scipy version is kept as the test oracle | `impl/M3_topology.md` "Result", "Sandbox" (production vs lab vs scipy table), "Decisions" |
+| AB7 | our advantages (`advantages_v4` on `score_batch` terms) | TRL advantages through the aggregator path (`sum_then_normalize`, `scale_rewards="none"`, reward function `advantage_v4` with weight 1, loggers with weight 0) | max abs difference (R2) | max \|TRL − v4\| = **2.37e-7** (float32 `rewards_per_func`), 5 seeds × 5 group orders, real `GRPOTrainer._generate_and_score_completions`, 5 hand-set groups. Identical and low-spread groups: exactly 0. End to end on prepared caches, RIGA and LIDC groups mixed (B4): ≤ 1e-5 on every train and eval call. With a live guard weight w: v4 + w (g_area − mean) to ≤ 1e-5 | **B (TRL aggregator path)**: equal to the reference within float32 rounding. Every reward call must hold whole groups of 8 (checked in `TRLReward`; `num_generations ≠ 8` refused, B2-5) | `impl/M7_train.md` "Result" (R2 rows); `impl/breakit/B4_wiring.md` "Checks that held" |
+
+## Sources for the methods compared
+
+- **AB1.** Pillow `ImageDraw.polygon` (fill + outline, coordinates with (0, 0) at the top left; no pixel-centre rule
+  stated): https://pillow.readthedocs.io/en/stable/reference/ImageDraw.html . polycore: the top-left fill
+  convention, https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-rules ;
+  cell/cover accumulation and spans, https://rasterizer.readthedocs.io/en/stable/algorithm.html ;
+  https://en.wikipedia.org/wiki/Scanline_rendering .
+- **AB2.** Reward v4: GDPO (per-reward group normalisation), https://arxiv.org/abs/2601.05242 ; MaD-RL (gated
+  reverse-KL frequency matching, the r_topo form), https://arxiv.org/abs/2609.31644 ; inter-rater tolerance τ as the
+  P95 of rater distances (surface Dice), Nikolov et al., https://arxiv.org/abs/1809.04430 ; Dr. GRPO,
+  https://arxiv.org/abs/2503.20783 . Phase 0 / v2: lab `ITERATION4` (`experiments/phase1/lab/t_reward/results/`).
+- **AB3.** Topology-matching terms for segmentation (persistence-barcode matching, the family the hole term comes
+  from): Stucki et al., Betti matching, https://arxiv.org/abs/2211.15272 . Design and arms: M6 spike,
+  `tests/oracles/reward_variants.py`.
+- **AB4.** Tolerance τ (above, Nikolov et al.); count / area guards in segmentation RL (VLM-R1's min(1, L_gt/L_pred)),
+  https://arxiv.org/abs/2504.07615 .
+- **AB5.** Arithmetical digital straight segments, Debled-Rennesson & Reveillès 1995,
+  https://doi.org/10.1142/S0218001495000249 (DGtal: https://dgtal.org/doc/2.1/moduleArithDSSReco.html); Potrace
+  polygon stage, https://potrace.sourceforge.net/potrace.pdf ; min-# polygonal approximation (Imai–Iri, Chan–Chin),
+  https://arxiv.org/abs/cs/0209007 .
+- **AB6.** `scipy.ndimage.label` (default cross structure = 4-connectivity; 8-connectivity needs a 3×3 structure),
+  https://docs.scipy.org/doc/scipy/reference/generated/scipy.ndimage.label.html ; Spaghetti labeling, Bolelli et
+  al., IEEE TIP 29 (2020), https://iris.unimore.it/handle/11380/1181437 ; OpenCV flag mapping,
+  https://github.com/opencv/opencv/blob/5.x/modules/imgproc/include/opencv2/imgproc.hpp .
+- **AB7.** TRL GRPO trainer (`multi_objective_aggregation`, `scale_rewards`, reward kwargs),
+  https://huggingface.co/docs/trl/main/en/grpo_trainer and https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py .
+
+## How D1 measured AB1 and AB5
+
+- **AB1** (`ab1.py`). Phase 0's `polygon_io.py` was extracted with `git show faaacc4:src/objdel/checker/polygon_io.py`
+  into scratch and imported unchanged. Grid vertices were mapped to pixels as `x·W/1000` (the corner convention
+  Phase 0 used for crack-edge rings), and also shifted by −½ px. The oracle is `oracle_winding` (exact integers);
+  a pixel is wrong when the mask differs from odd crossings. Only single-ring shapes were used, because Phase 0
+  draws one ring and has no holes. K1 families in the corpus: star, soup, grid, rect 545 / 545 / 545 / 544,
+  degenerate 376, halfpixel 266, tiny 179. Timing: one fixed batch of 256 star rings, 40 % at 250 / 500 px and
+  60 % at 50 / 100 px, median of 7 runs.
+- **AB5** (`ab5.py`, `HF_HUB_OFFLINE=1`). The raters' frame masks come from the prepared `ExpertCache` files, and
+  `min_area` from `objdel.targets.min_areas`. Each rater target is built with both configs and tokenized with
+  `add_special_tokens=False` (SmolVLM-256M-Instruct, LFM2.5-VL-450M, Qwen3-VL-2B-Instruct). It is rasterized with
+  `geometry.to_mask` and compared with the rater mask. 68 s, peak RSS 0.68 GB, 0 build errors.

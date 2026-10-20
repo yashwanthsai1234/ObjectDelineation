@@ -290,7 +290,7 @@ None of the polygon-as-text VLM papers I found represents holes explicitly. Simp
 - With Qwen3-VL-2B, 0–1000 crop-relative integers match the pretraining prior. Expect better zero-shot behaviour and faster SFT than with any new token scheme.
 - For SmolVLM there is no coordinate prior to preserve, so the choice should be driven by data efficiency. Plain digits reuse 10 well-trained token types, which Hi-Token's density argument favours at our data scale (thousands, not millions, of masks). Adding 1,000 `<loc>` tokens would leave most of them under-trained.
 - Use the same format for both models so that comparisons between them are clean.
-- Emit compact JSON with no spaces (about 20% fewer tokens than default `json.dumps`), and train and parse with exactly that serialization. One parser-side caution: the current `extract_json` in `src/objdel/checker/polygon_io.py` accepts any JSON, so whitespace variants still parse.
+- Emit compact JSON with no spaces (about 20% fewer tokens than default `json.dumps`), and train and parse with exactly that serialization. One parser-side caution: the current `extract_json` in `src/objdel/checker/polygon_io.py` accepts any JSON, so whitespace variants still parse (correction, 2026-10-19: `polygon_io.py` was deleted in Phase 1 (M2); the production path is `objdel.geometry` (strict `parse`, polycore `to_mask`, pixel-centre even-odd); whitespace inside the text is a parse error there).
 
 ### Gaps
 - I did not find primary documentation (model card or cookbook) for Qwen3-VL *polygon* output. The issue above covers boxes only.
@@ -312,7 +312,7 @@ Most papers do not state their rasterizer. Groundbench is the only one that free
 - Common toolchains differ: COCO uses `pycocotools frPyObjects`; supervision uses `cv2.fillPoly`. — [supervision docs](https://supervision.roboflow.com/0.24.0/detection/utils/)
 - **Measurement [local]** (synthetic disks and annuli with jittered centres, 20 per size; crop = 4r+4 px; round trip through 0–1000 integers; table shows mean IoU against the source mask, with area ratio in brackets):
   - Contour = exact crack-edge rings (`objdel.checker.polygonize`), rasterized with a pixel-centre even-odd test: **IoU 1.000, area 1.00, for every size r=3–20, disks and annuli.** The round trip is exact.
-  - Crack-edge rings rasterized with PIL fill+outline (the repo's current `polygon_io.rasterize`):
+  - Crack-edge rings rasterized with PIL fill+outline (the repo's then-current `polygon_io.rasterize`; correction, 2026-10-19: `polygon_io.py` was deleted in Phase 1 (M2); the production path is `objdel.geometry` (strict `parse`, polycore `to_mask`, pixel-centre even-odd)):
 
 | radius r (px) | 3 | 5 | 8 | 12 | 20 |
 |---|---|---|---|---|---|
@@ -371,7 +371,7 @@ Most papers do not state their rasterizer. Groundbench is the only one that free
 Each test is cheap and measurable, and most run on the M3 without training.
 
 1. **H1 – Token budget per real object (no training).** Use the RIGA DP-ε table above. Repeat it on LIDC nodule crops: crack-edge rings, ε ∈ {2, 3, 5, 8} in 0–1000 units, with crop sizes as planned for Phase 1. Measure vertices, tokens (Qwen3-VL-2B and SmolVLM tokenizers), and the IoU loss compared with the inter-reader band. Expected: under 150 tokens per nodule at ε=5.
-2. **H2 – Rasterizer bias (no training).** Replace `polygon_io.rasterize` (PIL fill+outline) with a pixel-centre even-odd fill on corner-convention vertices. Re-score the Phase-0 MedSAM and VLM outputs and the expert-vs-expert IoUs. Measure how much IoU and band membership change for LIDC slices with nodule radius ≤ 8 px. Expected: shifts of several IoU points on small nodules.
+2. **H2 – Rasterizer bias (no training).** Replace `polygon_io.rasterize` (PIL fill+outline) with a pixel-centre even-odd fill on corner-convention vertices (done in Phase 1: plan D1, `objdel.checker.polycore`; `polygon_io.py` deleted). Re-score the Phase-0 MedSAM and VLM outputs and the expert-vs-expert IoUs. Measure how much IoU and band membership change for LIDC slices with nodule radius ≤ 8 px. Expected: shifts of several IoU points on small nodules.
 3. **H3 – Steps to validity for small models.** SFT SmolVLM-256M, SmolVLM-500M and Qwen3-VL-2B (LoRA vs full) on RIGA disc+cup targets at ε=5. Every N steps, record:
    - parse rate;
    - legal-polygon rate (`ring_problems`);

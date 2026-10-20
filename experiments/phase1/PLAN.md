@@ -42,7 +42,7 @@ Lab numbers come from Apple M3 runs, often under heavy load, so timings are pess
 | D10 | Output format | Compact JSON, integers 0–1000 relative to the crop. Outer rings clockwise on screen, holes counter-clockwise. Start at the top-most then left-most vertex. `"holes":[]` always present. Truncation = format failure. RIGA emits disc + cup (rim computed). No vertex cap. | Spaced JSON (+22 % tokens). Float coordinates (2×). Fixed vertex count (collapses). | Tokens: 8.2 per vertex (Qwen/SmolVLM), 5.2 (LFM) |
 | D11 | SFT targets | `minseg_hybrid`: potrace polygon stage OR lossless digital straight segments. τ = 3 grid units, IoU ≥ 0.99, defect-localized repair, pinch bevel, certified by polycore. Crop ≤ 500 px, preferring sides that divide 1000. One target per rater. | Douglas–Peucker / Visvalingam–Whyatt (more vertices, lower IoU, useless on small crops). Potrace ½ px (4–5× the tokens). | 100 % topology kept; IoU ≥ 0.99; median tokens: disc 157, cup 197, nodule 92 |
 | D12 | Models | Screen smallest first: SmolVLM-256M → LFM2.5-VL-450M → Qwen3-VL-2B. Qwen3-VL-2B is also the non-smallest control. LIDC crops upscaled to 512 px; SmolVLM `longest_edge` 1024 on RIGA. | SmolVLM-500M (adds nothing). Florence-2 (no GRPO support). | Only Qwen3-VL-2B has a zero-shot prior (box IoU 0.76); SFT works on 256M and 450M; LFM licence allows research and publication |
-| D13 | Data | **RIGA:** staged extractor recovers 4,500 / 4,500 masks; literature split train 590 / val 65 / test 95 (88 unique photos). **LIDC:** full parser with 4 fixes; 10,921 multi-reader slices; patient split 70 / 10 / 20. Parquet + SHA-256 manifest. | Phase 0 extraction (4,172 masks, BinRushed1 lost). DVC/webdataset (unneeded). | pylidc parity on 1,018 scans (99.97 % of masks exact); 0 cross-split duplicates; 313 train disagreement slices |
+| D13 | Data | **RIGA:** staged extractor recovers 4,500 / 4,500 masks; literature split train 590 / val 65 / test 95 (88 unique photos). **LIDC:** full parser with 4 fixes; 10,921 multi-reader slices; patient split 70 / 10 / 20. Parquet + SHA-256 manifest. *Final store (F4, §9): RIGA 592 / 63 / 95; LIDC 10,625 items, patients 709 / 100 / 201.* | Phase 0 extraction (4,172 masks, BinRushed1 lost). DVC/webdataset (unneeded). | pylidc parity on 1,018 scans (99.97 % of masks exact); 0 cross-split duplicates; 313 train disagreement slices (final, lab split: 296) |
 | D14 | C++ vs Python | C++: polycore (raster, legality; shared later with CUDA). Python + OpenCV: topology, band, caches, orchestration. numba: target-builder kernels, offline. One production implementation per operation; prototypes kept only as differential tests. | All-Python (≈ 1,000× slower legality). All-C++ (slower iteration; OpenCV is already optimal for labeling). | — |
 
 ## 3. Architecture
@@ -52,9 +52,9 @@ Lab numbers come from Apple M3 runs, often under heavy load, so timings are pess
 ```
                     ┌──────────────────────────── Phase 1 (Mac, CPU) ─────────────────────────────┐
  raw data           │                                                                             │
- RIGA (6 raters) ───┼─► data.ingest ─────► exact expert masks ────► data.splits                   │
+ RIGA (6 raters) ───┼─► data.riga/lidc ──► exact expert masks ────► data.splits                   │
  LIDC (4 readers)   │   staged RIGA          4,500 RIGA masks        group-aware, seeded,         │
-                    │   extractor,           10,921 LIDC slices      leak-tested                  │
+                    │   extractor,           10,625 LIDC items       leak-tested                  │
                     │   LIDC parser          (certified)                 │                        │
                     │                                                    ▼                        │
                     │                          data.store: Parquet + SHA-256 manifest             │
@@ -65,7 +65,7 @@ Lab numbers come from Apple M3 runs, often under heavy load, so timings are pess
                     │               polycore                        τ, T5, rater topologies      │
                     │                               │                          │                  │
                     │                               ▼                          │                  │
-                    │               data.export: TRL chat rows                │                  │
+                    │               train.dataset: TRL chat rows              │                  │
                     └───────────────────────────────┼──────────────────────────┼──────────────────┘
                                                     ▼                          ▼
      Phase 2  SFT (TRL SFTTrainer) ──► checkpoint ──► Phase 3+  GRPO (TRL GRPOTrainer, G = 8)
@@ -135,8 +135,8 @@ src/objdel/
   geometry/            canonical polygon schema, strict parser, serializer
   targets/             SFT target builder
   reward/              cache, terms, advantages, batch scorer, typed errors
-  data/                riga (staged extractor), lidc (parser), splits, store, export
-  train/               TRL reward functions, aggregator, callbacks (logging, rollback), configs
+  data/                riga (staged extractor), lidc (parser), splits, store
+  train/               TRL chat rows (dataset), reward functions, aggregator, callbacks (logging, rollback), configs
   eval/                metrics harness and reports
 tests/                 unit, property, oracle, fuzz and integration tests (oracles in tests/oracles/)
 experiments/phase1/    PLAN.md, RESULTS.md, scripts, lab/ (the evidence behind this plan)
@@ -213,24 +213,24 @@ Each module ships with the tests named here, written first (test-driven).
 
 ### 4.4 SFT targets (D11)
 
-- **API:** `build_target(masks, schema, BuildConfig(), derived) -> (text, objects, info)`.
+- **API:** `build_target(masks, schema, BuildConfig(), derived) -> (text, objects, info)`. *As built: `build_target(masks, names, cfg=None, min_area=None) -> Target(text, objs, info)`; rim and size rule via `min_area` (EXECUTION §3).*
 - **Crop policy:**
   - side ≤ 500 px, preferring sides that divide 1000;
   - larger objects downscaled by an integer factor with block majority, and the downscaled mask becomes the ground truth everywhere;
   - LIDC crops upscaled to 512 px for the model input.
 - **Certification uses polycore.** fastgeom becomes a differential test.
-- **Hashing:** the target set is hashed under pinned versions.
+- **Hashing:** the target set is hashed under pinned versions (`objdel.targets.target_set_hash`; final `data/targets` target_set_sha256 `1af819f4…`).
 
 ### 4.5 Data (D13)
 
 - **RIGA:** staged extractor F1–F7, regenerating all 4,500 masks. Duplicate pairs are grouped. Test results are reported on 95 and on 88 photos.
 - **LIDC:** parser with single-point ROIs dropped and a documented outline rule (fill including the outline; exclusions remove their outline). Patient ids come from the pylidc DB; slice index from z positions.
-- **Splits** (`build_splits.py`, 11 tests):
+- **Splits** (`objdel.data.splits`, 11 tests planned; 17 in `tests/test_data_splits.py`):
   - group-aware and seeded;
   - stratified by disagreement;
   - injected-leak negative controls.
-- **Store:** Parquet with original image bytes, exact masks (RLE) and a manifest. RIGA stays private (its licence forbids redistribution).
-- **Export:** TRL chat rows with `{"type":"image"}` placeholders.
+- **Store:** Parquet with original image bytes, exact masks (RLE) and a manifest. *As built: decoded image arrays (`.npy`; None without a model image), bit-packed masks (`np.packbits`), SHA-256 + row-count manifest.* RIGA stays private (its licence forbids redistribution).
+- **Export:** TRL chat rows with `{"type":"image"}` placeholders (`objdel.train.dataset`; moved to M7, EXECUTION §2).
 
 ### 4.6 TRL integration (D7, D8, D9)
 
@@ -274,7 +274,7 @@ Each milestone starts by porting or writing its tests, then promotes the lab cod
 | M6 | Reward v4: cache (stored), terms, advantages, batch scorer; leave-one-rater-out g_area test; per-rollout local-gradient rate on the 251 items; hole-matching spike | `lab/t_reward` | K3, K4, K8, K9, K10, R3, R4, R5 |
 | M7 | TRL integration with reward v4: rewards, aggregator, callbacks, configs; group-contiguity test; Mac smoke run | `lab/t_stack` | R2 (v4), K12 (v4) |
 | M8 | Evaluation harness + hack audit | new | R10 |
-| M9 | Vast x86 benchmark (1 h, cheapest 8-core box) + Phase 1 RESULTS.md | — | R9 |
+| M9 | x86-64 build and tests in Docker (exactness, not timing) + Phase 1 RESULTS.md. No rental: x86 timing moves to the Phase 2 entry gates (decided 2026-10-19) | — | R9 |
 
 M1–M3 are independent. M5 needs M1 and M3. M6 needs M3 and M4. M7 needs M2, M5 and M6. M8 can start after M6.
 
@@ -295,7 +295,7 @@ M1–M3 are independent. M5 needs M1 and M3. M6 needs M3 and M4. M7 needs M2, M5
 |---|---|---|
 | K1 | Raster equals oracle (both rules) on ≥ 10k shapes | ✅ 0 / 849.8 M px |
 | K2 | Legality labels equal oracle on ≥ 10k rings | ✅ 0 / 10,000 |
-| K3 | 256-rollout batch ≤ 250 ms on 8 cores (Mac and Vast x86) | ✅ Mac 14–75 ms; x86 pending (M9) |
+| K3 | 256-rollout batch ≤ 250 ms on 8 cores (Mac; x86 timing is a Phase 2 entry gate) | ✅ Mac 14–75 ms |
 | K4 | p99 per rollout ≤ 5 ms | ✅ ≤ 4.2 ms under load |
 | K5 / K6 / K7 | Targets: topology 100 %; IoU min ≥ 0.98 and median ≥ 0.99; median tokens ≤ 250 | ✅ 100 %; 0.990 / 0.993+; 92–197 |
 | K8 | Band: per-stratum abs(Spearman ρ) with area ≤ 0.10 (pooled reported, not gated) | ✅ |
@@ -311,7 +311,7 @@ M1–M3 are independent. M5 needs M1 and M3. M6 needs M3 and M4. M7 needs M2, M5
 | R4 | On ≥ 200 train disagreement items, the neutrality 95 % CI contains 0 with half-width ≤ 0.10 | ✅ v4 realistic: +0.038 [−0.011, +0.091]; 1-px: +0.047 [−0.009, +0.104] (251 items) |
 | R5 | Rater-subsample medians in [0.92, 0.98] for m = 2–5; single-rater policy tested | ✅ 0.961–0.980; single-rater excluded |
 | R6 | Size-rule invariance tests | ✅ |
-| R9 | Wheels + CI per OS; K3/K4 re-measured on Vast x86; pins and target hash | M1, M9 |
+| R9 | Wheels + CI per OS; x86-64 tests pass in Docker; pins and target hash | M1, M9 |
 | R10 | Eval harness tests green | M8 |
 
 ### Phase 2 entry gates (checked on the validation split after SFT; the smallest model passing them is "smallest viable")
@@ -322,6 +322,7 @@ M1–M3 are independent. M5 needs M1 and M3. M6 needs M3 and M4. M7 needs M2, M5
 | Geometry | median IoU_tc ≥ 0.85 (RIGA disc), ≥ 0.75 (cup), ≥ 0.60 (LIDC); ≥ 70 % of rollouts pass IoU_tc ≥ 0.5 |
 | Topology | topology-any ≥ 90 % on unanimous items |
 | GRPO signal | at temperature 1 with G = 8: duplicate outputs ≤ 10 %; ≥ 50 % of groups with geometric σ above the floor. An over-trained SFT that collapses outputs gives zero GRPO signal, as seen in the lab. |
+| Reward speed on x86 | K3/K4 re-measured on the first Vast box's CPU (256 rollouts ≤ 250 ms, p99 ≤ 5 ms) before any training step |
 | Cost | per-step wall time measured on the 4090 for the smallest model (G = 8, 1,536 tokens); the roadmap's GPU-hour estimate replaced by the measurement |
 | Precision probe | before the first SFT run, a synthetic-shape probe per candidate model at the chosen crop/upscale settings (known polygons on synthetic images, a few hundred SFT steps): boundary error ≤ 2 px on LIDC-sized objects, or the model is dropped from LIDC |
 | Housekeeping | novelty sentences in their narrowed form (§8); LFM licence recorded (done: research and publication allowed) |
@@ -362,16 +363,20 @@ M1–M3 are independent. M5 needs M1 and M3. M6 needs M3 and M4. M7 needs M2, M5
   - the median component count rises by ≥ 0.5 over the SFT checkpoint;
   - the duplicate-hash rate within groups exceeds 50 %.
 - **M6 spike for the hole case:** try the hole-matching term from the original reward design (Hungarian ring IoU vs consensus holes). Keep it only if it lowers the stamped-holes win rate without breaking neutrality (R4).
+- **Local-gradient gate re-registered after measurement (M6, 2026-10-19).** The per-rollout form ("dilating or eroding an honest rollout lowers its advantage", ≥ 95 %) measured 81.6 % on the 251 items: moves toward the median rater area raise the advantage, which is what a closeness reward should do. The gate now covers moves away from the rater consensus (97.6 % per rollout) plus a negative mean ΔA for every move.
+- **R4 realistic neutrality is borderline in production (M6).** +0.056 [+0.014, +0.100] in the gate run, +0.030 to +0.066 over 6 draws (1-px mode passes every draw). A mild lean toward minority topologies, the less harmful direction (it works against collapse). v4 stays frozen; per-image topology TV/JS is monitored in Phase 3.
+- **Sub-filter raters abstain from the topology vote (fix B2-4, 2026-10-19).** A rater whose whole mask is below the size filter no longer counts as answering "nothing" (it let a ≤ 4 px speck farm the topology bonus). It stays in the band, vote, area range, τ and T5. The gate set of "251 train disagreement items" becomes 239 under this rule (LIDC train disagreement items in the full store: 311 → 299). Gates after the change: K9 full-LIDC 99.3 % [98.5, 99.9]; R3(a) 100 % / 96.3 %; holes-stamped 61.6 %; R4 still borderline (see above). Details: `impl/fixes/F2.md`.
+- **Final data (F4 data fixes after break-it B3, F2 for B2-4; 2026-10-19).** Supersedes the D13 counts. **Store:** RIGA 592 / 63 / 95 (keypoint duplicate groups, B3-8; planned 590 / 65 was the lab's draw); LIDC 10,625 items (7,341 / 1,084 / 2,200), patients 709 / 100 / 201 (planned 70 / 10 / 20 % split kept). From 10,921: copied reader outlines merged, one layer per distinct mask (B3-3, `meta.copied_raters`; −80 slices left with < 2 readers), then frames overlapping another outlined nodule dropped (B3-2, 216 items, `meta.other_nodules`). BinRushed1 reconstructions keep their masks but have `image=None` (B3-1) and are skipped by `prepare`. Lab-split train disagreement: 296 at 5 px (was 313), 291 under the size rule (was 308), 242 without merged-reader clusters (was 251). **Targets:** `data/targets` target_set_sha256 `1af819f4…`. **Prepared (RL):** LIDC train 7,341 items / 23,469 targets / 289 disagreement items (3.9 %; 299 under the size rule minus 10 decided only by an abstaining sub-filter rater, B2-4), val 1,084 / 3,444 / 44; RIGA train 547 / 3,282 (45 BinRushed1 skipped), val 58 / 348. SFT keeps voting raters only (10 LIDC train targets dropped, B2-4). Sources: `data/store/build_report.json`, `data/prepared/manifest.json`, `impl/fixes/F4.md`.
 - **The original absolute form of K8b failed** (2τ excursion ≤ 0.5 on 89 %; every held-out rater ≥ 0.85 on 48 %). No band shape short of a step function passes it, even with an oracle tolerance. The re-registered form tests what GRPO uses, namely ranking.
 
 ## 10. Risks
 
 | Risk | Mitigation |
 |---|---|
-| Topology disagreement is a small share of data (251 train slices under the size filter; 313 unfiltered) | Oversample disagreement items in RL prompts; report per-image TV only on them |
+| Topology disagreement is a small share of data (251 train slices under the size filter; 313 unfiltered; final prepared LIDC train: 289 / 7,341 items, 3.9 %) | Oversample disagreement items in RL prompts; report per-image TV only on them |
 | The smallest model lacks the resolution for 2 px LIDC precision | Upscale LIDC crops to 512 px; the Phase 2 gate decides; Qwen3-VL-2B as fallback |
 | Over-trained SFT collapses diversity, so GRPO gets no signal | Early-stop SFT on the duplicate-rate / σ gate |
 | TRL bugs (SmolVLM + vLLM #6294; reward metric reads 0; group contiguity per process untested) | HF generation for SmolVLM; per-term dashboards; an M7 test that every process's reward call receives whole groups |
 | F5 assumes Gaussian rater excursions | Validate on IMA++ or QUBIQ when the next track starts |
 | Lossy targets are not idempotent on large objects | Lossless-vs-hybrid ablation in Phase 2 |
-| Benchmarks only on a loaded Mac | M9 measures on Vast x86 before Phase 2 |
+| Benchmarks only on a loaded Mac | First step on the first Vast box in Phase 2: K3/K4 re-measured on its x86 CPU before training |

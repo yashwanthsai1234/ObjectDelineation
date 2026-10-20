@@ -7,7 +7,7 @@ from scipy.optimize import linear_sum_assignment
 import cv2, cc3d, edt
 from skimage.measure import label as sk_label, euler_number as sk_euler
 
-cv2.setNumThreads(1)
+cv2.setNumThreads(0)  # 0 = single-threaded; 1 is a no-op on the macOS build (I14)
 rng = np.random.default_rng(0)
 FG8 = np.ones((3, 3), bool)
 BG4 = ndi.generate_binary_structure(2, 1)
