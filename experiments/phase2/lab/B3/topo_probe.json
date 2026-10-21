@@ -1,0 +1,268 @@
+{
+ "icc": {
+  "rater_nonsimple_share_all_slices_of_nonsimple_nodules": 0.18674277139182513,
+  "rater_nonsimple_share_nonsimple_items": 0.15036267785197163,
+  "majority_nonsimple_nonsimple_items": -0.0061637553904859395
+ },
+ "designs": {
+  "val": {
+   "items": 44,
+   "nodules": 14,
+   "patients": 12,
+   "unanimous": 0,
+   "majority_nonsimple": 3,
+   "hole_items": 40,
+   "multipart_items": 5,
+   "cluster_size_max": 19,
+   "train_patients_removed": 0,
+   "train_items_removed": 0,
+   "train_targets_removed": 0,
+   "train_nonsimple_items_kept": "301 / 301",
+   "train_nonsimple_targets_kept_share": 1.0,
+   "train_unanimous_kept": 12,
+   "binomial_halfwidth_p0.5": 0.1477,
+   "cluster_bootstrap_halfwidth": {
+    "rho=0.0|p=0.3": 0.1365,
+    "rho=0.0|p=0.5": 0.1503,
+    "rho=0.0|p=0.7": 0.1361,
+    "rho=0.15|p=0.3": 0.1563,
+    "rho=0.15|p=0.5": 0.1703,
+    "rho=0.15|p=0.7": 0.1585,
+    "rho=0.3|p=0.3": 0.1833,
+    "rho=0.3|p=0.5": 0.1946,
+    "rho=0.3|p=0.7": 0.1805,
+    "rho=0.6|p=0.3": 0.226,
+    "rho=0.6|p=0.5": 0.2317,
+    "rho=0.6|p=0.7": 0.2324,
+    "rho=0.9|p=0.3": 0.2759,
+    "rho=0.9|p=0.5": 0.2795,
+    "rho=0.9|p=0.7": 0.2848
+   },
+   "paired_A0_vs_A0prime": {
+    "rho=0.3": {
+     "halfwidth_median": 0.2147,
+     "diff_mean": 0.4689,
+     "rho": 0.3,
+     "p1": 0.5,
+     "p0_parts": 0.5
+    },
+    "rho=0.6": {
+     "halfwidth_median": 0.213,
+     "diff_mean": 0.4309,
+     "rho": 0.6,
+     "p1": 0.5,
+     "p0_parts": 0.5
+    }
+   },
+   "verdict": {
+    "ci_rho0.15": false,
+    "ci_rho0.3": false,
+    "ci_rho0.6": false,
+    "leak": "0 by construction (held-out patients removed from SFT train)",
+    "train_kept": true
+   }
+  },
+  "val+train_half": {
+   "items": 195,
+   "nodules": 63,
+   "patients": 56,
+   "unanimous": 8,
+   "majority_nonsimple": 30,
+   "hole_items": 135,
+   "multipart_items": 71,
+   "cluster_size_max": 21,
+   "train_patients_removed": 44,
+   "train_items_removed": 997,
+   "train_targets_removed": 3206,
+   "train_nonsimple_items_kept": "150 / 301",
+   "train_nonsimple_targets_kept_share": 0.4517,
+   "train_unanimous_kept": 4,
+   "binomial_halfwidth_p0.5": 0.0702,
+   "cluster_bootstrap_halfwidth": {
+    "rho=0.0|p=0.3": 0.0632,
+    "rho=0.0|p=0.5": 0.0683,
+    "rho=0.0|p=0.7": 0.0631,
+    "rho=0.15|p=0.3": 0.0821,
+    "rho=0.15|p=0.5": 0.0896,
+    "rho=0.15|p=0.7": 0.0799,
+    "rho=0.3|p=0.3": 0.0958,
+    "rho=0.3|p=0.5": 0.1053,
+    "rho=0.3|p=0.7": 0.097,
+    "rho=0.6|p=0.3": 0.1267,
+    "rho=0.6|p=0.5": 0.1307,
+    "rho=0.6|p=0.7": 0.125,
+    "rho=0.9|p=0.3": 0.1625,
+    "rho=0.9|p=0.5": 0.1624,
+    "rho=0.9|p=0.7": 0.1625
+   },
+   "paired_A0_vs_A0prime": {
+    "rho=0.3": {
+     "halfwidth_median": 0.1049,
+     "diff_mean": 0.3476,
+     "rho": 0.3,
+     "p1": 0.5,
+     "p0_parts": 0.5
+    },
+    "rho=0.6": {
+     "halfwidth_median": 0.1219,
+     "diff_mean": 0.3436,
+     "rho": 0.6,
+     "p1": 0.5,
+     "p0_parts": 0.5
+    }
+   },
+   "verdict": {
+    "ci_rho0.15": false,
+    "ci_rho0.3": false,
+    "ci_rho0.6": false,
+    "leak": "0 by construction (held-out patients removed from SFT train)",
+    "train_kept": false
+   }
+  },
+  "val+train_all": {
+   "items": 345,
+   "nodules": 114,
+   "patients": 101,
+   "unanimous": 12,
+   "majority_nonsimple": 50,
+   "hole_items": 251,
+   "multipart_items": 106,
+   "cluster_size_max": 21,
+   "train_patients_removed": 89,
+   "train_items_removed": 2058,
+   "train_targets_removed": 6444,
+   "train_nonsimple_items_kept": "0 / 301",
+   "train_nonsimple_targets_kept_share": 0.0,
+   "train_unanimous_kept": 0,
+   "binomial_halfwidth_p0.5": 0.0528,
+   "cluster_bootstrap_halfwidth": {
+    "rho=0.0|p=0.3": 0.0469,
+    "rho=0.0|p=0.5": 0.0517,
+    "rho=0.0|p=0.7": 0.0471,
+    "rho=0.15|p=0.3": 0.0624,
+    "rho=0.15|p=0.5": 0.0678,
+    "rho=0.15|p=0.7": 0.0622,
+    "rho=0.3|p=0.3": 0.0736,
+    "rho=0.3|p=0.5": 0.0804,
+    "rho=0.3|p=0.7": 0.0737,
+    "rho=0.6|p=0.3": 0.0964,
+    "rho=0.6|p=0.5": 0.1017,
+    "rho=0.6|p=0.7": 0.0961,
+    "rho=0.9|p=0.3": 0.1224,
+    "rho=0.9|p=0.5": 0.1224,
+    "rho=0.9|p=0.7": 0.1238
+   },
+   "paired_A0_vs_A0prime": {
+    "rho=0.3": {
+     "halfwidth_median": 0.0848,
+     "diff_mean": 0.3607,
+     "rho": 0.3,
+     "p1": 0.5,
+     "p0_parts": 0.5
+    },
+    "rho=0.6": {
+     "halfwidth_median": 0.0983,
+     "diff_mean": 0.3698,
+     "rho": 0.6,
+     "p1": 0.5,
+     "p0_parts": 0.5
+    }
+   },
+   "verdict": {
+    "ci_rho0.15": false,
+    "ci_rho0.3": false,
+    "ci_rho0.6": false,
+    "leak": "0 by construction (held-out patients removed from SFT train)",
+    "train_kept": false
+   }
+  },
+  "synthetic_nonsimple_160": {
+   "items": 160,
+   "cluster_bootstrap_halfwidth": {
+    "rho=0.0|p=0.3": 0.0688,
+    "rho=0.0|p=0.5": 0.0781,
+    "rho=0.0|p=0.7": 0.0719,
+    "rho=0.15|p=0.3": 0.0719,
+    "rho=0.15|p=0.5": 0.0751,
+    "rho=0.15|p=0.7": 0.0719,
+    "rho=0.3|p=0.3": 0.072,
+    "rho=0.3|p=0.5": 0.0781,
+    "rho=0.3|p=0.7": 0.0735,
+    "rho=0.6|p=0.3": 0.075,
+    "rho=0.6|p=0.5": 0.0781,
+    "rho=0.6|p=0.7": 0.075,
+    "rho=0.9|p=0.3": 0.075,
+    "rho=0.9|p=0.5": 0.0781,
+    "rho=0.9|p=0.7": 0.0751
+   },
+   "binomial_halfwidth_p0.5": 0.0775
+  },
+  "synthetic_nonsimple_240": {
+   "items": 240,
+   "cluster_bootstrap_halfwidth": {
+    "rho=0.0|p=0.3": 0.0583,
+    "rho=0.0|p=0.5": 0.0625,
+    "rho=0.0|p=0.7": 0.0583,
+    "rho=0.15|p=0.3": 0.0583,
+    "rho=0.15|p=0.5": 0.0625,
+    "rho=0.15|p=0.7": 0.0583,
+    "rho=0.3|p=0.3": 0.0604,
+    "rho=0.3|p=0.5": 0.0625,
+    "rho=0.3|p=0.7": 0.0604,
+    "rho=0.6|p=0.3": 0.0604,
+    "rho=0.6|p=0.5": 0.0625,
+    "rho=0.6|p=0.7": 0.0604,
+    "rho=0.9|p=0.3": 0.0625,
+    "rho=0.9|p=0.5": 0.0625,
+    "rho=0.9|p=0.7": 0.0625
+   },
+   "binomial_halfwidth_p0.5": 0.0633
+  },
+  "synthetic_nonsimple_320": {
+   "items": 320,
+   "cluster_bootstrap_halfwidth": {
+    "rho=0.0|p=0.3": 0.05,
+    "rho=0.0|p=0.5": 0.0547,
+    "rho=0.0|p=0.7": 0.05,
+    "rho=0.15|p=0.3": 0.0516,
+    "rho=0.15|p=0.5": 0.0547,
+    "rho=0.15|p=0.7": 0.0516,
+    "rho=0.3|p=0.3": 0.0516,
+    "rho=0.3|p=0.5": 0.0547,
+    "rho=0.3|p=0.7": 0.0516,
+    "rho=0.6|p=0.3": 0.0531,
+    "rho=0.6|p=0.5": 0.0547,
+    "rho=0.6|p=0.7": 0.0531,
+    "rho=0.9|p=0.3": 0.0547,
+    "rho=0.9|p=0.5": 0.0547,
+    "rho=0.9|p=0.7": 0.0547
+   },
+   "binomial_halfwidth_p0.5": 0.0548
+  },
+  "synthetic_nonsimple_480": {
+   "items": 480,
+   "cluster_bootstrap_halfwidth": {
+    "rho=0.0|p=0.3": 0.0407,
+    "rho=0.0|p=0.5": 0.0448,
+    "rho=0.0|p=0.7": 0.0406,
+    "rho=0.15|p=0.3": 0.0417,
+    "rho=0.15|p=0.5": 0.0448,
+    "rho=0.15|p=0.7": 0.0417,
+    "rho=0.3|p=0.3": 0.0417,
+    "rho=0.3|p=0.5": 0.0448,
+    "rho=0.3|p=0.7": 0.0427,
+    "rho=0.6|p=0.3": 0.0427,
+    "rho=0.6|p=0.5": 0.0448,
+    "rho=0.6|p=0.7": 0.0437,
+    "rho=0.9|p=0.3": 0.0438,
+    "rho=0.9|p=0.5": 0.0448,
+    "rho=0.9|p=0.7": 0.0443
+   },
+   "binomial_halfwidth_p0.5": 0.0447
+  }
+ },
+ "prereg": {
+  "half_width": 0.06,
+  "min_train_nonsimple_kept": 0.5
+ }
+}

@@ -1,0 +1,43 @@
+# Phase 2 Vast image candidate (B5, H-A5-7 option b): A3's Dockerfile.vast plus a second, isolated vLLM venv.
+#
+#   /opt/venv  training env, the Mac's exact pins (torch 2.14.1 cu130, transformers 5.20.1, TRL 1.16.0, numpy 2.5.4,
+#              numba 0.68.0): SFT, scoring, eval_run, every hash. Same layer as Dockerfile.vast.
+#   /opt/vllm  offline K-sampler only: vllm==0.32.0 and whatever it resolves (torch 2.13.0 cu130, transformers 5.19.0,
+#              numpy 2.3.5, numba 0.65.0). objdel is never installed here: the sampler reads a request JSONL (chat text
+#              rendered by /opt/venv, image path, mm_processor_kwargs, SamplingParams) and writes completions + token
+#              ids; truncation, parsing and scoring run back in /opt/venv.
+#
+# Build context (made by build_images.sh): train.txt (uv pip freeze of .venv), vllm.txt (uv pip compile of
+# vllm==0.32.0 for x86_64-manylinux_2_40, Python 3.12).
+# Code and data are not baked in (A3 §6.1): the repo snapshot is copied per run and installed editable into /opt/venv.
+#
+# References:
+#   A3 candidate: experiments/phase2/lab/A3/Dockerfile.vast ; vLLM 0.32.0 metadata: https://pypi.org/pypi/vllm/0.32.0/json
+#   uv in Docker: https://docs.astral.sh/uv/guides/integration/docker/
+# Stages: base (OS tools + uv) -> sampler (base + /opt/vllm; buildable alone with --target sampler) -> phase2 (sampler +
+# /opt/venv). B5 built --target sampler on the Mac (disk budget); the /opt/venv layer is A3's, built and checked there.
+FROM python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build openssh-server rsync tmux procps ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /usr/local/bin/uv
+ENV UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONDONTWRITEBYTECODE=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    HF_HOME=/workspace/hf \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    TOKENIZERS_PARALLELISM=false
+WORKDIR /workspace
+
+FROM base AS sampler
+COPY vllm.txt /opt/requirements-vllm.txt
+RUN uv venv --python /usr/local/bin/python3.12 /opt/vllm \
+    && uv pip install --python /opt/vllm/bin/python -r /opt/requirements-vllm.txt
+
+FROM sampler AS phase2
+COPY train.txt /opt/requirements.txt
+RUN uv venv --python /usr/local/bin/python3.12 /opt/venv \
+    && uv pip install --python /opt/venv/bin/python -r /opt/requirements.txt
+ENV PATH=/opt/venv/bin:$PATH

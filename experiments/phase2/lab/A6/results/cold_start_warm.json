@@ -1,0 +1,23 @@
+{
+ "env": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 19.27294921875,
+  "time": "2026-10-19 17:17:45"
+ },
+ "numba_cache_dir": "/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase2/A6/nb_cold",
+ "import_targets_s": 0.9082956250058487,
+ "first_call_s": 1.3076919170562178,
+ "second_call_s": 0.07504358293954283,
+ "edt_32x500_serial_s": 0.5761430830461904,
+ "edt_32x500_2threads_s": 0.21724670904222876,
+ "edt_thread_speedup": 2.6520221437932063,
+ "env_end": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 19.27294921875,
+  "time": "2026-10-19 17:17:48"
+ }
+}
