@@ -148,8 +148,9 @@ def test_e2e_store_to_trl_to_controller_to_eval_and_gates(chain):
         assert np.abs(np.array(r["samples"]["advantage"]) - trl_eval[r["item_id"]]).max() <= 1e-5
     report = eval_run.build_report(results)
     json.dumps(report, allow_nan=False)
-    assert set(report["gates"]["gates"]) == {"format", "geometry_median", "geometry_pass", "topology",
-                                             "grpo_duplicates", "grpo_sigma"}
+    assert set(report["gates"]["gates"]) == {"G-format", "G-geometry", "G-prior-b", "G-precision", "G-topology-a",
+                                             "G-signal", "G-vision"}  # prereg.C1_GATES (plan §5.1)
+    assert report["gates"]["gates"]["G-format"]["pass"] is False
     assert report["gates"]["pass"] is False  # junk and truncated samples: format 62.5 %
     assert set(report["summary"]["datasets"]) == {"riga", "lidc"}
     assert eval_run.markdown(report, "b4").count("| riga") >= 2
@@ -190,18 +191,32 @@ def _summary(ds):
     """The part of objdel.eval.summarize's per-dataset output that the gates read, all perfect."""
     obj = {"iou_tc_median": 1.0}
     objects = {"riga": {"disc": obj, "cup": obj}, "lidc": {"nodule": obj}}[ds]
-    return {"format": 1.0, "legal": 1.0, "iou_tc_pass": 1.0, "topo_any_unanimous": 1.0, "group": G, "dup_rate": 0.0,
-            "signal_share": 1.0, "objects": objects}
+    return {"format": 1.0, "legal": 1.0, "iou_tc_pass": 1.0, "group": G, "dup_rate": 0.0, "signal_share": 1.0,
+            "objects": objects}
+
+
+def _report(datasets):
+    """A perfect plan §5.1 report (schema: objdel.eval.gates): shifted + rescaled views, prior, probes, G-vision."""
+    summary = {"datasets": {d: _summary(d) for d in datasets}}
+    names = {"riga": ("disc", "cup"), "lidc": ("nodule",)}
+    prior = {d: {n: {"diff": 0.1, "ci": [0.05, 0.15]} for n in names[d]} for d in datasets}
+    return {"views": {v: {"summary": summary} for v in ("shifted", "rescaled")},
+            "prior": {"shifted": prior, "rescaled": prior},
+            "probes": {"precision": {"pass": True}, "topology": {"pass": True}},
+            "vision": {"ratio": 1.0, "tv": 0.01, "pass": True}, "g_probe": {"verdict": "PASS"}}
 
 
 def test_gates_pass_a_perfect_two_dataset_report():
     from objdel.eval import gates
-    assert gates.phase2_entry({"summary": {"datasets": {d: _summary(d) for d in ("riga", "lidc")}}})["pass"]
+    g = gates.phase2_entry(_report(("riga", "lidc")))
+    assert g["pass"] and g["datasets"] == {"lidc": True, "riga": True} and g["warnings"] == []
 
 
 def test_b4_5_gates_accept_a_model_dropped_from_lidc():
     from objdel.eval import gates
-    assert gates.phase2_entry({"summary": {"datasets": {"riga": _summary("riga")}}})["pass"]
+    r = _report(("riga",))
+    r["probes"] = {"precision": {"pass": False, "capacity": {"pass": False}}, "topology": {"pass": False}}
+    assert gates.phase2_entry(r)["pass"]  # LIDC (and its probes) not judged
 
 
 def test_b4_6_readme_quick_start_imports_exist():

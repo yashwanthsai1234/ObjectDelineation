@@ -134,7 +134,8 @@ def test_pinch_between_slanted_edges(params):
 def test_size_rule_not_raw_topology():
     """A jagged boundary (pen-stroke jitter, like RIGA BinRushed masks) whose tau = 3 polygon rasterizes with two
     sub-filter pinholes: certified under the size rule (plan §4.2) at tau = 3. Demanding the raw signature pushed it
-    to tau = 1.25 with 350 vertices (and real BinRushed masks to 550 vertices, 6,000-token answers)."""
+    to tau = 1.25 with 350 vertices (and real BinRushed masks to 550 vertices, 6,000-token answers). The size rule's
+    latitude applies to objects outside BuildConfig.exact (RIGA); LIDC nodules must be pixel-exact (BK1-1)."""
     S, rng = 500, np.random.default_rng(16)
     amp, k, jitter = rng.uniform(0.5, 4), int(rng.integers(10, 60)), rng.uniform(1, 4)
     y, x = np.mgrid[:S, :S]
@@ -142,7 +143,7 @@ def test_size_rule_not_raw_topology():
     m = np.hypot(y - 250, x - 250) <= 150 + amp * np.sin(k * np.arctan2(y - 250, x - 250)) + jitter * noise
     m = ndimage.binary_fill_holes(max_component(m))
     assert signature(m) == (0,)
-    t, out = check({"nodule": m}, ("nodule",), {"nodule": 400})
+    t, out = check({"nodule": m}, ("nodule",), {"nodule": 400}, BuildConfig(exact=()))
     assert signature(out["nodule"]) != (0,)  # the raw raster has sub-filter pinholes
     assert t.info["nodule"]["tau"] == 3.0 and t.info["nodule"]["vertices"] < 150
 
@@ -289,15 +290,17 @@ def test_kept_sees_a_hole_freed_by_a_removed_island():
 
 def test_default_min_area_is_safe_for_every_union_rule():
     """B1-3: without min_area the target keeps the size-filtered signature at every rule a raters' union on this
-    crop can produce (own rule .. min_area(H * W)), not only at the mask's own rule."""
+    crop can produce (own rule .. min_area(H * W)), not only at the mask's own rule. Objects outside
+    BuildConfig.exact only: an exact target keeps every hole at any rule."""
     S = 500
     yy, xx = np.mgrid[:S, :S]
     m = (yy - 250) ** 2 + (xx - 250) ** 2 < 150 ** 2
     m &= ~((yy - 250) ** 2 / 14 ** 2 + (xx - 250) ** 2 / 8.4 ** 2 < 1)  # a 371-px hole, own rule 352
-    t, out = check({"nodule": m}, ("nodule",))
+    cfg = BuildConfig(exact=())
+    t, out = check({"nodule": m}, ("nodule",), None, cfg)
     g = out["nodule"]
     assert instance_topology(g).hole_areas.tolist() == [371]
-    explicit = build_target({"nodule": m}, ("nodule",), None, {"nodule": min_area(int(m.sum()))})
+    explicit = build_target({"nodule": m}, ("nodule",), cfg, {"nodule": min_area(int(m.sum()))})
     assert len(explicit.text) < len(t.text)  # the reward's rule, when known, allows a shorter answer
 
 

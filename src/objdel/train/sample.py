@@ -14,6 +14,14 @@
   step's file again, holding held-out completions (possibly after the step's training ones), so pass `keys`
   (e.g. the validation ids) to keep one split.
 - write(rows, path): the JSONL file.
+- export_prompts / import_completions: the JSONL bridge to experiments/phase2/sample_vllm.py, which samples with
+  vLLM 0.32 in its own venv (plan D13, C-BRIDGE; promoted from lab/B5 export_prompts.py and vllm_parity.py). The
+  prompt is TRL GRPO's generation prompt as text (prepare_multimodal_messages, then the processor's
+  apply_chat_template with add_generation_prompt=True, tokenize=False; B5: vLLM's prompt ids equal the training
+  env's in 64 / 64 LFM items and through the renderer for Qwen3.5 and SmolVLM), the image path, the processor
+  kwargs minus padding_side (vLLM's mm_processor_kwargs) and every sampling field (configs.sampling, seed,
+  stop_token_ids). Completions come back as token ids; truncation is rewards.truncated, the reward's rule.
+  sample() (HF generate through TRL) stays the reference and the Qwen3.5 fallback.
 
 References:
 - TRL 1.16 GRPOTrainer: _generate, _generate_and_score_completions (prepare_multimodal_messages, is_truncated),
@@ -32,7 +40,7 @@ from trl.data_utils import prepare_multimodal_messages
 
 from objdel.reward import REWARD_V4
 
-from . import rewards
+from . import configs, rewards
 
 G = REWARD_V4.group
 
@@ -91,3 +99,59 @@ def write(rows: Iterable[dict], path) -> None:
     with open(path, "w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
+
+
+def _path(image) -> str:
+    return image if isinstance(image, str) else image["path"]
+
+
+def export_prompts(rows, path, model: str, dataset: str, n: int, processor=None, stop_ids=None,
+                   seed: int = 0) -> None:
+    """rows: prompt, image (a path; grpo_rows' decoded Image column is read as paths), key (unique) -> the prompts
+    JSONL. processor: AutoProcessor of the sampled checkpoint (default: MODELS[model] with processor_kwargs)."""
+    kw = configs.processor_kwargs(model, dataset)
+    if processor is None:
+        from transformers import AutoProcessor
+        processor = AutoProcessor.from_pretrained(configs.MODELS[model], **kw)
+    if hasattr(rows, "cast_column"):  # a datasets.Dataset: paths, not decoded images
+        from datasets import Image
+        rows = rows.cast_column("image", Image(decode=False))
+    sampling = configs.sampling(model) | {"seed": seed}
+    if stop_ids is not None:
+        sampling["stop_token_ids"] = sorted(stop_ids)
+    mm = {k: v for k, v in kw.items() if k != "padding_side"}
+    seen, out = set(), []
+    for r in rows:
+        if r["key"] in seen:
+            raise ValueError(f"{r['key']}: exported twice (ids are item keys)")
+        seen.add(r["key"])
+        image = _path(r["image"])
+        text = processor.apply_chat_template([prepare_multimodal_messages(r["prompt"], images=[image])],
+                                             add_generation_prompt=True, tokenize=False)
+        out.append({"id": r["key"], "prompt": text[0] if isinstance(text, list) else text, "image": image,
+                    "processor_kwargs": mm, "sampling": sampling, "n": n})
+    write(out, path)
+
+
+def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = None) -> list[dict]:
+    """sample_vllm's completions -> eval_run rows {"item_id", "samples", "truncated", "tokens"} (tokens: completion
+    length in token ids, for eval.metrics' token stats; samples in k order, items in order of first appearance).
+    ValueError unless every id has exactly the exported n samples k = 0 .. n-1, each once, and (with ids, the
+    exported keys) the ids are exactly those (BK2-3, BK3-7: a cut or doubled file would change K silently)."""
+    by: dict[str, dict[int, dict]] = {}
+    with open(path) as f:
+        for c in map(json.loads, f):
+            if by.setdefault(c["id"], {}).setdefault(c["k"], c) is not c:
+                raise ValueError(f"{c['id']}: sample k = {c['k']} twice")
+    if ids is not None and set(by) != set(ids):
+        raise ValueError(f"{path}: missing: {sorted(set(ids) - set(by))[:5]}, not exported: "
+                         f"{sorted(set(by) - set(ids))[:5]}")
+    rows = []
+    for key, cs in by.items():
+        if sorted(cs) != list(range(n)):
+            raise ValueError(f"{key}: {len(cs)} samples k = {sorted(cs)[:3]}.., want {n} samples k = 0 .. {n - 1}")
+        cs = [cs[k] for k in range(n)]
+        rows.append({"item_id": key, "samples": [c["text"] for c in cs],
+                     "truncated": [rewards.truncated(c["token_ids"], stop_ids) for c in cs],
+                     "tokens": [len(c["token_ids"]) for c in cs]})
+    return rows

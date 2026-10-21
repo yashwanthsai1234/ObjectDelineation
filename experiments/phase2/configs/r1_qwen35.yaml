@@ -1,0 +1,14 @@
+# R1 screening, rung 2 (Qwen3.5-0.8B full FT unless R0's peak memory picks LoRA, D6).
+model: qwen3.5-0.8b
+view: views/lidc-bundle   # build_views --epochs 3 (the 2-epoch branch decays into epoch 3)
+output_dir: r1-qwen35
+seed: 1
+branches: [0.5, 1.0, 2.0]
+lora: false   # D6: true if the R0 Qwen3.5 arm peaks above 20 GB (LoRA r16, LR 5e-4, saved merged)
+vision: {prepared: prepared, reference: vision_ref/qwen3.5-0.8b.json}   # reference: written in R0 by --vision_reference_only true (under run_dir)
+sft:
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 4   # effective batch 32 (D5)
+  dataloader_num_workers: 6
+  dataloader_persistent_workers: true
+  gradient_checkpointing: false    # R0 peak memory decides (§6.0)

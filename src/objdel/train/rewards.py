@@ -87,7 +87,8 @@ def _text(completion) -> str:
 class TRLReward:
     """caches(key) -> {object name: ExpertCache} for one prompt (objdel.train.dataset.cache_loader); stop_ids: the
     ids TRL treats as the end of a completion (`stop_ids(model, processor)`); pool: optional executor for
-    score_batch."""
+    score_batch, one map per reward call. Scoring processes use caches=serve.ref_loader with
+    pool=serve.fork_pool(4) (objdel.train.serve, plan D14): jobs then pickle as cache keys, not masks."""
 
     def __init__(self, caches: Callable[[str], Mapping[str, ExpertCache]], stop_ids: Iterable[int],
                  pool: Executor | None = None):
