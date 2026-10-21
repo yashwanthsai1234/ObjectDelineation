@@ -1,0 +1,698 @@
+{
+ "env": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 8.873046875,
+  "time": "2026-10-19 17:01:00"
+ },
+ "cache_load_ms_per_item": {
+  "load_riga": 70.59396608565294,
+  "load_lidc": 1.008606439572759
+ },
+ "mixed": {
+  "chars_per_completion": 421.8681640625,
+  "per_completion_ms": {
+   "n": 1024,
+   "median": 0.143166515044868,
+   "p95": 1.175174984382465,
+   "p99": 1.6909367626067247,
+   "max": 4.915542085655034,
+   "mean": 0.47103457211505884,
+   "sum": 482.33940184582025
+  },
+  "serial": {
+   "n": 4,
+   "median": 112.90639598155394,
+   "p95": 117.15535799739882,
+   "p99": 117.7541379421018,
+   "max": 117.90383292827755,
+   "mean": 111.74029146786779,
+   "sum": 446.96116587147117
+  },
+  "threads2": {
+   "n": 4,
+   "median": 148.8443124690093,
+   "p95": 150.12191236019135,
+   "p99": 150.21688239648938,
+   "max": 150.2406249055639,
+   "mean": 143.00509370514192,
+   "sum": 572.0203748205677
+  },
+  "threads4": {
+   "n": 4,
+   "median": 141.554125060793,
+   "p95": 153.82531604846008,
+   "p99": 155.52689599455334,
+   "max": 155.95229098107666,
+   "mean": 143.49271878018044,
+   "sum": 573.9708751207218
+  },
+  "threads8": {
+   "n": 4,
+   "median": 146.40304207568988,
+   "p95": 151.10518573201261,
+   "p99": 151.73487071762793,
+   "max": 151.89229196403176,
+   "mean": 147.6388022711035,
+   "sum": 590.555209084414
+  },
+  "stages_ms_per_batch": {
+   "score_mask.signature": 34.48895789915696,
+   "score_mask.iou": 18.059500260278583,
+   "score_mask.band_depth": 14.588287100195885,
+   "score_mask.roi+area": 11.979794857325032,
+   "polycore.rasterize": 7.1054361469578,
+   "parse": 6.704071973217651,
+   "polycore.pack": 4.097135097254068,
+   "polycore.validate": 4.054761491715908,
+   "rater_answers": 1.6911302227526903
+  },
+  "signature_split_ms_per_batch": {
+   "instance_topology": 43.43803261872381,
+   "size_filter+instance_topology (slow path)": 1.1546254681888968
+  },
+  "signature_slow_path_share": 0.008333333333333333,
+  "cprofile_total_ms_per_batch": 167.74674200000004,
+  "cprofile_top": [
+   [
+    23.645,
+    23.645,
+    719,
+    "~:0:<connectedComponentsWithAlgorithm>"
+   ],
+   [
+    18.218,
+    22.257,
+    1736,
+    "objdel/reward/score.py:61:_iou"
+   ],
+   [
+    14.422,
+    18.608,
+    360,
+    "objdel/reward/cache.py:130:band_depth"
+   ],
+   [
+    12.833,
+    12.833,
+    726,
+    "~:0:<boundingRect>"
+   ],
+   [
+    7.074,
+    8.618,
+    360,
+    "objdel/checker/polycore.py:82:rasterize"
+   ],
+   [
+    5.747,
+    107.644,
+    360,
+    "objdel/reward/score.py:75:score_mask"
+   ],
+   [
+    4.949,
+    167.224,
+    256,
+    "objdel/reward/score.py:123:score_objects"
+   ],
+   [
+    4.905,
+    38.272,
+    363,
+    "objdel/checker/topology.py:105:instance_topology"
+   ],
+   [
+    4.682,
+    4.682,
+    2450,
+    "~:0:<built-in method numpy._core._multiarray_umath.count_nonzero>"
+   ],
+   [
+    4.456,
+    4.456,
+    2917,
+    "~:0:<method 'reduce' of 'numpy.ufunc' objects>"
+   ],
+   [
+    3.782,
+    28.617,
+    360,
+    "objdel/geometry/shape.py:70:to_mask"
+   ],
+   [
+    3.595,
+    5.944,
+    360,
+    "objdel/checker/polycore.py:93:validate"
+   ],
+   [
+    3.242,
+    3.242,
+    256,
+    "~:0:<method 'fullmatch' of 're.Pattern' objects>"
+   ],
+   [
+    3.159,
+    6.115,
+    2156,
+    "objdel/checker/polycore.py:39:_as_i32"
+   ],
+   [
+    2.713,
+    5.03,
+    256,
+    "objdel/reward/score.py:102:rater_answers"
+   ],
+   [
+    2.332,
+    43.309,
+    360,
+    "objdel/checker/topology.py:157:signature"
+   ],
+   [
+    2.202,
+    2.202,
+    256,
+    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py:344:raw_decode"
+   ],
+   [
+    2.134,
+    2.134,
+    2867,
+    "~:0:<built-in method numpy.ascontiguousarray>"
+   ],
+   [
+    2.125,
+    5.336,
+    768,
+    "numpy/_core/_methods.py:115:_mean"
+   ],
+   [
+    1.943,
+    9.508,
+    360,
+    "objdel/checker/polycore.py:55:pack"
+   ],
+   [
+    1.89,
+    12.311,
+    256,
+    "objdel/geometry/text.py:102:parse"
+   ],
+   [
+    1.665,
+    23.89,
+    2081,
+    "objdel/reward/score.py:89:<genexpr>"
+   ]
+  ],
+  "cprofile_by_file_ms_per_batch": {
+   "~": 68.445,
+   "objdel/reward/score.py": 36.774,
+   "objdel/checker/polycore.py": 16.961,
+   "objdel/reward/cache.py": 14.422,
+   "objdel/checker/topology.py": 9.531,
+   "numpy/_core/fromnumeric.py": 5.48,
+   "numpy/_core/_methods.py": 3.813,
+   "objdel/geometry/shape.py": 3.782,
+   "objdel/geometry/text.py": 2.961,
+   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 2.79,
+   "numpy/_core/numeric.py": 1.218,
+   "<string>": 0.704,
+   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.355,
+   "numpy/_core/getlimits.py": 0.279,
+   "numpy/_core/multiarray.py": 0.191
+  },
+  "cxx_floor_ms": {
+   "threads1": [
+    19.610000075772405,
+    360
+   ],
+   "threads8": [
+    5.691875005140901,
+    360
+   ]
+  }
+ },
+ "riga": {
+  "chars_per_completion": 851.3154296875,
+  "per_completion_ms": {
+   "n": 1024,
+   "median": 0.8942915592342615,
+   "p95": 1.4914546394720665,
+   "p99": 2.225530869327484,
+   "max": 15.272082993760705,
+   "mean": 1.0034472219331292,
+   "sum": 1027.5299552595243
+  },
+  "serial": {
+   "n": 4,
+   "median": 240.9575415076688,
+   "p95": 255.42105005006306,
+   "p99": 256.7772100062575,
+   "max": 257.11624999530613,
+   "mean": 240.70902075618505,
+   "sum": 962.8360830247402
+  },
+  "threads2": {
+   "n": 4,
+   "median": 239.24566648202017,
+   "p95": 288.4903044672683,
+   "p99": 294.92889451328665,
+   "max": 296.53854202479124,
+   "mean": 251.95248975069262,
+   "sum": 1007.8099590027705
+  },
+  "threads4": {
+   "n": 4,
+   "median": 238.5371249401942,
+   "p95": 261.19692942593247,
+   "p99": 262.5706194760278,
+   "max": 262.9140419885516,
+   "mean": 240.85579172242433,
+   "sum": 963.4231668896973
+  },
+  "threads8": {
+   "n": 4,
+   "median": 286.22560447547585,
+   "p95": 319.12764572771266,
+   "p99": 321.01089561590925,
+   "max": 321.4817080879584,
+   "mean": 289.2701877572108,
+   "sum": 1157.0807510288432
+  },
+  "stages_ms_per_batch": {
+   "score_mask.signature": 88.14572877599858,
+   "score_mask.iou": 57.08220214000903,
+   "score_mask.band_depth": 39.32159862597473,
+   "score_mask.roi+area": 29.75595896714367,
+   "polycore.rasterize": 17.383730475557968,
+   "parse": 17.226711701368913,
+   "polycore.pack": 9.418369707418606,
+   "polycore.validate": 8.501012052875012,
+   "rater_answers": 3.290174441644922
+  },
+  "signature_split_ms_per_batch": {
+   "instance_topology": 105.14610513928346,
+   "size_filter+instance_topology (slow path)": 1.1616040137596428
+  },
+  "signature_slow_path_share": 0.00244140625,
+  "cprofile_total_ms_per_batch": 307.9147192499999,
+  "cprofile_top": [
+   [
+    55.487,
+    55.487,
+    1029,
+    "~:0:<connectedComponentsWithAlgorithm>"
+   ],
+   [
+    39.063,
+    47.851,
+    3072,
+    "objdel/reward/score.py:61:_iou"
+   ],
+   [
+    30.228,
+    36.704,
+    512,
+    "objdel/reward/cache.py:130:band_depth"
+   ],
+   [
+    28.583,
+    28.583,
+    1026,
+    "~:0:<boundingRect>"
+   ],
+   [
+    14.582,
+    17.897,
+    512,
+    "objdel/checker/polycore.py:82:rasterize"
+   ],
+   [
+    10.377,
+    10.377,
+    4096,
+    "~:0:<built-in method numpy._core._multiarray_umath.count_nonzero>"
+   ],
+   [
+    8.635,
+    217.809,
+    512,
+    "objdel/reward/score.py:75:score_mask"
+   ],
+   [
+    8.046,
+    81.489,
+    513,
+    "objdel/checker/topology.py:105:instance_topology"
+   ],
+   [
+    6.702,
+    6.702,
+    3839,
+    "~:0:<method 'reduce' of 'numpy.ufunc' objects>"
+   ],
+   [
+    6.669,
+    306.957,
+    256,
+    "objdel/reward/score.py:123:score_objects"
+   ],
+   [
+    6.0,
+    47.543,
+    512,
+    "objdel/geometry/shape.py:70:to_mask"
+   ],
+   [
+    5.759,
+    9.043,
+    512,
+    "objdel/checker/polycore.py:93:validate"
+   ],
+   [
+    5.315,
+    9.669,
+    3072,
+    "objdel/checker/polycore.py:39:_as_i32"
+   ],
+   [
+    4.356,
+    4.356,
+    256,
+    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py:344:raw_decode"
+   ],
+   [
+    4.353,
+    4.353,
+    256,
+    "~:0:<method 'fullmatch' of 're.Pattern' objects>"
+   ],
+   [
+    3.806,
+    89.283,
+    512,
+    "objdel/checker/topology.py:157:signature"
+   ],
+   [
+    3.771,
+    3.771,
+    4098,
+    "~:0:<built-in method numpy.ascontiguousarray>"
+   ],
+   [
+    3.65,
+    6.983,
+    256,
+    "objdel/reward/score.py:102:rater_answers"
+   ],
+   [
+    2.971,
+    2.971,
+    514,
+    "~:0:<copyMakeBorder>"
+   ],
+   [
+    2.956,
+    50.808,
+    3584,
+    "objdel/reward/score.py:89:<genexpr>"
+   ],
+   [
+    2.863,
+    13.471,
+    512,
+    "objdel/checker/polycore.py:55:pack"
+   ],
+   [
+    2.382,
+    18.033,
+    256,
+    "objdel/geometry/text.py:102:parse"
+   ]
+  ],
+  "cprofile_by_file_ms_per_batch": {
+   "~": 134.751,
+   "objdel/reward/score.py": 66.239,
+   "objdel/checker/polycore.py": 30.594,
+   "objdel/reward/cache.py": 30.228,
+   "objdel/checker/topology.py": 15.161,
+   "numpy/_core/fromnumeric.py": 7.477,
+   "objdel/geometry/shape.py": 6.0,
+   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 4.946,
+   "numpy/_core/_methods.py": 4.429,
+   "objdel/geometry/text.py": 3.865,
+   "numpy/_core/numeric.py": 2.097,
+   "<string>": 1.021,
+   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.454,
+   "numpy/_core/getlimits.py": 0.316,
+   "numpy/_core/multiarray.py": 0.291
+  },
+  "cxx_floor_ms": {
+   "threads1": [
+    109.36137498356402,
+    512
+   ],
+   "threads8": [
+    11.989000020548701,
+    512
+   ]
+  }
+ },
+ "lidc": {
+  "chars_per_completion": 118.8408203125,
+  "per_completion_ms": {
+   "n": 1024,
+   "median": 0.1498744823038578,
+   "p95": 0.3179875842761245,
+   "p99": 1.3880486995913055,
+   "max": 18.103541107848287,
+   "mean": 0.25928314039447287,
+   "sum": 265.5059357639402
+  },
+  "serial": {
+   "n": 4,
+   "median": 37.453624536283314,
+   "p95": 74.47152931708841,
+   "p99": 79.27383942995219,
+   "max": 80.47441695816815,
+   "mean": 46.137593511957675,
+   "sum": 184.5503740478307
+  },
+  "threads2": {
+   "n": 4,
+   "median": 37.51925000688061,
+   "p95": 38.61011877306737,
+   "p99": 38.712023730622604,
+   "max": 38.73749997001141,
+   "mean": 37.70507298759185,
+   "sum": 150.8202919503674
+  },
+  "threads4": {
+   "n": 4,
+   "median": 52.06504149828106,
+   "p95": 62.89084738236851,
+   "p99": 64.38260230817832,
+   "max": 64.75554103963077,
+   "mean": 53.101124765817076,
+   "sum": 212.4044990632683
+  },
+  "threads8": {
+   "n": 4,
+   "median": 50.73037452530116,
+   "p95": 60.96125173498876,
+   "p99": 62.30591677711345,
+   "max": 62.642083037644625,
+   "mean": 53.225593524985015,
+   "sum": 212.90237409994006
+  },
+  "stages_ms_per_batch": {
+   "score_mask.signature": 6.623772002058104,
+   "score_mask.band_depth": 4.098095407243818,
+   "score_mask.iou": 2.8505639056675136,
+   "parse": 2.7983529143966734,
+   "polycore.pack": 2.7973128599114716,
+   "polycore.validate": 2.4555462296120822,
+   "polycore.rasterize": 1.8521969905123115,
+   "score_mask.roi+area": 1.6415628197137266,
+   "rater_answers": 1.241556426975876
+  },
+  "signature_split_ms_per_batch": {
+   "instance_topology": 15.665705606807023,
+   "size_filter+instance_topology (slow path)": 0.02176023554056883
+  },
+  "signature_slow_path_share": 0.001953125,
+  "cprofile_total_ms_per_batch": 128.00684374999997,
+  "cprofile_top": [
+   [
+    10.628,
+    126.35,
+    256,
+    "objdel/reward/score.py:123:score_objects"
+   ],
+   [
+    8.326,
+    9.476,
+    511,
+    "~:0:<method 'any' of 'numpy.ndarray' objects>"
+   ],
+   [
+    7.582,
+    28.508,
+    256,
+    "objdel/geometry/shape.py:70:to_mask"
+   ],
+   [
+    5.945,
+    5.945,
+    2295,
+    "~:0:<method 'reduce' of 'numpy.ufunc' objects>"
+   ],
+   [
+    5.076,
+    55.519,
+    256,
+    "objdel/reward/score.py:75:score_mask"
+   ],
+   [
+    4.974,
+    8.866,
+    870,
+    "objdel/reward/score.py:61:_iou"
+   ],
+   [
+    4.64,
+    4.64,
+    500,
+    "~:0:<connectedComponentsWithAlgorithm>"
+   ],
+   [
+    4.423,
+    7.395,
+    256,
+    "objdel/reward/score.py:102:rater_answers"
+   ],
+   [
+    4.157,
+    8.317,
+    256,
+    "objdel/reward/cache.py:130:band_depth"
+   ],
+   [
+    4.022,
+    4.022,
+    252,
+    "~:0:<built-in method numpy.fromiter>"
+   ],
+   [
+    3.653,
+    3.653,
+    1374,
+    "~:0:<built-in method numpy._core._multiarray_umath.count_nonzero>"
+   ],
+   [
+    3.34,
+    3.34,
+    2024,
+    "~:0:<built-in method numpy.ascontiguousarray>"
+   ],
+   [
+    3.334,
+    14.66,
+    256,
+    "objdel/checker/topology.py:105:instance_topology"
+   ],
+   [
+    3.145,
+    3.145,
+    256,
+    "~:0:<method 'wrap' of 'numpy._core._multiarray_umath._array_converter' objects>"
+   ],
+   [
+    2.599,
+    6.571,
+    256,
+    "objdel/checker/polycore.py:93:validate"
+   ],
+   [
+    2.595,
+    6.937,
+    1532,
+    "objdel/checker/polycore.py:39:_as_i32"
+   ],
+   [
+    2.519,
+    8.406,
+    768,
+    "numpy/_core/_methods.py:115:_mean"
+   ],
+   [
+    2.443,
+    2.443,
+    513,
+    "~:0:<boundingRect>"
+   ],
+   [
+    2.083,
+    3.321,
+    256,
+    "objdel/checker/polycore.py:82:rasterize"
+   ],
+   [
+    1.953,
+    12.292,
+    256,
+    "objdel/geometry/text.py:102:parse"
+   ],
+   [
+    1.712,
+    10.118,
+    768,
+    "numpy/_core/fromnumeric.py:3737:mean"
+   ],
+   [
+    1.706,
+    2.098,
+    908,
+    "~:0:<built-in method builtins.all>"
+   ]
+  ],
+  "cprofile_by_file_ms_per_batch": {
+   "~": 51.733,
+   "objdel/reward/score.py": 30.037,
+   "objdel/checker/polycore.py": 9.778,
+   "objdel/geometry/shape.py": 7.582,
+   "objdel/checker/topology.py": 6.41,
+   "numpy/_core/fromnumeric.py": 5.37,
+   "numpy/_core/_methods.py": 4.641,
+   "objdel/reward/cache.py": 4.157,
+   "objdel/geometry/text.py": 2.937,
+   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 1.861,
+   "<string>": 1.7,
+   "numpy/_core/numeric.py": 0.865,
+   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.536,
+   "numpy/_core/getlimits.py": 0.187,
+   "numpy/_core/multiarray.py": 0.145
+  },
+  "cxx_floor_ms": {
+   "threads1": [
+    2.012167009525001,
+    256
+   ],
+   "threads8": [
+    1.2911659432575107,
+    256
+   ]
+  }
+ },
+ "env_end": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 8.01611328125,
+  "time": "2026-10-19 17:02:02"
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "procs": 1,
+ "checks": false,
+ "datasets": {
+  "lidc": {
+   "wall_s": 341.5,
+   "targets_per_op": {
+    "identity": 23469,
+    "hflip": 23469,
+    "vflip": 23469,
+    "rot90": 23469,
+    "rot180": 23469,
+    "rot270": 23469,
+    "transpose": 23469,
+    "antitranspose": 23469
+   },
+   "hash": {
+    "identity": "b481450688d3b8920562be3516ddd77401379288e4925f55c10954bd99c2c4c6",
+    "hflip": "668a03766c9f010ac21c8f0168761f5f770ae66aeb828a5f1978854182713c09",
+    "vflip": "a385b0dbdaad3ec7e78492b19594e42491c3feddcd1e09cbd69e215c9d0ac7ba",
+    "rot90": "6db4a75ec3588df058f5dd09778222d73ec866bd7d58aff2edf85534e990c53b",
+    "rot180": "f472f162d88cf82d774e56dd94f987051af37eec5694c67d1c10ed9f7f957b7f",
+    "rot270": "b93be02cee49d060bb5d55f85077e763f029c12acd630a32af4bdd7e2cf94210",
+    "transpose": "bba0aedfc92fc1739ee60063a3a7513e78426c015c042abcf276eaa3348eda49",
+    "antitranspose": "8e8a8faf5c4ee259b7a29421f5f322f12c893c59d4adf11033008092e0d5f65c"
+   },
+   "errors": [],
+   "build_cpu_s": 215.7,
+   "text_bytes": {
+    "identity": 7186494,
+    "hflip": 7186394,
+    "vflip": 7186454,
+    "rot90": 7186574,
+    "rot180": 7186574,
+    "rot270": 7186514,
+    "transpose": 7186434,
+    "antitranspose": 7186414
+   },
+   "identity_matches_data_targets": true
+  },
+  "riga": {
+   "wall_s": 1632.2,
+   "targets_per_op": {
+    "identity": 3552,
+    "hflip": 3552,
+    "vflip": 3552,
+    "rot90": 3552,
+    "rot180": 3552,
+    "rot270": 3552,
+    "transpose": 3552,
+    "antitranspose": 3552
+   },
+   "hash": {
+    "identity": "54bc88bfce0f7ee80d572ac88989442bb8556e3fcf6c5f0b00f2b579123a86ef",
+    "hflip": "287cfcbfba89f2479a59424293855a0c77374f610ce918640084a07da24be144",
+    "vflip": "afa892d55b2b4c0e7efcb5fe6b128a5cf2d152a4a2d67c9d5d14ce06a41fbee5",
+    "rot90": "92de84fa9dfd5ff104072b4b0e4c2e2e0d4a50d5b9fa473a3bc00813c088e414",
+    "rot180": "189b3d0b9205302832454c0dc99a3850a4710b204e73d22e8c562737e7e3863e",
+    "rot270": "ee881dc5eab31caa430fc8ca009ec9faf636a6a033455cd97fa43bacc3b0e90c",
+    "transpose": "6cc46fe04ea2e255b138983d48c543a45ece78358e85d4619307fe6a46b6b3d0",
+    "antitranspose": "c43bb14f4d58d177d3759fab0eb752461562328fdc5775056025ef802c8d11ca"
+   },
+   "errors": [],
+   "build_cpu_s": 871.6,
+   "text_bytes": {
+    "identity": 1859582,
+    "hflip": 1863632,
+    "vflip": 1859542,
+    "rot90": 1861092,
+    "rot180": 1863482,
+    "rot270": 1864252,
+    "transpose": 1861042,
+    "antitranspose": 1864272
+   },
+   "identity_matches_data_targets": true
+  }
+ },
+ "wall_s": 1983.2,
+ "build_cpu_min": 18.12,
+ "all_hash": "e86e07e66f7bf3b3008991ecbce85463579e3d7500f66a63daa8060ac32074b4"
+}

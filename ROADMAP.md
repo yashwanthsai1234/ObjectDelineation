@@ -110,7 +110,7 @@ Access details are from the research notes and must be re-checked before downloa
 | 0 ✅ | Census and baselines | checker built; experts disagree; MedSAM makes structure errors IoU misses | Mac | 0 | done (`experiments/phase0/RESULTS*.md`) |
 | 1 ✅ | Reward and data | **Done: [experiments/phase1/RESULTS.md](experiments/phase1/RESULTS.md)** (plan: [PLAN.md](experiments/phase1/PLAN.md)). C++ polygon core, exact reward v4 (topology-conditional IoU, self-calibrated band, rater-frequency topology term, area guard), SFT target builder, full RIGA/LIDC data and splits, TRL integration, eval harness | Mac | 0 | Phase 1 exit gates in the plan, §7: all pass on the Mac (exactness and determinism also on x86-64 in Docker) or are re-registered / accepted with reasons (RESULTS §2); native x86 reward timing and the first CI run are Phase 2 entry steps |
 | 1c | Natural-image census | share of objects with holes or several parts in SA-1B / refCOCO | Mac | 0 | numbers for Track B's enriched split |
-| 2 | **SFT** | pick the smallest VLM that learns polygons; outer-ring tokens (A0) vs hole-aware tokens (A0′) | Vast | ~6 | ≥ 90 % valid; A0′ recovers holes and parts that A0 cannot |
+| 2 | **SFT** | pick the smallest VLM that learns polygons; outer rings with all parts (A0) vs hole-aware polygons (A0′) | Vast | ~6 (plan: see Phase 2 PLAN §4.9) | ≥ 90 % valid; A0′ recovers holes that A0 cannot (parts are already expressible in A0; experiments/phase2/PLAN.md C2) |
 | 3 | **GRPO, Track A (medical)** | arms A1–A9 plus best-of-8 and DPO, on rater sets | Vast | ~50 | decision on H1–H3 |
 | 4 | GRPO, Track B (natural images) | same arms with morphological bands | Vast | ~40 | generality of H1 |
 | 5 | Level 2 controller | checker steers training; overfitting and hacking alarms | Vast | ~10 | H4 |
@@ -170,7 +170,7 @@ SmolVLM's language model is not Qwen, so it can also serve as the non-Qwen contr
 
 | | |
 |---|---|
-| Arms | **A0**: outer ring only (SimpleSeg-style). **A0′**: hole- and part-aware tokens. |
+| Arms | **A0**: outer rings only, every part kept, no holes (SimpleSeg-style "A0-multi"). **A0′**: hole-aware polygons (the D10 format with holes). A0 and A0′ differ only in holes. |
 
 - Each epoch's target is a random expert's polygon, so the model learns the spread of answers, not an average.
 - Augmentation: flips, 90° rotations, scale jitter.

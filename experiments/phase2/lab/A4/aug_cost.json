@@ -1,0 +1,93 @@
+{
+ "riga": {
+  "summary": {
+   "targets_x_ops": 798,
+   "rebuilt_ok": 1.0,
+   "disc": {
+    "naive_meets_cert": 1.0,
+    "naive_exact": 0.0,
+    "naive_iou_min": 0.9900433595631926,
+    "naive_iou_median": 0.99202482454614,
+    "naive_diff_px_median": 255.0,
+    "naive_sig_ok": 1.0,
+    "naive_legal": 1.0,
+    "rebuilt_iou_min": 0.9900433595631926,
+    "vertices_ratio_median": 1.0,
+    "vertices_ratio_p95": 1.0
+   },
+   "cup": {
+    "naive_meets_cert": 0.9273182957393483,
+    "naive_exact": 0.0,
+    "naive_iou_min": 0.9868593955321945,
+    "naive_iou_median": 0.9914502849905004,
+    "naive_diff_px_median": 57.0,
+    "naive_sig_ok": 1.0,
+    "naive_legal": 1.0,
+    "rebuilt_iou_min": 0.990005711022273,
+    "vertices_ratio_median": 1.0,
+    "vertices_ratio_p95": 1.0666666666666667
+   },
+   "text_len_ratio_median": 1.0,
+   "text_len_ratio_p95": 1.0253807106598984
+  },
+  "targets": 114,
+  "build_s_per_target_orig": 0.027041111115913577,
+  "build_s_per_target_aug": 0.02357254582524351,
+  "img_commute": null,
+  "wall_s": 27.79013824998401
+ },
+ "lidc": {
+  "summary": {
+   "targets_x_ops": 4858,
+   "rebuilt_ok": 1.0,
+   "nodule": {
+    "naive_meets_cert": 1.0,
+    "naive_exact": 1.0,
+    "naive_iou_min": 1.0,
+    "naive_iou_median": 1.0,
+    "naive_diff_px_median": 0.0,
+    "naive_sig_ok": 1.0,
+    "naive_legal": 1.0,
+    "rebuilt_iou_min": 1.0,
+    "vertices_ratio_median": 1.0,
+    "vertices_ratio_p95": 1.0
+   },
+   "text_len_ratio_median": 1.0,
+   "text_len_ratio_p95": 1.0
+  },
+  "targets": 694,
+  "build_s_per_target_orig": 0.0009478351987981552,
+  "build_s_per_target_aug": 0.0008090501538538801,
+  "img_commute": {
+   "hflip": {
+    "maxabs": 0,
+    "meanabs": 0.0
+   },
+   "vflip": {
+    "maxabs": 0,
+    "meanabs": 0.0
+   },
+   "rot90": {
+    "maxabs": 20,
+    "meanabs": 0.1920494396016345
+   },
+   "rot180": {
+    "maxabs": 0,
+    "meanabs": 0.0
+   },
+   "rot270": {
+    "maxabs": 20,
+    "meanabs": 0.1920494396016345
+   },
+   "transpose": {
+    "maxabs": 20,
+    "meanabs": 0.1920494396016345
+   },
+   "antitranspose": {
+    "maxabs": 20,
+    "meanabs": 0.1920494396016345
+   }
+  },
+  "wall_s": 27.347598249907605
+ }
+}

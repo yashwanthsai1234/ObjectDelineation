@@ -1,0 +1,307 @@
+{
+ "train_holes": 285,
+ "train_multipart_targets": 182,
+ "train_bin_shares": [
+  0.4386,
+  0.3614,
+  0.2
+ ],
+ "fidelity": {
+  "ks_p": {
+   "hole_area": 0.0037,
+   "hole_fraction": 0.4108,
+   "hole_offset": 0.006,
+   "hole_wall": 0.4899,
+   "part_ratio": 0.353,
+   "part_gap": 0.1221
+  },
+  "gen_bin_shares": [
+   0.3967,
+   0.3533,
+   0.25
+  ],
+  "generated": {
+   "hole_area": [
+    6.0,
+    14.0,
+    72.0
+   ],
+   "hole_fraction": [
+    0.013,
+    0.042,
+    0.185
+   ],
+   "hole_offset": [
+    0.274,
+    0.488,
+    0.832
+   ],
+   "hole_wall": [
+    0.414,
+    1.828,
+    4.01
+   ],
+   "part_ratio": [
+    0.197,
+    0.525,
+    0.87
+   ],
+   "part_gap": [
+    2.162,
+    7.801,
+    32.377
+   ]
+  },
+  "real_train": {
+   "hole_area": [
+    5.0,
+    12.0,
+    48.599999999999994
+   ],
+   "hole_fraction": [
+    0.011,
+    0.036,
+    0.151
+   ],
+   "hole_offset": [
+    0.183,
+    0.464,
+    0.878
+   ],
+   "hole_wall": [
+    0.414,
+    1.236,
+    4.0
+   ],
+   "part_ratio": [
+    0.212,
+    0.567,
+    0.896
+   ],
+   "part_gap": [
+    1.236,
+    6.81,
+    31.503
+   ]
+  },
+  "rejections": {
+   "hole": 18,
+   "two": 0
+  },
+  "pass": false
+ },
+ "probe": {
+  "hole_items_per_bin": [
+   120,
+   120,
+   120
+  ],
+  "hole_area_per_bin_median": [
+   6.0,
+   17.0,
+   49.0
+  ],
+  "holed_object_diam_median": 22.383466188758387,
+  "two_part": 160,
+  "controls": 160
+ },
+ "models": {
+  "exact": {
+   "hole_recall_single": {
+    "bins": [
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ]
+    ],
+    "pooled_train_weighted": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "part_recall_descriptive": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "false_nonsimple_controls": [
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  "A0_holes_emptied": {
+   "hole_recall_single": {
+    "bins": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "pooled_train_weighted": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "part_recall_descriptive": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "false_nonsimple_controls": [
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  "centroid_disc": {
+   "hole_recall_single": {
+    "bins": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "pooled_train_weighted": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "part_recall_descriptive": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "false_nonsimple_controls": [
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  "sigma_0.5": {
+   "hole_recall_single": {
+    "bins": [
+     [
+      0.575,
+      0.4833,
+      0.6583
+     ],
+     [
+      0.8083,
+      0.7333,
+      0.875
+     ],
+     [
+      0.8833,
+      0.825,
+      0.9333
+     ]
+    ],
+    "pooled_train_weighted": [
+     0.721,
+     0.6757,
+     0.7678
+    ]
+   },
+   "hole_recall_mean8": {
+    "bins": [
+     [
+      0.601,
+      0.5583,
+      0.6427
+     ],
+     [
+      0.8458,
+      0.8073,
+      0.8802
+     ],
+     [
+      0.8917,
+      0.8604,
+      0.9208
+     ]
+    ],
+    "pooled_train_weighted": [
+     0.7476,
+     0.7237,
+     0.7706
+    ]
+   },
+   "hole_recall_any8": {
+    "bins": [
+     [
+      0.975,
+      0.9417,
+      1.0
+     ],
+     [
+      0.9833,
+      0.9583,
+      1.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ]
+    ],
+    "pooled_train_weighted": [
+     0.983,
+     0.966,
+     0.9963
+    ]
+   },
+   "part_recall_descriptive": [
+    0.8812,
+    0.8313,
+    0.9313
+   ],
+   "false_nonsimple_controls": [
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ },
+ "sanity": {
+  "exact_all_1": true,
+  "A0_all_0": true,
+  "disc_all_0": true
+ }
+}

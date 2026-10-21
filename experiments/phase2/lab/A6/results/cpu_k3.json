@@ -1,0 +1,46 @@
+{
+ "env": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 15.947265625,
+  "time": "2026-10-19 17:24:30"
+ },
+ "prepared/mixed": {
+  "cpu_ms_median": 192.80549999999863,
+  "cpu_ms_max": 224.18499999999852,
+  "wall_ms_median": 271.1489380453713
+ },
+ "prepared/riga": {
+  "cpu_ms_median": 295.79499999999825,
+  "cpu_ms_max": 318.4969999999936,
+  "wall_ms_median": 397.73895801045
+ },
+ "prepared/lidc": {
+  "cpu_ms_median": 57.52599999999575,
+  "cpu_ms_max": 81.32600000000423,
+  "wall_ms_median": 74.71056247595698
+ },
+ "fixtures/mixed": {
+  "cpu_ms_median": 155.3144999999958,
+  "cpu_ms_max": 179.61300000000335,
+  "wall_ms_median": 247.80920846387744
+ },
+ "fixtures/riga": {
+  "cpu_ms_median": 299.44250000001205,
+  "cpu_ms_max": 329.9609999999973,
+  "wall_ms_median": 400.0969164771959
+ },
+ "fixtures/lidc": {
+  "cpu_ms_median": 44.1485000000057,
+  "cpu_ms_max": 46.30799999998203,
+  "wall_ms_median": 53.69581206468865
+ },
+ "env_end": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 16.92578125,
+  "time": "2026-10-19 17:28:42"
+ }
+}

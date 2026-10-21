@@ -1,0 +1,75 @@
+{
+ "files": {
+  "riga/train": {
+   "targets": 3552,
+   "hash_base": "54bc88bfce0f7ee80d572ac88989442bb8556e3fcf6c5f0b00f2b579123a86ef",
+   "hash_crop": "54bc88bfce0f7ee80d572ac88989442bb8556e3fcf6c5f0b00f2b579123a86ef",
+   "texts_differ": 0,
+   "base_ms_median": 29.622,
+   "crop_ms_median": 22.327,
+   "paired_ratio_median": 0.7684,
+   "paired_ratio_p10_p90": [
+    0.5893,
+    1.0261
+   ],
+   "total_s_base": 106.1,
+   "total_s_crop": 81.6,
+   "base_matches_data_targets": true
+  },
+  "riga/val": {
+   "targets": 378,
+   "hash_base": "39b2f17131b59c8ae9a3cbadefaa770d7de8bd83a3851a104f7a1e4a51015190",
+   "hash_crop": "39b2f17131b59c8ae9a3cbadefaa770d7de8bd83a3851a104f7a1e4a51015190",
+   "texts_differ": 0,
+   "base_ms_median": 30.986,
+   "crop_ms_median": 23.021,
+   "paired_ratio_median": 0.7715,
+   "paired_ratio_p10_p90": [
+    0.6126,
+    0.9873
+   ],
+   "total_s_base": 11.0,
+   "total_s_crop": 8.6,
+   "base_matches_data_targets": true
+  },
+  "lidc/train": {
+   "targets": 23469,
+   "hash_base": "b481450688d3b8920562be3516ddd77401379288e4925f55c10954bd99c2c4c6",
+   "hash_crop": "b481450688d3b8920562be3516ddd77401379288e4925f55c10954bd99c2c4c6",
+   "texts_differ": 0,
+   "base_ms_median": 1.825,
+   "crop_ms_median": 1.704,
+   "paired_ratio_median": 0.9245,
+   "paired_ratio_p10_p90": [
+    0.3946,
+    2.2542
+   ],
+   "total_s_base": 97.9,
+   "total_s_crop": 92.0,
+   "base_matches_data_targets": true
+  },
+  "lidc/val": {
+   "targets": 3444,
+   "hash_base": "138290299b5afcf72c10f45ff32171473ba8cc56c2b3b2c2853aae568d0e6c40",
+   "hash_crop": "138290299b5afcf72c10f45ff32171473ba8cc56c2b3b2c2853aae568d0e6c40",
+   "texts_differ": 0,
+   "base_ms_median": 1.734,
+   "crop_ms_median": 1.605,
+   "paired_ratio_median": 0.9264,
+   "paired_ratio_p10_p90": [
+    0.3471,
+    2.511
+   ],
+   "total_s_base": 16.2,
+   "total_s_crop": 15.5,
+   "base_matches_data_targets": true
+  }
+ },
+ "overall_base": "1af819f474536dffe5a4a33888ed343bebd3855383fc162b3ca00e0ab82e91d3",
+ "overall_crop": "1af819f474536dffe5a4a33888ed343bebd3855383fc162b3ca00e0ab82e91d3",
+ "verdict": {
+  "hash_unchanged": true,
+  "riga_speedup": true
+ },
+ "wall_s": 713.2
+}

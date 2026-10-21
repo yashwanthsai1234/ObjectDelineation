@@ -1,0 +1,224 @@
+{
+ "env": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 17.67724609375,
+  "time": "2026-10-19 17:02:54"
+ },
+ "riga": {
+  "objects": 48,
+  "load_ms_per_object": {
+   "n": 48,
+   "median": 32.06572902854532,
+   "p95": 90.40636636200358,
+   "p99": 161.04596490971747,
+   "max": 176.92358291242272,
+   "mean": 44.15934373537311,
+   "sum": 2119.6484992979094
+  },
+  "stages_ms_per_object": {
+   "npz read+inflate": 1.7927631003355298,
+   "sha256 digest check": 0.2572152564728943,
+   "fingerprint()": 0.04444440855877474,
+   "_band (2 EDT + boundary)": 33.284421816157796,
+   "ExpertCache.__init__ total": 39.51048004334249
+  },
+  "mem_MB_per_object": 4.0531158447265625,
+  "shapes": [
+   "(6, 500, 500)"
+  ],
+  "cprofile_one_item": [
+   [
+    82.587,
+    82.587,
+    4,
+    "~:0:<built-in method scipy.ndimage._nd_image.euclidean_feature_transform>"
+   ],
+   [
+    6.787,
+    6.787,
+    38,
+    "~:0:<method 'reduce' of 'numpy.ufunc' objects>"
+   ],
+   [
+    4.467,
+    90.252,
+    4,
+    "scipy/ndimage/_morphology.py:2435:distance_transform_edt"
+   ],
+   [
+    3.593,
+    3.593,
+    38,
+    "~:0:<method 'astype' of 'numpy.ndarray' objects>"
+   ],
+   [
+    1.835,
+    1.835,
+    24,
+    "~:0:<connectedComponentsWithAlgorithm>"
+   ],
+   [
+    1.146,
+    1.146,
+    22,
+    "~:0:<method 'decompress' of 'zlib.Decompress' objects>"
+   ],
+   [
+    1.034,
+    1.225,
+    14,
+    "objdel/reward/cache.py:220:<genexpr>"
+   ],
+   [
+    0.577,
+    0.577,
+    14,
+    "~:0:<boundingRect>"
+   ],
+   [
+    0.561,
+    1.18,
+    4,
+    "objdel/reward/cache.py:202:_digest"
+   ],
+   [
+    0.555,
+    0.555,
+    12,
+    "~:0:<method 'update' of '_hashlib.HASH' objects>"
+   ],
+   [
+    0.433,
+    0.433,
+    20,
+    "~:0:<built-in method numpy.ascontiguousarray>"
+   ],
+   [
+    0.374,
+    0.424,
+    4,
+    "numpy/_core/numeric.py:1726:indices"
+   ]
+  ]
+ },
+ "lidc": {
+  "objects": 200,
+  "load_ms_per_object": {
+   "n": 200,
+   "median": 1.0793540277518332,
+   "p95": 2.636908326530828,
+   "p99": 3.4944578376598487,
+   "max": 59.264207957312465,
+   "mean": 1.614580373861827,
+   "sum": 322.9160747723654
+  },
+  "stages_ms_per_object": {
+   "npz read+inflate": 0.4691593867028132,
+   "sha256 digest check": 0.010103127569891512,
+   "fingerprint()": 0.01759185513947159,
+   "_band (2 EDT + boundary)": 0.41059938084799796,
+   "ExpertCache.__init__ total": 0.6336893595289439
+  },
+  "mem_MB_per_object": 0.05078315734863281,
+  "shapes": [
+   "(2, 50, 50)",
+   "(3, 50, 50)",
+   "(4, 100, 100)",
+   "(4, 50, 50)"
+  ],
+  "cprofile_one_item": [
+   [
+    0.165,
+    0.165,
+    2,
+    "~:0:<built-in method scipy.ndimage._nd_image.euclidean_feature_transform>"
+   ],
+   [
+    0.065,
+    0.065,
+    5,
+    "~:0:<built-in method builtins.compile>"
+   ],
+   [
+    0.055,
+    0.055,
+    1,
+    "~:0:<built-in method _io.open>"
+   ],
+   [
+    0.04,
+    0.288,
+    5,
+    "numpy/lib/_format_impl.py:780:read_array"
+   ],
+   [
+    0.039,
+    0.244,
+    2,
+    "scipy/ndimage/_morphology.py:2435:distance_transform_edt"
+   ],
+   [
+    0.036,
+    0.036,
+    15,
+    "~:0:<method 'reduce' of 'numpy.ufunc' objects>"
+   ],
+   [
+    0.034,
+    0.112,
+    4,
+    "objdel/checker/topology.py:105:instance_topology"
+   ],
+   [
+    0.034,
+    0.189,
+    5,
+    "numpy/lib/_format_impl.py:621:_read_array_header"
+   ],
+   [
+    0.033,
+    0.084,
+    1,
+    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/zipfile/__init__.py:1413:_RealGetContents"
+   ],
+   [
+    0.032,
+    0.064,
+    40,
+    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/dataclasses.py:1413:_astuple_inner"
+   ],
+   [
+    0.032,
+    0.12,
+    5,
+    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/zipfile/__init__.py:1574:open"
+   ],
+   [
+    0.03,
+    0.038,
+    38,
+    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/ast.py:86:_convert"
+   ]
+  ]
+ },
+ "edt_500_ms": {
+  "scipy edt": 7.911687484011054,
+  "scipy edt core": 19.932312483433634,
+  "opencv precise (not used: x86 IPP nondeterminism)": 2.4053744855336845
+ },
+ "gil": {
+  "spinner_solo_per_s": 14907856.0,
+  "spinner_during_edt_per_s": 7793568.922680017,
+  "ratio": 0.5227826806671607,
+  "edt_ms_500": 47.52332707575988
+ },
+ "env_end": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 19.2314453125,
+  "time": "2026-10-19 17:03:04"
+ }
+}

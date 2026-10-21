@@ -1,0 +1,1032 @@
+{
+ "filters": {
+  "allocated_storage": 100.0,
+  "cpu_cores_effective": {
+   "gte": 8
+  },
+  "cuda_max_good": {
+   "gte": 12.8
+  },
+  "disk_space": {
+   "gte": 50
+  },
+  "external": {
+   "eq": false
+  },
+  "inet_down": {
+   "gte": 200
+  },
+  "limit": 500,
+  "num_gpus": {
+   "eq": 1
+  },
+  "order": [
+   [
+    "dph_total",
+    "asc"
+   ]
+  ],
+  "reliability": {
+   "gt": 0.98
+  },
+  "rentable": {
+   "eq": true
+  },
+  "verified": {
+   "eq": true
+  }
+ },
+ "offers": {
+  "A100 PCIE|bid|any": {
+   "cores_eff_median": 42.0,
+   "countries": [
+    "KR",
+    "US"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 110.3,
+   "gpu_mem_bw_median": 1456,
+   "inet_up_usd_tb_median": 22.48,
+   "max": 0.539,
+   "median": 0.483,
+   "min": 0.428,
+   "n": 2,
+   "p25": 0.428,
+   "ram_gb_per_gpu_median": 47.2,
+   "reliability_median": 0.997,
+   "storage_usd_gb_month_median": 0.6,
+   "vram_gb": [
+    40,
+    80
+   ]
+  },
+  "A100 PCIE|bid|secure_cloud": {
+   "n": 0
+  },
+  "A100 PCIE|on-demand|any": {
+   "cores_eff_median": 18.0,
+   "countries": [
+    "EE",
+    "KR",
+    "US"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 95.4,
+   "gpu_mem_bw_median": 1314,
+   "inet_up_usd_tb_median": 8.67,
+   "max": 1.006,
+   "median": 0.759,
+   "min": 0.585,
+   "n": 4,
+   "p25": 0.69,
+   "ram_gb_per_gpu_median": 27.5,
+   "reliability_median": 0.9958,
+   "storage_usd_gb_month_median": 0.567,
+   "vram_gb": [
+    40,
+    80
+   ]
+  },
+  "A100 PCIE|on-demand|secure_cloud": {
+   "n": 0
+  },
+  "A100 SXM4|bid|any": {
+   "cores_eff_median": 32.0,
+   "countries": [
+    "CA",
+    "CZ",
+    "NL",
+    "US"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 128.8,
+   "gpu_mem_bw_median": 1666,
+   "inet_up_usd_tb_median": 4.0,
+   "max": 1.1,
+   "median": 0.531,
+   "min": 0.339,
+   "n": 9,
+   "p25": 0.468,
+   "ram_gb_per_gpu_median": 31.5,
+   "reliability_median": 0.9922,
+   "storage_usd_gb_month_median": 0.267,
+   "vram_gb": [
+    39,
+    40,
+    80
+   ]
+  },
+  "A100 SXM4|bid|secure_cloud": {
+   "cores_eff_median": 32.0,
+   "countries": [
+    "CZ"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 128.8,
+   "gpu_mem_bw_median": 1669,
+   "inet_up_usd_tb_median": 40.0,
+   "max": 1.1,
+   "median": 0.967,
+   "min": 0.921,
+   "n": 3,
+   "p25": 0.921,
+   "ram_gb_per_gpu_median": 31.5,
+   "reliability_median": 0.9953,
+   "storage_usd_gb_month_median": 0.24,
+   "vram_gb": [
+    80
+   ]
+  },
+  "A100 SXM4|on-demand|any": {
+   "cores_eff_median": 28.0,
+   "countries": [
+    "CA",
+    "CZ",
+    "NL",
+    "SI",
+    "TW",
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 106.6,
+   "gpu_mem_bw_median": 1485,
+   "inet_up_usd_tb_median": 4.67,
+   "max": 1.324,
+   "median": 0.923,
+   "min": 0.477,
+   "n": 14,
+   "p25": 0.589,
+   "ram_gb_per_gpu_median": 19.6,
+   "reliability_median": 0.9935,
+   "storage_usd_gb_month_median": 0.267,
+   "vram_gb": [
+    39,
+    40,
+    80
+   ]
+  },
+  "A100 SXM4|on-demand|secure_cloud": {
+   "cores_eff_median": 32.0,
+   "countries": [
+    "CZ",
+    "SI"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 128.8,
+   "gpu_mem_bw_median": 1669,
+   "inet_up_usd_tb_median": 40.0,
+   "max": 1.193,
+   "median": 1.111,
+   "min": 0.685,
+   "n": 4,
+   "p25": 1.094,
+   "ram_gb_per_gpu_median": 31.5,
+   "reliability_median": 0.9943,
+   "storage_usd_gb_month_median": 0.22,
+   "vram_gb": [
+    40,
+    80
+   ]
+  },
+  "B200|bid|any": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "US"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 679.4,
+   "gpu_mem_bw_median": 6106,
+   "inet_up_usd_tb_median": 37.5,
+   "max": 7.255,
+   "median": 7.18,
+   "min": 5.964,
+   "n": 3,
+   "p25": 5.964,
+   "ram_gb_per_gpu_median": 31.2,
+   "reliability_median": 0.9948,
+   "storage_usd_gb_month_median": 0.937,
+   "vram_gb": [
+    179
+   ]
+  },
+  "B200|bid|secure_cloud": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "US"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 695.8,
+   "gpu_mem_bw_median": 6074,
+   "inet_up_usd_tb_median": 37.5,
+   "max": 7.255,
+   "median": 7.255,
+   "min": 7.255,
+   "n": 1,
+   "p25": 7.255,
+   "ram_gb_per_gpu_median": 31.2,
+   "reliability_median": 0.9969,
+   "storage_usd_gb_month_median": 0.937,
+   "vram_gb": [
+    179
+   ]
+  },
+  "B200|on-demand|any": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "US"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 680.9,
+   "gpu_mem_bw_median": 6106,
+   "inet_up_usd_tb_median": 37.5,
+   "max": 10.755,
+   "median": 8.73,
+   "min": 6.276,
+   "n": 3,
+   "p25": 6.276,
+   "ram_gb_per_gpu_median": 31.2,
+   "reliability_median": 0.9948,
+   "storage_usd_gb_month_median": 0.937,
+   "vram_gb": [
+    179
+   ]
+  },
+  "B200|on-demand|secure_cloud": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "US"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 696.0,
+   "gpu_mem_bw_median": 6083,
+   "inet_up_usd_tb_median": 37.5,
+   "max": 10.755,
+   "median": 10.755,
+   "min": 10.755,
+   "n": 1,
+   "p25": 10.755,
+   "ram_gb_per_gpu_median": 31.2,
+   "reliability_median": 0.9969,
+   "storage_usd_gb_month_median": 0.937,
+   "vram_gb": [
+    179
+   ]
+  },
+  "H100 NVL|bid|any": {
+   "n": 0
+  },
+  "H100 NVL|bid|secure_cloud": {
+   "n": 0
+  },
+  "H100 NVL|on-demand|any": {
+   "n": 0
+  },
+  "H100 NVL|on-demand|secure_cloud": {
+   "n": 0
+  },
+  "H100 SXM|bid|any": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "DE"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 343.6,
+   "gpu_mem_bw_median": 2889,
+   "inet_up_usd_tb_median": 4.0,
+   "max": 1.597,
+   "median": 1.597,
+   "min": 1.597,
+   "n": 2,
+   "p25": 1.597,
+   "ram_gb_per_gpu_median": 107.4,
+   "reliability_median": 0.9941,
+   "storage_usd_gb_month_median": 0.267,
+   "vram_gb": [
+    80
+   ]
+  },
+  "H100 SXM|bid|secure_cloud": {
+   "n": 0
+  },
+  "H100 SXM|on-demand|any": {
+   "cores_eff_median": 25.0,
+   "countries": [
+    "DE",
+    "US"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 319.7,
+   "gpu_mem_bw_median": 2873,
+   "inet_up_usd_tb_median": 2.0,
+   "max": 5.321,
+   "median": 3.746,
+   "min": 2.17,
+   "n": 2,
+   "p25": 2.17,
+   "ram_gb_per_gpu_median": 75.2,
+   "reliability_median": 0.9951,
+   "storage_usd_gb_month_median": 0.233,
+   "vram_gb": [
+    80
+   ]
+  },
+  "H100 SXM|on-demand|secure_cloud": {
+   "n": 0
+  },
+  "H200 NVL|bid|any": {
+   "cores_eff_median": 64.0,
+   "countries": [
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 438.1,
+   "gpu_mem_bw_median": 3890,
+   "inet_up_usd_tb_median": 4.0,
+   "max": 4.06,
+   "median": 3.499,
+   "min": 2.787,
+   "n": 5,
+   "p25": 3.019,
+   "ram_gb_per_gpu_median": 90.5,
+   "reliability_median": 0.9946,
+   "storage_usd_gb_month_median": 0.867,
+   "vram_gb": [
+    140
+   ]
+  },
+  "H200 NVL|bid|secure_cloud": {
+   "n": 0
+  },
+  "H200 NVL|on-demand|any": {
+   "cores_eff_median": 64.0,
+   "countries": [
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 452.0,
+   "gpu_mem_bw_median": 3890,
+   "inet_up_usd_tb_median": 4.0,
+   "max": 4.339,
+   "median": 4.102,
+   "min": 3.739,
+   "n": 5,
+   "p25": 3.974,
+   "ram_gb_per_gpu_median": 90.5,
+   "reliability_median": 0.9946,
+   "storage_usd_gb_month_median": 0.867,
+   "vram_gb": [
+    140
+   ]
+  },
+  "H200 NVL|on-demand|secure_cloud": {
+   "n": 0
+  },
+  "H200|bid|any": {
+   "n": 0
+  },
+  "H200|bid|secure_cloud": {
+   "n": 0
+  },
+  "H200|on-demand|any": {
+   "n": 0
+  },
+  "H200|on-demand|secure_cloud": {
+   "n": 0
+  },
+  "L40S|bid|any": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "RO",
+    "TR",
+    "TW",
+    "US",
+    "ZA"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 93.6,
+   "gpu_mem_bw_median": 626,
+   "inet_up_usd_tb_median": 9.2,
+   "max": 0.792,
+   "median": 0.602,
+   "min": 0.428,
+   "n": 6,
+   "p25": 0.428,
+   "ram_gb_per_gpu_median": 23.6,
+   "reliability_median": 0.9967,
+   "storage_usd_gb_month_median": 0.2,
+   "vram_gb": [
+    45,
+    48
+   ]
+  },
+  "L40S|bid|secure_cloud": {
+   "n": 0
+  },
+  "L40S|on-demand|any": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "RO",
+    "TR",
+    "TW",
+    "US",
+    "ZA"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 93.6,
+   "gpu_mem_bw_median": 625,
+   "inet_up_usd_tb_median": 9.2,
+   "max": 0.864,
+   "median": 0.819,
+   "min": 0.561,
+   "n": 6,
+   "p25": 0.694,
+   "ram_gb_per_gpu_median": 23.6,
+   "reliability_median": 0.9967,
+   "storage_usd_gb_month_median": 0.2,
+   "vram_gb": [
+    45,
+    48
+   ]
+  },
+  "L40S|on-demand|secure_cloud": {
+   "n": 0
+  },
+  "RTX 3090|bid|any": {
+   "cores_eff_median": 14.857142857142858,
+   "countries": [
+    "AR",
+    "CA",
+    "CZ",
+    "ES",
+    "NO",
+    "OM",
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 44.4,
+   "gpu_mem_bw_median": 805,
+   "inet_up_usd_tb_median": 8.0,
+   "max": 0.557,
+   "median": 0.188,
+   "min": 0.149,
+   "n": 20,
+   "p25": 0.169,
+   "ram_gb_per_gpu_median": 7.4,
+   "reliability_median": 0.9948,
+   "storage_usd_gb_month_median": 0.233,
+   "vram_gb": [
+    24
+   ]
+  },
+  "RTX 3090|bid|secure_cloud": {
+   "cores_eff_median": 14.0,
+   "countries": [
+    "CZ"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 44.4,
+   "gpu_mem_bw_median": 804,
+   "inet_up_usd_tb_median": 12.14,
+   "max": 0.171,
+   "median": 0.162,
+   "min": 0.154,
+   "n": 2,
+   "p25": 0.154,
+   "ram_gb_per_gpu_median": 5.9,
+   "reliability_median": 0.9946,
+   "storage_usd_gb_month_median": 0.167,
+   "vram_gb": [
+    24
+   ]
+  },
+  "RTX 3090|on-demand|any": {
+   "cores_eff_median": 16.0,
+   "countries": [
+    "AR",
+    "CA",
+    "CL",
+    "CZ",
+    "ES",
+    "NO",
+    "OM",
+    "SE",
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 44.4,
+   "gpu_mem_bw_median": 805,
+   "inet_up_usd_tb_median": 12.0,
+   "max": 0.824,
+   "median": 0.321,
+   "min": 0.2,
+   "n": 21,
+   "p25": 0.26,
+   "ram_gb_per_gpu_median": 15.7,
+   "reliability_median": 0.9955,
+   "storage_usd_gb_month_median": 0.2,
+   "vram_gb": [
+    24
+   ]
+  },
+  "RTX 3090|on-demand|secure_cloud": {
+   "cores_eff_median": 14.0,
+   "countries": [
+    "CZ"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 44.3,
+   "gpu_mem_bw_median": 804,
+   "inet_up_usd_tb_median": 12.14,
+   "max": 0.399,
+   "median": 0.394,
+   "min": 0.39,
+   "n": 2,
+   "p25": 0.39,
+   "ram_gb_per_gpu_median": 5.9,
+   "reliability_median": 0.9946,
+   "storage_usd_gb_month_median": 0.167,
+   "vram_gb": [
+    24
+   ]
+  },
+  "RTX 4090|bid|any": {
+   "cores_eff_median": 21.333333333333332,
+   "countries": [
+    "BG",
+    "CA",
+    "FR",
+    "HU",
+    "NO",
+    "OM",
+    "RO",
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 97.1,
+   "gpu_mem_bw_median": 879,
+   "inet_up_usd_tb_median": 13.33,
+   "max": 1.041,
+   "median": 0.494,
+   "min": 0.305,
+   "n": 19,
+   "p25": 0.361,
+   "ram_gb_per_gpu_median": 23.4,
+   "reliability_median": 0.9955,
+   "storage_usd_gb_month_median": 0.267,
+   "vram_gb": [
+    24,
+    48
+   ]
+  },
+  "RTX 4090|bid|secure_cloud": {
+   "cores_eff_median": 32.0,
+   "countries": [
+    "HU"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 97.6,
+   "gpu_mem_bw_median": 880,
+   "inet_up_usd_tb_median": 33.33,
+   "max": 1.041,
+   "median": 1.041,
+   "min": 1.041,
+   "n": 1,
+   "p25": 1.041,
+   "ram_gb_per_gpu_median": 31.5,
+   "reliability_median": 0.994,
+   "storage_usd_gb_month_median": 0.293,
+   "vram_gb": [
+    24
+   ]
+  },
+  "RTX 4090|on-demand|any": {
+   "cores_eff_median": 16.0,
+   "countries": [
+    "BG",
+    "CA",
+    "CL",
+    "EE",
+    "ES",
+    "FI",
+    "HU",
+    "JP",
+    "NO",
+    "OM",
+    "RO",
+    "TW",
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 97.0,
+   "gpu_mem_bw_median": 879,
+   "inet_up_usd_tb_median": 13.65,
+   "max": 1.574,
+   "median": 0.656,
+   "min": 0.506,
+   "n": 23,
+   "p25": 0.58,
+   "ram_gb_per_gpu_median": 15.7,
+   "reliability_median": 0.9973,
+   "storage_usd_gb_month_median": 0.267,
+   "vram_gb": [
+    22,
+    24,
+    48
+   ]
+  },
+  "RTX 4090|on-demand|secure_cloud": {
+   "cores_eff_median": 32.0,
+   "countries": [
+    "HU"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 97.0,
+   "gpu_mem_bw_median": 879,
+   "inet_up_usd_tb_median": 33.33,
+   "max": 1.574,
+   "median": 1.574,
+   "min": 1.574,
+   "n": 1,
+   "p25": 1.574,
+   "ram_gb_per_gpu_median": 31.5,
+   "reliability_median": 0.994,
+   "storage_usd_gb_month_median": 0.293,
+   "vram_gb": [
+    24
+   ]
+  },
+  "RTX 5090|bid|any": {
+   "cores_eff_median": 18.666666666666664,
+   "countries": [
+    "CA",
+    "CZ",
+    "ES",
+    "HU",
+    "NO",
+    "RO",
+    "TW",
+    "US"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 187.5,
+   "gpu_mem_bw_median": 1454,
+   "inet_up_usd_tb_median": 13.33,
+   "max": 1.566,
+   "median": 0.75,
+   "min": 0.395,
+   "n": 32,
+   "p25": 0.588,
+   "ram_gb_per_gpu_median": 39.2,
+   "reliability_median": 0.9957,
+   "storage_usd_gb_month_median": 0.267,
+   "vram_gb": [
+    32
+   ]
+  },
+  "RTX 5090|bid|secure_cloud": {
+   "cores_eff_median": 22.666666666666664,
+   "countries": [
+    "CA",
+    "CZ"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 189.6,
+   "gpu_mem_bw_median": 1453,
+   "inet_up_usd_tb_median": 12.14,
+   "max": 0.828,
+   "median": 0.651,
+   "min": 0.429,
+   "n": 6,
+   "p25": 0.461,
+   "ram_gb_per_gpu_median": 9.8,
+   "reliability_median": 0.9956,
+   "storage_usd_gb_month_median": 0.2,
+   "vram_gb": [
+    32
+   ]
+  },
+  "RTX 5090|on-demand|any": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "BE",
+    "CA",
+    "CZ",
+    "DK",
+    "ES",
+    "HU",
+    "NO",
+    "RO",
+    "SE",
+    "SK",
+    "TW",
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 198.4,
+   "gpu_mem_bw_median": 1454,
+   "inet_up_usd_tb_median": 12.0,
+   "max": 2.294,
+   "median": 1.019,
+   "min": 0.628,
+   "n": 37,
+   "p25": 0.948,
+   "ram_gb_per_gpu_median": 15.7,
+   "reliability_median": 0.9956,
+   "storage_usd_gb_month_median": 0.267,
+   "vram_gb": [
+    32
+   ]
+  },
+  "RTX 5090|on-demand|secure_cloud": {
+   "cores_eff_median": 32.0,
+   "countries": [
+    "CA",
+    "CZ",
+    "HU"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 198.6,
+   "gpu_mem_bw_median": 1454,
+   "inet_up_usd_tb_median": 12.29,
+   "max": 2.294,
+   "median": 0.964,
+   "min": 0.801,
+   "n": 9,
+   "p25": 0.894,
+   "ram_gb_per_gpu_median": 10.8,
+   "reliability_median": 0.9922,
+   "storage_usd_gb_month_median": 0.2,
+   "vram_gb": [
+    32
+   ]
+  },
+  "RTX 6000Ada|bid|any": {
+   "n": 0
+  },
+  "RTX 6000Ada|bid|secure_cloud": {
+   "n": 0
+  },
+  "RTX 6000Ada|on-demand|any": {
+   "cores_eff_median": 14.666666666666666,
+   "countries": [
+    "EE",
+    "JP"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 113.1,
+   "gpu_mem_bw_median": 765,
+   "inet_up_usd_tb_median": 22.0,
+   "max": 0.678,
+   "median": 0.676,
+   "min": 0.674,
+   "n": 2,
+   "p25": 0.674,
+   "ram_gb_per_gpu_median": 14.0,
+   "reliability_median": 0.991,
+   "storage_usd_gb_month_median": 0.367,
+   "vram_gb": [
+    48
+   ]
+  },
+  "RTX 6000Ada|on-demand|secure_cloud": {
+   "n": 0
+  },
+  "RTX A6000|bid|any": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "FI"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 54.4,
+   "gpu_mem_bw_median": 650,
+   "inet_up_usd_tb_median": 6.0,
+   "max": 0.645,
+   "median": 0.645,
+   "min": 0.645,
+   "n": 1,
+   "p25": 0.645,
+   "ram_gb_per_gpu_median": 62.9,
+   "reliability_median": 0.9964,
+   "storage_usd_gb_month_median": 0.613,
+   "vram_gb": [
+    48
+   ]
+  },
+  "RTX A6000|bid|secure_cloud": {
+   "n": 0
+  },
+  "RTX A6000|on-demand|any": {
+   "cores_eff_median": 24.0,
+   "countries": [
+    "FI"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 54.5,
+   "gpu_mem_bw_median": 652,
+   "inet_up_usd_tb_median": 6.0,
+   "max": 0.699,
+   "median": 0.699,
+   "min": 0.699,
+   "n": 1,
+   "p25": 0.699,
+   "ram_gb_per_gpu_median": 62.9,
+   "reliability_median": 0.9964,
+   "storage_usd_gb_month_median": 0.613,
+   "vram_gb": [
+    48
+   ]
+  },
+  "RTX A6000|on-demand|secure_cloud": {
+   "n": 0
+  },
+  "RTX PRO 6000 S|bid|any": {
+   "cores_eff_median": 32.0,
+   "countries": [
+    "BG",
+    "CZ",
+    "ES",
+    "FR",
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 279.5,
+   "gpu_mem_bw_median": 1396,
+   "inet_up_usd_tb_median": 4.0,
+   "max": 1.58,
+   "median": 1.028,
+   "min": 0.561,
+   "n": 10,
+   "p25": 0.729,
+   "ram_gb_per_gpu_median": 58.9,
+   "reliability_median": 0.9968,
+   "storage_usd_gb_month_median": 0.2,
+   "vram_gb": [
+    96
+   ]
+  },
+  "RTX PRO 6000 S|bid|secure_cloud": {
+   "cores_eff_median": 28.0,
+   "countries": [
+    "CZ"
+   ],
+   "cuda_max_good_min": 13.3,
+   "dlperf_median": 234.6,
+   "gpu_mem_bw_median": 1397,
+   "inet_up_usd_tb_median": 33.33,
+   "max": 0.741,
+   "median": 0.741,
+   "min": 0.741,
+   "n": 1,
+   "p25": 0.741,
+   "ram_gb_per_gpu_median": 15.7,
+   "reliability_median": 0.9986,
+   "storage_usd_gb_month_median": 0.533,
+   "vram_gb": [
+    96
+   ]
+  },
+  "RTX PRO 6000 S|on-demand|any": {
+   "cores_eff_median": 34.0,
+   "countries": [
+    "BG",
+    "CZ",
+    "ES",
+    "FR",
+    "US"
+   ],
+   "cuda_max_good_min": 12.8,
+   "dlperf_median": 279.4,
+   "gpu_mem_bw_median": 1396,
+   "inet_up_usd_tb_median": 4.0,
+   "max": 1.819,
+   "median": 1.564,
+   "min": 1.361,
+   "n": 10,
+   "p25": 1.494,
+   "ram_gb_per_gpu_median": 58.9,
+   "reliability_median": 0.998,
+   "storage_usd_gb_month_median": 0.2,
+   "vram_gb": [
+    96
+   ]
+  },
+  "RTX PRO 6000 S|on-demand|secure_cloud": {
+   "cores_eff_median": 28.0,
+   "countries": [
+    "CZ"
+   ],
+   "cuda_max_good_min": 13.3,
+   "dlperf_median": 234.6,
+   "gpu_mem_bw_median": 1397,
+   "inet_up_usd_tb_median": 33.33,
+   "max": 1.607,
+   "median": 1.607,
+   "min": 1.607,
+   "n": 1,
+   "p25": 1.607,
+   "ram_gb_per_gpu_median": 15.7,
+   "reliability_median": 0.9986,
+   "storage_usd_gb_month_median": 0.533,
+   "vram_gb": [
+    96
+   ]
+  },
+  "RTX PRO 6000 WS|bid|any": {
+   "cores_eff_median": 28.0,
+   "countries": [
+    "CA",
+    "JP",
+    "KR",
+    "NO",
+    "PL",
+    "RS",
+    "US"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 283.1,
+   "gpu_mem_bw_median": 1403,
+   "inet_up_usd_tb_median": 4.0,
+   "max": 1.872,
+   "median": 1.362,
+   "min": 0.694,
+   "n": 17,
+   "p25": 1.094,
+   "ram_gb_per_gpu_median": 123.4,
+   "reliability_median": 0.9941,
+   "storage_usd_gb_month_median": 0.333,
+   "vram_gb": [
+    96
+   ]
+  },
+  "RTX PRO 6000 WS|bid|secure_cloud": {
+   "cores_eff_median": 192.0,
+   "countries": [
+    "US"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 283.0,
+   "gpu_mem_bw_median": 1402,
+   "inet_up_usd_tb_median": 33.33,
+   "max": 1.38,
+   "median": 1.38,
+   "min": 1.38,
+   "n": 1,
+   "p25": 1.38,
+   "ram_gb_per_gpu_median": 503.5,
+   "reliability_median": 0.9954,
+   "storage_usd_gb_month_median": 0.333,
+   "vram_gb": [
+    96
+   ]
+  },
+  "RTX PRO 6000 WS|on-demand|any": {
+   "cores_eff_median": 32.0,
+   "countries": [
+    "CA",
+    "JP",
+    "KR",
+    "NO",
+    "PL",
+    "RS",
+    "US"
+   ],
+   "cuda_max_good_min": 13.0,
+   "dlperf_median": 283.1,
+   "gpu_mem_bw_median": 1403,
+   "inet_up_usd_tb_median": 4.0,
+   "max": 2.046,
+   "median": 1.601,
+   "min": 1.442,
+   "n": 17,
+   "p25": 1.522,
+   "ram_gb_per_gpu_median": 123.5,
+   "reliability_median": 0.9934,
+   "storage_usd_gb_month_median": 0.333,
+   "vram_gb": [
+    96
+   ]
+  },
+  "RTX PRO 6000 WS|on-demand|secure_cloud": {
+   "cores_eff_median": 192.0,
+   "countries": [
+    "US"
+   ],
+   "cuda_max_good_min": 13.2,
+   "dlperf_median": 283.0,
+   "gpu_mem_bw_median": 1402,
+   "inet_up_usd_tb_median": 33.33,
+   "max": 2.046,
+   "median": 2.046,
+   "min": 2.046,
+   "n": 1,
+   "p25": 2.046,
+   "ram_gb_per_gpu_median": 503.5,
+   "reliability_median": 0.9954,
+   "storage_usd_gb_month_median": 0.333,
+   "vram_gb": [
+    96
+   ]
+  }
+ },
+ "taken_utc": "2026-10-20T00:16:41Z"
+}

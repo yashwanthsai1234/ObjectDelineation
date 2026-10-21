@@ -1,0 +1,34 @@
+# Phase 3 single-env candidate (B5, H-A5-7 option a): training + vLLM colocate in one venv.
+#
+#   /opt/venv  the Mac's pins with exactly three changes: torch 2.14.1 -> 2.13.0, torchvision 0.29.1 -> 0.28.0,
+#              transformers 5.20.1 -> 5.19.0 (vLLM 0.32.0 pins torch==2.13.0 and transformers<5.20), plus
+#              vllm==0.32.0 and its dependencies. Two uv overrides keep the hash-relevant pins: numba==0.68.0 (vLLM
+#              pins 0.65.0, used only for n-gram speculative decoding) and numpy==2.5.4 (mistral-common caps < 2.4 on
+#              Python < 3.13; mistral-common is only used for Mistral tokenizers). TRL 1.16 warns (declares vLLM <= 0.31).
+#
+# Build context (made by build_images.sh): p3.txt (uv pip compile of the re-pinned freeze + vllm==0.32.0 with
+# p3.override, x86_64-manylinux_2_40, Python 3.12), p3.override.
+#
+# References:
+#   uv overrides: https://docs.astral.sh/uv/concepts/resolution/#dependency-overrides
+#   vLLM 0.32.0 metadata: https://pypi.org/pypi/vllm/0.32.0/json ; TRL vLLM range: trl/import_utils.py v1.16.0
+FROM python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build openssh-server rsync tmux procps ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /usr/local/bin/uv
+ENV UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONDONTWRITEBYTECODE=1
+
+COPY p3.txt p3.override /opt/
+RUN uv venv --python /usr/local/bin/python3.12 /opt/venv \
+    && uv pip install --python /opt/venv/bin/python -r /opt/p3.txt --override /opt/p3.override
+
+ENV PATH=/opt/venv/bin:$PATH \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    HF_HOME=/workspace/hf \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    TOKENIZERS_PARALLELISM=false
+WORKDIR /workspace
