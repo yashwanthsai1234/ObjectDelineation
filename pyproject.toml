@@ -70,6 +70,9 @@ markers = [
 # https://coverage.readthedocs.io/en/latest/config.html#run-concurrency
 concurrency = ["multiprocessing", "thread"]
 parallel = true
+# Forked reward-pool workers (objdel.train.serve) start coverage from this file, not from --cov: without a source
+# they also trace tests/ and experiments/ and the report counts those files against objdel.
+source_pkgs = ["objdel"]
 
 [tool.ruff]
 line-length = 120

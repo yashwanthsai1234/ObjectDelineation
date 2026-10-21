@@ -18,6 +18,13 @@ Per object (structure) of one rater:
    and demanding the raw signature pushed 1-2 % of RIGA objects to near-lossless answers of up to 6,000 tokens.
    The ring cap MAX_RINGS applies after the size rule (break-it B1-4): an object with more raw rings is traced from
    its size-filtered mask instead, and still certified against the raw mask.
+   LIDC nodules (BuildConfig.exact) must also rasterize to the mask pixel for pixel (D9). tau is in grid units and
+   a pixel is 1000 / S of them, so at S >= 167 tau = 3 is >= 1/2 px and a shortcut can cross a pixel centre
+   (break-it BK1-1: 20 % of S = 200 view rows were certified but not exact). The check steps those down the
+   ladder; every identity (policy-frame) LIDC target is already exact, so the Phase 1 target-set hashes do not
+   change. If no rung is exact (rings traced from the size-filtered mask, or the vertex cap), the object falls
+   back to the certificate alone. RIGA is exempt: its jagged BinRushed masks would be pushed to near-lossless
+   answers, as the raw signature did (above).
 5. If an object fails, it is rebuilt one rung lower on the tolerance ladder tau = 3, 2.75, ..., 0.25, then lossless
    only, then the exact rings, which pass by construction for crops <= 500 px (the lab's stress test, S = 125-501).
 The answer is the canonical text of all objects (objdel.geometry.canonicalize / serialize); it must parse.
@@ -37,7 +44,7 @@ References:
 import hashlib
 import time
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 import cv2
@@ -57,6 +64,7 @@ class BuildConfig:
     tau: float = 3.0  # largest L-inf tolerance, grid units
     step: float = 0.25  # ladder step down to lossless
     iou_min: float = 0.99
+    exact: tuple = ("nodule",)  # objects whose target must rasterize to the mask pixel for pixel (step 4)
 
     def ladder(self) -> list:
         k = round(self.tau / self.step)
@@ -70,13 +78,22 @@ class Target(NamedTuple):
 
 
 def _rings(mask):
-    """(lattice path, step directions, component label, is hole) of every ring."""
-    _, label = cv2.connectedComponents(mask.view(np.uint8), connectivity=8)
+    """(lattice path, step directions, component label, is hole) of every ring, traced on the mask cut to its
+    bounding box (crop before trace, Phase 2 B3 P4: every target text and hash unchanged, RIGA -23 % build time).
+    The texts cannot change: boundary_edges pads by one pixel itself, the ring start key orders vertices by (y, x, d)
+    for any width, so a translation keeps every ring's start and order, and connectedComponents labels in raster
+    order, which a crop keeps."""
+    mask = np.ascontiguousarray(mask, dtype=bool)
+    x0, y0, w, h = cv2.boundingRect(mask.view(np.uint8))
+    if not w:
+        return []
+    sub = np.ascontiguousarray(mask[y0:y0 + h, x0:x0 + w])
+    _, label = cv2.connectedComponents(sub.view(np.uint8), connectivity=8)
     out = []
-    for r in polygonize(mask):
+    for r in polygonize(sub, offset=(x0, y0)):
         path, dirs = lattice_path(r.pts)
         x, y = path[0] + _RIGHT[dirs[0]]  # the foreground pixel right of the first step
-        out.append((path, dirs, int(label[y, x]), r.hole))
+        out.append((path, dirs, int(label[y - y0, x - x0]), r.hole))
     return out
 
 
@@ -161,9 +178,20 @@ def build_target(masks: Mapping[str, np.ndarray], names, cfg: BuildConfig | None
     min_area: the reward's size filter per object name (and "rim" for RIGA), min_area of the union of all raters, as
     ExpertCache computes it (`min_areas`); the target keeps the size-filtered signature at that rule. A name without
     an entry is certified at every rule a union on this crop can have (module docstring), which is safe for any union
-    but can need more vertices. Raises ValueError when no target can be certified."""
+    but can need more vertices. Objects in cfg.exact must also be pixel-exact; when no rung is (rings traced from
+    the size-filtered mask, or the vertex cap), the target is built again without that demand (module docstring).
+    Raises ValueError when no target can be certified."""
+    cfg = cfg or BuildConfig()
+    try:
+        return _build(masks, names, cfg, min_area or {})
+    except ValueError:
+        if not set(cfg.exact) & set(names):
+            raise
+        return _build(masks, names, replace(cfg, exact=()), min_area or {})
+
+
+def _build(masks, names, cfg: BuildConfig, min_area: Mapping[str, int]) -> Target:
     t0 = time.process_time()
-    cfg, min_area = cfg or BuildConfig(), min_area or {}
     src = {n: as_mask(masks[n]) for n in names}
     shapes = {m.shape for m in src.values()}
     if len(shapes) != 1 or not 0 < max(shape := shapes.pop()) <= MAX_SIDE:
@@ -194,7 +222,8 @@ def build_target(masks: Mapping[str, np.ndarray], names, cfg: BuildConfig | None
                     g = to_mask(parts, W, H)
                     u = np.count_nonzero(g.mask | src[n])
                     iou = 1.0 if u == 0 else np.count_nonzero(g.mask & src[n]) / u
-                    if g.legal and iou >= cfg.iou_min and kept(n, g.mask):
+                    if g.legal and iou >= cfg.iou_min and kept(n, g.mask) and (
+                            n not in cfg.exact or np.array_equal(g.mask, src[n])):
                         break
                 if level[n] == len(ladder) - 1:
                     raise ValueError(f"{n}: no certified target")

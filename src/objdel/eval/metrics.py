@@ -9,7 +9,8 @@ the item's ExpertCaches. Per item (`metrics`):
 - per object and sample: IoU_tc, F5, g_area, IoU and Dice vs the strict-majority vote, D_max (best IoU to any single
   rater), area A, A / A_max, A / A_min, |M| / |E| (A over the raters' union, the egg of the egg-yolk band),
   size-filtered components and their excess over the most fragmented rater;
-- per object: soft Dice (MRNet protocol) and the squared generalized energy distance (GED);
+- per object and sample: NSD@tau (surface Dice) against the best rater, tau = NSD_TAU per structure;
+- per object: soft Dice (MRNet protocol), the squared generalized energy distance (GED) and HM-IoU;
 - per item: TV and JS (base 2) between the K-sample topology histogram and the rater histogram, minimum-mode
   retention, mode coverage, pass@k for k in 1, 2, 4, ..., <= min(K, 64), and per GRPO group of G = 8 samples (one
   group of K when K is not a multiple of 8) the duplicate share and whether some geometric term's std is above its
@@ -28,7 +29,8 @@ Definitions and choices:
 - Pass criterion: the reward's own validity gate (objdel.reward.topology_valid: legal, a rater drew the topology,
   IoU_tc >= REWARD_V4.iou_gate for every object, score_completion's iou_min), so a RIGA answer with a good disc and a
   missed cup fails. The Phase 2 geometry gate (summarize's iou_tc_pass) is its geometric part, legal and IoU_tc >= 0.5
-  for every object; topology is gated separately (topo_any_unanimous).
+  for every object; topology is gated by the synthetic topology probe (objdel.eval.probes; plan D20), and
+  topo_any_unanimous is reported only (val has 0 unanimous non-simple items).
 - Duplicates (GRPO groups) are outputs the reward cannot tell apart: equal format and legality flags and equal
   rasters of every object (SHA-256 of the packed masks), so re-spelled texts of one mask (sub-pixel vertex nudges,
   whitespace) count as duplicates, as the reward's low-spread drop treats them (B2-6).
@@ -44,6 +46,20 @@ Definitions and choices:
 - GED (Kohl et al. 2018, App. B): 2 E d(S, Y) - E d(S, S') - E d(Y, Y') over all sample / rater pairs (V-statistic),
   d = 1 - IoU, d(empty, empty) = 0.
 - pass@k: the unbiased estimator 1 - C(n - c, k) / C(n, k), in Chen et al.'s numerically stable product form.
+- HM-IoU (HPU-Net, CAR; "HM-IoU16" at K = 16): Hungarian matching of the K samples to the k raters, each rater
+  duplicated so that it is matched floor(K / k) or ceil(K / k) times (exactly K / k when k divides K, the published
+  protocol), maximising the total IoU; the mean IoU of the matched pairs (two empty masks: 1). Solved as one
+  rectangular assignment (scipy linear_sum_assignment) on floor(K / k) mandatory copies of each rater, forced by a
+  bonus, plus one optional copy per rater (impl/M4.md: the ceil-only tiling lets a rater go unmatched).
+- NSD@tau (Nikolov et al. 2018; Metrics Reloaded's default boundary metric), as google-deepmind/surface-distance
+  (compute_surface_distances + compute_surface_dice_at_tolerance, spacing 1 px): surfels on the corner grid of 2 x 2
+  neighbourhood codes, weighted by their contour length; (|S_P within tau of S_G| + |S_G within tau of S_P|) /
+  (|S_P| + |S_G|), distances by exact EDT; two empty masks: 1 (the reference gives 0 / 0), one empty: 0. Per sample
+  the maximum over the raters (like D_max), so a rater's own target scores 1. tau at frame resolution (D25, A4 S2):
+  2 px LIDC, 9 px disc, 16 px cup. 4-connected boundary pixels (A4's prototype) differ from the reference by up to
+  0.14 on LIDC rater pairs (impl/M4.md).
+- Token statistics: per sample completion token counts when the caller passes them (train.sample / sample_vllm);
+  summarize reports the truncated share, mean and p95 tokens.
 
 References:
 - W. Ji et al., "Learning calibrated medical image segmentation via multi-rater agreement modeling", CVPR 2021
@@ -58,6 +74,12 @@ References:
 - M. Chen et al., "Evaluating large language models trained on code", 2021 (unbiased pass@k, Fig. 3):
   https://arxiv.org/abs/2107.03374
 - Multi-Answer RL (coverage of a set of valid answers): https://arxiv.org/abs/2603.24844
+- HM-IoU: C. Kohl et al., "A hierarchical probabilistic U-Net", 2019, https://arxiv.org/abs/1905.13077 ; E. Kassapis
+  et al., CAR (HM-IoU16), https://arxiv.org/abs/2006.13144 ; scipy.optimize.linear_sum_assignment:
+  https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.linear_sum_assignment.html
+- NSD: S. Nikolov et al., https://arxiv.org/abs/1809.04430 ; reference code:
+  https://github.com/google-deepmind/surface-distance (metrics.py, lookup_tables.py) ; Metrics Reloaded:
+  https://arxiv.org/abs/2206.01653
 - Per-image TV / JS and minimum-mode retention: experiments/phase1/lab/t_dynamics/REPORT.md, grpo_toy.py
 - Duplicate hash on packed rasters (numpy.packbits):
   https://numpy.org/doc/stable/reference/generated/numpy.packbits.html ; identical rewards give a zero-signal group
@@ -68,6 +90,8 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 
 import numpy as np
+from scipy import ndimage
+from scipy.optimize import linear_sum_assignment
 
 from objdel.reward import (
     NUMERIC,
@@ -87,6 +111,9 @@ THRESHOLDS = (0.1, 0.3, 0.5, 0.7, 0.9)  # MRNet soft Dice
 PASS_KS = (1, 2, 4, 8, 16, 32, 64)
 FAIL = -1.0  # topology answer of unparseable or illegal samples (sig_ids are CRC32 values >= 0)
 _ZEROED = ("iou_tc", "f5", "g_area", "iou_vote", "dice_vote", "d_max")  # scores of failed and illegal samples
+NSD_TAU = {"nodule": 2.0, "disc": 9.0, "cup": 16.0}  # px at frame resolution (D25)
+_D = 0.5 * np.sqrt(2.0)  # surfel length per 2 x 2 neighbourhood code (surface-distance lookup table, 1 px spacing)
+_SURFEL = np.array([0, _D, _D, 1, _D, 1, 2 * _D, _D, _D, 2 * _D, 1, _D, 1, _D, _D, 0])
 _GEOMETRIC = [(t, f) for t, f in zip(TERMS, REWARD_V4.floors, strict=True) if t != "legal"]  # (term, sigma floor)
 
 
@@ -95,6 +122,12 @@ def pass_at_k(n: int, c: int, k: int) -> float:
     if n - c < k:
         return 1.0
     return 1.0 - float(np.prod(1.0 - k / np.arange(n - c + 1, n + 1)))
+
+
+def _unit(x) -> float:
+    """x clamped to [0, 1]: float sums of shares can land 2.2e-16 outside (S1-15: NSD -2.2e-16 at tau = 0; TV, JS and
+    retention 1 + 2.2e-16)."""
+    return min(1.0, max(0.0, float(x)))
 
 
 def tv_js(p: Mapping, q: Mapping) -> tuple[float, float]:
@@ -107,13 +140,13 @@ def tv_js(p: Mapping, q: Mapping) -> tuple[float, float]:
         nz = x > 0
         return float(np.sum(x[nz] * np.log2(x[nz] / m[nz])))
 
-    return 0.5 * float(np.abs(a - b).sum()), max(0.0, 0.5 * kl(a) + 0.5 * kl(b))
+    return _unit(0.5 * float(np.abs(a - b).sum())), _unit(0.5 * kl(a) + 0.5 * kl(b))
 
 
 def min_mode_retention(p: Mapping, f: Mapping) -> float:
     """min over rater answers a of p_v(a) / f(a), p_v = p restricted to f's support, renormalised; 0 if empty."""
     valid = sum(p.get(a, 0.0) for a in f)
-    return min(p.get(a, 0.0) / valid / fa for a, fa in f.items()) if valid > 0 else 0.0
+    return _unit(min(p.get(a, 0.0) / valid / fa for a, fa in f.items())) if valid > 0 else 0.0
 
 
 def _dice(a: np.ndarray, b: np.ndarray) -> float:
@@ -144,10 +177,59 @@ def _pairwise_iou(masks: np.ndarray) -> np.ndarray:
     return iou[inv][:, inv]
 
 
+def hm_iou(iou: np.ndarray) -> float:
+    """Hungarian-matched IoU from the (K samples, k raters) IoU matrix (module docstring)."""
+    K, k = iou.shape
+    base, extra = divmod(K, k)
+    cols = np.concatenate([np.tile(np.arange(k), base), np.arange(k) if extra else []]).astype(int)
+    bonus = np.where(np.arange(len(cols)) < base * k, 2.0 * K + 2, 0.0)  # every mandatory copy is matched
+    r, c = linear_sum_assignment(iou[:, cols] + bonus, maximize=True)
+    return float(iou[r, cols[c]].mean())
+
+
+def _surface(m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(surfel length on the (H + 1, W + 1) corner grid, 0 off the surface; distance of every corner to the surface,
+    inf for an empty mask)."""
+    p = np.pad(m, 1).astype(np.uint8)
+    code = 8 * p[:-1, :-1] + 4 * p[:-1, 1:] + 2 * p[1:, :-1] + p[1:, 1:]
+    border = (code != 0) & (code != 15)
+    dist = ndimage.distance_transform_edt(~border) if border.any() else np.full(border.shape, np.inf)
+    return _SURFEL[code], dist
+
+
+def _nsd(a: tuple, b: tuple, tau: float) -> float:
+    (la, da), (lb, db) = a, b
+    total = la.sum() + lb.sum()
+    return _unit(1.0 - (la[db > tau].sum() + lb[da > tau].sum()) / total) if total else 1.0  # exactly 1 if all in
+
+
+def nsd(a: np.ndarray, b: np.ndarray, tau: float) -> float:
+    """Normalized surface Dice of two masks at tolerance tau px (module docstring)."""
+    return _nsd(_surface(a), _surface(b), tau)
+
+
+def _nsd_best(drawn: np.ndarray, raters: np.ndarray, tau: float) -> np.ndarray:
+    """Per sample, the maximum NSD over the raters, on the joint bounding box (distances are unchanged by the crop);
+    each distinct mask once."""
+    both = np.concatenate([drawn, raters])
+    rows, cols = np.flatnonzero(both.any((0, 2))), np.flatnonzero(both.any((0, 1)))
+    if not rows.size:
+        return np.ones(len(drawn))
+    crop = both[:, rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
+    rs = [_surface(r) for r in crop[len(drawn):]]
+    seen = {}
+    for m in crop[:len(drawn)]:
+        key = np.packbits(m).tobytes()
+        if key not in seen:
+            s = _surface(m)
+            seen[key] = max(_nsd(s, r, tau) for r in rs)
+    return np.array([seen[np.packbits(m).tobytes()] for m in crop[:len(drawn)]])
+
+
 def _ged(iou: np.ndarray, n: int) -> float:
     """GED from the pairwise IoU of n samples followed by the raters."""
     d = 1.0 - iou
-    return float(2 * d[:n, n:].mean() - d[:n, :n].mean() - d[n:, n:].mean())
+    return max(0.0, float(2 * d[:n, n:].mean() - d[:n, :n].mean() - d[n:, n:].mean()))  # BK2-9: -1.1e-16 at 0
 
 
 def ged(samples: np.ndarray, raters: np.ndarray) -> float:
@@ -174,8 +256,10 @@ def _native(x) -> list:
 
 def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H: int,
             names: Sequence[str] | None = None, truncated: Sequence[bool] | None = None,
-            caches: Mapping[str, ExpertCache] | None = None) -> dict:
-    """Metrics of one item: K completions (texts) against the rater masks {name: bool (k, H, W)} on a W x H frame.
+            caches: Mapping[str, ExpertCache] | None = None, tokens: Sequence[int] | None = None,
+            nsd_tau: Mapping[str, float] = NSD_TAU) -> dict:
+    """Metrics of one item: K completions (texts) against the rater masks {name: bool (k, H, W)} on a W x H frame;
+    tokens: completion token counts (optional); nsd_tau: NSD tolerance per structure, px.
 
     Returns JSON-native values: per-sample lists under "samples" and "objects"[name], item scalars otherwise
     (module docstring). Raises ValueError for fewer than 2 raters or samples, or mismatched lengths."""
@@ -183,6 +267,8 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
     truncated = [False] * len(samples) if truncated is None else [bool(t) for t in truncated]
     if len(samples) < 2 or len(truncated) != len(samples):
         raise ValueError("need >= 2 samples and one truncated flag per sample")
+    if tokens is not None and len(tokens) != len(samples):
+        raise ValueError("need one token count per sample")
     caches = caches or {n: ExpertCache.build(raters[n]) for n in names}  # ValueError for < 2 raters
     K, k = len(samples), caches[names[0]].k
     keys = [(str(t), tr) for t, tr in zip(samples, truncated, strict=True)]
@@ -205,12 +291,14 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
              "d_max": iou[:K, K:K + k].max(1),
              "area": area, "a_amax": area / max(a_max, 1), "a_amin": area / a_min if a_min else np.ones(K),
              "m_e": area / max(int(np.count_nonzero(c.union)), 1),
-             "components": comps, "extra_components": comps - max(len(s) for s in c.rater_sigs)}
+             "components": comps, "extra_components": comps - max(len(s) for s in c.rater_sigs),
+             "nsd": _nsd_best(drawn, c.raters, nsd_tau[n])}
         o = {key: np.asarray(v, np.float64) for key, v in o.items()}
         for key in _ZEROED:
             o[key][~legal] = 0.0
         objects[n] = {**{key: _native(v) for key, v in o.items()},
-                      "soft_dice": soft_dice(drawn, c.raters), "ged": _ged(iou[:-1, :-1], K)}
+                      "soft_dice": soft_dice(drawn, c.raters), "ged": _ged(iou[:-1, :-1], K),
+                      "hm_iou": hm_iou(iou[:K, K:K + k])}
 
     # topology answers: the joint size-filtered signature, as score_completion's sig_id; failures share FAIL
     answers = rater_answers(caches, names)
@@ -227,7 +315,9 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
         "samples": {"format_ok": _native(T["format_ok"]), "legal": _native(T["legal"]),
                     "iou_tc": _native(gated["iou_tc"]), "f5": _native(gated["f5"]), "g_area": _native(gated["g_area"]),
                     "topo_any": _native(T["topo_any"]),
-                    "passed": _native(passed), "advantage": _native(adv), "error": [r["terms"]["error"] for r in rows]},
+                    "passed": _native(passed), "advantage": _native(adv), "error": [r["terms"]["error"] for r in rows],
+                    "truncated": _native(truncated),
+                    **({} if tokens is None else {"tokens": [int(t) for t in tokens]})},
         "objects": objects,
         "tv": tv, "js": js, "min_mode": min_mode_retention(p, f), "coverage": len(f.keys() & p.keys()) / len(f),
         "pass_at_k": {str(x): pass_at_k(K, int(passed.sum()), x) for x in PASS_KS if x <= K},
@@ -244,16 +334,20 @@ def _mean(xs) -> float | None:
 def summarize(items: Sequence[dict]) -> dict:
     """Per dataset (item["dataset"]): rates over all samples, per-structure medians and means over all samples
     (failed and illegal samples count as 0), per-image metrics averaged over items, and the same on disagreement items
-    (> 1 rater topology answer) for the topology metrics."""
+    (> 1 rater topology answer) for the topology metrics; the truncated share and, when every item has token counts,
+    their mean and p95 ("tokens": None otherwise)."""
     out = {}
     for ds in sorted({it["dataset"] for it in items}):
         its = [it for it in items if it["dataset"] == ds]
         S = {key: np.concatenate([it["samples"][key] for it in its])
-             for key in ("format_ok", "legal", "topo_any", "passed")}
+             for key in ("format_ok", "legal", "topo_any", "passed", "truncated")}
+        tokens = [it["samples"].get("tokens") for it in its]
+        tokens = np.concatenate(tokens) if all(t is not None for t in tokens) else None
         unanimous = [x for it in its if it["modes"] == 1 for x in it["samples"]["topo_any"]]
         dis = [it for it in its if it["modes"] > 1]
         names = list(its[0]["objects"])
-        objs = {n: {key: np.concatenate([it["objects"][n][key] for it in its]) for key in _ZEROED} for n in names}
+        objs = {n: {key: np.concatenate([it["objects"][n][key] for it in its]) for key in (*_ZEROED, "nsd")}
+                for n in names}
         k_min = min(it["K"] for it in its)
         groups = {it["group"] for it in its}
         out[ds] = {
@@ -261,7 +355,9 @@ def summarize(items: Sequence[dict]) -> dict:
             "format": float(S["format_ok"].mean()), "legal": float(S["legal"].mean()),
             "errors": dict(Counter(e for it in its for e in it["samples"]["error"] if e)),
             "topo_any": float(S["topo_any"].mean()), "topo_any_unanimous": _mean(unanimous),
-            "pass_rate": float(S["passed"].mean()),
+            "pass_rate": float(S["passed"].mean()), "truncated": float(S["truncated"].mean()),
+            "tokens": None if tokens is None else {"mean": float(tokens.mean()),
+                                                   "p95": float(np.percentile(tokens, 95))},
             "iou_tc_pass": float(np.mean(np.min([objs[n]["iou_tc"] for n in names], 0) >= REWARD_V4.iou_gate)),
             "pass_at_k": {str(x): _mean([it["pass_at_k"][str(x)] for it in its]) for x in PASS_KS if x <= k_min},
             **{key: _mean([it[key] for it in its]) for key in ("tv", "js", "coverage")},
@@ -274,6 +370,9 @@ def summarize(items: Sequence[dict]) -> dict:
                             **{f"{key}_mean": float(objs[n][key].mean()) for key in _ZEROED},
                             "f5_median": float(np.median(objs[n]["f5"])),
                             "soft_dice": _mean([it["objects"][n]["soft_dice"] for it in its]),
-                            "ged": _mean([it["objects"][n]["ged"] for it in its])} for n in names},
+                            "ged": _mean([it["objects"][n]["ged"] for it in its]),
+                            "hm_iou": _mean([it["objects"][n]["hm_iou"] for it in its]),
+                            "nsd_mean": float(objs[n]["nsd"].mean()), "nsd_median": float(np.median(objs[n]["nsd"]))}
+                        for n in names},
         }
     return {"datasets": out}

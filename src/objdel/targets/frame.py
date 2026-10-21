@@ -31,6 +31,12 @@ Frame semantics: masks are (k, H, W) with W = H = S; the reward rasterizes at W 
 pixel g * W / 1000 and to item pixel box[0] + scale * g * W / 1000 (x; y likewise with box[1]). box = (x0, y0, x1,
 y1) is half-open in item pixels, x1 - x0 = scale * W, and may extend past the image (padding).
 
+Views (Phase 2, D10; plan §5.0): frame(item, offset=(dx, dy), side=S, window=(lo, hi)) moves the scale-1 window of
+side S (default: the policy's S) by (dx, dy) item pixels from where the policy would centre a window of that side,
+and windows Hounsfield units with (lo, hi) instead of LUNG_WINDOW. A moved or resized window must hold the rater
+union with >= CLEARANCE background pixels on every side and meet no other outlined nodule (meta["other_nodules"],
+B3-2), else ValueError; the defaults reproduce the policy frame byte for byte and skip those checks.
+
 References:
     experiments/phase1/lab/t_targets/REPORT.md (crop policy H6) and targets/crops.py (pad_div, block reduce)
     M. Chen, Y. Peng, "Topology-preserving downsampling of binary images", ECCV 2024: https://arxiv.org/abs/2407.17786
@@ -53,6 +59,7 @@ from objdel.data import Item
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
 LUNG_WINDOW = (-1000, 400)
+CLEARANCE = 2  # px between the rater union and the edge of a moved or resized window (D10)
 
 
 @dataclass(frozen=True)
@@ -98,19 +105,88 @@ def _blocks(a, f):
     return a.reshape(*lead, h // f, f, w // f, f).sum((-3, -1), dtype=np.int64)
 
 
-def frame(item: Item, cfg: FrameConfig | None = None) -> Frame:
+def union_box(item: Item) -> tuple[int, int, int, int]:
+    """Half-open (x0, y0, x1, y1) box of every rater's union over all structures; ValueError when empty."""
+    union = np.logical_or.reduce([as_mask(s, 3).any(0) for s in item.masks.values()])
+    ys, xs = np.nonzero(union.any(1)), np.nonzero(union.any(0))
+    if not ys[0].size:
+        raise ValueError(f"{item.item_id}: no rater drew anything")
+    return int(xs[0][0]), int(ys[0][0]), int(xs[0][-1]) + 1, int(ys[0][-1]) + 1
+
+
+def centred(item: Item, side: int, box=None) -> tuple[int, int]:
+    """Top-left corner of the policy's window of `side` px around the union (shifted inside the image if it fits)."""
+    x0, y0, x1, y1 = box or union_box(item)
+    Hi, Wi = next(iter(item.masks.values())).shape[-2:]
+    return int(_window(x0, x1, side, Wi)), int(_window(y0, y1, side, Hi))
+
+
+def crowded(item: Item, box) -> bool:
+    """Does the half-open window box meet another outlined nodule (objdel.data.lidc.crowded, B3-2)?"""
+    x0, y0, x1, y1 = box
+    return any(a < x1 and x0 < c and b < y1 and y0 < d for a, b, c, d in item.meta.get("other_nodules", ()))
+
+
+def pixels(image: np.ndarray, x0: int, y0: int, side: int, window=None, noise=None) -> np.ndarray:
+    """(c, side, side) crop at (x0, y0) of an (H, W[, c]) image, zero (black) outside it, channels first, alpha
+    dropped. Hounsfield units (any dtype but uint8) get `noise` (side, side) added, then the HU window (default
+    LUNG_WINDOW), inside the image only. Shared by frame and augment.render, so the two cannot drift."""
+    chw = _crop(np.atleast_3d(image)[..., :3].transpose(2, 0, 1), x0, y0, side)
+    if image.dtype == np.uint8:
+        return chw
+    H, W = image.shape[:2]
+    y, x = np.arange(y0, y0 + side), np.arange(x0, x0 + side)
+    inside = ((y >= 0) & (y < H))[:, None] & ((x >= 0) & (x < W))
+    chw = chw.astype(np.int64) + (0 if noise is None else noise)
+    return np.where(inside, hu_window(chw, LUNG_WINDOW if window is None else window), 0)
+
+
+def rgb(chw: np.ndarray, side: int | None) -> np.ndarray:
+    """(1 | 3, S, S) 0..255 -> uint8 (S, S, 3), upscaled to `side`."""
+    return upscale(np.ascontiguousarray(np.repeat(chw, 3 // len(chw), 0).transpose(1, 2, 0), np.uint8), side)
+
+
+def hu_window(a: np.ndarray, window=LUNG_WINDOW) -> np.ndarray:
+    """Hounsfield units -> 0..255 (int64), rounded half up: the lung window of Phase 0 for the default; ValueError
+    for an empty or inverted window (break-it BK1-6)."""
+    lo, hi = window
+    if hi <= lo:
+        raise ValueError(f"HU window {window}: hi must exceed lo")
+    return ((np.clip(a.astype(np.int64), lo, hi) - lo) * 255 + (hi - lo) // 2) // (hi - lo)
+
+
+def upscale(image: np.ndarray, side: int | None) -> np.ndarray:
+    """uint8 (S, S, 3) -> (side, side, 3) with Pillow bicubic (bit-identical on every CPU, F3); no-op for None / S."""
+    if not side or side == image.shape[0]:
+        return image
+    return np.array(Image.fromarray(image).resize((side, side), Image.Resampling.BICUBIC))  # writable
+
+
+def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: int | None = None,
+          window=None) -> Frame:
     cfg = cfg or FRAMES[item.dataset]
     stacks = {n: as_mask(s, 3) for n, s in item.masks.items()}
-    union = np.logical_or.reduce([s.any(0) for s in stacks.values()])
-    ys, xs = np.nonzero(union)
-    if not ys.size:
-        raise ValueError(f"{item.item_id}: no rater drew anything")
-    side = int(max(ys[-1] - ys[0], xs.max() - xs.min())) + 1
-    need = side + 2 * max(cfg.margin_px, -(-side * cfg.margin_pct // 100))
+    ux0, uy0, ux1, uy1 = ub = union_box(item)
+    extent = max(ux1 - ux0, uy1 - uy0)
+    need = extent + 2 * max(cfg.margin_px, -(-extent * cfg.margin_pct // 100))
     f = -(-need // cfg.max_side)
     S = min(d for d in DIVISORS if d >= max(-(-need // f), cfg.min_side))
-    Hi, Wi = union.shape
-    x0, y0 = int(_window(xs.min(), xs.max() + 1, f * S, Wi)), int(_window(ys[0], ys[-1] + 1, f * S, Hi))
+    dx, dy = (int(v) for v in offset)
+    moved = (dx, dy) != (0, 0) or side is not None and (side, f) != (S, 1)
+    if side is not None:
+        if side not in DIVISORS or not cfg.min_side <= side <= cfg.max_side:
+            raise ValueError(f"{item.item_id}: side {side} is not a divisor of 1000 in "
+                             f"[{cfg.min_side}, {cfg.max_side}]")
+        f, S = 1, int(side)
+    x0, y0 = centred(item, f * S, ub)
+    x0, y0 = x0 + dx, y0 + dy
+    if moved:
+        c = CLEARANCE
+        if not (ux0 - x0 >= c and uy0 - y0 >= c and x0 + S - ux1 >= c and y0 + S - uy1 >= c):
+            raise ValueError(f"{item.item_id}: the union {ub} is not inside the window {(x0, y0, x0 + S, y0 + S)} "
+                             f"with {c} px clearance")
+        if crowded(item, (x0, y0, x0 + S, y0 + S)):
+            raise ValueError(f"{item.item_id}: the window {(x0, y0, x0 + S, y0 + S)} meets another outlined nodule")
     masks = {n: _crop(s, x0, y0, f * S) for n, s in stacks.items()}
     if f > 1:
         masks = {n: 2 * _blocks(m, f) >= f * f for n, m in masks.items()}
@@ -118,13 +194,8 @@ def frame(item: Item, cfg: FrameConfig | None = None) -> Frame:
     if image is not None:
         if image.ndim not in (2, 3) or image.ndim == 3 and image.shape[2] not in (1, 3, 4):
             raise ValueError(f"{item.item_id}: image must be gray, RGB or RGBA (H, W[, 1|3|4]), got {image.shape}")
-        if image.dtype != np.uint8:  # Hounsfield units
-            lo, hi = LUNG_WINDOW
-            image = ((np.clip(image.astype(np.int64), lo, hi) - lo) * 255 + (hi - lo) // 2) // (hi - lo)
-        image = _crop(np.atleast_3d(image)[..., :3].transpose(2, 0, 1), x0, y0, f * S)  # channels first, no alpha
+        image = pixels(image, x0, y0, f * S, window)
         if f > 1:
             image = (_blocks(image, f) + f * f // 2) // (f * f)  # block mean, rounded half up
-        image = np.ascontiguousarray(np.repeat(image, 3 // len(image), 0).transpose(1, 2, 0), np.uint8)  # gray: x3
-        if cfg.image_side and cfg.image_side != S:  # Pillow, not cv2.INTER_CUBIC: bit-identical on every CPU (F3)
-            image = np.array(Image.fromarray(image).resize((cfg.image_side,) * 2, Image.Resampling.BICUBIC))  # writable
+        image = rgb(image, cfg.image_side)  # Pillow, not cv2.INTER_CUBIC: bit-identical on every CPU (F3)
     return Frame(image, masks, S, S, (x0, y0, x0 + f * S, y0 + f * S), f)

@@ -1,5 +1,6 @@
 """Break-it B2 (reward, TRL wiring, eval): reproducers of the confirmed breakdowns, now fixed (ids B2-<n>, see
 experiments/phase1/impl/breakit/B2_reward.md) and the robustness checks that held (plain tests). No data needed."""
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -184,7 +185,10 @@ def prepared(tmp_path, n=3):
         digest = ExpertCache.build(m).save(d / "nodule.npz")
         recs.append({"item_id": f"it{i}", "rl": True, "caches": {"nodule": digest}})
     (tmp_path / "lidc").mkdir()
-    (tmp_path / "lidc" / "train.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+    text = "".join(json.dumps(r) + "\n" for r in recs)
+    (tmp_path / "lidc" / "train.jsonl").write_text(text)
+    files = {"lidc/train.jsonl": {"sha256": hashlib.sha256(text.encode()).hexdigest()}}  # S1-14: cache_loader (I45)
+    (tmp_path / "manifest.json").write_text(json.dumps({"files": files}))
     return tmp_path
 
 

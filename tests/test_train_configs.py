@@ -8,10 +8,11 @@ from objdel.train import configs  # noqa: E402
 from objdel.train.rewards import LOGGED  # noqa: E402
 
 
-def test_models_are_the_screened_three():
+def test_models_are_the_screened_three_plus_qwen35():
+    """Phase 2 (plan D1, M2) adds Qwen3.5-0.8B to the ladder."""
     assert configs.MODELS == {"smolvlm-256m": "HuggingFaceTB/SmolVLM-256M-Instruct",
                               "lfm2.5-vl-450m": "LiquidAI/LFM2.5-VL-450M",
-                              "qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct"}
+                              "qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct", "qwen3.5-0.8b": "Qwen/Qwen3.5-0.8B"}
 
 
 @pytest.mark.parametrize("model", list(configs.MODELS))
@@ -22,7 +23,8 @@ def test_grpo_config_is_plan_d8(model, tmp_path):
     assert c.num_generations == REWARD_V4.group and c.num_generations_eval is None and c.temperature == 1.0
     assert (c.scale_rewards, c.multi_objective_aggregation) == ("none", "sum_then_normalize")
     assert c.reward_weights == [0.0] * len(LOGGED) + [1.0]
-    assert c.max_completion_length == configs.MAX_COMPLETION[model] == {"lfm2.5-vl-450m": 1024}.get(model, 1536)
+    budget = {"lfm2.5-vl-450m": 1024, "qwen3.5-0.8b": 1024}.get(model, 1536)
+    assert c.max_completion_length == configs.MAX_COMPLETION[model] == budget
     assert c.use_vllm == (model != "smolvlm-256m")  # TRL #6294: vLLM corrupts SmolVLM prompts
     assert not c.remove_unused_columns and c.log_completions
     # whole groups on every process, at any world size (tests/test_train_trl.py simulates 1, 2, 4 processes)
@@ -41,7 +43,8 @@ def test_sft_config(model, tmp_path):
 def test_lora_only_where_the_plan_needs_it():
     assert configs.lora("smolvlm-256m") is None and configs.lora("lfm2.5-vl-450m") is None
     q = configs.lora("qwen3-vl-2b")
-    assert (q.r, q.lora_alpha, q.target_modules) == (16, 32, "all-linear")
+    # Phase 2 (plan D6 / D7, M2): language model only, vision tower and projector excluded
+    assert (q.r, q.lora_alpha, q.target_modules, q.exclude_modules) == (16, 32, "all-linear", configs.VISION)
 
 
 def test_image_sizes_are_plan_d12():

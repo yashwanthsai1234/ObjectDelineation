@@ -205,8 +205,10 @@ def test_illegal_answers_score_zero_on_geometry():
     d = summarize([it])["datasets"]["lidc"]
     assert d["iou_tc_pass"] == 0.0 and d["pass_rate"] == 0.0
     assert d["objects"]["nodule"]["iou_tc_median"] == 0.0 and d["objects"]["nodule"]["f5_median"] == 0.0
-    g = gates.phase2_entry({"summary": summarize([it])})
-    assert g["gates"]["geometry_pass"]["pass"] is False and g["gates"]["geometry_median"]["pass"] is False
+    g = gates.phase2_entry({"views": {v: {"summary": summarize([it])} for v in ("shifted", "rescaled")}})
+    vals = g["gates"]["G-geometry"]["values"]
+    assert g["gates"]["G-geometry"]["pass"] is False
+    assert vals["pass_share/shifted/lidc"] == 0.0 and vals["median/rescaled/lidc/nodule"] == 0.0
     assert hack_audit([it])["datasets"]["lidc"]["rhr"] == 1.0  # every parsed output is a failure
 
 
@@ -370,61 +372,47 @@ def test_alarms_for_training_evaluations(nod):
 # ---------------------------------------------------------------- summary and Phase 2 entry gates
 
 def good_report():
+    """A one-view (shifted) report as eval_run writes it; the full §5.1 schema is tested in test_p2_eval.py."""
     def ds(objs, iou):
         return {"items": 10, "samples": 640, "format": 0.99, "legal": 0.95, "topo_any_unanimous": 0.95,
                 "iou_tc_pass": 0.8, "group": 8, "dup_rate": 0.05, "signal_share": 0.6,
                 "objects": {n: {"iou_tc_median": iou[n]} for n in objs}}
-    return {"summary": {"datasets": {"riga": ds(("disc", "cup"), {"disc": 0.9, "cup": 0.8}),
-                                     "lidc": ds(("nodule",), {"nodule": 0.7})}}}
+    return {"views": {"shifted": {"summary": {"datasets": {
+        "riga": ds(("disc", "cup"), {"disc": 0.9, "cup": 0.8}), "lidc": ds(("nodule",), {"nodule": 0.7})}}}}}
 
 
-def test_phase2_gates_pass_on_a_good_report():
+def test_phase2_gates_on_one_view_pass_what_it_measures_and_fail_the_rest():
     g = gates.phase2_entry(good_report())
-    assert g["pass"] is True
-    assert set(g["gates"]) == {"format", "geometry_median", "geometry_pass", "topology", "grpo_duplicates",
-                               "grpo_sigma"}
+    assert set(g["gates"]) == {"G-format", "G-geometry", "G-prior-b", "G-precision", "G-topology-a", "G-signal",
+                               "G-vision"}
+    assert all(g["gates"][k]["pass"] for k in ("G-format", "G-signal"))
+    assert g["pass"] is False  # the rescaled view, the prior, the probes and G-vision are not in this report
 
 
 @pytest.mark.parametrize("path,value,gate", [
-    (("riga", "format"), 0.97, "format"), (("lidc", "legal"), 0.89, "format"),
-    (("riga", "objects", "disc", "iou_tc_median"), 0.84, "geometry_median"),
-    (("riga", "objects", "cup", "iou_tc_median"), 0.74, "geometry_median"),
-    (("lidc", "objects", "nodule", "iou_tc_median"), 0.59, "geometry_median"),
-    (("lidc", "iou_tc_pass"), 0.69, "geometry_pass"), (("riga", "topo_any_unanimous"), 0.89, "topology"),
-    (("lidc", "dup_rate"), 0.11, "grpo_duplicates"), (("riga", "signal_share"), 0.49, "grpo_sigma"),
-    (("lidc", "group"), 4, "grpo_duplicates"),
+    (("riga", "format"), 0.97, "G-format"), (("lidc", "legal"), 0.89, "G-format"),
+    (("lidc", "dup_rate"), 0.11, "G-signal"), (("riga", "signal_share"), 0.49, "G-signal"),
+    (("lidc", "group"), 4, "G-signal"),
 ])
 def test_phase2_gates_fail_cases(path, value, gate):
     r = good_report()
-    d = r["summary"]["datasets"]
+    d = r["views"]["shifted"]["summary"]["datasets"]
     for p in path[:-1]:
         d = d[p]
     d[path[-1]] = value
     g = gates.phase2_entry(r)
-    assert g["pass"] is False and g["gates"][gate]["pass"] is False
-    coupled = {gate, "grpo_sigma"} if path[-1] == "group" else {gate}  # the group size gates both GRPO checks
-    assert all(v["pass"] for k, v in g["gates"].items() if k not in coupled)
-
-
-def test_phase2_gates_fail_when_a_required_dataset_or_structure_is_missing():
-    r = good_report()
-    del r["summary"]["datasets"]["riga"]
-    g = gates.phase2_entry(r, datasets=("riga", "lidc"))
-    assert g["pass"] is False and g["gates"]["geometry_median"]["pass"] is False and g["datasets"]["riga"] is False
-    r = good_report()
-    del r["summary"]["datasets"]["riga"]["objects"]["cup"]
-    assert gates.phase2_entry(r)["pass"] is False
-    assert gates.phase2_entry({"summary": {"datasets": {}}})["pass"] is False  # nothing evaluated
+    assert g["gates"][gate]["pass"] is False
+    assert all(g["gates"][k]["pass"] for k in ("G-format", "G-signal") if k != gate)
 
 
 def test_phase2_gates_per_dataset():
-    """B4-5: gates are decided per dataset; a model dropped from LIDC (plan §7 precision probe) is judged on RIGA."""
+    """B4-5: gates are decided per dataset; a model dropped from LIDC (plan §5.1 precision probe) is judged on RIGA."""
     r = good_report()
-    r["summary"]["datasets"]["lidc"]["format"] = 0.5
-    g = gates.phase2_entry(r)
-    assert g["pass"] is False and g["datasets"] == {"lidc": False, "riga": True}
+    r["views"]["shifted"]["summary"]["datasets"]["lidc"]["format"] = 0.5
     g = gates.phase2_entry(r, datasets=("riga",))
-    assert g["pass"] is True and g["datasets"] == {"riga": True} and "lidc/format" not in g["gates"]["format"]["values"]
+    assert g["datasets"] == {"riga": False} and g["gates"]["G-format"]["pass"] is True
+    assert "format/shifted/lidc" not in g["gates"]["G-format"]["values"]
+    assert gates.phase2_entry({"views": {"shifted": {"summary": {"datasets": {}}}}})["pass"] is False
 
 
 def test_summary_of_the_raters_own_targets(nod, riga):

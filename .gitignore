@@ -20,3 +20,4 @@ htmlcov/
 
 # Editor / OS
 .DS_Store
+/runs/

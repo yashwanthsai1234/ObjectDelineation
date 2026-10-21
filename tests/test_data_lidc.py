@@ -1,6 +1,7 @@
 """LIDC parser: rules P1-P6 on crafted XML, clustering, slice records, patient/z lookup; data-backed parity with the
 lab fixture and with pylidc's database contours (sample), the item contract and the B3 regressions on the store."""
 import csv
+import importlib.util
 import json
 import random
 import sqlite3
@@ -402,6 +403,8 @@ def test_parity_with_pylidc_database_sample():
     xml_root = ROOT / "data" / "raw" / "lidc_xml"
     if not xml_root.is_dir():
         pytest.skip("LIDC XML absent")
+    if importlib.util.find_spec("pylidc") is None:  # BK4-20: a [dev]-only env with data/; pylidc's import is broken
+        pytest.skip("pylidc not installed")
     db = lidc.pylidc_db()
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     files = lidc.series_files(xml_root)

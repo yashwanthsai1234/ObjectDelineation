@@ -1,0 +1,17 @@
+# R0 timing prelude (PLAN §4.7 step 8): 30 steps from R1's init, discarded; workers 0, deterministic off.
+model: lfm2.5-vl-450m
+view: views/lidc-bundle
+output_dir: r0-timing-w0-det-off
+seed: 1
+steps_per_epoch: 30
+branches: []   # stable only, nothing saved (BK3-14)
+vision: off   # discarded timing run: no G-vision (BK3-4)
+rolling_minutes: 1000
+sft:
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 4
+  dataloader_num_workers: 0
+  dataloader_persistent_workers: false
+  dataloader_prefetch_factor: null   # only with workers > 0 (BK3-1)
+  full_determinism: false   # CUBLAS_WORKSPACE_CONFIG=:4096:8 set for the session
+  logging_steps: 1

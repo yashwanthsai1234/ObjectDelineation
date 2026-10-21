@@ -8,7 +8,9 @@ annotated z positions. `build_data` picks the slices up without code changes.
 Slice matching (B3-4): a DICOM is kept when its SOPInstanceUID is one the XML's contours cite. A contour z position
 that no SOP-matched DICOM covers falls back to the DICOM whose ImagePositionPatient z is within 0.01 mm of it, the
 rule the store uses to map contours to slices (`lidc.ct_slices`, P3); a z shared by two DICOMs is ambiguous and
-skipped. LIDC-IDRI-0365's XML cites no SOP UID of its TCIA series, and readers 2 and 4 of LIDC-IDRI-0017 cite five
+skipped. Two kept DICOMs whose z positions share one archive key ("z<mm, 2 decimals>") would overwrite each
+other, and HU values outside int16 or not integral would be wrapped or truncated by the int16 cast: both raise
+(I45) instead, and the series is reported FAILED. LIDC-IDRI-0365's XML cites no SOP UID of its TCIA series, and readers 2 and 4 of LIDC-IDRI-0017 cite five
 absent UIDs at z positions the other readers' UIDs cover.
 
     .venv/bin/python -I -m experiments.phase1.fetch_lidc_pixels data/raw/lidc_xml data/lidc_slices [--workers 3]
@@ -60,6 +62,26 @@ def choose(headers, sops) -> tuple[dict[str, float], int]:
     return keep, by_z
 
 
+def z_keys(keep: dict[str, float]) -> dict[str, str]:
+    """{DICOM name: archive key}; ValueError when two DICOMs would share a key (one would overwrite the other)."""
+    keys = {name: f"z{z:.2f}" for name, z in keep.items()}
+    if len(set(keys.values())) < len(keys):
+        dup = sorted(k for k in set(keys.values()) if list(keys.values()).count(k) > 1)
+        raise ValueError(f"two DICOMs share the z key(s) {dup}")
+    return keys
+
+
+def hounsfield(pixels: np.ndarray, slope: float, intercept: float) -> np.ndarray:
+    """Stored values -> int16 HU; ValueError when a value is not an integer or does not fit int16 (I45: the cast
+    wrapped and truncated silently)."""
+    hu = pixels.astype(np.float64) * slope + intercept
+    if not np.array_equal(hu, np.rint(hu)):
+        raise ValueError("HU values are not integers (RescaleSlope / RescaleIntercept)")
+    if hu.size and (hu.min() < np.iinfo(np.int16).min or hu.max() > np.iinfo(np.int16).max):
+        raise ValueError(f"HU values [{hu.min()}, {hu.max()}] do not fit int16")
+    return hu.astype(np.int16)
+
+
 def fetch(series, sops, out_dir: Path, tmp_root: Path) -> int:
     tmp = tmp_root / series
     shutil.rmtree(tmp, ignore_errors=True)
@@ -85,11 +107,11 @@ def fetch(series, sops, out_dir: Path, tmp_root: Path) -> int:
                 ds = pydicom.dcmread(fh, stop_before_pixels=True)
             headers.append((name, str(ds.SOPInstanceUID), float(ds.ImagePositionPatient[2])))
         keep, by_z = choose(headers, sops)
-        for name, z in sorted(keep.items()):
+        for name, key in sorted(z_keys(keep).items()):
             with zf.open(name) as fh:
                 ds = pydicom.dcmread(fh)
-            hu = ds.pixel_array.astype(np.float32) * float(ds.get("RescaleSlope", 1)) + float(ds.get("RescaleIntercept", 0))
-            slices[f"z{z:.2f}"] = hu.astype(np.int16)
+            slices[key] = hounsfield(ds.pixel_array, float(ds.get("RescaleSlope", 1)),
+                                     float(ds.get("RescaleIntercept", 0)))
             meta = {"pixel_spacing": [float(v) for v in ds.PixelSpacing],
                     "slice_thickness": float(ds.get("SliceThickness", 0) or 0)}
     (out_dir / f"{series}.json").write_text(json.dumps({

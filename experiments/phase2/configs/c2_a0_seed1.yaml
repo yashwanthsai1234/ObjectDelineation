@@ -1,0 +1,14 @@
+# C2 (PLAN §6.1 R3-R5): a0_seed1, to the depth of the checkpoint with the final G-probe verdict (set branches).
+model: lfm2.5-vl-450m   # = the C1 rung
+view: views/lidc-bundle
+output_dir: c2-a0_seed1
+seed: 1
+a0: true
+branches: [1.0]   # = the final G-probe checkpoint's depth
+vision: {prepared: prepared, reference: vision_ref/lfm2.5-vl-450m.json}   # reference: written in R0 by --vision_reference_only true (under run_dir)
+sft:
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 4   # effective batch 32 (D5)
+  dataloader_num_workers: 6
+  dataloader_persistent_workers: true
+  gradient_checkpointing: false    # R0 peak memory decides (§6.0)

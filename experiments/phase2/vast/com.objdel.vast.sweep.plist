@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- PLAN §4.5: launchd job for sweep_orphans.sh every 3600 s. Install: sed "s#__REPO__#$PWD#g" this file >
+     ~/Library/LaunchAgents/com.objdel.vast.sweep.plist && launchctl load ~/Library/LaunchAgents/com.objdel.vast.sweep.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.objdel.vast.sweep</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>__REPO__/experiments/phase2/vast/sweep_orphans.sh</string></array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>StandardOutPath</key><string>__REPO__/experiments/phase2/vast/sweep.launchd.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/experiments/phase2/vast/sweep.launchd.log</string>
+</dict>
+</plist>
