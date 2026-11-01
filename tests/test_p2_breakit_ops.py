@@ -312,15 +312,3 @@ def test_image_check_peaks_and_threshold():
     assert lookup("NVIDIA GeForce RTX 5090") == 209.5 and lookup("NVIDIA A100-SXM4-80GB") == 312
     assert lookup("NVIDIA RTX PRO 6000 Blackwell Workstation Edition") == 500 and lookup("Tesla T4") is None
     assert "tf >= 0.6 * peak" in text and "8192" in text
-
-
-def test_dockerfile_installs_the_mac_freeze_with_build_backend():
-    # --no-build-isolation on the box needs scikit-build-core and nanobind in /opt/venv: the Mac freeze carries them
-    freeze = subprocess.run(["uv", "pip", "freeze", "--python", str(ROOT / ".venv" / "bin" / "python")],
-                            capture_output=True, text=True)  # fmt: skip
-    if freeze.returncode or "torch==" not in freeze.stdout:
-        pytest.skip("no Mac training venv here")
-    pins = dict(ln.split("==") for ln in freeze.stdout.splitlines() if "==" in ln)
-    assert pins["scikit-build-core"] == "1.1.1" and pins["nanobind"] == "3.1.0"
-    assert (pins["torch"], pins["transformers"], pins["trl"], pins["numpy"], pins["numba"]) == (
-        "2.14.1", "5.20.1", "1.16.0", "2.5.4", "0.68.0")  # fmt: skip

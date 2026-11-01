@@ -25,7 +25,11 @@ train = [
     "torchvision==0.29.1",  # pairs with torch 2.14.1; transformers/TRL vision-model image processing
 ]
 data = ["pydicom>=3.0", "pylidc==0.2.3"]
-dev = ["pytest>=8.0", "pytest-cov>=6.0", "hypothesis>=6.100", "ruff==0.17.1", "matplotlib>=3.9"]  # matplotlib: pylidc-parity oracle
+dev = [
+    "pytest>=8.0", "pytest-cov>=6.0", "hypothesis>=6.100", "ruff==0.17.1",
+    "matplotlib>=3.9",  # pylidc-parity oracle
+    "pyyaml>=6.0",  # experiments/phase2/vast/policy.py reads run configs (in the training lock via transformers)
+]
 
 [build-system]
 # Pinned: the extension's machine code depends on them (plan §6).
