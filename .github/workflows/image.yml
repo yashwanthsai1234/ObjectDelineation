@@ -1,0 +1,46 @@
+name: image
+
+# Builds and pushes the Phase 2 Vast image (experiments/phase2/docker) on a native x86-64 runner. The Mac's emulated
+# build needs ~35 GB of scratch disk the Mac cannot spare (V0, 2026-11-01). Manual only: each run is a choice.
+# Inputs come from the repo: Dockerfile.phase2 and the committed locks (build_images.sh --lock, on the Mac).
+# The repository token pushes. A package first pushed by a workflow is linked to its repository, so the token may write
+# to it, and a new package is private:
+# https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions
+# The older objdel-vast package was pushed with a personal token and is not linked, so this workflow uses objdel-gpu.
+# Third-party actions are pinned to full commit SHAs, release tag in the comment (as tests.yml).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  phase2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/objdel-gpu
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+      - name: Free disk (the build peaks near 35 GB; the runner image ships ~30 GB of SDKs we never use)
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force
+          df -h /
+      - name: Log in to GHCR with the repository token
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - id: build
+        run: experiments/phase2/docker/build_images.sh --push phase2
+      - name: Image reference for .vast-allowlist
+        env:
+          TAG: ${{ steps.build.outputs.tag }}
+        run: |
+          digest=$(docker buildx imagetools inspect "$TAG" --format '{{json .Manifest}}' | python3 -c "import json,sys; print(json.load(sys.stdin)['digest'])")
+          echo "image: $TAG@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+          df -h /

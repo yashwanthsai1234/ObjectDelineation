@@ -2,14 +2,21 @@
 # Phase 2 Vast image (PLAN §4.3, D15), promoted from lab/B5/Dockerfile.phase2 + lab/A3/Dockerfile.vast. One image, two
 # venvs; code and data are never baked in (the repo snapshot is rsynced per session and installed editable):
 #   /opt/vllm  offline K-sampler only: the vllm==0.32.0 lock (torch 2.13.0, transformers 5.19.0); objdel never here
-#   /opt/venv  training env = the Mac's `uv pip freeze` (torch 2.14.1 cu130, transformers 5.20.1, TRL 1.16.0, numpy
-#              2.5.4, numba 0.68.0) + image-only Qwen3.5 GDN extras (cannot install on macOS; nothing in objdel imports
-#              them, so xarch_hashes is unaffected): flash-linear-attention, kernels, and causal-conv1d when a prebuilt
-#              wheel exists (no nvcc in the slim base; otherwise /opt/causal_conv1d.MISSING and the `kernels` hub route).
-#              The extras are installed under the freeze as constraints, so they can never move a pinned version.
-#              UNVERIFIED for torch 2.14.1 / cu130 until build_images.sh + image_check.sh run (R0 step 3).
+#   /opt/venv  training env = locks/train.txt: pyproject base + [train] + build backend, pinned to the Mac's versions
+#              (torch 2.14.1 cu130, transformers 5.20.1, TRL 1.16.0, numpy 2.5.4, numba 0.68.0) + image-only Qwen3.5 GDN extras (cannot install on macOS; nothing in objdel imports
+#              them, so xarch_hashes is unaffected): flash-linear-attention, kernels, causal-conv1d. The extras are
+#              installed under the freeze as constraints, so they can never move a pinned version.
+# Size (V0, 2026-11-01): the venvs pin the same cuBLAS / cuFFT / cuSOLVER / cuSPARSE / ... wheels, and the first push
+# stored them twice (3.94 + 3.40 GB compressed). Both venvs are now built in one RUN and dedupe.py hardlinks identical
+# files, which a layer stores once. exclude-vllm.txt drops the CUDA 12 libs and video decoding vllm pins (the training
+# lock no longer holds dev tools at all), and the RUN imports each venv's entry points so a bad lock fails the build.
+# causal-conv1d has no wheel for torch 2.14 and the slim base has no nvcc (the first build fell back silently): the
+# `ccd` stage compiles it with the CUDA 13.0 compiler torch 2.14.1 pins (cuda-toolkit==13.0.3, from PyPI) for sm_80 /
+# sm_120 only, and the image gets the wheel, not the compiler. A failed compile fails the build. The PyPI runtime ships
+# only libcudart.so.13, so the builder adds the libcudart.so link the linker asks for.
 # No CUDA base image: the torch wheels carry the CUDA 13.0 user space; the host runtime injects the driver (>= 580).
-# Build context (build_images.sh): train.txt, vllm.txt. Stages: base -> sampler (--target sampler) -> phase2.
+# Build context (build_images.sh, from locks/): train.txt, vllm.txt, exclude-vllm.txt, dedupe.py, patch_arch.py. Stages: base -> ccd; base -> sampler
+# (--target sampler); base + ccd -> phase2.
 FROM python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,18 +32,43 @@ ENV UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONDONTWRITEBYTECODE=1 \
     TOKENIZERS_PARALLELISM=false
 WORKDIR /workspace
 
+FROM base AS ccd
+ARG CCD_URL=https://files.pythonhosted.org/packages/f4/d1/eba27735f31bd5527d39a3c7f693e6ded7b844cab275db719a15ad37b6cd/causal_conv1d-1.7.0.tar.gz
+ARG CCD_SHA256=3202758494eaa7b597ce1c282dfa188889506bfcb92cad3c407d26736bfcd32b
+COPY patch_arch.py /opt/patch_arch.py
+RUN uv venv --python /usr/local/bin/python3.12 /opt/b \
+    && uv pip install --python /opt/b/bin/python torch==2.14.1 "cuda-toolkit[nvcc,cccl]==13.0.3" \
+        setuptools wheel packaging ninja \
+    && curl -fsSL -o /tmp/ccd.tar.gz "$CCD_URL" && echo "$CCD_SHA256  /tmp/ccd.tar.gz" | sha256sum -c - \
+    && mkdir /src && tar xzf /tmp/ccd.tar.gz -C /src --strip-components=1 \
+    && /opt/b/bin/python /opt/patch_arch.py /src/setup.py \
+    && export CUDA_HOME=/opt/b/lib/python3.12/site-packages/nvidia/cu13 \
+    && ln -sf libcudart.so.13 $CUDA_HOME/lib/libcudart.so \
+    && cd /src && PATH=$CUDA_HOME/bin:/opt/b/bin:$PATH CAUSAL_CONV1D_FORCE_BUILD=TRUE MAX_JOBS=1 \
+        uv build --wheel --no-build-isolation --python /opt/b/bin/python -o /wheels . \
+    && uv pip install --python /opt/b/bin/python --no-deps /wheels/causal_conv1d-*.whl \
+    && /opt/b/bin/python -c "import causal_conv1d, causal_conv1d_cuda; print('causal_conv1d', causal_conv1d.__version__)"
+
 FROM base AS sampler
 COPY vllm.txt /opt/requirements-vllm.txt
 RUN uv venv --python /usr/local/bin/python3.12 /opt/vllm \
     && uv pip install --python /opt/vllm/bin/python -r /opt/requirements-vllm.txt
 
-FROM sampler AS phase2
+FROM base AS phase2
+COPY vllm.txt /opt/requirements-vllm.txt
 COPY train.txt /opt/requirements.txt
-RUN uv venv --python /usr/local/bin/python3.12 /opt/venv \
-    && uv pip install --python /opt/venv/bin/python -r /opt/requirements.txt
+COPY dedupe.py exclude-vllm.txt /opt/
+COPY --from=ccd /wheels/ /opt/wheels/
 # Extras pinned here (latest on PyPI 2026-10-20), so the p2-<pinhash> tag (it hashes this file) names one image (BK4-15)
-RUN uv pip install --python /opt/venv/bin/python -c /opt/requirements.txt flash-linear-attention==0.5.2 kernels==0.17.2 \
-    && { uv pip install --python /opt/venv/bin/python -c /opt/requirements.txt --no-build-isolation causal-conv1d==1.7.0 \
-         || echo "no causal-conv1d wheel for these pins: kernels hub route" > /opt/causal_conv1d.MISSING; } \
-    && uv pip freeze --python /opt/venv/bin/python > /opt/venv.freeze.txt
+RUN uv venv --python /usr/local/bin/python3.12 /opt/vllm \
+    && uv pip install --python /opt/vllm/bin/python -r /opt/requirements-vllm.txt --excludes /opt/exclude-vllm.txt \
+    && uv venv --python /usr/local/bin/python3.12 /opt/venv \
+    && uv pip install --python /opt/venv/bin/python -r /opt/requirements.txt \
+    && uv pip install --python /opt/venv/bin/python -c /opt/requirements.txt flash-linear-attention==0.5.2 \
+        kernels==0.17.2 /opt/wheels/causal_conv1d-1.7.0*.whl \
+    && /opt/venv/bin/python -c "import torch, torchvision, transformers, trl, peft, datasets, pandas, numba, cv2, scipy, fla, kernels, causal_conv1d_cuda" \
+    && /opt/vllm/bin/python -c "import vllm, vllm.entrypoints.llm" \
+    && uv pip freeze --python /opt/venv/bin/python > /opt/venv.freeze.txt \
+    && python3 /opt/dedupe.py /opt/vllm /opt/venv \
+    && rm -rf /opt/wheels /opt/exclude-vllm.txt
 ENV PATH=/opt/venv/bin:$PATH

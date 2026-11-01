@@ -1,0 +1,3 @@
+# CUDA 12 cutlass libs (we run CUDA 13) and video decoding (we sample images); image audit, 2026-11-01
+nvidia-cutlass-dsl-libs-cu12
+pynvvideocodec
