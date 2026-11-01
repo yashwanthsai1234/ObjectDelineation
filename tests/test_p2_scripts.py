@@ -19,7 +19,8 @@ import pytest
 from experiments.phase2 import train_sft as TS
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = sorted((ROOT / "experiments/phase2/configs").glob("*.yaml"))
+CONFIGS = sorted(c for c in (ROOT / "experiments/phase2/configs").glob("*.yaml")
+                 if "\nsteps:" not in c.read_text())  # r0.yaml is a step list for run.sh, not a train_sft config
 
 
 @pytest.mark.parametrize("script", ["train_sft", "select_ckpt", "g_probe", "hf_sample"])
@@ -221,12 +222,12 @@ def test_sampler_child_is_bounded_checked_and_reused(tmp_path, monkeypatch):
     prompts, comps, calls = tmp_path / "p.jsonl", tmp_path / "c.jsonl", []
     prompts.write_text("".join(json.dumps({"id": i, "n": 2}) + "\n" for i in "ab"))
 
-    def run(cmd, check, timeout):
+    def run(cmd, timeout):
         calls.append(timeout)
         rows = [{"id": i, "k": k} for i in "ab" for k in range(2)][: 3 if len(calls) == 1 else 4]
         comps.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
-    monkeypatch.setattr(SC.subprocess, "run", run)
+    monkeypatch.setattr(SC, "run_group", run)
     SC.run_sampler("hf", prompts, tmp_path, comps, 7.0)
     assert calls == [7.0, 7.0]  # the partial first attempt was retried
     SC.run_sampler("hf", prompts, tmp_path, comps, 7.0)
@@ -281,9 +282,7 @@ def test_g_probe_repair_is_the_next_earlier_eligible_branch():
     b = lambda d, e: {"depth": d, "eligible": e}  # noqa: E731
     sel = {"selected": "e2", "branches": {"e0.5": b(0.5, True), "e1": b(1.0, False), "e2": b(2.0, True)}}
     assert GP.candidates(sel) == ["e2", "e0.5"]
-    assert GP.candidates(sel | {"selected": "e0.5"}) == ["e0.5"]
-    with pytest.raises(SystemExit, match="no eligible"):
-        GP.candidates(sel | {"selected": None})
+    assert GP.candidates(sel | {"selected": "e0.5"}) == ["e0.5"]  # no selection: g_probe skips (test_p2_v1_select)
 
 
 def test_sample_vllm_refuses_below_90_percent_free():

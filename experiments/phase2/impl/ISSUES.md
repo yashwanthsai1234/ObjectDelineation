@@ -55,3 +55,15 @@ remains in `tests/test_p2_breakit_*.py`), except:
 
 Coverage config: `source_pkgs = ["objdel"]` added to `[tool.coverage.run]` (forked reward-pool workers otherwise traced
 tests/ and experiments/, reporting 77 % for a library that is at 94 %).
+
+## V0 (2026-11-01): RTX 3090 watchdog dry run, instance 58715600, offer 50693169 at $0.230/h
+
+| Item | Result |
+|---|---|
+| Offer filter | Fixed (4f6159a): Vast sends `verification: "verified"` (no `verified` bool) and `cpu_ram` in MB, 1 GB = 1000 MB |
+| vastai errors | Fixed (4f6159a): exit 0 with empty stdout, error JSON on stderr; offer IDs change between searches (`--pick top`) |
+| Image | Rebuilt on GitHub Actions (a6d8fb3, `image.yml`): objdel-gpu:p2-99c6eb484c88, 5.88 GB compressed (was 7.57), causal-conv1d compiled, 2.58 GB deduped. Pull + start on the 3090: 5.7 min |
+| Self-destroy (S1-5) | VERIFIED: cap 21:39:46 UTC, account empty at 21:40:50 with no destroy from the Mac; the sweep then closed the run |
+| Invoice (BK4-18) | `show invoices-v1 --charges` lists one Instance row, $0.022 for the ~11 min; credit 4.660 -> 4.639 |
+| On-box checks (BK4-19: /dev/shm, `CONTAINER_API_KEY`, watchdog.log, GPU imports) | NOT RUN: `~/.ssh/id_ed25519` has a passphrase and is not in the agent (the box accepted the key ~1 min after `running`). Owner runs `ssh-add --apple-use-keychain ~/.ssh/id_ed25519`, then a short re-check before V1 |
+| Cap vs pull | The 10-min cap counts the image pull (5.7 min); V1 caps must allow ~6 min of pull |

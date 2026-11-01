@@ -18,7 +18,8 @@ from experiments.phase2.vast import policy as P
 from tests import test_p2_vast as V
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = sorted((ROOT / "experiments" / "phase2" / "configs").glob("*.yaml"))
+CONFIGS = sorted(c for c in (ROOT / "experiments" / "phase2" / "configs").glob("*.yaml")
+                 if "\nsteps:" not in c.read_text())  # r0.yaml is a step list for run.sh, not a train_sft config
 ANCHOR = '    save = lambda: (d / "state.json").write_text(json.dumps(st))\n'
 HOOK = """    k = " ".join(argv[:2])
     if st.get("fail", {}).get(k, 0) > 0:

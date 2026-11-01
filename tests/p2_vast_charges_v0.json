@@ -1,0 +1,61 @@
+{
+ "count": 1,
+ "next_token": null,
+ "results": [
+  {
+   "amount": 0.029,
+   "description": "Instance 58715600 Charges - 1 day",
+   "end": 1793491200,
+   "items": [
+    {
+     "amount": 0.023,
+     "description": "0.116 hours at $0.200/hour",
+     "end": 1793491200,
+     "items": [],
+     "metadata": {},
+     "source": null,
+     "start": 1793491200,
+     "type": "gpu"
+    },
+    {
+     "amount": 0.006,
+     "description": "0.208 hours at $0.030/hour",
+     "end": 1793491200,
+     "items": [],
+     "metadata": {},
+     "source": null,
+     "start": 1793491200,
+     "type": "disk"
+    },
+    {
+     "amount": 0.0,
+     "description": "Bandwidth (download)",
+     "end": 1793491200,
+     "items": [],
+     "metadata": {},
+     "source": null,
+     "start": 1793491200,
+     "type": "bwd"
+    },
+    {
+     "amount": 0.0,
+     "description": "Bandwidth (upload)",
+     "end": 1793491200,
+     "items": [],
+     "metadata": {},
+     "source": null,
+     "start": 1793491200,
+     "type": "bwu"
+    }
+   ],
+   "metadata": {
+    "label": "v0-watch"
+   },
+   "source": "instance-58715600",
+   "start": 1793491200,
+   "type": "instance"
+  }
+ ],
+ "success": true,
+ "total": 2
+}

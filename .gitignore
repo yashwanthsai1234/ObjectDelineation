@@ -21,3 +21,11 @@ htmlcov/
 # Editor / OS
 .DS_Store
 /runs/
+
+# Vast session state (experiments/phase2/vast): local records, never shipped to a host by sync_up
+/experiments/phase2/vast/ledger.csv
+/experiments/phase2/vast/offers/
+/experiments/phase2/vast/invoices/
+/experiments/phase2/vast/active_runs.json
+/experiments/phase2/vast/code_files.txt
+/experiments/phase2/vast/known_hosts

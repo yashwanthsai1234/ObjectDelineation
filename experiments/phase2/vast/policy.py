@@ -3,9 +3,9 @@
 `watchdog.sh` is the only logic that runs on the box.
 
     offers.sh GPU [--riga] [--disk GB] [--pick OFFER_ID|top]   search (§4.2 filter), top 5; --pick saves the offer
-    launch.sh OFFER_ID RUN_ID [--cap-hours H] [--allow-parallel] [--owner-approved]
-    sync_up.sh RUN_ID [--bundle lidc|riga] [--bundle-dir DIR]  code (git ls-files) + bundle, SHA-256 verified on the box
-    run.sh RUN_ID MODULE|CONFIG.yaml|vision-ref CONFIG... [ARGS]  timeout + tmux + heartbeat; a config runs its chain
+    launch.sh OFFER_ID RUN_ID [--cap-hours H] [--idle-minutes M] [--allow-parallel] [--owner-approved]
+    sync_up.sh RUN_ID [--bundle lidc|riga] [--bundle-dir DIR] [--code-only]   code (git ls-files) + bundle, SHA-256
+    run.sh RUN_ID MODULE|CONFIG.yaml [ARGS]                    timeout + tmux + heartbeat; a config runs its chain
     pull.sh [RUN_ID]                                           rsync runs/<id>/ to the Mac, touch PULLED_OK (no id: all)
     teardown.sh RUN_ID                                         final pull, destroy, verify absent, invoices, ledger
     sweep_orphans.sh                                           destroy unknown / overdue instances, close vanished runs;
@@ -13,8 +13,8 @@
 
 G10: a launch is refused when the money committed (closed sessions + every active run to its deadline) plus its own
 worst case passes $15, and needs --owner-approved (recorded in the ledger) when that projection reaches $10. Costs are
-dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB); invoices are
-saved raw and flagged UNPARSED until V0 shows their format (BK4-18).
+dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB); teardown saves
+the raw charges and records what Vast billed beside that estimate (`billed`, BK4-18).
 
 Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; default: this directory), VAST_RUNS
 (pull target, default <repo>/runs), DRY_RUN=1 (ssh / rsync are printed, not run; `vastai` is still called, so tests
@@ -64,6 +64,7 @@ BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
 IMPORT_CHECK = "import objdel._polycore, experiments.phase1.reward_gates, tests.oracles.reward_harness"
 MARGIN_S = 600  # run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull
 GRACE_S = 600  # sweep: a run younger than this may not be listed yet, so it is never closed as vanished
+PULL_S = 600  # added to --cap-hours: the watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min
 OPS = {"=": operator.eq, ">": operator.gt, ">=": operator.ge, "<=": operator.le}
 
 
@@ -255,10 +256,12 @@ def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None
     ledger(event=event, run_id=run_id, instance_id=iid, cost_usd=round(cost, 4))
 
 
-def onstart_cmd(run_id: str, cap_s: int, created: float | None = None) -> str:
-    """--onstart-cmd: unpack the watchdog and start it; carries no secret (CONTAINER_API_KEY is injected by Vast)."""
+def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: int = 1800) -> str:
+    """--onstart-cmd: unpack the watchdog and start it; carries no secret (CONTAINER_API_KEY is injected by Vast).
+    Vast's API spec limits onstart to 4048 characters (gzip+base64 beyond)."""
     b64 = base64.b64encode((HERE / "watchdog.sh").read_bytes()).decode()
-    env = (f"RUN_ID={run_id} WATCHDOG_CAP_S={cap_s} WATCHDOG_CREATED={int(created or time.time())} "
+    created = int(created or time.time())
+    env = (f"RUN_ID={run_id} WATCHDOG_CAP_S={cap_s} WATCHDOG_IDLE_S={idle_s} WATCHDOG_CREATED={created} "
            f"WATCHDOG_PULLED_OK=/workspace/runs/{run_id}/PULLED_OK")  # fmt: skip
     return f"printf %s {b64} | base64 -d > /root/watchdog.sh && {env} nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &"
 
@@ -299,7 +302,7 @@ def cmd_launch(a) -> None:
     o = json.loads(f.read_text())
     if why := reasons(o, o["_gpu"], o["_dataset"], o["_disk"]):
         die("; ".join(why))
-    cap_s, now = int(a.cap_hours * 3600), time.time()
+    cap_s, now = int(a.cap_hours * 3600) + PULL_S, time.time()
     bw = {k: o[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"instance": None, "offer": a.offer, "dph": o["dph_total"], **bw, "started": now, "deadline": now + cap_s}
     committed, worst = spend(committed=True), accrued(run, run["deadline"])
@@ -318,7 +321,7 @@ def cmd_launch(a) -> None:
     for s in sigs:  # an interrupt after `create` must reach the destroy below (BK4-3)
         signal.signal(s, signal.default_int_handler)
     out = vast("create", "instance", str(a.offer), "--image", image, "--login", login, "--disk", str(o["_disk"]),
-               "--onstart-cmd", onstart_cmd(a.run_id, cap_s, now), *flags)  # fmt: skip
+               "--onstart-cmd", onstart_cmd(a.run_id, cap_s, now, int(a.idle_minutes * 60)), *flags)  # fmt: skip
     run["instance"] = iid = int(out["new_contract"])
     try:  # G8: any failure or interrupt from here on destroys the instance
         active({**active(), a.run_id: run})
@@ -375,6 +378,8 @@ def cmd_sync_up(a) -> None:
     rsync(run, f"{ROOT}/", f"{host}/workspace/src/", f"--files-from={lst}")
     remote(run, "cd /workspace/src && uv pip install --python /opt/venv/bin/python --no-deps --no-build-isolation -e ."
                 f" && cd / && /opt/venv/bin/python -I -c {shlex.quote(IMPORT_CHECK)}")  # fmt: skip
+    if a.code_only:  # a code fix mid-session: the bundle is already on the box
+        return ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], detail="code only")
     rsync(run, *map(str, files), f"{host}/workspace/data/")
     verify, detail = f"cd /workspace/data && sha256sum -c {name}.sha256", ""
     if a.bundle == "riga":  # D16: identity streamed into age over this session's stdin; plaintext only in /dev/shm
@@ -392,24 +397,32 @@ def cmd_sync_up(a) -> None:
 
 
 def chain(cfg: Path, run_id: str) -> list[list[str]]:
-    """A config's stages on the box: train_sft, then (branches saved) select_ckpt with the config's G-vision block
-    (`--no-vision` only for `vision: off` timing arms) and g_probe on <run>/select (selected branch, then the D12(c)
-    repair). Paths are the box's: data under /workspace/data/lidc, runs under /workspace/runs/<id>."""
+    """A config's stages on the box, as argv lists (`-m module ...` runs in /opt/venv, `bash script ...` as is).
+    `steps:` (R0) lists them literally with {rd} / {data} filled in; a leading "~" lets a step fail without stopping
+    the chain. Otherwise `stages:` (default train, select, probe; C2: train, topology) picks from train_sft, then on
+    the saved branches select_ckpt (G-vision block, rotated view, `sampler:`) or its topology-only form, and g_probe;
+    a config without branches (timing arms) only trains. Box paths: data /workspace/data/lidc, runs
+    /workspace/runs/<id>."""
     import yaml
 
     c, data, rd = yaml.safe_load(Path(cfg).read_text()), "/workspace/data/lidc", f"/workspace/runs/{run_id}"
-    run, ev = f"{rd}/{c['output_dir']}", f"{data}/eval_views"
-    stages = [["-m", "experiments.phase2.train_sft", "--config", Path(cfg).resolve().relative_to(ROOT).as_posix()]]
-    if not c.get("branches"):
-        return stages
-    v = c.get("vision")
-    vis = ["--vision", json.dumps({"prepared": f"{data}/{v['prepared']}", "reference": f"{rd}/{v['reference']}"})
-           ] if v else ["--no-vision"]  # fmt: skip
-    return [*stages,
-            ["-m", "experiments.phase2.select_ckpt", "--run", run, "--shifted", f"{ev}/lidc-val-shifted", "--rescaled",
-             f"{ev}/lidc-val-rescaled", "--prepared", f"{data}/prepared", "--probes", ev, *vis],
-            ["-m", "experiments.phase2.g_probe", "--model", c["model"], "--select", f"{run}/select", "--train",
-             f"{data}/prepared", "--probe", f"{ev}/lidc-val-shifted", "--out", f"{run}/g_probe"]]  # fmt: skip
+    if "steps" in c:
+        return [[str(x).format(rd=rd, data=data) for x in s] for s in c["steps"]]
+    run, ev, prep = f"{rd}/{c['output_dir']}", f"{data}/eval_views", f"{data}/prepared"
+    v, samp = c.get("vision"), ["--sampler", c["sampler"]] if c.get("sampler") else []
+    ref = v and (f"{rd}/{v['reference']}" if isinstance(v["reference"], str) else v["reference"])  # a number as is
+    vis = ["--vision", json.dumps({"prepared": f"{data}/{v['prepared']}", "reference": ref})] if v else ["--no-vision"]
+    select = ["-m", "experiments.phase2.select_ckpt", "--run", run, "--prepared", prep, "--probes", ev, *samp]
+    table = {
+        "train": ["-m", "experiments.phase2.train_sft", "--config", Path(cfg).resolve().relative_to(ROOT).as_posix()],
+        "select": [*select, "--shifted", f"{ev}/lidc-val-shifted", "--rescaled", f"{ev}/lidc-val-rescaled",
+                   "--rotated", f"{ev}/lidc-val-rotated", *vis],
+        "topology": [*select, "--only", "topology"],
+        "probe": ["-m", "experiments.phase2.g_probe", "--model", c["model"], "--select", f"{run}/select", "--train",
+                  prep, "--probe", f"{ev}/lidc-val-shifted", "--out", f"{run}/g_probe"],
+    }  # fmt: skip
+    stages = c.get("stages", ["train", "select", "probe"]) if c.get("branches") or c.get("branches_from") else ["train"]
+    return [table[s] for s in stages]
 
 
 def vision_refs(cfg: Path, run_id: str) -> list[str]:
@@ -421,33 +434,36 @@ def vision_refs(cfg: Path, run_id: str) -> list[str]:
 
 
 def cmd_run(a) -> None:
-    """MODULE [ARGS] runs one module; a configs/*.yaml path runs its whole chain (`chain`) under one cap, refused on
-    the box while a G-vision reference it reads is missing; `vision-ref CONFIG...` writes those references (R0, same
-    run dir: train_sft --vision_reference_only true)."""
+    """MODULE [ARGS] runs one module (experiments.phase2.*, or R0's xarch_hashes); a configs/*.yaml path runs its
+    `chain` under one cap, refused on the box while a G-vision reference it reads is missing (R0 writes them). Each job
+    has its own tmux session and log (<run_id>-<name>, <name>.log), so a second job can run beside the first."""
     run, guard = get_run(a.run_id), []
-    if a.module == "vision-ref":
-        if not a.args or not all(vision_refs(ROOT / c, a.run_id) for c in a.args):
-            die("vision-ref needs configs whose vision.reference is a .json path")
-        stages = [["-m", "experiments.phase2.train_sft", "--config", c, "--vision_reference_only", "true"] for c in a.args]
-    elif a.module.endswith(".yaml"):
-        stages = chain(ROOT / a.module, a.run_id)
-        guard = [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} vision-ref "
-                 f"{a.module} first' >&2; false; }}; }}" for r in vision_refs(ROOT / a.module, a.run_id)]  # fmt: skip
-    elif re.fullmatch(r"experiments\.phase2\.\w+", a.module):
-        stages = [["-m", a.module, *a.args]]
+    if a.module.endswith(".yaml"):
+        stages, name = chain(ROOT / a.module, a.run_id), Path(a.module).stem
+        guard = [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} "
+                 f"experiments/phase2/configs/r0.yaml first' >&2; false; }}; }}"
+                 for r in vision_refs(ROOT / a.module, a.run_id)]  # fmt: skip
+    elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
+        stages, name = [["-m", a.module, *a.args]], a.module.rsplit(".", 1)[1]
     else:
         die("module must be experiments.phase2.<script> or experiments/phase2/configs/<name>.yaml")
     cap = int(min(a.cap_hours * 3600, run["deadline"] - time.time() - MARGIN_S))
     if cap <= 0:
         die("no time left before the instance cap")
+
+    def job(s: list[str]) -> str:  # "~": a failure is logged and the chain goes on
+        soft = s[0] == "~"
+        cmd = shlex.join(s[soft:]) if s[soft] == "bash" else f"/opt/venv/bin/python -I {shlex.join(s[soft:])}"
+        return f"{{ {cmd} || echo {shlex.quote('step failed, continuing: ' + cmd)}; }}" if soft else cmd
+
     rd = f"/workspace/runs/{a.run_id}"
-    jobs = " && ".join([*guard, *(f"/opt/venv/bin/python -I {shlex.join(s)}" for s in stages)])
-    inner = (  # EXIT is removed first: the watchdog's idle destroy needs it (BK4-11)
-        f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} && mkdir -p {rd} && rm -f {rd}/EXIT && "
+    jobs = " && ".join([*guard, *map(job, stages)])
+    inner = (  # EXIT is removed first: the watchdog's idle destroy needs it (BK4-11); `;` keeps cd/export in this shell
+        f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} && mkdir -p {rd} && rm -f {rd}/EXIT || exit 1; "
         f"(while :; do date -u +%s > {rd}/HEARTBEAT; sleep 60; done) & "
-        f"timeout {cap}s bash -c {shlex.quote(jobs)} > {rd}/run.log 2>&1; echo $? > {rd}/EXIT; kill %1"
+        f"timeout {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1"
     )
-    remote(run, f"tmux new-session -d -s {a.run_id} {shlex.quote('bash -c ' + shlex.quote(inner))}")
+    remote(run, f"tmux new-session -d -s {a.run_id}-{name} {shlex.quote('bash -c ' + shlex.quote(inner))}")
     ledger(event="run", run_id=a.run_id, instance_id=run["instance"], detail=f"{a.module} cap_s={cap}")
 
 
@@ -460,15 +476,23 @@ def cmd_pull(a) -> None:
         remote(run, f"touch /workspace/runs/{run_id}/PULLED_OK")
 
 
+def billed(charges: dict, iid: int) -> float | None:
+    """USD Vast charged instance `iid` (V0: `invoices-v1 --charges` rows carry it only as `source` "instance-<id>")."""
+    rows = [r["amount"] for r in charges.get("results", []) if r.get("source") == f"instance-{iid}"]
+    return round(sum(rows), 4) if rows else None
+
+
 def cmd_teardown(a) -> None:
     run = get_run(a.run_id)
     cmd_pull(a)
     destroy(run["instance"], a.run_id, "teardown")
-    inv = vast("show", "invoices-v1", "--raw", tries=3)
+    inv = vast("show", "invoices-v1", "--charges", "--raw", "--limit", "100", tries=3)
     (home() / "invoices").mkdir(exist_ok=True)
     (home() / "invoices" / f"{a.run_id}.json").write_text(json.dumps(inv, indent=1))
+    usd = billed(inv, run["instance"])  # in detail, not cost_usd: spend() already counts the teardown row
+    usd = "pending" if usd is None else f"${usd:.3f}"
     ledger(event="invoice", run_id=a.run_id, instance_id=run["instance"],
-           detail=f"UNPARSED: raw invoices/{a.run_id}.json (format UNVERIFIED until V0); reconcile by hand")  # fmt: skip
+           detail=f"billed={usd} (Vast charges accrue late; invoices/{a.run_id}.json)")
 
 
 def alert(msg: str) -> None:
@@ -509,9 +533,11 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("launch")
     p.add_argument("offer", type=int), p.add_argument("run_id"), p.add_argument("--cap-hours", type=float, default=4)
     p.add_argument("--allow-parallel", action="store_true"), p.add_argument("--owner-approved", action="store_true")
+    p.add_argument("--idle-minutes", type=float, default=30, help="watchdog idle destroy after a pulled EXIT")
     p = sub.add_parser("sync_up")
     p.add_argument("run_id"), p.add_argument("--bundle", default="lidc", choices=["lidc", "riga"])
     p.add_argument("--bundle-dir", type=Path, default=ROOT / "build" / "bundles")
+    p.add_argument("--code-only", action="store_true")
     p = sub.add_parser("run")
     p.add_argument("run_id"), p.add_argument("module"), p.add_argument("--cap-hours", type=float, default=24)
     p.add_argument("args", nargs=argparse.REMAINDER)

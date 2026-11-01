@@ -5,8 +5,10 @@
 Input (objdel.train.sample.export_prompts in the training env): one JSON object per prompt, {"id", "prompt" (chat
 text rendered with tokenize=False), "image" (path), "processor_kwargs" (configs.processor_kwargs minus
 padding_side, sent as mm_processor_kwargs), "sampling" (every SamplingParams field explicit: configs.sampling plus
-seed and stop_token_ids), "n"}; each request samples with request_seed(seed, id). Output: one line per completion, {"id", "k", "text", "token_ids", "finish_reason"}
-(+ "logprobs" with --logprobs: the sampled token's processed logprob, for the H-A5-2 teacher-forcing check), and
+seed and stop_token_ids), "n"}; each request samples with request_seed(seed, id). Output: one line per completion,
+{"id", "k", "text", "token_ids", "finish_reason"}
+(+ with --logprobs: "logprobs", the sampled token's processed logprob, for the H-A5-2 teacher-forcing check, and
+"prompt_token_ids", the prompt ids vLLM built, for the H-A5-1 check; experiments/phase2/parity.py reads both), and
 <out>.meta.json with every distinct SamplingParams as vLLM built it (the echo). vLLM's token_ids end with the stop
 id when finish_reason is "stop" (B5 CPU runs: LFM id 7, SmolVLM id 49279), so the training env applies TRL's
 truncation rule (objdel.train.rewards.truncated) to them in objdel.train.sample.import_completions.
@@ -62,8 +64,9 @@ def outputs(lines: list[dict], results):
         for k, c in enumerate(res.outputs):
             rec = {"id": x["id"], "k": k, "text": c.text, "token_ids": list(c.token_ids),
                    "finish_reason": c.finish_reason}
-            if c.logprobs:
-                rec["logprobs"] = [next(iter(d.values())).logprob for d in c.logprobs]
+            if c.logprobs:  # parity runs (--logprobs): the sampled token's entry, and the prompt ids vLLM built
+                rec["logprobs"] = [d[t].logprob for t, d in zip(c.token_ids, c.logprobs, strict=True)]
+                rec["prompt_token_ids"] = list(res.prompt_token_ids)
             yield rec
 
 

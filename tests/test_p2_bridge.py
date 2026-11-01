@@ -213,11 +213,12 @@ def test_logprob_parity_on_a_tiny_model(tmp_path):
             with torch.no_grad():
                 lp = torch.log_softmax(model(**kw).logits[0, n - 1:-1].float(), -1)[range(len(ids)), ids]
             comps.append({"id": r["key"], "k": k, "text": "", "token_ids": ids, "finish_reason": "length",
-                          "logprobs": lp.tolist()})
+                          "logprobs": lp.tolist(), "prompt_token_ids": enc["input_ids"][0].tolist()})
     base = ["--prompts", str(tmp_path / "p.jsonl"), "--model", str(model_dir), "--out", str(tmp_path / "r.json")]
     for shift, ok in ((0.0, True), (0.1, False)):
         (tmp_path / "c.jsonl").write_text("".join(json.dumps(dict(c, logprobs=[v + shift for v in c["logprobs"]]))
                                                   + "\n" for c in comps))
         r = parity.main(base + ["--completions", str(tmp_path / "c.jsonl")])
         assert (r["pass"], r["tokens"], r["sequences"]) == (ok, 24, 4) and r["max_abs"] < shift + 1e-5
+        assert r["prompt_ids"] == {"items": 2, "equal": 2, "mismatched": [], "pass": True}
     assert json.loads((tmp_path / "r.json").read_text())["median_abs"] == pytest.approx(0.1, abs=1e-4)

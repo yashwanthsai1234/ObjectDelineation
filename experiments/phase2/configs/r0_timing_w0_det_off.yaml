@@ -13,5 +13,4 @@ sft:
   dataloader_num_workers: 0
   dataloader_persistent_workers: false
   dataloader_prefetch_factor: null   # only with workers > 0 (BK3-1)
-  full_determinism: false   # CUBLAS_WORKSPACE_CONFIG=:4096:8 set for the session
   logging_steps: 1
