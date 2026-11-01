@@ -29,9 +29,17 @@ Data: objdel.train.dataset.view_rows over the view directory; the rows of view e
 views (D10). A branch's decay continues the same stream; the view must hold enough epochs for max(b) + its decay
 (R1: build_views --epochs 3), checked before anything loads. The process never samples: select_ckpt starts after
 it exits (D13). manifest.json records the config, the view hash, SHA-256 of the code, the step plan, the G-vision
-log, the pid and the exit status. `--resume true` continues a crashed run (status "running", same training config
-and view): the newest complete rolling checkpoint, then each branch not yet saved (from its own decay checkpoint
-when there is one).
+log, the pid, the exit status and `timing` (the stable phase's optimizer steps, mean s/step after the first WARM
+steps, samples/s, effective batch, peak CUDA GiB or null, rows per view epoch: project_r1's inputs). `--resume true`
+continues a crashed run (status "running", same training config and view): the newest complete rolling checkpoint,
+then each branch not yet saved (from its own decay checkpoint when there is one).
+
+`deterministic: true` (D24, the R0 timing arms): CUBLAS_WORKSPACE_CONFIG=:4096:8 unless set (torch >= 2.11 no
+longer needs it) and torch.use_deterministic_algorithms(True, warn_only=True) before anything loads. Never
+`sft: full_determinism` (transformers' enable_full_determinism also sets CUDA_LAUNCH_BLOCKING=1).
+`branches_from: <run_dir-relative g_probe.json>` (C2, R-x8): branches = [depth of the checkpoint that received the
+final G-probe verdict] (g_probe.json's "ckpt", named e<depth>); no file or no verdict exits before anything is
+written. `stages` and `sampler` belong to the Vast runner (policy.chain) and are only recorded here.
 
 References:
 - transformers 5.20 get_wsd_schedule, Trainer resume (optimizer, scheduler, RNG, data skip), LengthGroupedSampler:
@@ -46,6 +54,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -55,6 +64,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 ABORTED = 3  # exit code of a G-vision abort
+WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator and loader warm-up)
 ROOT = Path(__file__).resolve().parents[2]
 BOX_DATA, BOX_RUNS = Path("/workspace/data/lidc"), Path("/workspace/runs")  # sync_up / pull.sh on a Vast box (M7)
 SAME_RUN = ("model", "branches", "a0", "freeze_vision", "lora", "seed", "steps_per_epoch", "sft")  # resume check
@@ -87,6 +97,10 @@ class RunArgs:
     resume: bool = field(default=False, metadata={"help": "continue a crashed run in output_dir"})
     steps_per_epoch: int | None = field(default=None, metadata={"help": "override (smoke tests, timing)"})
     sft: dict = field(default_factory=dict, metadata={"help": "overrides of configs.sft_config"})
+    deterministic: bool = field(default=False, metadata={"help": "D24: use_deterministic_algorithms (timing arms)"})
+    branches_from: str | None = field(default=None, metadata={"help": "C2: g_probe.json under run_dir -> branches"})
+    stages: list[str] = field(default_factory=list, metadata={"help": "Vast runner only (policy.chain)"})
+    sampler: str | None = field(default=None, metadata={"help": "Vast runner only (policy.chain)"})
 
     def __post_init__(self):  # a bad G-vision config fails here, not at the first rolling checkpoint (BK3-5)
         if self.vision in (False, "off"):
@@ -112,6 +126,25 @@ def plan(args: RunArgs, steps_per_epoch: int) -> dict:
         raise ValueError(f"branches {br} at {steps_per_epoch} steps/epoch: points collide or a decay is 0 steps")
     stable = max(at.values(), default=steps_per_epoch)
     return {"steps_per_epoch": steps_per_epoch, "stable": stable, "warmup": round(WARMUP * stable), "branches": br}
+
+
+def timing(stamps: list[float], batch: int) -> dict:
+    """Step-end perf_counter stamps of one trainer -> mean s/step after the first WARM steps and peak CUDA memory."""
+    import torch
+
+    s = (stamps[-1] - stamps[WARM - 1]) / (len(stamps) - WARM) if len(stamps) > WARM else None
+    mem = torch.cuda.max_memory_allocated() / 2**30 if torch.cuda.is_available() else None
+    return {"steps": len(stamps), "warmup_excluded": WARM, "s_per_step": s, "samples_per_s": s and batch / s,
+            "batch": batch, "max_memory_gib": mem}  # fmt: skip
+
+
+def probed_depth(path: Path) -> float:
+    """The depth (epochs) of the checkpoint that received g_probe's final verdict: its "ckpt" is <run>/branches/e<b>."""
+    doc = json.loads(path.read_text()) if path.is_file() else {}
+    if doc.get("verdict") and (m := re.fullmatch(r"e(\d+(\.\d+)?)", Path(doc.get("ckpt") or "").name)):
+        return float(m[1])
+    why = doc.get("skipped") or "missing or unfinished R2"
+    raise SystemExit(f"branches_from {path}: no G-probe verdict on a branch checkpoint ({why}): C2 must not start")
 
 
 def resolve(args: RunArgs) -> RunArgs:
@@ -244,6 +277,11 @@ def train(args: RunArgs) -> int:
     resolve(args)
     if args.vision_reference_only:
         return vision_reference(args)
+    if args.branches_from:
+        args.branches = [probed_depth(Path(args.run_dir, args.branches_from))]
+    if args.deterministic:  # D24, before CUDA and cuBLAS initialise
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        torch.use_deterministic_algorithms(True, warn_only=True)
     if args.vision == {}:
         raise ValueError("vision: {} skips G-vision (D7, D12): give {prepared, reference}; `vision: off` for timing")
     out = Path(args.output_dir)
@@ -317,9 +355,10 @@ def train(args: RunArgs) -> int:
 
     class Rolling(TrainerCallback):
         def __init__(self, keep_at=(), stop_at=None):
-            self.keep_at, self.stop_at, self.last = dict(keep_at), stop_at, time.monotonic()
+            self.keep_at, self.stop_at, self.last, self.stamps = dict(keep_at), stop_at, time.monotonic(), []
 
         def on_step_end(self, a, state, control, **kw):
+            self.stamps.append(time.perf_counter())
             due = time.monotonic() - self.last >= 60 * args.rolling_minutes
             control.should_save = due or state.global_step in self.keep_at
             control.should_training_stop |= state.global_step == self.stop_at
@@ -365,7 +404,8 @@ def train(args: RunArgs) -> int:
         proc.save_pretrained(d)
 
     gbs = args.sft.get("per_device_train_batch_size", 8) * args.sft.get("gradient_accumulation_steps", 1)  # 1 GPU
-    p = plan(args, args.steps_per_epoch or sum(e == min(epochs) for e in epochs) // gbs)
+    rows0 = epochs.count(min(epochs, default=0))  # rows of one view epoch
+    p = plan(args, args.steps_per_epoch or rows0 // gbs)
     man["plan"] = p
     need = max([b["at"] + b["decay"] for b in p["branches"].values()] or [p["stable"]]) * gbs
     if need > len(rows):
@@ -375,6 +415,7 @@ def train(args: RunArgs) -> int:
         t = trainer(out / "rolling", p["stable"], p["stable"] if keep else None, keep, p["stable"])
         t.train(resume_from_checkpoint=latest(out / "rolling") if args.resume else None)
         man["log"]["stable"] = t.state.log_history
+        man["timing"] = timing(t.pop_callback(Rolling).stamps, gbs) | {"rows_per_epoch": rows0}
         write_json(out / "manifest.json", man)
     for name, b in p["branches"].items() if "abort" not in man else ():
         if not (out / "branches" / name).is_dir():

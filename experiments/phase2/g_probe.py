@@ -17,6 +17,9 @@ per-term means, steps 1-5 vs 11-20) and the step timing.
 --select (select_ckpt's output dir): probe the selected branch; when it is not PASS, the D12(c) repair probes the
 next-earlier eligible branch once. <out>/g_probe.json is the last probe's result plus "probed" (branch names in
 order) and "earlier" (the results before it); its "ckpt" is the checkpoint that received the final verdict (C2 depth).
+When select_ckpt's §5.1 gates failed (selected.json "gates_pass" not true), nothing is probed: g_probe.json is
+{"verdict": null, "skipped": "§5.1 gates failed: <gate names>", "probed": [], "gates_branch"} and the exit code is 0,
+so the run chain (train_sft && select_ckpt && g_probe) ends cleanly with the reason on disk.
 """
 
 import argparse
@@ -68,8 +71,6 @@ def train_log(log: list[dict]) -> dict:
 
 def candidates(sel: dict) -> list[str]:
     """D12(c): the selected branch, then the next-earlier (shallower) eligible branch."""
-    if not sel["selected"]:
-        raise SystemExit("g_probe: select_ckpt found no eligible branch (a §5.1 gate failure): nothing to probe")
     b, depth = sel["branches"], sel["branches"][sel["selected"]]["depth"]
     earlier = sorted((x["depth"], n) for n, x in b.items() if x["eligible"] and x["depth"] < depth)
     return [sel["selected"]] + [n for _, n in earlier[-1:]]
@@ -134,6 +135,10 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.select:
         sel = json.loads((a.select / "selected.json").read_text())
+        if not (sel["gates_pass"] and sel["selected"]):  # R1 failed §5.1: a probe would not change the outcome
+            why = ", ".join(sel.get("gates_failed") or ["no eligible branch (D12)"])
+            return save(a.out, {"verdict": None, "skipped": f"§5.1 gates failed: {why}", "probed": [],
+                                "gates_branch": sel["gates_branch"]})
         ckpts = [Path(sel["run"]) / "branches" / n for n in candidates(sel)]
     else:
         ckpts = [a.ckpt]
@@ -157,10 +162,14 @@ def main(argv=None) -> int:
         if docs[-1]["verdict"] == "PASS":
             break
     pool.shutdown()
-    doc = docs[-1] | {"probed": [c.name for c in ckpts[: len(docs)]], "earlier": docs[:-1]}
-    a.out.mkdir(parents=True, exist_ok=True)
-    (a.out / "g_probe.json").write_text(json.dumps(doc, indent=1, default=float) + "\n")
-    print(json.dumps({k: doc[k] for k in ("verdict", "h0", "gain", "probed")}))
+    return save(a.out, docs[-1] | {"probed": [c.name for c in ckpts[: len(docs)]], "earlier": docs[:-1]})
+
+
+def save(out: Path, doc: dict) -> int:
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "g_probe.json").write_text(json.dumps(doc, indent=1, default=float) + "\n")
+    keys = ("verdict", "skipped", "h0", "gain", "probed")
+    print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False))
     return 0
 
 

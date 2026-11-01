@@ -1,0 +1,23 @@
+# R0 box checks (PLAN §4.7 steps 3, 5-8; V0_V1.md §4.2): one run.sh chain after sync_up, stopped by the first failing
+# step except the "~" ones. {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
+#   run.sh v1 experiments/phase2/configs/r0.yaml --cap-hours 1.5
+# Then on the Mac: pull.sh v1; xarch_hashes --compare build/x86/hashes-mac.json runs/v1/xarch_vast.json (step 5);
+# project_r1 on the timing manifests (step 9, the stop rule) before R1 starts.
+steps:
+  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]   # step 2
+  - [bash, experiments/phase2/docker/image_check.sh, "{rd}/image_check.json"]          # step 3: CUDA, bf16 peak, GDN route
+  - [-m, experiments.phase1.bench.xarch_hashes, --out, "{rd}/xarch_vast.json"]          # step 5: compared on the Mac
+  - [-m, experiments.phase2.k3_harness, --root, "{data}/prepared", --out, "{rd}/k3_idle.json"]   # step 6: K3/K4 idle
+  # step 7: parity on base weights; a failure selects the pre-decided HF-only sampler (D13), so it does not stop R0
+  - ["~", -m, experiments.phase2.r0_parity, --model, lfm2.5-vl-450m, --view, "{data}/eval_views/lidc-val-shifted",
+     --out, "{rd}/parity-lfm"]
+  - ["~", -m, experiments.phase2.r0_parity, --model, qwen3.5-0.8b, --view, "{data}/eval_views/lidc-val-shifted",
+     --out, "{rd}/parity-qwen35"]
+  # step 8: G-vision base references (R1 refuses to start without them), 4 timing arms, the Qwen3.5 arm
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r1_lfm.yaml, --vision_reference_only, "true"]
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r1_qwen35.yaml, --vision_reference_only, "true"]
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_timing_w0_det_off.yaml]
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_timing_w6_det_off.yaml]
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_timing_w0_det_on.yaml]
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_timing_w6_det_on.yaml]
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_qwen35_arm.yaml]

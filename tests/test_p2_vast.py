@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -61,7 +62,7 @@ elif tool == "vastai":
     elif argv[:2] == ["destroy", "instance"]:
         st["instances"].pop(argv[2], None); save(); print("destroying instance", argv[2])
     elif argv[:2] == ["show", "invoices-v1"]:
-        print("[]")
+        print(json.dumps(st.get("charges", {"results": [], "count": 0, "next_token": None})))
     else:
         sys.exit(f"fake vastai: unknown {argv}")
 """
@@ -133,13 +134,14 @@ class Env:
             VAST_LAUNCH_TIMEOUT_S="3",
         )
 
-    def state(self, statuses=("loading", "running"), instances=None, offers=None):
+    def state(self, statuses=("loading", "running"), instances=None, offers=None, charges=None):
         old = json.loads((self.fake / "state.json").read_text()) if (self.fake / "state.json").exists() else {}
         st = {
             "next_id": 4242,
             "offers": offers if offers is not None else old.get("offers", []),
             "statuses": list(statuses),
             "instances": instances if instances is not None else old.get("instances", {}),
+            **({"charges": c} if (c := charges or old.get("charges")) else {}),
         }
         (self.fake / "state.json").write_text(json.dumps(st))
 
@@ -410,8 +412,41 @@ def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     assert row["event"] == "launch" and float(row["inet_up_cost"]) == 0.001 and float(row["inet_down_cost"]) == 0.001
     E.sh("teardown.sh", "r1")
     inv = E.ledger()[-1]
-    assert inv["event"] == "invoice" and "UNPARSED" in inv["detail"] and not inv["cost_usd"]
+    assert inv["event"] == "invoice" and "billed=pending" in inv["detail"] and not inv["cost_usd"]
     assert (E.home / "invoices" / "r1.json").exists()
+
+
+CHARGES_V0 = json.loads((ROOT / "tests" / "p2_vast_charges_v0.json").read_text())
+
+
+def test_billed_reads_the_instance_charges_vast_returned_in_v0():
+    """V0: `invoices-v1 --charges --raw` lists one `instance` row per instance, `source` = "instance-<id>", amount in
+    USD with gpu (from `running`), disk (from create) and bandwidth items; there is no instance_id key."""
+    assert P.billed(CHARGES_V0, 58715600) == pytest.approx(0.029)
+    assert P.billed(CHARGES_V0, 1) is None and P.billed({"results": []}, 58715600) is None
+
+
+def test_teardown_records_the_billed_amount_beside_the_estimate(E):
+    E.sh("offers.sh", "RTX_4090", "--pick", "111")
+    E.sh("launch.sh", "111", "r1")
+    E.state(charges={"results": [dict(CHARGES_V0["results"][0], source="instance-4242")], "next_token": None})
+    E.sh("teardown.sh", "r1")
+    (call,) = E.vast("show invoices-v1")
+    assert "--charges" in call and "--raw" in call
+    inv = E.ledger()[-1]
+    assert inv["event"] == "invoice" and "billed=$0.029" in inv["detail"]
+    assert not inv["cost_usd"]  # spend() counts the teardown row once
+
+
+def test_launch_cap_adds_the_image_pull(E):
+    """V0: the watchdog counts from launch, and the 5.88 GB pull took 5.7 min of a 10-min cap. GPU billing starts at
+    `running`, so the pull costs disk only; --cap-hours is job time and PULL_S is added to the box's cap."""
+    E.sh("offers.sh", "RTX_4090", "--pick", "111")
+    E.sh("launch.sh", "111", "r1", "--cap-hours", "2")
+    (c,) = E.vast("create instance")
+    assert f"WATCHDOG_CAP_S={7200 + P.PULL_S}" in c[c.index("--onstart-cmd") + 1] and P.PULL_S >= 360
+    run = json.loads((E.home / "active_runs.json").read_text())["r1"]
+    assert run["deadline"] - run["started"] == pytest.approx(7200 + P.PULL_S)
 
 
 def test_riga_decrypt_checks_shm_size(E):
@@ -864,15 +899,146 @@ def test_run_chain_for_an_r1_config(E):
     assert timing[:2] == ["-m", "experiments.phase2.train_sft"]
 
 
-def test_vision_ref_stage_and_r1_refuses_without_it(E):
-    cfgs = ["experiments/phase2/configs/r1_lfm.yaml", "experiments/phase2/configs/r1_qwen35.yaml"]
+def test_r1_refuses_on_the_box_without_its_g_vision_reference(E):
     E.launched()
-    line = next(ln for ln in E.sh("run.sh", "r1", "vision-ref", *cfgs).stdout.splitlines() if "tmux" in ln)
-    assert line.count("--vision_reference_only true") == 2 and all(c in line for c in cfgs)
-    assert "select_ckpt" not in line and "g_probe" not in line
-    assert P.vision_refs(ROOT / cfgs[1], "r1") == ["/workspace/runs/r1/vision_ref/qwen3.5-0.8b.json"]
-    line = next(ln for ln in E.sh("run.sh", "r1", cfgs[0]).stdout.splitlines() if "tmux" in ln)
+    line = next(ln for ln in E.sh("run.sh", "r1", "experiments/phase2/configs/r1_lfm.yaml").stdout.splitlines()
+                if "tmux" in ln)  # fmt: skip
     ref = "/workspace/runs/r1/vision_ref/lfm2.5-vl-450m.json"
-    assert f"test -f {ref}" in line and "run.sh r1 vision-ref" in line  # refused on the box, with the remedy
+    assert f"test -f {ref}" in line and "configs/r0.yaml first" in line  # refused on the box, with the remedy
     assert line.index(f"test -f {ref}") < line.index("experiments.phase2.train_sft")
-    E.sh("run.sh", "r1", "vision-ref", "experiments/phase2/configs/r0_timing_w0_det_off.yaml", ok=False)  # vision: off
+    assert P.vision_refs(ROOT / "experiments/phase2/configs/r1_qwen35.yaml", "r1") == [
+        "/workspace/runs/r1/vision_ref/qwen3.5-0.8b.json"]
+
+
+R0 = ROOT / "experiments/phase2/configs/r0.yaml"
+
+
+def test_r0_is_one_chain_of_the_plan_steps(E):
+    """PLAN §4.7 steps 3, 5-8 as one run.sh chain: image check, x86 hashes, idle K3, parity (both models; a failure
+    is recorded, not blocking: the HF-only path is pre-decided, D13), G-vision references, 4 timing arms, Qwen3.5."""
+    steps = P.chain(R0, "v1")
+    assert steps[0][:3] == ["~", "bash", "-c"] and "nvidia-smi -q" in steps[0][3] and "cpu.max" in steps[0][3]  # step 2
+    assert steps[1] == ["bash", "experiments/phase2/docker/image_check.sh", "/workspace/runs/v1/image_check.json"]
+    mods = [s[s.index("-m") + 1] for s in steps if "-m" in s]
+    assert mods[:2] == ["experiments.phase1.bench.xarch_hashes", "experiments.phase2.k3_harness"]
+    assert mods.count("experiments.phase2.r0_parity") == 2 and mods.count("experiments.phase2.train_sft") == 7
+    k3 = next(s for s in steps if "experiments.phase2.k3_harness" in s)
+    assert k3[k3.index("--root") + 1] == "/workspace/data/lidc/prepared"
+    cfgs = [s[s.index("--config") + 1] for s in steps if "--config" in s]
+    assert all((ROOT / c).exists() for c in cfgs) and len(cfgs) == 7
+    refs = [s[s.index("--config") + 1] for s in steps if "--vision_reference_only" in s]
+    assert refs == ["experiments/phase2/configs/r1_lfm.yaml", "experiments/phase2/configs/r1_qwen35.yaml"]
+    arms = {f"r0_timing_w{w}_det_{d}.yaml" for w in (0, 6) for d in ("on", "off")} | {"r0_qwen35_arm.yaml"}
+    assert {c.split("/")[-1] for c in cfgs[2:]} == arms
+    E.launched()
+    line = next(ln for ln in E.sh("run.sh", "r1", R0.relative_to(ROOT)).stdout.splitlines() if "tmux" in ln)
+    assert "bash experiments/phase2/docker/image_check.sh /workspace/runs/r1/image_check.json" in line
+    assert "/opt/venv/bin/python -I -m experiments.phase1.bench.xarch_hashes" in line
+    assert line.count("|| echo") == 3  # box record + two parity steps continue on failure; the rest stop the chain
+
+
+def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
+    """Audit: one session and one run.log per run_id made a second job (K3 under R1's load, §4.7 step 6) fail and
+    overwrote logs."""
+    E.launched()
+    out = E.sh("run.sh", "r1", "experiments.phase2.k3_harness", "--out", "/workspace/runs/r1/k3_load.json").stdout
+    assert "tmux new-session -d -s r1-k3_harness" in out and "/workspace/runs/r1/k3_harness.log" in out
+    out = E.sh("run.sh", "r1", "experiments/phase2/configs/r1_lfm.yaml").stdout
+    assert "-s r1-r1_lfm" in out and "/workspace/runs/r1/r1_lfm.log" in out
+    E.sh("run.sh", "r1", "experiments.phase1.bench.xarch_hashes", "--out", "x.json")
+    E.sh("run.sh", "r1", "experiments.phase1.build_data", ok=False)  # only the one Phase 1 module R0 needs
+
+
+def _cfg(name: str, text: str) -> Path:
+    """A config under the repo (chain() names it relative to ROOT), in the ignored build/ dir."""
+    (d := ROOT / "build" / "test_cfgs").mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(text)
+    return d / name
+
+
+def _on_box(E, tmp, *run_args):
+    """Run the script run.sh hands to tmux with bash, box paths under tmp (fake python and timeout): the calls made
+    as (cwd, OBJDEL_RUN_DIR, argv) lines, the EXIT code and the run dir."""
+    line = next(ln for ln in E.sh("run.sh", "r1", *run_args).stdout.splitlines() if "tmux" in ln)
+    inner = shlex.split(shlex.split(shlex.split(line.split("DRY_RUN: ", 1)[1])[-1])[-1])[2]
+    (tmp / "src").mkdir(exist_ok=True), (tmp / "bin").mkdir(exist_ok=True)
+    py, calls, rd = tmp / "bin/python", tmp / "calls", tmp / "runs/r1"
+    py.write_text(f'#!/bin/sh\necho "$PWD|$OBJDEL_RUN_DIR|$*" >> {calls}\n'), py.chmod(0o755)
+    (tmp / "bin/timeout").write_text('#!/bin/sh\nshift\nexec "$@"\n'), (tmp / "bin/timeout").chmod(0o755)
+    for box, local in (("/workspace/src", tmp / "src"), ("/workspace/runs", tmp / "runs"), ("/opt/venv/bin/python", py),
+                       ("sleep 60", "sleep 1")):  # fmt: skip
+        inner = inner.replace(box, str(local))
+    env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}")
+    subprocess.run(["bash", "-c", inner], env=env, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    lines = calls.read_text().splitlines() if calls.exists() else []
+    return [ln.split("|") for ln in lines], (rd / "EXIT").read_text().strip(), rd
+
+
+def test_run_sh_job_runs_in_the_code_dir_with_the_run_dir_exported(E, tmp_path):
+    """Audit: `cd ... && export ... && (heartbeat) &` backgrounded the whole && list, so the job ran in ssh's home dir
+    without OBJDEL_RUN_DIR (relative --config paths and train_sft's /workspace/runs check fail on the box)."""
+    E.launched()
+    calls, code, rd = _on_box(E, tmp_path, "experiments.phase2.k3_harness", "--out", "x.json")
+    assert calls == [[str(tmp_path / "src"), str(rd), "-I -m experiments.phase2.k3_harness --out x.json"]]
+    assert code == "0" and (rd / "k3_harness.log").exists() and (rd / "HEARTBEAT").exists()
+
+
+def test_soft_steps_continue_and_hard_steps_stop_the_chain(E, tmp_path):
+    _cfg("soft.yaml", json.dumps({"steps": [
+        ["~", "bash", "-c", "exit 3  # it's"], ["~", "-m", "experiments.phase2.a", "it's"],
+        ["-m", "experiments.phase2.b"], ["bash", "-c", "exit 4"], ["-m", "experiments.phase2.c"]]}))  # fmt: skip
+    E.launched()
+    calls, code, rd = _on_box(E, tmp_path, "build/test_cfgs/soft.yaml")
+    assert [c[2] for c in calls] == ["-I -m experiments.phase2.a it's", "-I -m experiments.phase2.b"]
+    log = (rd / "soft.log").read_text()
+    assert code == "4" and log.count("step failed, continuing: bash -c 'exit 3") == 1
+
+
+def test_c2_chain_trains_then_scores_only_the_topology_probe():
+    """Audit: each C2 run repeated R1's whole select_ckpt and g_probe (~1-2 GPU-h over three runs). `stages` picks the
+    stages; `branches_from` (resolved by train_sft on the box from R2's verdict) is not a timing run; `sampler` and the
+    rotated view reach select_ckpt."""
+    c2 = _cfg("c2.yaml", "model: lfm2.5-vl-450m\noutput_dir: c2-x\nbranches_from: r1-lfm/g_probe/g_probe.json\n"
+                         "stages: [train, topology]\nsampler: hf\nvision: off\n")  # fmt: skip
+    train, topo = P.chain(c2, "v1")
+    assert train[:2] == ["-m", "experiments.phase2.train_sft"] and train[-1] == "build/test_cfgs/c2.yaml"
+    assert topo[:2] == ["-m", "experiments.phase2.select_ckpt"] and topo[topo.index("--only") + 1] == "topology"
+    assert topo[topo.index("--run") + 1] == "/workspace/runs/v1/c2-x" and topo[topo.index("--sampler") + 1] == "hf"
+    assert "--shifted" not in topo
+    _, select, _ = P.chain(ROOT / "experiments/phase2/configs/r1_lfm.yaml", "v1")
+    assert select[select.index("--rotated") + 1] == "/workspace/data/lidc/eval_views/lidc-val-rotated"
+    assert "--sampler" not in select
+
+
+def test_chain_passes_a_numeric_g_vision_reference_as_is():
+    """RunArgs accepts R0's base distance as a number; select_ckpt reads a str reference as a file path."""
+    num = _cfg("num.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nvision: {prepared: prepared, reference: 0.25}\n")
+    _, select, _ = P.chain(num, "v1")
+    assert json.loads(select[select.index("--vision") + 1]) == {"prepared": "/workspace/data/lidc/prepared",
+                                                                "reference": 0.25}  # fmt: skip
+
+
+def test_sync_up_code_only_skips_the_bundle(E):
+    E.launched()
+    out = E.sh("sync_up.sh", "r1", "--code-only").stdout
+    rsyncs = [ln for ln in out.splitlines() if ln.startswith("DRY_RUN: rsync")]
+    assert len(rsyncs) == 1 and "--files-from" in rsyncs[0] and "bundle-lidc" not in out
+    assert "pip install" in out and E.ledger()[-1]["event"] == "sync" and not E.ledger()[-1]["bundle"]
+
+
+def test_code_snapshot_ships_no_local_vast_state():
+    """Audit: `git ls-files -co --exclude-standard` also lists untracked files, so the ledger, offers, invoices and run
+    records would reach the rented host. They are ignored; the allowlist (image pin, no secret) stays tracked."""
+    files = set(P.code_files())
+    state = ("ledger.csv", "offers/", "invoices/", "active_runs.json", "code_files.txt", "known_hosts")
+    assert not {f for f in files for s in state if f.startswith(f"experiments/phase2/vast/{s}")}
+
+
+def test_launch_idle_minutes_reach_the_watchdog(E):
+    """V1 has decision gaps (stop rule, gates, C2) between jobs; the watchdog's idle destroy (default 30 min after a
+    pulled EXIT) can be widened per session."""
+    E.sh("offers.sh", "RTX_4090", "--pick", "111")
+    E.sh("launch.sh", "111", "r1", "--idle-minutes", "90")
+    (c,) = E.vast("create instance")
+    assert "WATCHDOG_IDLE_S=5400" in c[c.index("--onstart-cmd") + 1] and len(c[c.index("--onstart-cmd") + 1]) <= 4048
+    assert "WATCHDOG_IDLE_S=1800" in P.onstart_cmd("r2", 600)  # the default, as watchdog.sh's own

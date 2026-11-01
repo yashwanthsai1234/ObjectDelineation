@@ -15,7 +15,8 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = sorted((ROOT / "experiments/phase2/configs").glob("*.yaml"))
+CONFIGS = sorted(c for c in (ROOT / "experiments/phase2/configs").glob("*.yaml")
+                 if "\nsteps:" not in c.read_text())  # r0.yaml is a step list for run.sh, not a train_sft config
 W0 = {"r0_timing_w0_det_off", "r0_timing_w0_det_on"}
 
 

@@ -3,6 +3,7 @@
     python -I -m experiments.phase2.select_ckpt --run runs/r1 --shifted data/eval_views/lidc-val-shifted \
         --vision '{"prepared": root, "reference": R0 base value}' | --no-vision \
         [--sampler vllm|hf] [--items 256] [--rescaled V] [--rotated V] [--prepared P] [--probes DIR]
+    python -I -m experiments.phase2.select_ckpt --run runs/c2 --probes DIR --only topology [--sampler hf]
 
 Order (D13): refuse unless train_sft has exited (manifest status "done", pid gone on this host); preload the eval
 views' caches (objdel.train.serve.preload) and fork the reward pool before anything imports CUDA; per branch, export
@@ -10,11 +11,11 @@ the prompts (objdel.train.sample.export_prompts), launch the sampler child (vLLM
 `/opt/vllm/bin/python`, or `experiments.phase2.hf_sample`; same JSONL bridge) after asserting
 torch.cuda.is_initialized() is False here, with a timeout, at most TRIES attempts, and a completeness check (every
 prompt id has its n samples; a partial file is a failed attempt); completions whose `.meta.json` records the same
-prompts' SHA-256 are reused on a rerun. Then import the completions (truncation by TRL's rule), score them on the pool
+prompts' SHA-256 and child command (sampler, checkpoint, flags) are reused on a rerun. Then import the completions (truncation by TRL's rule), score them on the pool
 (objdel.eval.metrics with the preloaded CacheRef), build the B2 signal panel (objdel.eval.signal) and G-vision on the
 CPU (objdel.eval.vision). Eligible (D12) = gates.eligible: phase2_entry's G-format, G-signal (groups of 8) and
-G-vision on the shifted view, one rule with the gate table, and an unmeasured G-vision fails (`--vision` is required; `--no-vision`
-makes every branch ineligible). Rule R-B (prereg.select_rb) picks the branch; none eligible -> the deepest is gated
+G-vision on the shifted view, one rule with the gate table, and an unmeasured G-vision fails (`--vision` is required;
+`--no-vision` makes every branch ineligible). Rule R-B (prereg.select_rb) picks the branch; none eligible -> the deepest is gated
 (§6.3). `--items N` is a seeded subset (SUBSET_SEED) for branch selection only (D13 HF path).
 
 The selected (or gated) branch then gets, always on the full views: shifted (re-sampled when --items was used) and
@@ -22,7 +23,14 @@ rescaled at K = 8 (gates), shifted at K = 16 (HM-IoU16 / GED16, report-only), G-
 probes on every probe record (--probes; probe records are rl: false, so not grpo_rows), and the free attribution
 check (--rotated: rotated vs identity shifted view, paired median IoU_tc, report-only; plan §6.1). Writes
 `<out>/selected.json`, `<out>/report.json` and `<out>/gates.json` (prereg.entry). Samples stay in
-`<out>/<branch>/<view>/` for re-scoring on the Mac.
+`<out>/<branch>/<view>/` for re-scoring on the Mac. selected.json's "gates_pass" / "gates_failed" (gate names) are
+what g_probe --select reads to skip after a §5.1 failure.
+
+`--only topology` (C2 runs, PLAN §6.1 R3-R5: one branch, its depth already chosen by R1's G-probe): the topology probe
+alone on the run's single branch at K = --k (8), scored by objdel.eval.probes.score_topology into
+`<out>/report.json` {"only", "branch", "sampler", "k", "probes": {"topology"}} (c2_analyze reads probes.topology as
+one seed's file). No selection, other views, G-vision, prior or gates: --shifted, --vision / --no-vision, --prepared,
+--rescaled and --rotated are not needed and are ignored.
 
 References: PLAN D12 (R-B), D13 (sampler sequencing), §5.1 gates, §6.1 R1; vLLM offline inference
 https://docs.vllm.ai/en/stable/serving/offline_inference.html
@@ -32,6 +40,7 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -52,16 +61,14 @@ TRIES = 2  # sampler child attempts
 def exited(run: Path) -> dict:
     """train_sft's manifest, after checking that it finished and its process is gone. A pid recorded on another host
     (manifest "host") cannot be checked here; PermissionError means the pid exists (another user's process)."""
-    man = json.loads((run / "manifest.json").read_text())
-    alive = False
-    if man.get("host", socket.gethostname()) == socket.gethostname() and man["pid"] != os.getpid():
-        try:
-            os.kill(man["pid"], 0)
-            alive = True
-        except PermissionError:
-            alive = True
-        except ProcessLookupError:
-            pass
+    man, host = json.loads((run / "manifest.json").read_text()), socket.gethostname()
+    alive = man.get("host", host) == host and man["pid"] != os.getpid()
+    try:
+        alive and os.kill(man["pid"], 0)
+    except ProcessLookupError:
+        alive = False
+    except PermissionError:
+        pass
     if man.get("status") != "done" or alive:
         raise RuntimeError(f"{run}: train_sft status {man.get('status')!r}, pid alive {alive}: it must exit first")
     return man
@@ -73,10 +80,10 @@ def cuda_untouched() -> None:
         raise RuntimeError("CUDA is initialized in select_ckpt: the sampler child would share the GPU (D13)")
 
 
-def sampler_cmd(kind: str, prompts: Path, model: Path, out: Path) -> list[str]:
+def sampler_cmd(kind: str, prompts: Path, model: Path, out: Path, extra=()) -> list[str]:
     head = [VLLM_PYTHON, "-I", str(ROOT / "experiments/phase2/sample_vllm.py")]
     head = head if kind == "vllm" else [sys.executable, "-I", "-m", "experiments.phase2.hf_sample"]
-    return head + ["--prompts", str(prompts), "--model", str(model), "--out", str(out)]
+    return head + ["--prompts", str(prompts), "--model", str(model), "--out", str(out), *extra]
 
 
 def complete(comps: Path, want: Counter) -> bool:
@@ -87,22 +94,36 @@ def complete(comps: Path, want: Counter) -> bool:
         return False
 
 
-def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: float) -> None:
-    """The sampler child, bounded: reuse matching completions, else TRIES attempts of `timeout` s each."""
+def run_group(cmd: list[str], timeout: float) -> None:
+    """subprocess.run(check=True, timeout=...) in a new session, killing the whole group on timeout: vLLM's engine is
+    a child process that holds the GPU, and the next job in the chain needs it."""
+    with subprocess.Popen(cmd, start_new_session=True) as p:
+        try:
+            if p.wait(timeout):
+                raise subprocess.CalledProcessError(p.returncode, cmd)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            raise
+
+
+def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: float, extra=()) -> None:
+    """The sampler child (extra: more flags, e.g. --logprobs), bounded: reuse completions of the same prompts and
+    child command (sampler, checkpoint, flags), else TRIES attempts of `timeout` s each."""
     want = Counter({p["id"]: p["n"] for p in map(json.loads, prompts.read_text().splitlines())})
-    sha, meta = hashlib.sha256(prompts.read_bytes()).hexdigest(), comps.with_suffix(".meta.json")
-    if meta.is_file() and json.loads(meta.read_text()).get("prompts_sha256") == sha and complete(comps, want):
+    cmd, meta = sampler_cmd(kind, prompts, model, comps, extra), comps.with_suffix(".meta.json")
+    stamp = {"prompts_sha256": hashlib.sha256(prompts.read_bytes()).hexdigest(), "cmd": cmd}
+    if meta.is_file() and json.loads(meta.read_text()) == stamp and complete(comps, want):
         return
     meta.unlink(missing_ok=True)
     for attempt in range(1, TRIES + 1):
         cuda_untouched()
         try:
-            subprocess.run(sampler_cmd(kind, prompts, model, comps), check=True, timeout=timeout)
+            run_group(cmd, timeout)
             err = None if complete(comps, want) else "partial output (an id without its n samples)"
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             err = str(e)
         if err is None:
-            meta.write_text(json.dumps({"prompts_sha256": sha}) + "\n")
+            meta.write_text(json.dumps(stamp) + "\n")
             return
         print(f"select_ckpt: sampler attempt {attempt}/{TRIES} on {model}: {err}", file=sys.stderr)
     raise RuntimeError(f"sampler failed {TRIES} times on {prompts}: {err}")
@@ -134,20 +155,34 @@ def view_rows(view: Path, items: int | None = None, rl_only: bool = True) -> lis
     ]
 
 
-def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int) -> dict:
-    """The sampler child on `rows` -> {key: completions row}."""
+def stop_ids(path: Path, proc) -> set[int]:
+    """rewards.stop_ids of a checkpoint directory. Base weights may have no generation_config.json (Qwen3.5-0.8B,
+    whose eos is only text_config's): then the model config's, as from_pretrained falls back for a loaded model."""
     from types import SimpleNamespace
 
-    from transformers import AutoProcessor, GenerationConfig
+    from transformers import AutoConfig, GenerationConfig
 
-    from objdel.train import rewards, sample
+    from objdel.train import rewards
+
+    try:
+        gen = GenerationConfig.from_pretrained(path)
+    except OSError:
+        gen = GenerationConfig.from_model_config(AutoConfig.from_pretrained(path))  # reads text_config's eos too
+    return rewards.stop_ids(SimpleNamespace(generation_config=gen), proc)
+
+
+def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) -> dict:
+    """The sampler child on `rows` (`out`/prompts.jsonl -> `out`/completions.jsonl) -> {key: completions row}."""
+    from transformers import AutoProcessor
+
+    from objdel.train import sample
 
     out.mkdir(parents=True, exist_ok=True)
     proc = AutoProcessor.from_pretrained(branch)  # saved by train_sft with the run's processor kwargs
-    stop = rewards.stop_ids(SimpleNamespace(generation_config=GenerationConfig.from_pretrained(branch)), proc)
+    stop = stop_ids(branch, proc)
     prompts, comps = out / "prompts.jsonl", out / "completions.jsonl"
     sample.export_prompts(rows, prompts, a.model, "lidc", k, processor=proc, stop_ids=stop, seed=a.seed)
-    run_sampler(a.sampler, prompts, branch, comps, 600 + a.timeout_s * len(rows) * k)
+    run_sampler(a.sampler, prompts, branch, comps, 600 + a.timeout_s * len(rows) * k, extra)
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
 
 
@@ -181,10 +216,19 @@ def prior_ci(model_iou: dict, prior_rows: list[dict]) -> dict:
     return {"lidc": out}
 
 
+def score_probe(a, branch: Path, p: str, out: Path) -> dict:
+    """Probe `p` ("precision" / "topology", every record of a.probes/probe-<p>) at K = a.k -> its scorer's result."""
+    from objdel.eval import probes
+
+    d = a.probes / f"probe-{p}"
+    done = sample_view(a, branch, view_rows(d, rl_only=False), out / f"probe-{p}", a.k)
+    return getattr(probes, f"score_{p}")(list(done.values()), d)
+
+
 def judge(a, sel: dict, out: Path, pool) -> dict:
     """The §5.1 report of the selected (or gated) branch, on the full views (--items never applies here, D13)."""
     from experiments.phase2 import baselines
-    from objdel.eval import probes, signal
+    from objdel.eval import signal
 
     best, whole = a.run / "branches" / sel["name"], argparse.Namespace(**vars(a) | {"items": None})
 
@@ -206,12 +250,22 @@ def judge(a, sel: dict, out: Path, pool) -> dict:
             v: prior_ci(r["iou"], baselines.score_prior(views[v], "lidc", "val", fit)) for v, r in scored.items()
         }
     if a.probes:
-        report["probes"] = {}
-        for p, scorer in (("precision", probes.score_precision), ("topology", probes.score_topology)):
-            d = a.probes / f"probe-{p}"
-            done = sample_view(whole, best, view_rows(d, rl_only=False), out / f"probe-{p}", a.k)
-            report["probes"][p] = scorer(list(done.values()), d)
+        report["probes"] = {p: score_probe(whole, best, p, out) for p in ("precision", "topology")}
     return report
+
+
+def topology_only(a) -> int:
+    """--only topology (C2): the topology probe on the run's single branch -> <out>/report.json."""
+    a.model = a.model or exited(a.run)["config"]["model"]
+    names, out = sorted(p.name for p in (a.run / "branches").iterdir()), a.out or a.run / "select"
+    if a.probes is None or len(names) != 1:
+        raise SystemExit(f"select_ckpt --only topology: needs --probes and one branch, found {names}")
+    topo = score_probe(a, a.run / "branches" / names[0], "topology", out / names[0])
+    report = {"only": "topology", "branch": names[0], "sampler": a.sampler, "k": a.k, "probes": {"topology": topo}}
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "report.json").write_text(json.dumps(report, indent=1, default=str) + "\n")
+    print(json.dumps({"branch": names[0], "pass": topo.get("pass")}))
+    return 0
 
 
 def vision_config(a) -> dict | None:
@@ -242,7 +296,7 @@ def vision_check(branch: Path, cfg: dict | None) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--run", type=Path, required=True, help="train_sft output_dir")
-    ap.add_argument("--shifted", type=Path, required=True, help="shifted-val eval view (selection)")
+    ap.add_argument("--shifted", type=Path, help="shifted-val eval view (selection; required unless --only)")
     ap.add_argument("--rescaled", type=Path, help="rescaled-val eval view (selected branch only)")
     ap.add_argument("--rotated", type=Path, help="rotated shifted-val eval view (attribution check, report-only)")
     ap.add_argument("--prepared", type=Path, help="prepared root: the image-blind prior is fitted on lidc/train")
@@ -258,7 +312,12 @@ def main(argv=None) -> int:
     vis = ap.add_mutually_exclusive_group()
     vis.add_argument("--vision", help='G-vision JSON {"prepared": root, "reference": R0 value or JSON} (required)')
     vis.add_argument("--no-vision", action="store_true", help="G-vision not measured: every branch ineligible")
+    ap.add_argument("--only", choices=("topology",), help="C2: only the topology probe of a single-branch run")
     a = ap.parse_args(argv)
+    if a.only:
+        return topology_only(a)
+    if a.shifted is None:
+        ap.error("--shifted is required (unless --only topology)")
     vision_cfg = vision_config(a)
     man = exited(a.run)
     a.model = a.model or man["config"]["model"]
@@ -291,6 +350,7 @@ def main(argv=None) -> int:
         "reasons": why,
         "gates_branch": judged,
         "gates_pass": gate and gate["pass"],
+        "gates_failed": [n for n, g in gate["gates"].items() if not g["pass"]] if gate else [],
         "sampler": a.sampler,
         "k": a.k,
         "items": a.items,
