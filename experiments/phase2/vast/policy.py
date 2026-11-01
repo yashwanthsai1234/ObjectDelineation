@@ -2,7 +2,7 @@
 `*.sh` files next to this module are symlinks to the one shim `vast.sh` (the link's name is the command), and
 `watchdog.sh` is the only logic that runs on the box.
 
-    offers.sh GPU [--riga] [--disk GB] [--pick OFFER_ID]       search (§4.2 filter), top 5; --pick saves the offer
+    offers.sh GPU [--riga] [--disk GB] [--pick OFFER_ID|top]   search (§4.2 filter), top 5; --pick saves the offer
     launch.sh OFFER_ID RUN_ID [--cap-hours H] [--allow-parallel] [--owner-approved]
     sync_up.sh RUN_ID [--bundle lidc|riga] [--bundle-dir DIR]  code (git ls-files) + bundle, SHA-256 verified on the box
     run.sh RUN_ID MODULE|CONFIG.yaml|vision-ref CONFIG... [ARGS]  timeout + tmux + heartbeat; a config runs its chain
@@ -88,8 +88,9 @@ def is_raw(p: Path) -> bool:
 
 
 def terms(gpu: str, dataset: str, disk: int = 80) -> list[tuple]:
-    """(reason, query term, offer JSON key, op, limit, scale) per term. Vast reports gpu_ram / cpu_ram in MB (the query
-    takes GB). `duration` is query-only: its JSON unit is UNVERIFIED."""
+    """(reason, query term, offer JSON key, op, limit, scale) per term. Vast reports gpu_ram (MiB) and cpu_ram (MB) and
+    the query takes GB; V0 showed cpu_ram>=32 returns 32160, so cpu_ram counts 1 GB = 1000 MB. `verification` is the
+    string "verified" in the JSON (the query term is `verified=true`). `duration` is query-only: its unit is UNVERIFIED."""
     if gpu not in CARDS:
         raise ValueError(f"unknown card {gpu}; one of {sorted(CARDS)}")
     c, mb = CARDS[gpu], 1 / 1024
@@ -99,11 +100,11 @@ def terms(gpu: str, dataset: str, disk: int = 80) -> list[tuple]:
         ("gpu_name", f"gpu_name={gpu}", "gpu_name", "=", gpu, 1),
         ("gpu_ram", f"gpu_ram>={lo}", "gpu_ram", ">=", lo, mb) if lo else None,
         ("gpu_ram", f"gpu_ram<={hi}", "gpu_ram", "<=", hi, mb),
-        ("verified", "verified=true", "verified", "=", True, 1),
+        ("verified", "verified=true", "verification", "=", "verified", 1),
         ("rentable", "rentable=true", "rentable", "=", True, 1),
         ("reliability", "reliability>0.98", "reliability2", ">", 0.98, 1),
         ("cores", "cpu_cores_effective>=12", "cpu_cores_effective", ">=", 12, 1),
-        ("cpu_ram", f"cpu_ram>={cpu}", "cpu_ram", ">=", cpu, mb),
+        ("cpu_ram", f"cpu_ram>={cpu}", "cpu_ram", ">=", cpu, 1 / 1000),
         ("cuda", "cuda_vers>=13.0", "cuda_max_good", ">=", 13.0, 1),
         ("disk", f"disk_space>={disk}", "disk_space", ">=", disk, 1),
         ("inet_down", "inet_down>=500", "inet_down", ">=", 500, 1),
@@ -205,7 +206,7 @@ def vast(*args: str, tries: int = 1):
         env["VAST_API_KEY"] = secret("objdel-vast-scoped")
     for i in range(tries):
         p = subprocess.run(["vastai", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
-        if not p.returncode:
+        if not p.returncode and (p.stdout.strip() or "--raw" not in args):  # an API error exits 0 with empty stdout (V0)
             return json.loads(p.stdout) if "--raw" in args else p.stdout
         if i < tries - 1:
             time.sleep(float(os.environ.get("VAST_POLL_S", 10)))
@@ -273,17 +274,18 @@ def cmd_offers(a) -> None:
     for o in ok:
         print(
             f"{o['id']:>10}  ${o['dph_total']:.3f}/h  {o['gpu_ram'] / 1024:.0f} GB  {o['cpu_cores_effective']} cores"
-            f"  {o['cpu_ram'] / 1024:.0f} GB RAM  cuda {o['cuda_max_good']}  hosting_type {o.get('hosting_type')}"
+            f"  {o['cpu_ram'] / 1000:.0f} GB RAM  cuda {o['cuda_max_good']}  hosting_type {o.get('hosting_type')}"
             f"  ${o['inet_up_cost']}/GB up"
         )
     if a.pick is None:
         return
-    o = next((o for o in ok if o["id"] == a.pick), None)
+    o = ok[0] if a.pick == "top" and ok else next((o for o in ok if str(o["id"]) == a.pick), None)  # top: no race
     if o is None:
         die(f"offer {a.pick} is not among the admissible offers above")
     (home() / "offers").mkdir(exist_ok=True)
     (home() / "offers" / f"{o['id']}.json").write_text(json.dumps(dict(o, _gpu=a.gpu, _dataset=ds, _disk=a.disk)))
     ledger(event="offer", offer_id=o["id"], gpu=a.gpu, **offer_cols(o), detail=query(a.gpu, ds, a.disk))
+    print(f"picked {o['id']}")
 
 
 def cmd_launch(a) -> None:
@@ -502,7 +504,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="vast", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("offers")
-    p.add_argument("gpu"), p.add_argument("--riga", action="store_true"), p.add_argument("--pick", type=int)
+    p.add_argument("gpu"), p.add_argument("--riga", action="store_true"), p.add_argument("--pick")
     p.add_argument("--disk", type=int, default=80)
     p = sub.add_parser("launch")
     p.add_argument("offer", type=int), p.add_argument("run_id"), p.add_argument("--cap-hours", type=float, default=4)

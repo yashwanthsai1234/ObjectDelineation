@@ -1,0 +1,22 @@
+{
+ "id": 58395202,
+ "ask_contract_id": 58395202,
+ "gpu_name": "RTX 3090",
+ "num_gpus": 1,
+ "gpu_ram": 24576,
+ "cpu_ram": 32195,
+ "cpu_cores_effective": 12.0,
+ "cuda_max_good": 13.3,
+ "dph_total": 0.2288888888888889,
+ "reliability2": 0.9932335,
+ "disk_space": 83.77500000000009,
+ "inet_down": 790.5,
+ "direct_port_count": 256,
+ "verification": "verified",
+ "rentable": true,
+ "hosting_type": 0,
+ "host_id": 116365,
+ "machine_id": 33061,
+ "inet_up_cost": 0.00390625,
+ "inet_down_cost": 0.0026041666666666665
+}
