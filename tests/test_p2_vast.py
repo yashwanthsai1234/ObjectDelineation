@@ -82,7 +82,7 @@ def offer(oid=111, gpu="RTX 4090", **kw):
         "disk_space": 200,
         "inet_down": 900,
         "direct_port_count": 10,
-        "verified": True,
+        "verification": "verified",  # V0: Vast sends this string, not a "verified" bool
         "rentable": True,
         "hosting_type": 0,
         "host_id": 7,
@@ -254,12 +254,31 @@ def test_ceilings_are_1p5x_snapshot_median():
         ({"cpu_ram": 16000}, "cpu_ram"),
         ({"num_gpus": 2}, "num_gpus"),
         ({"gpu_name": "RTX 3090"}, "gpu_name"),
-        ({"verified": False}, "verified"),
+        ({"verification": "unverified"}, "verified"),
+        ({"verification": None}, "verified"),
     ],
 )
 def test_admissible_rejects(bad, why):
     assert P.reasons(offer(), "RTX_4090", "lidc") == []
     assert any(why in r for r in P.reasons(offer(**bad), "RTX_4090", "lidc"))
+
+
+def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
+    """V0: on an API error vastai prints {"error": ...} to stderr, nothing to stdout, and exits 0 (cli/main.py
+    run_command). The first launch crashed on json.loads("") and lost the message."""
+    err = '{"error": true, "status_code": 400, "msg": "offer no longer available"}\n'
+    monkeypatch.setenv("VAST_API_KEY", "k")
+    monkeypatch.setattr(P.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", err))
+    with pytest.raises(SystemExit, match="offer no longer available"):
+        P.vast("create", "instance", "1", "--raw")
+
+
+def test_real_offer_from_v0_is_admissible():
+    """A 3090 offer as Vast's search returned it at V0 (2026-11-01): `verification` is a string, and cpu_ram is in
+    MB with 1 GB = 1000 MB (Vast returned cpu_ram 32160 for the query cpu_ram>=32). All offers failed before."""
+    o = json.loads((Path(__file__).parent / "p2_vast_offer_3090.json").read_text())
+    assert P.reasons(o, "RTX_3090", "lidc") == []
+    assert any("cpu_ram" in r for r in P.reasons(dict(o, cpu_ram=31999), "RTX_3090", "lidc"))
 
 
 # --- H-GOV on the recorded snapshot (D16) ---------------------------------------------------------------------------
@@ -431,6 +450,14 @@ def test_one_instance_rule(E):
     assert "--allow-parallel" in p.stderr and not E.vast("create instance")
     E.sh("launch.sh", "111", "r1", "--allow-parallel")
     assert E.vast("create instance")
+
+
+def test_pick_top_takes_the_cheapest_admissible_offer_of_the_same_search(E):
+    """V0: Vast re-lists offers between searches, so `offers.sh` then `--pick <id>` raced and lost; `--pick top`
+    picks from the one search."""
+    E.state(offers=[offer(222, dph_total=0.4), offer(111, dph_total=0.5)])
+    p = E.sh("offers.sh", "RTX_4090", "--pick", "top")
+    assert (E.home / "offers" / "222.json").exists() and "picked 222" in p.stdout
 
 
 def test_launch_needs_a_picked_admissible_offer(E):

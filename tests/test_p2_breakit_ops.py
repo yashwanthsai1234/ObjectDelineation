@@ -225,7 +225,7 @@ def test_card_boundaries(gpu):
     if lo:
         assert P.reasons(dict(base, gpu_ram=lo * 1024 - 1), gpu, "lidc") == ["gpu_ram fails the §4.2 filter"]
     need = max(32, c.get("cpu_ram", 0))
-    assert P.reasons(dict(base, cpu_ram=need * 1024 - 1), gpu, "lidc") == ["cpu_ram fails the §4.2 filter"]
+    assert P.reasons(dict(base, cpu_ram=need * 1000 - 1), gpu, "lidc") == ["cpu_ram fails the §4.2 filter"]  # MB, V0
     assert P.reasons(dict(base, hosting_type=0), gpu, "riga") == ["datacenter fails the §4.2 filter"]
     q = P.query(gpu, "lidc")
     assert f"dph<={c['ceiling']}" in q and f"gpu_ram<={hi}" in q and "datacenter" not in q
