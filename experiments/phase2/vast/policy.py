@@ -223,8 +223,9 @@ def remote(run: dict, command: str, stdin: str | None = None, what: str = "") ->
     sh([*ssh(run), f"root@{run['ip']}", command], stdin, what)
 
 
-def rsync(run: dict, src: str, dst: str, *extra: str) -> None:
-    sh(["rsync", "-az", "--exclude=data/raw/", *extra, "-e", shlex.join(ssh(run)), src, dst])
+def rsync(run: dict, *paths: str, opts: tuple = ()) -> None:
+    """paths: sources, then the destination (V1: two sources once made the .sha256 the destination)."""
+    sh(["rsync", "-az", "--exclude=data/raw/", *opts, "-e", shlex.join(ssh(run)), *paths])
 
 
 def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None:
@@ -255,7 +256,8 @@ def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: i
     k = "/root/.ssh/authorized_keys"  # V1: some hosts write it with a foreign owner and sshd refuses it (vast-cli #336)
     fix = (f"(for i in $(seq 60); do [ -f {k} ] && chown root:root {k} && chmod 600 {k} && chmod 700 /root/.ssh "
            f"&& chmod go-w /root; sleep 2; done) & ")
-    return fix + f"printf %s {b64} | base64 -d > /root/watchdog.sh && {env} nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &"
+    tmux = "touch /root/.no_auto_tmux; "  # V1: Vast's login tmux broke every `ssh host CMD` ("not a terminal")
+    return tmux + fix + f"printf %s {b64} | base64 -d > /root/watchdog.sh && {env} nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &"
 
 
 def offer_cols(o: dict) -> dict:
@@ -343,8 +345,8 @@ def get_run(run_id: str) -> dict:
 def code_files() -> list[str]:
     """The tracked code snapshot, without data, docs, lab or results dirs, or RIGA-derived tables (D16, BK4-13).
     tests/ ships: k3_harness -> phase1.reward_gates -> tests.oracles."""
-    git = ["git", "ls-files", "-co", "--exclude-standard"]
-    files = subprocess.run(git, cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+    git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole (V1)
+    files = subprocess.run(git, cwd=ROOT, capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
     drop = re.compile(r"^(data|docs)/|^experiments/[^/]+/(lab|results)/|riga[^/]*\.(csv|jsonl?)$", re.I)
     files = [f for f in files if not drop.search(f)]
     if not any(f.startswith("tests/oracles/") for f in files):
@@ -364,7 +366,7 @@ def cmd_sync_up(a) -> None:
     lst = home() / "code_files.txt"
     lst.write_text("\n".join(code_files()) + "\n")
     host = f"root@{run['ip']}:"
-    rsync(run, f"{ROOT}/", f"{host}/workspace/src/", f"--files-from={lst}")
+    rsync(run, f"{ROOT}/", f"{host}/workspace/src/", opts=(f"--files-from={lst}",))
     remote(run, "cd /workspace/src && uv pip install --python /opt/venv/bin/python --no-deps --no-build-isolation -e ."
                 f" && cd / && /opt/venv/bin/python -I -c {shlex.quote(IMPORT_CHECK)}")  # fmt: skip
     if a.code_only:  # a code fix mid-session: the bundle is already on the box
@@ -427,6 +429,8 @@ def cmd_run(a) -> None:
     `chain` under one cap, refused on the box while a G-vision reference it reads is missing (R0 writes them). Each job
     has its own tmux session and log (<run_id>-<name>, <name>.log), so a second job can run beside the first."""
     run, guard = get_run(a.run_id), []
+    if a.module.endswith(".yaml") and a.args:  # V1: a trailing --cap-hours was silently ignored
+        die(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
     if a.module.endswith(".yaml"):
         stages, name = chain(ROOT / a.module, a.run_id), Path(a.module).stem
         guard = [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} "
@@ -460,7 +464,7 @@ def cmd_pull(a) -> None:
     for run_id in [a.run_id] if a.run_id else list(active()):
         run, dst = get_run(run_id), Path(os.environ.get("VAST_RUNS", ROOT / "runs")) / run_id
         dst.mkdir(parents=True, exist_ok=True)
-        rsync(run, f"root@{run['ip']}:/workspace/runs/{run_id}/", f"{dst}/", "--exclude=PULLED_OK")
+        rsync(run, f"root@{run['ip']}:/workspace/runs/{run_id}/", f"{dst}/", opts=("--exclude=PULLED_OK",))
         remote(run, f"touch /workspace/runs/{run_id}/PULLED_OK")
 
 
