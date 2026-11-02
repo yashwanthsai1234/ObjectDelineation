@@ -1,6 +1,8 @@
 """Upload a run's selected branch to the owner's private HF model repo (on the box; the Mac runs push_hf.sh).
 
     python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-lfm < token
+    (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
+    be the run's)
 
 The token arrives on stdin (push_hf.sh streams it from the Mac keychain over ssh: never on argv, in the environment or
 on disk); push_hf.sh refuses it unless token_problems is empty: fine-grained, write access to this one repo only (the
@@ -87,14 +89,17 @@ def main(argv=None) -> int:
     ap.add_argument("--run", type=Path, required=True, help="train_sft output dir (select/ inside)")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--revision", required=True, help="the repo branch, e.g. r1-lfm")
+    ap.add_argument("--view", type=Path, help="local copy of the training view (default: the manifest's path)")
     a = ap.parse_args(argv)
     token = sys.stdin.readline().strip() or sys.exit("hf_push: no token on stdin")
     sel = json.loads((a.run / "select" / "selected.json").read_text())
     if not sel["selected"]:
         sys.exit(f"hf_push: {a.run}: no branch selected (none passed D12); nothing to upload")
     man = json.loads((a.run / "manifest.json").read_text())
-    ds = json.loads((Path(man["config"]["view"]) / "manifest.json").read_text())["dataset"]
-    if ds != "lidc":
+    view = json.loads(((a.view or Path(man["config"]["view"])) / "manifest.json").read_text())
+    if view["view_hash"] != man["view"]["view_hash"]:
+        sys.exit(f"hf_push: {a.view}: view_hash {view['view_hash']} is not the run's {man['view']['view_hash']}")
+    if (ds := view["dataset"]) != "lidc":
         sys.exit(f"hf_push: {a.run} trained on {ds}: only LIDC runs are uploaded (RIGA's licence forbids "
                  "redistribution, D16)")  # fmt: skip
     hub = api(token)

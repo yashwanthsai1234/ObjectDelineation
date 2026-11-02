@@ -158,3 +158,19 @@ def test_push_hf_refuses_an_over_broad_token_before_touching_the_box(monkeypatch
 
 def test_push_hf_has_its_shim():
     assert (Path(P.__file__).parent / "push_hf.sh").resolve().name == "vast.sh"
+
+
+def test_push_from_the_mac_takes_a_local_copy_of_the_view_with_the_same_hash(tmp_path, monkeypatch, fake):
+    """The run manifest names the box's view path; on the Mac --view points at the local copy, accepted only when its
+    view_hash is the one the run trained on (and its dataset is LIDC)."""
+    run = run_dir(tmp_path)
+    man = json.loads((run / "manifest.json").read_text())
+    local = Path(man["config"]["view"])
+    man["config"]["view"] = "/workspace/data/lidc/views/lidc-bundle"  # the box path
+    (run / "manifest.json").write_text(json.dumps(man))
+    monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
+    assert H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-lfm", "--view", str(local)]) == 0
+    (local / "manifest.json").write_text(json.dumps({"dataset": "lidc", "view_hash": "other"}))
+    monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
+    with pytest.raises(SystemExit, match="view_hash"):
+        H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-lfm", "--view", str(local)])
