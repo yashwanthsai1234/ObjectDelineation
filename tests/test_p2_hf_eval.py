@@ -436,8 +436,8 @@ def test_hf_sample_loads_bf16_on_the_gpu_whatever_the_checkpoint_dtype(monkeypat
     """V1 review: from_pretrained's default dtype is "auto", so R0's rate (bf16 base weights) and R1's branches (saved
     fp32 by full FT) would sample at different precisions and the projection would undercount. The GPU always samples
     in bf16, the dtype of D13's vLLM path and of the parity check; CPU smoke runs stay fp32."""
-    import torch
-    import transformers
+    torch = pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
 
     from experiments.phase2 import hf_sample
 
