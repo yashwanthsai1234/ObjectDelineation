@@ -357,3 +357,16 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
 
 GRPO_SMOKE = {"per_device_train_batch_size": 8, "gradient_accumulation_steps": 1, "per_device_eval_batch_size": 8,
               "max_completion_length": 8, "use_cpu": True, "bf16": False, "beta": 0.0}
+
+
+def test_select_ckpt_blocks_the_cuda_only_conv_package_before_any_model_loads():
+    """V1 rerun (2026-11-02): transformers 5.20 runs LFM2's (and Qwen3.5's) short convolution through the
+    `causal_conv1d` package whenever it is installed, on any device; the package is CUDA-only, so select_ckpt's CPU
+    G-vision check crashed on the GPU image ("Expected x.is_cuda()"). select_ckpt never uses CUDA: main() blocks the
+    package first, and transformers falls back to its torch path."""
+    code = ("import sys\nfrom experiments.phase2 import select_ckpt as S\n"
+            "try:\n    S.main(['--help'])\nexcept SystemExit:\n    pass\n"
+            "assert 'causal_conv1d' in sys.modules and sys.modules['causal_conv1d'] is None, 'not blocked'\n"
+            "try:\n    import causal_conv1d\nexcept ImportError:\n    print('blocked')\n")  # fmt: skip
+    p = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=300)
+    assert p.stdout.strip().endswith("blocked"), p.stdout[-500:] + p.stderr[-2000:]

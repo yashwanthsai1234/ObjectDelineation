@@ -318,6 +318,10 @@ def vision_check(branch: Path, cfg: dict | None) -> dict:
 
 
 def main(argv=None) -> int:
+    # Never CUDA here: transformers 5.20 runs LFM2 / Qwen3.5 short convolutions through the CUDA-only causal_conv1d
+    # package whenever it is installed, on any device (the CPU G-vision check crashed on the GPU image, V1). Blocked
+    # before any model loads, so transformers takes its torch path.
+    sys.modules.setdefault("causal_conv1d", None)
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--run", type=Path, required=True, help="train_sft output_dir")
     ap.add_argument("--shifted", type=Path, help="shifted-val eval view (selection; required unless --only)")
