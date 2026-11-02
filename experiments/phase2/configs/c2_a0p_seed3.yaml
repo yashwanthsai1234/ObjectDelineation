@@ -3,6 +3,7 @@ model: lfm2.5-vl-450m   # = the C1 rung
 view: views/lidc-bundle
 output_dir: c2-a0p_seed3
 seed: 3
+sampler: hf   # D13 fallback: R0 parity (2026-11-02, RTX 4090) failed H-A5-2 seq_p99 for LFM 1.11 and Qwen3.5 1.44 (> 0.5)
 a0: false
 branches_from: r1-lfm/g_probe/g_probe.json   # branches = [depth of the checkpoint with the final G-probe verdict]
 stages: [train, topology]   # Vast runner (policy.chain)
