@@ -16,32 +16,23 @@ import argparse
 import hashlib
 import io
 import json
-import os
 import subprocess
 import tarfile
 from pathlib import Path
 
-from experiments.phase2.vast import policy
+from experiments.phase2.vast.policy import ROOT, die, is_raw, load
 
 LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
-
-
-is_raw = policy.is_raw
 SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view would differ (BK1-7)
 
 
 def walk(data: Path, top: Path, prefix: str) -> list[tuple[str, Path]]:
     if top.resolve() != data.resolve() / top.relative_to(data):  # a symlink between data/ and top (BK4-14)
-        policy.die(f"refusing symlinked path {top}")
-    out = []
-    for dirpath, dirs, files in os.walk(top):
-        for n in dirs + files:
-            p = Path(dirpath) / n
-            if p.is_symlink():
-                policy.die(f"refusing symlink {p}")
-        out += [(f"{prefix}/{(Path(dirpath) / f).relative_to(top).as_posix()}", Path(dirpath) / f)
-                for f in files if f not in SKIP]  # fmt: skip
-    return out
+        die(f"refusing symlinked path {top}")
+    paths = list(top.rglob("*"))  # lists symlinks without following them
+    if links := [p for p in paths if p.is_symlink()]:
+        die(f"refusing symlink {links[0]}")
+    return [(f"{prefix}/{p.relative_to(top).as_posix()}", p) for p in paths if not p.is_dir() and p.name not in SKIP]
 
 
 def manifest(ds: str, prep: Path) -> bytes:
@@ -49,28 +40,26 @@ def manifest(ds: str, prep: Path) -> bytes:
     m = json.loads((prep / "manifest.json").read_text())
     m["files"], m["sets"] = ({k: v for k, v in m[s].items() if k.startswith(f"{ds}/")} for s in ("files", "sets"))
     if missing := [k for k in m["files"] if not (prep / k).is_file()]:
-        policy.die(f"prepared/manifest.json lists missing files: {missing}")
+        die(f"prepared/manifest.json lists missing files: {missing}")
     return (json.dumps(m, indent=1, sort_keys=True) + "\n").encode()
 
 
-def members(ds: str, data: Path) -> list[tuple[str, Path]]:
+def members(ds: str, data: Path) -> list[tuple[str, Path | bytes]]:
     if is_raw(data):
-        policy.die("refusing to bundle anything under data/raw")
-    prep, picked = data / "prepared", []
-    for sub in (ds, f"images/{ds}", f"caches/{ds}"):
-        picked += walk(data, prep / sub, f"prepared/{sub}")
+        die("refusing to bundle anything under data/raw")
+    prep = data / "prepared"
+    picked = [f for sub in (ds, f"images/{ds}", f"caches/{ds}") for f in walk(data, prep / sub, f"prepared/{sub}")]
     for kind in ("views", "eval_views"):
-        names = sorted(p.name for p in (data / kind).glob("*") if p.name.startswith(f"{ds}-"))
+        names = {p.name for p in (data / kind).glob(f"{ds}-*")}
         if kind == "eval_views" and ds == "lidc":
             if missing := [n for n in LIDC_EVAL if not (data / kind / n).is_dir()]:
-                policy.die(f"eval views missing: {missing}")
-            names = sorted({*names, *LIDC_EVAL})
+                die(f"eval views missing: {missing}")
+            names |= set(LIDC_EVAL)
         if not names:
-            policy.die(f"no {ds} {kind} under {data / kind}")
-        for n in names:
-            picked += walk(data, data / kind / n, f"{kind}/{n}")
+            die(f"no {ds} {kind} under {data / kind}")
+        picked += [f for n in sorted(names) for f in walk(data, data / kind / n, f"{kind}/{n}")]
     if bad := [p for _, p in picked if is_raw(p) or not p.is_file()]:
-        policy.die(f"refusing (data/raw or not a file): {bad[:3]}")
+        die(f"refusing (data/raw or not a file): {bad[:3]}")
     return sorted([*picked, ("prepared/manifest.json", manifest(ds, prep))])
 
 
@@ -82,18 +71,15 @@ def sha(p: Path | bytes) -> str:
 
 
 def write_tar(fileobj, files: list[tuple[str, Path | bytes]]) -> None:
-    """Members are files on disk or bytes built here (the filtered manifest)."""
+    """Members are files on disk or bytes built here (the filtered manifest); TarInfo's defaults are mtime 0, uid/gid
+    0, mode 0644 and no owner names."""
     sums = "".join(f"{sha(p)}  {n}\n" for n, p in files).encode()
     with tarfile.open(fileobj=fileobj, mode="w|", format=tarfile.PAX_FORMAT) as t:
         for name, src in [("SHA256SUMS", sums), *files]:
             info = tarfile.TarInfo(name)
-            size = len(src) if isinstance(src, bytes) else src.stat().st_size
-            info.size, info.mtime, info.mode, info.uname, info.gname = size, 0, 0o644, "", ""
-            if isinstance(src, bytes):
-                t.addfile(info, io.BytesIO(src))
-            else:
-                with src.open("rb") as f:
-                    t.addfile(info, f)
+            info.size = len(src) if isinstance(src, bytes) else src.stat().st_size
+            with io.BytesIO(src) if isinstance(src, bytes) else src.open("rb") as f:
+                t.addfile(info, f)
 
 
 def build(ds: str, data: Path, out: Path) -> Path:
@@ -102,15 +88,14 @@ def build(ds: str, data: Path, out: Path) -> Path:
     target = out / ("bundle-riga.tar.age" if ds == "riga" else f"bundle-{ds}.tar")
     tmp = target.with_name(target.name + ".part")
     if ds == "riga":  # D16: plaintext never on disk
-        rcpt = policy.allowlist().get("riga_recipient", "")
-        if not rcpt.startswith("age1"):
-            policy.die("no age riga_recipient recorded in .vast-allowlist")
+        if not (rcpt := load(".vast-allowlist").get("riga_recipient", "")).startswith("age1"):
+            die("no age riga_recipient recorded in .vast-allowlist")
         with subprocess.Popen(["age", "-r", rcpt, "-o", str(tmp)], stdin=subprocess.PIPE) as age:
             write_tar(age.stdin, files)
             age.stdin.close()
         if age.returncode:
             tmp.unlink(missing_ok=True)
-            policy.die("age encryption failed")
+            die("age encryption failed")
     else:
         with tmp.open("wb") as f:
             write_tar(f, files)
@@ -123,8 +108,8 @@ def build(ds: str, data: Path, out: Path) -> Path:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dataset", choices=["lidc", "riga"])
-    ap.add_argument("--data", type=Path, default=policy.ROOT / "data")
-    ap.add_argument("--out", type=Path, default=policy.ROOT / "build" / "bundles")
+    ap.add_argument("--data", type=Path, default=ROOT / "data")
+    ap.add_argument("--out", type=Path, default=ROOT / "build" / "bundles")
     a = ap.parse_args(argv)
     build(a.dataset, a.data, a.out)
 

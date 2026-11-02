@@ -85,18 +85,15 @@ def test_timing_excludes_the_warmup_steps(TS, monkeypatch):
 
 @pytest.mark.slow
 def test_manifest_records_timing(TS, tmp_path, synthetic_items, monkeypatch):
-    from test_p2_scripts import _tiny_vlm
+    from test_p2_scripts import CPU_SFT, _tiny_vlm
 
     from experiments.phase2 import build_views as BV
     from objdel.data import store
 
     store.write(synthetic_items(("train",), unanimous=True), tmp_path / "store")
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
-    sft = {"per_device_train_batch_size": 1, "gradient_accumulation_steps": 1, "use_cpu": True, "bf16": False,
-           "dataloader_num_workers": 0, "dataloader_persistent_workers": False,
-           "dataloader_prefetch_factor": None}  # fmt: skip
     a = TS.RunArgs("lfm2.5-vl-450m", str(tmp_path / "view"), str(tmp_path / "o"), branches=[], steps_per_epoch=6,
-                   model_path=str(_tiny_vlm(tmp_path / "m")), vision=False, rolling_minutes=1e3, sft=sft)  # fmt: skip
+                   model_path=str(_tiny_vlm(tmp_path / "m")), vision=False, rolling_minutes=1e3, sft=CPU_SFT)
     assert TS.train(a) == 0
     t = json.loads((tmp_path / "o/manifest.json").read_text())["timing"]
     assert t["steps"] == 6 and t["s_per_step"] > 0 and t["samples_per_s"] == pytest.approx(1 / t["s_per_step"])

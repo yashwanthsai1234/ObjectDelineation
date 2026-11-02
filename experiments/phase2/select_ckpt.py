@@ -1,39 +1,31 @@
-"""D12 checkpoint selection over a train_sft run's WSD branches (plan D12, D13, §3.2 ②, §5.1); never touches CUDA.
+"""D12 checkpoint selection over a train_sft run's WSD branches (PLAN D12, D13, §3.2 ②, §5.1); never touches CUDA.
 
     python -I -m experiments.phase2.select_ckpt --run runs/r1 --shifted data/eval_views/lidc-val-shifted \
         --vision '{"prepared": root, "reference": R0 base value}' | --no-vision \
         [--sampler vllm|hf] [--items 256] [--rescaled V] [--rotated V] [--prepared P] [--probes DIR]
     python -I -m experiments.phase2.select_ckpt --run runs/c2 --probes DIR --only topology [--sampler hf]
 
-Order (D13): refuse unless train_sft has exited (manifest status "done", pid gone on this host); preload the eval
-views' caches (objdel.train.serve.preload) and fork the reward pool before anything imports CUDA; per branch, export
-the prompts (objdel.train.sample.export_prompts), launch the sampler child (vLLM's `sample_vllm.py` under
-`/opt/vllm/bin/python`, or `experiments.phase2.hf_sample`; same JSONL bridge) after asserting
-torch.cuda.is_initialized() is False here, with a timeout, at most TRIES attempts, and a completeness check (every
-prompt id has its n samples; a partial file is a failed attempt); completions whose `.meta.json` records the same
-prompts' SHA-256 and child command (sampler, checkpoint, flags) are reused on a rerun. Then import the completions (truncation by TRL's rule), score them on the pool
-(objdel.eval.metrics with the preloaded CacheRef), build the B2 signal panel (objdel.eval.signal) and G-vision on the
-CPU (objdel.eval.vision). Eligible (D12) = gates.eligible: phase2_entry's G-format, G-signal (groups of 8) and
-G-vision on the shifted view, one rule with the gate table, and an unmeasured G-vision fails (`--vision` is required;
-`--no-vision` makes every branch ineligible). Rule R-B (prereg.select_rb) picks the branch; none eligible -> the deepest is gated
-(§6.3). `--items N` is a seeded subset (SUBSET_SEED) for branch selection only (D13 HF path).
+Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches
+and fork the reward pool before anything imports CUDA; per branch, export the prompts and run the sampler child
+(`sample_vllm.py` under /opt/vllm, or `hf_sample`; one JSONL bridge) with CUDA asserted untouched here, a timeout,
+TRIES attempts and a completeness check (every prompt id has its n samples). Completions whose `.meta.json` stamp
+(prompts SHA-256, child command) matches are reused on a rerun. Score them on the pool (objdel.eval.metrics), build
+the B2 signal panel and run G-vision on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
+G-vision; an unmeasured G-vision fails (--vision is required, --no-vision makes every branch ineligible). Rule R-B
+(prereg.select_rb) picks; none eligible -> the deepest is gated (§6.3). --items N: a seeded subset (SUBSET_SEED)
+for selection only (D13 HF path).
 
-The selected (or gated) branch then gets, always on the full views: shifted (re-sampled when --items was used) and
-rescaled at K = 8 (gates), shifted at K = 16 (HM-IoU16 / GED16, report-only), G-prior (b) (--prepared), both
-probes on every probe record (--probes; probe records are rl: false, so not grpo_rows), and the free attribution
-check (--rotated: rotated vs identity shifted view, paired median IoU_tc, report-only; plan §6.1). Writes
-`<out>/selected.json`, `<out>/report.json` and `<out>/gates.json` (prereg.entry). Samples stay in
-`<out>/<branch>/<view>/` for re-scoring on the Mac. selected.json's "gates_pass" / "gates_failed" (gate names) are
-what g_probe --select reads to skip after a §5.1 failure.
+The selected (or gated) branch is then judged on the full views: shifted and rescaled at K = 8 (gates), shifted at
+K = 16 (report-only), G-prior (b) (--prepared), both probes on every probe record (--probes) and the rotated-vs-
+identity attribution check (--rotated, report-only, §6.1). Writes <out>/selected.json ("gates_pass" /
+"gates_failed" are what g_probe --select reads), report.json and gates.json (prereg.entry); samples stay in
+<out>/<branch>/<view>/ for re-scoring on the Mac.
 
-`--only topology` (C2 runs, PLAN §6.1 R3-R5: one branch, its depth already chosen by R1's G-probe): the topology probe
-alone on the run's single branch at K = --k (8), scored by objdel.eval.probes.score_topology into
-`<out>/report.json` {"only", "branch", "sampler", "k", "probes": {"topology"}} (c2_analyze reads probes.topology as
-one seed's file). No selection, other views, G-vision, prior or gates: --shifted, --vision / --no-vision, --prepared,
---rescaled and --rotated are not needed and are ignored.
+--only topology (C2, PLAN §6.1 R3-R5): the topology probe alone on the run's single branch at K = --k into
+<out>/report.json {"only", "branch", "sampler", "k", "probes": {"topology"}} (c2_analyze reads probes.topology).
+No selection, other views, G-vision, prior or gates; their flags are ignored.
 
-References: PLAN D12 (R-B), D13 (sampler sequencing), §5.1 gates, §6.1 R1; vLLM offline inference
-https://docs.vllm.ai/en/stable/serving/offline_inference.html
+References: PLAN D12 (R-B), D13, §5.1, §6.1 R1; https://docs.vllm.ai/en/stable/serving/offline_inference.html
 """
 
 import argparse
@@ -132,11 +124,8 @@ def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: flo
 def _score(job) -> dict:
     """One item's metrics on the preloaded caches (runs in a pool worker)."""
     item_id, texts, truncated, W, H, names, root = job
-    return {
-        "item_id": item_id,
-        "dataset": item_id.split("/")[0],
-        **metrics(texts, {}, W, H, names, truncated, caches=serve.CacheRef(item_id, root)),
-    }
+    m = metrics(texts, {}, W, H, names, truncated, caches=serve.CacheRef(item_id, root))
+    return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
 
 
 def view_rows(view: Path, items: int | None = None, rl_only: bool = True) -> list[dict]:
@@ -147,12 +136,8 @@ def view_rows(view: Path, items: int | None = None, rl_only: bool = True) -> lis
     recs = [r for r in D.records(view, "lidc", "val") if r["rl"] or not rl_only]
     if items and items < len(recs):
         recs = [recs[i] for i in sorted(np.random.default_rng(SUBSET_SEED).choice(len(recs), items, replace=False))]
-    names = list(D.SCHEMAS["lidc"])
-    return [
-        {"prompt": [D._user("lidc")], "image": D._image(view, r["item_id"]), "key": r["item_id"]}
-        | {"W": r["W"], "H": r["H"], "names": names}
-        for r in D._verified(view, recs)
-    ]
+    return [{"prompt": [D._user("lidc")], "image": D._image(view, r["item_id"]), "key": r["item_id"], "W": r["W"],
+             "H": r["H"], "names": list(D.SCHEMAS["lidc"])} for r in D._verified(view, recs)]
 
 
 def stop_ids(path: Path, proc) -> set[int]:
@@ -186,19 +171,24 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
 
 
+def score_items(pool, rows: list[dict], done: dict, root: Path) -> tuple[list[dict], list[dict]]:
+    """_score on the pool for every row (done: {key: completions row}) -> (per-item metrics, signal groups)."""
+    from objdel.eval import signal
+
+    jobs = [(r["key"], done[r["key"]]["samples"], done[r["key"]]["truncated"], r["W"], r["H"], r["names"], str(root))
+            for r in rows]  # fmt: skip
+    results = list(pool.map(_score, jobs, chunksize=4))
+    return results, [signal.group(r["item_id"], done[r["item_id"]]["samples"], r) for r in results]
+
+
 def score_view(a, branch: Path, view: Path, out: Path, pool, k: int) -> dict:
     """sample_view on the view (a.items: subset), then metrics on the pool -> summarize (eval_run's report form), the
     signal panel and the per-item K-sample mean IoU_tc per structure (G-prior)."""
     from objdel.eval import signal, summarize
 
     rows = view_rows(view, a.items)
-    done = sample_view(a, branch, rows, out, k)
-    root = str(Path(view).resolve())
-    jobs = [(m["key"], done[m["key"]]["samples"], done[m["key"]]["truncated"], m["W"], m["H"], m["names"], root)
-            for m in rows]  # fmt: skip
-    results = list(pool.map(_score, jobs, chunksize=4))
+    results, groups = score_items(pool, rows, sample_view(a, branch, rows, out, k), view.resolve())
     (out / "items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in results))
-    groups = [signal.group(r["item_id"], done[r["item_id"]]["samples"], r) for r in results]
     iou = {r["item_id"]: {n: float(np.mean(o["iou_tc"])) for n, o in r["objects"].items()} for r in results}
     return {"summary": summarize(results), "panel": signal.panel(groups), "iou": iou}
 
@@ -246,24 +236,26 @@ def judge(a, sel: dict, out: Path, pool) -> dict:
     if a.prepared:
         fit = baselines.fit_prior(a.prepared, "lidc", "train")
         views = {"shifted": a.shifted, "rescaled": a.rescaled}
-        report["prior"] = {
-            v: prior_ci(r["iou"], baselines.score_prior(views[v], "lidc", "val", fit)) for v, r in scored.items()
-        }
+        report["prior"] = {v: prior_ci(r["iou"], baselines.score_prior(views[v], "lidc", "val", fit))
+                           for v, r in scored.items()}  # fmt: skip
     if a.probes:
         report["probes"] = {p: score_probe(whole, best, p, out) for p in ("precision", "topology")}
     return report
 
 
-def topology_only(a) -> int:
+def dump(path: Path, doc: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=1, default=str) + "\n")
+
+
+def topology_only(a, out: Path) -> int:
     """--only topology (C2): the topology probe on the run's single branch -> <out>/report.json."""
-    a.model = a.model or exited(a.run)["config"]["model"]
-    names, out = sorted(p.name for p in (a.run / "branches").iterdir()), a.out or a.run / "select"
+    names = sorted(p.name for p in (a.run / "branches").iterdir())
     if a.probes is None or len(names) != 1:
         raise SystemExit(f"select_ckpt --only topology: needs --probes and one branch, found {names}")
     topo = score_probe(a, a.run / "branches" / names[0], "topology", out / names[0])
-    report = {"only": "topology", "branch": names[0], "sampler": a.sampler, "k": a.k, "probes": {"topology": topo}}
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "report.json").write_text(json.dumps(report, indent=1, default=str) + "\n")
+    dump(out / "report.json", {"only": "topology", "branch": names[0], "sampler": a.sampler, "k": a.k,
+                               "probes": {"topology": topo}})
     print(json.dumps({"branch": names[0], "pass": topo.get("pass")}))
     return 0
 
@@ -314,15 +306,13 @@ def main(argv=None) -> int:
     vis.add_argument("--no-vision", action="store_true", help="G-vision not measured: every branch ineligible")
     ap.add_argument("--only", choices=("topology",), help="C2: only the topology probe of a single-branch run")
     a = ap.parse_args(argv)
-    if a.only:
-        return topology_only(a)
-    if a.shifted is None:
+    if a.shifted is None and not a.only:
         ap.error("--shifted is required (unless --only topology)")
-    vision_cfg = vision_config(a)
-    man = exited(a.run)
-    a.model = a.model or man["config"]["model"]
+    vision_cfg = None if a.only else vision_config(a)
+    a.model, out = a.model or exited(a.run)["config"]["model"], a.out or a.run / "select"
+    if a.only:
+        return topology_only(a, out)
     vision_cfg = vision_cfg and {"model": a.model} | vision_cfg  # train_sft.reference checks R0's JSON model
-    out = a.out or a.run / "select"
     for v in filter(None, (a.shifted, a.rescaled, a.rotated)):
         serve.preload(v, ["lidc"])  # every scored root before the fork: workers see STORE as of fork time
     pool = serve.fork_pool(a.procs)  # before torch / CUDA (D14)
@@ -339,32 +329,21 @@ def main(argv=None) -> int:
     if judged:
         report = judge(a, next(x for x in branches if x["name"] == judged), out / judged, pool)
         gate = prereg.entry(report, ["lidc"])  # phase2_entry with the pre-registered G-prior (a) slot
-        (out / "report.json").write_text(json.dumps(report, indent=1, default=str) + "\n")
-        (out / "gates.json").write_text(json.dumps(gate, indent=1, default=str) + "\n")
+        dump(out / "report.json", report)
+        dump(out / "gates.json", gate)
     pool.shutdown()
     torch = sys.modules.get("torch")
-    doc = {
+    dump(out / "selected.json", {
         "cuda_initialized": bool(torch and torch.cuda.is_initialized()),
         "run": str(a.run),  # g_probe --select reads the branches from here
-        "selected": name,
-        "reasons": why,
-        "gates_branch": judged,
-        "gates_pass": gate and gate["pass"],
+        "selected": name, "reasons": why, "gates_branch": judged, "gates_pass": gate and gate["pass"],
         "gates_failed": [n for n, g in gate["gates"].items() if not g["pass"]] if gate else [],
-        "sampler": a.sampler,
-        "k": a.k,
-        "items": a.items,
-        "branches": {
-            x["name"]: {k: x[k] for k in ("depth", "eligible", "vision")}
-            | {"summary": x["summary"]["datasets"]["lidc"], "panel": x["panel"]["summary"]}
-            for x in branches
-        },
-    }
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "selected.json").write_text(json.dumps(doc, indent=1, default=str) + "\n")
+        "sampler": a.sampler, "k": a.k, "items": a.items,
+        "branches": {x["name"]: {k: x[k] for k in ("depth", "eligible", "vision")}
+                     | {"summary": x["summary"]["datasets"]["lidc"], "panel": x["panel"]["summary"]} for x in branches},
+    })  # fmt: skip
     print(json.dumps({"selected": name, "eligible": why["eligible"]}))
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

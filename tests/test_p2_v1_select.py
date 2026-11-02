@@ -141,31 +141,18 @@ def test_full_select_still_needs_shifted(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- the sampler child's extra flags, prompt-id echo
 
 
-def test_sampler_extra_flags_reach_the_child_and_the_reuse_check(tmp_path, monkeypatch):
+def test_sampler_reuse_is_keyed_on_flags_sampler_and_checkpoint(tmp_path, monkeypatch):
     assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"), ["--logprobs"])[-1] == "--logprobs"
-    prompts, comps, calls = tmp_path / "p.jsonl", tmp_path / "c.jsonl", []
-    prompts.write_text(json.dumps({"id": "a", "n": 1}) + "\n")
-
-    def run(cmd, timeout):
-        calls.append(cmd)
-        comps.write_text(json.dumps({"id": "a", "k": 0}) + "\n")
-
-    monkeypatch.setattr(SC, "run_group", run)
-    SC.run_sampler("vllm", prompts, tmp_path, comps, 1.0)
-    SC.run_sampler("vllm", prompts, tmp_path, comps, 1.0, ["--logprobs"])  # no reuse: sampled without logprobs
-    SC.run_sampler("vllm", prompts, tmp_path, comps, 1.0, ["--logprobs"])  # reused
-    assert [c[-1] == "--logprobs" for c in calls] == [False, True]
-
-
-def test_reuse_is_keyed_on_the_sampler_too(tmp_path, monkeypatch):
     prompts, comps, calls = tmp_path / "p.jsonl", tmp_path / "c.jsonl", []
     prompts.write_text(json.dumps({"id": "a", "n": 1}) + "\n")
     monkeypatch.setattr(SC, "run_group", lambda cmd, timeout: calls.append(cmd) or comps.write_text(
         json.dumps({"id": "a", "k": 0}) + "\n"))
-    SC.run_sampler("vllm", prompts, tmp_path, comps, 1.0)
-    SC.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # the D13 HF fallback must not reuse vLLM's samples
-    SC.run_sampler("hf", prompts, tmp_path / "other", comps, 1.0)  # nor another checkpoint's
-    assert len(calls) == 3
+    for kind, model, extra in (("vllm", tmp_path, ()), ("vllm", tmp_path, ["--logprobs"]),  # sampled anew
+                               ("vllm", tmp_path, ["--logprobs"]),  # reused
+                               ("hf", tmp_path, ()),  # the D13 HF fallback must not reuse vLLM's samples
+                               ("hf", tmp_path / "other", ())):  # nor another checkpoint's
+        SC.run_sampler(kind, prompts, model, comps, 1.0, extra)
+    assert [c[-1] == "--logprobs" for c in calls] == [False, True, False, False]
 
 
 def test_stop_ids_of_base_weights_without_generation_config(tmp_path):

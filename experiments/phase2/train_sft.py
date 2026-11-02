@@ -3,43 +3,38 @@
     python -I -m experiments.phase2.train_sft --config experiments/phase2/configs/r1_lfm.yaml [--resume true]
     python -I -m experiments.phase2.train_sft --config <same> --vision_reference_only true   # R0: G-vision base ref
 
-Schedule (D5, configs.sft_config): warmup (3 % of the stable steps), constant LR, and for each branch point b
-(epochs, default 0.5 / 1 / 2) a linear decay to 0 over 15 % of b. The stable run uses the deepest branch's schedule
-and stops at its branch point, so every saved branch point sits at LR factor 1; it saves a full checkpoint (model,
-optimizer, scheduler, RNG, data position) at every b, and each decay branch is a new trainer resumed from it with
-the same warmup_stable_decay schedule ending at b + d (sft_config(steps, branch_at=b)): on a tiny model every
-branch is bit-identical to an uninterrupted WSD run that decays at b (impl/M8.md). Branch points that round to one
-step, or a decay of 0 steps, are refused. `branches: []` is a stable-only run of one epoch that saves nothing (the
-R0 timing prelude and Qwen3.5 arm). Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor (the
-sampler loads them); LoRA runs (D6: Qwen3-VL-2B, or `lora: true`) are saved merged. Rolling checkpoints (optimizer
-included, limit 3) every `rolling_minutes`; at each one the G-vision check (objdel.eval.vision, §5.1) on the
-training device and dtype (recorded; the reference is CPU float32, B1): ratio < 0.5 **and** TV < 0.002 aborts with
-the reason in manifest.json (exit code 3; D7 repair: rerun with tower and projector frozen), one alone warns.
+Schedule (D5, configs.sft_config): warmup 3 % of the stable steps, constant LR, and per branch point b (epochs,
+default 0.5 / 1 / 2) a linear decay to 0 over 15 % of b. The stable run uses the deepest branch's schedule and stops
+at its point, so every branch point sits at LR factor 1; it saves a full checkpoint (model, optimizer, scheduler, RNG,
+data position) at every b, and each branch is a new trainer resumed from it whose schedule ends at b + d
+(sft_config(steps, branch_at=b)): bit-identical to an uninterrupted WSD run decaying at b (impl/M8.md). Colliding
+branch points and 0-step decays are refused. `branches: []` = stable only, one epoch, nothing saved (R0 timing and
+Qwen3.5 arm). Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor; LoRA runs (D6) saved merged.
+Rolling checkpoints (optimizer included, limit 3) every `rolling_minutes`, each with the G-vision check
+(objdel.eval.vision, §5.1) on the training device and dtype (the reference is CPU float32, B1): ratio < 0.5 **and**
+TV < 0.002 aborts with the reason in manifest.json (exit 3; D7 repair: freeze_vision), one alone warns.
 
-G-vision is required (D7, D12): `vision: {prepared, reference}` with reference = the base model's projector
-distance, a number or the JSON that `--vision_reference_only true` writes in R0 (§4.7 step 8: base model, CPU,
-float32, on vision.fixed_set). `vision: off` only for the discarded timing runs; `vision: {}` is refused.
+G-vision is required (D7, D12): `vision: {prepared, reference}`, reference = the base projector distance, a number or
+the JSON `--vision_reference_only true` writes in R0 (§4.7 step 8: base model, CPU, float32, vision.fixed_set).
+`vision: off` only for the discarded timing runs; `vision: {}` is refused.
 
-Paths: view and vision.prepared resolve under data_root (default $OBJDEL_DATA_ROOT, else /workspace/data/lidc on a
-Vast box, else data); output_dir and a vision.reference JSON under run_dir (default $OBJDEL_RUN_DIR, else runs).
-On a box (/workspace/runs exists) the output must land under /workspace/runs, where pull.sh reads.
+Paths: view and vision.prepared under data_root ($OBJDEL_DATA_ROOT, else /workspace/data/lidc on a Vast box, else
+data); output_dir and a vision.reference JSON under run_dir ($OBJDEL_RUN_DIR, else runs), on a box under
+/workspace/runs (pull.sh).
 
-Data: objdel.train.dataset.view_rows over the view directory; the rows of view epoch e are visited in epoch order
-(length-grouped within each epoch, seeded by data_seed + e), so "b epochs" means the first b passes over fresh
-views (D10). A branch's decay continues the same stream; the view must hold enough epochs for max(b) + its decay
-(R1: build_views --epochs 3), checked before anything loads. The process never samples: select_ckpt starts after
-it exits (D13). manifest.json records the config, the view hash, SHA-256 of the code, the step plan, the G-vision
-log, the pid, the exit status and `timing` (the stable phase's optimizer steps, mean s/step after the first WARM
-steps, samples/s, effective batch, peak CUDA GiB or null, rows per view epoch: project_r1's inputs). `--resume true`
-continues a crashed run (status "running", same training config and view): the newest complete rolling checkpoint,
-then each branch not yet saved (from its own decay checkpoint when there is one).
+Data: view_rows in view-epoch order, length-grouped within each epoch (seed data_seed + e), so "b epochs" = the first
+b passes over fresh views (D10); the view must hold max(b) + its decay epochs (checked before anything loads). No
+sampling here: select_ckpt starts after exit (D13). manifest.json: config, view hash, code SHA-256, step plan, G-vision
+log, pid, status and `timing` (stable optimizer steps, mean s/step after WARM steps, samples/s, effective batch, peak
+CUDA GiB or null, rows per view epoch: project_r1's inputs). `--resume true` continues a crashed run (status
+"running", same config and view): the newest complete rolling checkpoint, then each unsaved branch (from its own decay
+checkpoint when there is one).
 
-`deterministic: true` (D24, the R0 timing arms): CUBLAS_WORKSPACE_CONFIG=:4096:8 unless set (torch >= 2.11 no
-longer needs it) and torch.use_deterministic_algorithms(True, warn_only=True) before anything loads. Never
-`sft: full_determinism` (transformers' enable_full_determinism also sets CUDA_LAUNCH_BLOCKING=1).
-`branches_from: <run_dir-relative g_probe.json>` (C2, R-x8): branches = [depth of the checkpoint that received the
-final G-probe verdict] (g_probe.json's "ckpt", named e<depth>); no file or no verdict exits before anything is
-written. `stages` and `sampler` belong to the Vast runner (policy.chain) and are only recorded here.
+`deterministic: true` (D24, R0 timing arms): CUBLAS_WORKSPACE_CONFIG=:4096:8 unless set, and
+torch.use_deterministic_algorithms(True, warn_only=True), before anything loads; never `sft: full_determinism` (it
+sets CUDA_LAUNCH_BLOCKING=1). `branches_from: <run_dir-relative g_probe.json>` (C2, R-x8): branches = [depth of the
+checkpoint ("ckpt", e<depth>) with the final G-probe verdict]; none exits before anything is written. `stages` and
+`sampler` belong to the Vast runner (policy.chain) and are only recorded here.
 
 References:
 - transformers 5.20 get_wsd_schedule, Trainer resume (optimizer, scheduler, RNG, data skip), LengthGroupedSampler:
@@ -71,20 +66,16 @@ SAME_RUN = ("model", "branches", "a0", "freeze_vision", "lora", "seed", "steps_p
 TRAINER_FILES = ("optimizer", "scheduler", "rng_state", "trainer_state", "adapter_")
 
 
-def _data_root() -> str:
-    return os.environ.get("OBJDEL_DATA_ROOT") or (str(BOX_DATA) if BOX_DATA.is_dir() else "data")
-
-
 @dataclass
 class RunArgs:
     model: str = field(metadata={"help": "objdel.train.configs.MODELS key"})
     view: str = field(metadata={"help": "training view directory, relative to data_root (views/<view>)"})
     output_dir: str = field(metadata={"help": "run directory, relative to run_dir"})
-    data_root: str = field(default_factory=_data_root, metadata={"help": "$OBJDEL_DATA_ROOT, Vast bundle dir or data"})
-    run_dir: str = field(
-        default_factory=lambda: os.environ.get("OBJDEL_RUN_DIR", "runs"),
-        metadata={"help": "$OBJDEL_RUN_DIR (Vast: /workspace/runs/<RUN_ID>, set by run.sh) or runs"},
-    )
+    data_root: str = field(
+        default_factory=lambda: os.environ.get("OBJDEL_DATA_ROOT") or (str(BOX_DATA) if BOX_DATA.is_dir() else "data"),
+        metadata={"help": "$OBJDEL_DATA_ROOT, Vast bundle dir or data"})
+    run_dir: str = field(default_factory=lambda: os.environ.get("OBJDEL_RUN_DIR", "runs"),
+                         metadata={"help": "$OBJDEL_RUN_DIR (Vast: /workspace/runs/<RUN_ID>, set by run.sh) or runs"})
     model_path: str | None = field(default=None, metadata={"help": "local weights (default MODELS[model])"})
     branches: list[float] = field(default_factory=lambda: [0.5, 1.0, 2.0], metadata={"help": "epochs ([] = timing)"})
     a0: bool = field(default=False, metadata={"help": "empty every holes list (A0)"})
@@ -109,10 +100,8 @@ class RunArgs:
             ref = self.vision.get("reference")
             num = isinstance(ref, (int, float)) and not isinstance(ref, bool) and math.isfinite(ref) and ref > 0
             if set(self.vision) != {"prepared", "reference"} or not (num or str(ref).endswith(".json")):
-                raise ValueError(
-                    f"vision {self.vision!r}: need {{prepared, reference}}, reference = R0's base projector distance "
-                    "(a positive number, or the .json that --vision_reference_only writes)"
-                )
+                raise ValueError(f"vision {self.vision!r}: need {{prepared, reference}}, reference = R0's base "
+                                 "projector distance (a positive number, or the .json --vision_reference_only writes)")
 
 
 def plan(args: RunArgs, steps_per_epoch: int) -> dict:
@@ -152,17 +141,9 @@ def resolve(args: RunArgs) -> RunArgs:
     args.view, args.output_dir = str(Path(args.data_root, args.view)), str(Path(args.run_dir, args.output_dir))
     if args.vision:
         ref = args.vision["reference"]
-        args.vision = {
-            "prepared": str(Path(args.data_root, args.vision["prepared"])),
-            "reference": str(Path(args.run_dir, ref)) if isinstance(ref, str) else ref,
-        }
+        args.vision = {"prepared": str(Path(args.data_root, args.vision["prepared"])),
+                       "reference": str(Path(args.run_dir, ref)) if isinstance(ref, str) else ref}
     return args
-
-
-def vision_set(prepared) -> tuple[list[dict], str]:
-    from objdel.eval import vision
-
-    return vision.fixed_set(prepared)
 
 
 def reference(ref, model: str | None, set_sha256: str) -> float:
@@ -173,6 +154,14 @@ def reference(ref, model: str | None, set_sha256: str) -> float:
     if (doc["model"], doc["set_sha256"]) != (model or doc["model"], set_sha256):
         raise ValueError(f"{ref}: reference of {doc['model']} on set {doc['set_sha256'][:12]}, not this run's")
     return doc["reference"]
+
+
+def preload(cfg: dict, model: str | None) -> dict:
+    """{"prepared", "reference"} -> the fixed set and its checked reference {"items", "set_sha256", "reference"}."""
+    from objdel.eval import vision
+
+    items, sha = vision.fixed_set(cfg["prepared"])
+    return {"items": items, "set_sha256": sha, "reference": reference(cfg["reference"], model, sha)}
 
 
 def vision_reference(args: RunArgs) -> int:
@@ -188,29 +177,23 @@ def vision_reference(args: RunArgs) -> int:
     src = args.model_path or configs.MODELS[args.model]
     proc = AutoProcessor.from_pretrained(src, **configs.processor_kwargs(args.model, "lidc"))
     model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.float32).eval()
-    items, sha = vision_set(args.vision["prepared"])
-    with torch.no_grad():
-        d = vision.projector_distance(model, proc, [it["image"] for it in items[: vision.N_IMAGES]])
+    items, sha = vision.fixed_set(args.vision["prepared"])
+    d = vision.projector_distance(model, proc, [it["image"] for it in items[: vision.N_IMAGES]])  # inference_mode
     dest = Path(args.vision["reference"])
     dest.parent.mkdir(parents=True, exist_ok=True)
-    doc = {"model": args.model, "source": src, "reference": d, "set_sha256": sha, "device": "cpu", "dtype": "float32"}
-    write_json(dest, doc | {"code": code_hashes()})
+    write_json(dest, {"model": args.model, "source": src, "reference": d, "set_sha256": sha, "device": "cpu",
+                      "dtype": "float32", "code": code_hashes()})
     return 0
 
 
 def vision_check(model, processor, cfg: dict) -> dict:
-    """objdel.eval.vision.check on the fixed set: cfg = train's preloaded {"items", "set_sha256", "reference"}, or
-    {"prepared", "reference"} (select_ckpt)."""
-    import torch
-
+    """objdel.eval.vision.check (inference mode, module modes restored) on the fixed set: cfg = preload's output, or
+    {"prepared", "reference", "model"?} (select_ckpt)."""
     from objdel.eval import vision
 
-    if "items" not in cfg:
-        items, sha = vision_set(cfg["prepared"])
-        cfg = {"items": items, "set_sha256": sha, "reference": reference(cfg["reference"], cfg.get("model"), sha)}
+    cfg = cfg if "items" in cfg else preload(cfg, cfg.get("model"))
     images = [it["image"] for it in cfg["items"][: vision.N_IMAGES]]
-    with torch.no_grad():
-        res = vision.check(model, processor, images, cfg["items"], reference=cfg["reference"])
+    res = vision.check(model, processor, images, cfg["items"], reference=cfg["reference"])
     return res | {"set_sha256": cfg["set_sha256"]}
 
 
@@ -219,11 +202,8 @@ def record_vision(man: dict, step: int, res: dict) -> bool:
     keys = ("action", "ratio", "tv", "tv_black", "tv_other", "set_sha256", "device", "dtype")
     man["vision"].append({"step": step} | {k: res.get(k) for k in keys})
     if res["action"] == "abort":
-        man["abort"] = {
-            "step": step,
-            "reason": f"G-vision (a) ratio {res['ratio']:.4g} < 0.5 and (b) TV "
-            f"{res['tv']:.4g} < 0.002 (D7 repair: rerun with freeze_vision)",
-        }
+        man["abort"] = {"step": step, "reason": f"G-vision (a) ratio {res['ratio']:.4g} < 0.5 and (b) TV "
+                                                f"{res['tv']:.4g} < 0.002 (D7 repair: rerun with freeze_vision)"}
     return res["action"] == "abort"
 
 
@@ -262,8 +242,7 @@ def replace_dir(write, dest: Path) -> None:
 def main(argv=None) -> int:
     from trl import TrlParser
 
-    (args,) = TrlParser([RunArgs]).parse_args_and_config(argv)
-    return train(args)
+    return train(TrlParser([RunArgs]).parse_args_and_config(argv)[0])
 
 
 def train(args: RunArgs) -> int:
@@ -290,58 +269,37 @@ def train(args: RunArgs) -> int:
     view = json.loads(Path(args.view, "manifest.json").read_text())
     deep = max((b * (1 + configs.DECAY) for b in args.branches), default=1.0)
     if view["config"]["epochs"] < math.ceil(deep):  # S1-8, before anything loads
-        raise ValueError(
-            f"{args.view}: {view['config']['epochs']} view epoch(s), the deepest branch decays to {deep:g} epochs: "
-            f"rebuild it with build_views --epochs {math.ceil(deep)}"
-        )
-    vis = None
-    if args.vision:
-        items, sha = vision_set(args.vision["prepared"])
-        vis = {"items": items, "set_sha256": sha, "reference": reference(args.vision["reference"], args.model, sha)}
+        raise ValueError(f"{args.view}: {view['config']['epochs']} view epoch(s), the deepest branch decays to "
+                         f"{deep:g} epochs: rebuild it with build_views --epochs {math.ceil(deep)}")
+    vis = args.vision and preload(args.vision, args.model)
     out.mkdir(parents=True, exist_ok=True)
     old = json.loads((out / "manifest.json").read_text()) if (out / "manifest.json").exists() else None
     if old and not args.resume:
         raise ValueError(f"{out} holds a run: --resume true continues it, or pick another output_dir")
-    man = {
-        "config": asdict(args),
-        "view": {
-            "dir": args.view,
-            "view_hash": view.get("view_hash"),
-            "manifest_sha256": sha256(Path(args.view, "manifest.json")),
-        },
-        "code": code_hashes(),
-        "vision": [],
-        "log": {},
-    }
+    man = {"config": asdict(args), "code": code_hashes(), "vision": [], "log": {},
+           "view": {"dir": args.view, "view_hash": view.get("view_hash"),
+                    "manifest_sha256": sha256(Path(args.view, "manifest.json"))}}
     if args.resume:
         same = old and all(old["config"][k] == man["config"][k] for k in SAME_RUN)
         if not (same and old["status"] == "running" and old["view"]["view_hash"] == man["view"]["view_hash"]):
             raise ValueError(f"--resume: {out} is not a crashed run of this config and view")
         man |= {k: old[k] for k in ("vision", "log", "started")} | {"resumed": old.get("resumed", []) + [time.time()]}
-    man |= {
-        "pid": os.getpid(),
-        "host": socket.gethostname(),
-        "status": "running",
-        "started": man.get("started", time.time()),
-    }
+    man |= {"pid": os.getpid(), "host": socket.gethostname(), "status": "running",
+            "started": man.get("started", time.time())}
     write_json(out / "manifest.json", man)
     src = args.model_path or configs.MODELS[args.model]
     proc = AutoProcessor.from_pretrained(src, **configs.processor_kwargs(args.model, "lidc"))
     rows = dataset.view_rows(args.view, proc.tokenizer, configs.MAX_COMPLETION[args.model], a0=args.a0)
-    if "epoch" in rows.column_names:
-        epochs = list(rows["epoch"])
-    else:  # row_id = "<epoch>/<item_id>/<rater>/<rep>"
-        epochs = [int(i.split("/", 1)[0]) for i in rows["row_id"]]
-    lengths = list(rows["length"])
-
+    epochs, lengths = list(rows["epoch"]), list(rows["length"])
     configs.training_template(args.model, proc)  # ValueError if Qwen3.5's template is not TRL's no-think one
     peft = configs.lora(args.model, force=args.lora)
     dtype = getattr(torch, configs.dtype(args.model, lora=peft is not None))  # fp32 for full FT (bf16 autocast)
-
-    def sft_args(out_dir, stable, branch_at=None):
-        o = {"seed": args.seed, "data_seed": args.seed, "save_strategy": "no", "save_total_limit": 3}
-        o |= {"logging_steps": 10}
-        return configs.sft_config(args.model, str(out_dir), stable, branch_at, lora=peft is not None, **(o | args.sft))
+    gbs = args.sft.get("per_device_train_batch_size", 8) * args.sft.get("gradient_accumulation_steps", 1)  # 1 GPU
+    rows0 = epochs.count(min(epochs, default=0))  # rows of one view epoch
+    p = man["plan"] = plan(args, args.steps_per_epoch or rows0 // gbs)
+    need = max([b["at"] + b["decay"] for b in p["branches"].values()] or [p["stable"]]) * gbs
+    if need > len(rows):
+        raise ValueError(f"{args.view}: {len(rows)} rows, the deepest branch and its decay need {need}")
 
     class Trainer(SFTTrainer):
         def _get_train_sampler(self, train_dataset=None):  # view epochs in order, length-grouped inside each
@@ -363,21 +321,22 @@ def train(args: RunArgs) -> int:
             control.should_save = due or state.global_step in self.keep_at
             control.should_training_stop |= state.global_step == self.stop_at
 
-        def on_save(self, a, state, control, model=None, processing_class=None, **kw):
+        def on_save(self, a, state, control, model=None, **kw):
             self.last, step = time.monotonic(), state.global_step
-            ckpt = Path(a.output_dir, f"checkpoint-{step}")
             if step in self.keep_at:
+                ckpt = Path(a.output_dir, f"checkpoint-{step}")
                 replace_dir(lambda tmp: shutil.copytree(ckpt, tmp), out / "stable" / self.keep_at[step])
-            if vis:
-                was, prm = model.training, next(model.parameters())
+            if vis:  # vision.check restores the module modes; training_step calls model.train() anyway
+                prm = next(model.parameters())
                 res = vision_check(model, proc, vis) | {"device": str(prm.device), "dtype": str(prm.dtype)}
                 control.should_training_stop |= record_vision(man, step, res)
-                model.train(was)
                 write_json(out / "manifest.json", man)
 
-    def trainer(out_dir, stable, branch_at=None, keep_at=(), stop_at=None):
+    def trainer(out_dir, branch_at=None, keep_at=(), stop_at=None):
         model = AutoModelForImageTextToText.from_pretrained(src, dtype=dtype)
-        cfg = sft_args(out_dir, stable, branch_at)
+        o = {"seed": args.seed, "data_seed": args.seed, "save_strategy": "no", "save_total_limit": 3}
+        o |= {"logging_steps": 10}
+        cfg = configs.sft_config(args.model, str(out_dir), p["stable"], branch_at, lora=bool(peft), **(o | args.sft))
         opt = None
         if not peft:  # full FT: vision tower + projector at 0.1x (D7), or frozen (the D7 repair)
             lm, vision = configs.param_groups(model, cfg.learning_rate)
@@ -387,10 +346,6 @@ def train(args: RunArgs) -> int:
             opt = torch.optim.AdamW(groups, lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
         kw = {"train_dataset": rows, "processing_class": proc, "peft_config": peft, "optimizers": (opt, None)}
         return Trainer(model=model, args=cfg, callbacks=[Rolling(keep_at, stop_at)], **kw)
-
-    def save(model, dest):  # D6: adapters merged, so every kept directory is a full model with its processor
-        model = model.merge_and_unload() if hasattr(model, "merge_and_unload") else model
-        replace_dir(lambda tmp: (model.save_pretrained(tmp), proc.save_pretrained(tmp)), dest)
 
     def finish(d):  # a kept stable checkpoint: model-only (LoRA merged) with the processor, for the depth curve
         if (d / "adapter_config.json").exists():
@@ -403,34 +358,28 @@ def train(args: RunArgs) -> int:
                 f.unlink()
         proc.save_pretrained(d)
 
-    gbs = args.sft.get("per_device_train_batch_size", 8) * args.sft.get("gradient_accumulation_steps", 1)  # 1 GPU
-    rows0 = epochs.count(min(epochs, default=0))  # rows of one view epoch
-    p = plan(args, args.steps_per_epoch or rows0 // gbs)
-    man["plan"] = p
-    need = max([b["at"] + b["decay"] for b in p["branches"].values()] or [p["stable"]]) * gbs
-    if need > len(rows):
-        raise ValueError(f"{args.view}: {len(rows)} rows, the deepest branch and its decay need {need}")
     keep = {b["at"]: name for name, b in p["branches"].items()}
     if not (keep and (out / "stable" / keep[p["stable"]]).is_dir()):  # stable phase not finished yet
-        t = trainer(out / "rolling", p["stable"], p["stable"] if keep else None, keep, p["stable"])
+        t = trainer(out / "rolling", p["stable"] if keep else None, keep, p["stable"])
         t.train(resume_from_checkpoint=latest(out / "rolling") if args.resume else None)
         man["log"]["stable"] = t.state.log_history
         man["timing"] = timing(t.pop_callback(Rolling).stamps, gbs) | {"rows_per_epoch": rows0}
         write_json(out / "manifest.json", man)
-    for name, b in p["branches"].items() if "abort" not in man else ():
+    for name, b in p["branches"].items():
+        if "abort" in man:
+            break
         if not (out / "branches" / name).is_dir():
-            t = trainer(out / "decay" / name, p["stable"], branch_at=b["at"])
+            t = trainer(out / "decay" / name, branch_at=b["at"])
             t.train(resume_from_checkpoint=(args.resume and latest(out / "decay" / name)) or str(out / "stable" / name))
-            save(t.model, out / "branches" / name)
+            model = t.model.merge_and_unload() if hasattr(t.model, "merge_and_unload") else t.model  # D6: merged
+            replace_dir(lambda tmp: (model.save_pretrained(tmp), proc.save_pretrained(tmp)), out / "branches" / name)
             man["log"][name] = t.state.log_history
         finish(out / "stable" / name)  # frees the optimizer state once its branch exists
         write_json(out / "manifest.json", man)
-        if "abort" in man:
-            break
     for d in (out / "stable").glob("e*"):  # after an abort too
         finish(d)
-    shutil.rmtree(out / "rolling", ignore_errors=True)
-    shutil.rmtree(out / "decay", ignore_errors=True)
+    for d in ("rolling", "decay"):
+        shutil.rmtree(out / d, ignore_errors=True)
     man |= {"status": "aborted" if "abort" in man else "done", "finished": time.time()}
     write_json(out / "manifest.json", man)
     return ABORTED if "abort" in man else 0

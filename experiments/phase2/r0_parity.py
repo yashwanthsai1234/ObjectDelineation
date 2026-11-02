@@ -3,18 +3,13 @@
     python -I -m experiments.phase2.r0_parity --model lfm2.5-vl-450m --view <eval_views>/lidc-val-shifted \
         --out <run_dir>/parity-lfm [--items 32] [--logprob-items 8] [--k 8]
 
-Base weights: huggingface_hub.snapshot_download(configs.MODELS[model]) (HF_HOME's cache on the box), one local
-directory with the processor and generation config (Qwen3.5 has none: select_ckpt.stop_ids) that vLLM and transformers
-both load. Prompts for the seeded
---items subset of the view's scored items (select_ckpt.view_rows, SUBSET_SEED) are exported and sampled at n = --k by
-`sample_vllm.py --logprobs` in /opt/vllm through select_ckpt.sample_view (CUDA untouched here, timeout, retries,
-completeness check; files in <out>/samples/). After the child has exited, parity.compare in bfloat16:
-(a) H-A5-1 prompt ids: vLLM's echoed prompt ids equal the HF processor's on every item (100 %);
-(b) H-A5-2 logprobs: HF teacher forcing of the first --logprob-items items x n (PLAN: 8 x 8): median |Δ| <=
-    parity.MEDIAN["bfloat16"] (0.02 nats) and p99 per-sequence |ΣΔ| <= parity.SEQ_P99 (0.5).
-Writes <out>/parity.json (parity.compare's report: dtype, tokens, sequences, median_abs, p99_abs, max_abs,
-seq_p99_abs, thresholds, prompt_ids {items, equal, mismatched, pass}, pass; plus model, weights, view, items,
-logprob_items, k) and exits 1 when it fails (fail -> the HF sampler is that model's gate path, D13).
+Base weights: snapshot_download(configs.MODELS[model]), one local directory that vLLM and transformers both load
+(no generation config for Qwen3.5: select_ckpt.stop_ids). The seeded --items subset (select_ckpt.view_rows) is
+sampled at n = --k by `sample_vllm.py --logprobs` through select_ckpt.sample_view (CUDA untouched, timeout, retries,
+completeness; files in <out>/samples/). Then parity.compare in bfloat16: (a) H-A5-1 prompt ids equal on every item;
+(b) H-A5-2 HF teacher forcing of the first --logprob-items x n (PLAN: 8 x 8) within parity.MEDIAN["bfloat16"]
+(0.02) and parity.SEQ_P99 (0.5). Writes <out>/parity.json (compare's report plus model, weights, view, items,
+logprob_items, k); exit 1 on a fail (-> the HF sampler is that model's gate path, D13).
 """
 
 import argparse

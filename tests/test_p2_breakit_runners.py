@@ -13,11 +13,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = sorted(c for c in (ROOT / "experiments/phase2/configs").glob("*.yaml")
-                 if "\nsteps:" not in c.read_text())  # r0.yaml is a step list for run.sh, not a train_sft config
-W0 = {"r0_timing_w0_det_off", "r0_timing_w0_det_on"}
+from test_p2_scripts import CONFIGS, CPU_SFT, ROOT
 
 
 def _yaml(path):
@@ -37,7 +33,7 @@ def _train_sft():
 
 @pytest.mark.parametrize("path", CONFIGS, ids=[p.stem for p in CONFIGS])
 def test_every_config_builds_its_sft_config(path):
-    """train_sft builds SFTConfig as sft_args does (its fixed overrides | the YAML's sft block) before the model."""
+    """train_sft builds SFTConfig as trainer() does (its fixed overrides | the YAML's sft block) before the model."""
     TS = _train_sft()
     from objdel.train import configs
 
@@ -126,12 +122,8 @@ def test_plan_refuses_colliding_branch_points():
 def test_timing_runs_are_stable_only():
     """BK3-14: branches [] = one stable epoch, no branch, no decay; the timing / arm configs use it with vision off."""
     TS = _train_sft()
-    assert TS.plan(TS.RunArgs("lfm2.5-vl-450m", "v", "o", branches=[]), 30) == {
-        "steps_per_epoch": 30,
-        "stable": 30,
-        "warmup": 1,
-        "branches": {},
-    }
+    want = {"steps_per_epoch": 30, "stable": 30, "warmup": 1, "branches": {}}
+    assert TS.plan(TS.RunArgs("lfm2.5-vl-450m", "v", "o", branches=[]), 30) == want
     for p in CONFIGS:
         a = TS.RunArgs(**_yaml(p))
         timing = p.stem.startswith("r0_")
@@ -203,18 +195,8 @@ def test_grpo_and_bridge_get_the_same_sampling_fields():
 
     for m in ("lfm2.5-vl-450m", "qwen3.5-0.8b"):
         s = configs.sampling(m)
-        g = configs.grpo_config(
-            m,
-            "o",
-            use_vllm=False,
-            bf16=False,
-            temperature=s["temperature"],
-            top_p=s["top_p"],
-            top_k=s["top_k"],
-            min_p=s["min_p"],
-            repetition_penalty=s["repetition_penalty"],
-            max_completion_length=s["max_tokens"],
-        )
+        same = {k: s[k] for k in ("temperature", "top_p", "top_k", "min_p", "repetition_penalty")}
+        g = configs.grpo_config(m, "o", use_vllm=False, bf16=False, max_completion_length=s["max_tokens"], **same)
         assert (g.temperature, g.top_p, g.top_k, g.min_p, g.repetition_penalty) == (1.0, 1.0, 0, 0.0, 1.0)
         assert g.max_completion_length == 1024 and s["presence_penalty"] == s["frequency_penalty"] == 0
 
@@ -405,30 +387,14 @@ def tiny_run(tmp_path, synthetic_items, monkeypatch):
     TS = _train_sft()
 
     def args(out, **kw):
-        sft = {
-            "per_device_train_batch_size": 1,
-            "gradient_accumulation_steps": 1,
-            "use_cpu": True,
-            "bf16": False,
-            "logging_steps": 1,
-            "dataloader_num_workers": 0,
-            "dataloader_persistent_workers": False,
-            "dataloader_prefetch_factor": None,
-        }
-        base = dict(
-            model="lfm2.5-vl-450m",
-            model_path=str(model),
-            view=str(tmp_path / "view"),
-            output_dir=str(tmp_path / out),
-            branches=[0.5, 1.0],
-            steps_per_epoch=8,  # e0.5 at 4, e1 at 8, each with a 1-step decay (decay 0 is refused, BK3-10)
-            rolling_minutes=0.0,
-            vision=False,
-            sft=sft,
-        )
+        base = dict(model="lfm2.5-vl-450m", model_path=str(model), view=str(tmp_path / "view"),
+                    output_dir=str(tmp_path / out), branches=[0.5, 1.0], rolling_minutes=0.0, vision=False, sft=CPU_SFT,
+                    steps_per_epoch=8)  # e0.5 at 4, e1 at 8, each with a 1-step decay (decay 0 is refused, BK3-10)
         return TS.RunArgs(**(base | kw))
 
-    monkeypatch.setattr(TS, "vision_set", lambda prepared: ([], "set-sha"))  # vision_check is mocked where used
+    from objdel.eval import vision
+
+    monkeypatch.setattr(vision, "fixed_set", lambda prepared: ([], "set-sha"))  # vision_check is mocked where used
     return TS, args, tmp_path
 
 
@@ -436,6 +402,11 @@ def _weights(d):
     from safetensors.numpy import load_file
 
     return {k: v for f in sorted(Path(d).glob("*.safetensors")) for k, v in load_file(f).items()}
+
+
+def _same_weights(a, b) -> bool:
+    wa, wb = _weights(a), _weights(b)
+    return wa.keys() == wb.keys() and all(np.array_equal(wa[k], wb[k]) for k in wa)
 
 
 @pytest.mark.slow
@@ -454,9 +425,7 @@ def test_two_runs_are_bit_identical_and_rolling_keeps_three(tiny_run, monkeypatc
     cur[0] = "b"
     assert TS.train(args("b", vision=vis)) == 0
     assert rolling and max(rolling) <= 3  # rotation (save_total_limit 3) while the stable run saves every step
-    for b in ("e0.5", "e1"):
-        wa, wb = _weights(tmp / "a/branches" / b), _weights(tmp / "b/branches" / b)
-        assert wa.keys() == wb.keys() and all(np.array_equal(wa[k], wb[k]) for k in wa)
+    assert all(_same_weights(tmp / "a/branches" / b, tmp / "b/branches" / b) for b in ("e0.5", "e1"))
     man = json.loads((tmp / "a/manifest.json").read_text())
     assert man["status"] == "done" and not (tmp / "a/rolling").exists() and len(man["vision"]) >= 4
     assert {(v["device"], v["dtype"]) for v in man["vision"]} == {("cpu", "torch.float32")}  # BK3-12
@@ -521,9 +490,7 @@ def test_resume_after_a_crash_equals_an_uninterrupted_run(tiny_run, monkeypatch)
     assert TS.train(args("cr", vision=vis, resume=True)) == 0
     man = json.loads((tmp / "cr/manifest.json").read_text())
     assert man["status"] == "done" and len(man["resumed"]) == 1 and man["host"] == socket.gethostname()
-    for b in ("e0.5", "e1"):
-        wa, wb = _weights(tmp / "ref/branches" / b), _weights(tmp / "cr/branches" / b)
-        assert wa.keys() == wb.keys() and all(np.array_equal(wa[k], wb[k]) for k in wa)
+    assert all(_same_weights(tmp / "ref/branches" / b, tmp / "cr/branches" / b) for b in ("e0.5", "e1"))
     with pytest.raises(ValueError, match="--resume"):
         TS.train(args("cr", vision=vis, resume=True))
 
@@ -555,7 +522,7 @@ def test_vision_reference_only_writes_the_r0_reference(tiny_run, monkeypatch):
     from PIL import Image
 
     imgs = [Image.new("RGB", (64, 64), (40 * i, 80, 120)) for i in range(4)]
-    monkeypatch.setattr(TS, "vision_set", lambda prepared: ([{"image": im} for im in imgs], "set-sha"))
+    monkeypatch.setattr(vision, "fixed_set", lambda prepared: ([{"image": im} for im in imgs], "set-sha"))
     monkeypatch.setattr(vision, "projector_distance", lambda m, p, images: 0.25)
     a = args("unused", run_dir=str(tmp / "box"), vision={"prepared": "p", "reference": "vision_ref/lfm.json"})
     assert TS.train(TS.RunArgs(**(vars(a) | {"vision_reference_only": True}))) == 0

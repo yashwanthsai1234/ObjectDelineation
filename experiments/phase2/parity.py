@@ -2,13 +2,12 @@
 
     .venv/bin/python -I -m experiments.phase2.parity --prompts P.jsonl --completions C.jsonl --model DIR --out R.json
 
-Inputs: the bridge files of one sampling run (C-BRIDGE): the prompts JSONL of objdel.train.sample.export_prompts and
-the completions of `sample_vllm.py --logprobs` (each line's "logprobs": vLLM's processed logprob of every sampled
-token). Every completion is teacher-forced through HF in the training env: the processor applied to the exported
-prompt text and image (the prompt ids TRL GRPO builds, B5: equal to vLLM's), the sampled ids appended, one forward
-pass in --dtype, log_softmax in float32, the sampled token's logprob. Δ = vLLM - HF per token and its per-sequence
-sum. Pass (pre-registered in lab/B5/REPORT.md): median |Δ| <= 1e-3 in float32 (0.02 in bfloat16) and the p99 of
-the per-sequence |ΣΔ| <= 0.5 nats, and (H-A5-1) every item's prompt ids, as vLLM echoed them, equal the processor's.
+Inputs (C-BRIDGE): export_prompts' prompts JSONL and `sample_vllm.py --logprobs` completions (vLLM's processed
+logprob of every sampled token). Each completion is teacher-forced through HF: the processor on the exported prompt
+text and image (TRL GRPO's prompt ids, B5: equal to vLLM's), the sampled ids appended, one forward in --dtype,
+float32 log_softmax. Δ = vLLM - HF per token and its per-sequence sum. Pass (pre-registered, lab/B5/REPORT.md):
+median |Δ| <= 1e-3 in float32 (0.02 in bfloat16), p99 per-sequence |ΣΔ| <= 0.5 nats, and (H-A5-1) every item's
+prompt ids as vLLM echoed them equal the processor's.
 """
 import argparse
 import json
@@ -46,14 +45,6 @@ def teacher(model, processor, x: dict, ids: list[int]) -> np.ndarray:
     return torch.log_softmax(logits, -1).gather(1, comp[0][:, None])[:, 0].numpy()
 
 
-def report(deltas: list[np.ndarray], dtype: str) -> dict:
-    t, s = np.abs(np.concatenate(deltas)), np.abs([d.sum() for d in deltas])
-    r = {"dtype": dtype, "tokens": int(t.size), "sequences": len(deltas), "median_abs": float(np.median(t)),
-         "p99_abs": float(np.quantile(t, 0.99)), "max_abs": float(t.max()), "seq_p99_abs": float(np.quantile(s, 0.99))}
-    return r | {"thresholds": {"median_abs": MEDIAN[dtype], "seq_p99_abs": SEQ_P99},
-                "pass": r["median_abs"] <= MEDIAN[dtype] and r["seq_p99_abs"] <= SEQ_P99}
-
-
 def load(model_dir, prompts: dict, dtype: str):
     """(model, processor) of model_dir in dtype, on CUDA when there is one (call it after the sampler child has
     exited), the processor with the prompts' one processor configuration."""
@@ -70,7 +61,7 @@ def load(model_dir, prompts: dict, dtype: str):
 
 def compare(model_dir, prompts_path, comps_path, dtype: str, teach=None) -> dict:
     """H-A5-1 on every item (vLLM's echoed prompt_token_ids equal the processor's) and H-A5-2 on the completions of
-    the `teach` ids (default: all): report() plus "prompt_ids"; "pass" needs both."""
+    the `teach` ids (default: all); "pass" needs both."""
     prompts = {x["id"]: x for x in map(json.loads, Path(prompts_path).read_text().splitlines())}
     comps = [json.loads(x) for x in Path(comps_path).read_text().splitlines()]
     if any("logprobs" not in c for c in comps):
@@ -82,8 +73,12 @@ def compare(model_dir, prompts_path, comps_path, dtype: str, teach=None) -> dict
     ids["pass"] = bool(echoed) and not bad
     deltas = [np.asarray(c["logprobs"], np.float64) - teacher(model, processor, prompts[c["id"]], c["token_ids"])
               for c in comps if teach is None or c["id"] in teach]  # fmt: skip
-    r = report(deltas, dtype)
-    return r | {"prompt_ids": ids, "pass": r["pass"] and ids["pass"]}
+    t, s = np.abs(np.concatenate(deltas)), np.abs([d.sum() for d in deltas])
+    r = {"dtype": dtype, "tokens": int(t.size), "sequences": len(deltas), "median_abs": float(np.median(t)),
+         "p99_abs": float(np.quantile(t, 0.99)), "max_abs": float(t.max()), "seq_p99_abs": float(np.quantile(s, 0.99))}
+    ok = r["median_abs"] <= MEDIAN[dtype] and r["seq_p99_abs"] <= SEQ_P99
+    return r | {"thresholds": {"median_abs": MEDIAN[dtype], "seq_p99_abs": SEQ_P99}, "prompt_ids": ids,
+                "pass": ok and ids["pass"]}
 
 
 def main(argv=None) -> dict:

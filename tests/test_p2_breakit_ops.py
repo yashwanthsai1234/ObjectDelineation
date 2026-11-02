@@ -46,11 +46,6 @@ def knob(E, **kw):
     f.write_text(json.dumps(dict(json.loads(f.read_text()), **kw)))
 
 
-def active(E) -> dict:
-    f = E.home / "active_runs.json"
-    return json.loads(f.read_text()) if f.exists() else {}
-
-
 # --- CI: the [dev]-only job (no torch / transformers / trl / datasets / pydicom, no data/) ---------------------------
 
 BLOCKED = ("torch", "transformers", "trl", "datasets", "peft", "accelerate", "pydicom", "pylidc")
@@ -63,13 +58,7 @@ CI_RUN = (
 )
 
 
-@pytest.mark.parametrize(
-    "node",
-    [
-        "tests/test_p2_bridge.py",
-        "tests/test_p2_views.py::test_build_eval_views_help",
-    ],
-)
+@pytest.mark.parametrize("node", ["tests/test_p2_bridge.py", "tests/test_p2_views.py::test_build_eval_views_help"])
 def test_ci_dev_only_job_skips_instead_of_failing(node):
     env = dict(os.environ, OBJDEL_FIXTURES="/nonexistent", OBJDEL_STORE="/nonexistent")
     cmd = [sys.executable, "-c", CI_RUN, "-q", "-p", "no:cacheprovider", "-m", "not slow", node]
@@ -81,14 +70,14 @@ def test_ci_dev_only_job_skips_instead_of_failing(node):
 
 
 def test_launch_destroys_when_polling_fails(E):
-    E.sh("offers.sh", "RTX_4090", "--pick", "111")
+    E.pick()
     knob(E, fail={"show instance": 1})
     E.sh("launch.sh", "111", "r1", ok=False)
     assert E.instances() == {}
 
 
 def test_launch_destroys_when_running_reply_lacks_ports(E):
-    E.sh("offers.sh", "RTX_4090", "--pick", "111")
+    E.pick()
     knob(E, no_ports=True)
     E.sh("launch.sh", "111", "r1", ok=None)
     assert E.instances() == {}
@@ -96,9 +85,9 @@ def test_launch_destroys_when_running_reply_lacks_ports(E):
 
 def test_launch_bad_status_and_timeout_destroy_even_without_status(E):
     E.state(statuses=[None])
-    E.sh("offers.sh", "RTX_4090", "--pick", "111")
+    E.pick()
     p = E.sh("launch.sh", "111", "r1", ok=False, VAST_LAUNCH_TIMEOUT_S="0.2")
-    assert "timeout" in p.stderr and E.instances() == {} and active(E) == {}
+    assert "timeout" in p.stderr and E.instances() == {} and E.active() == {}
 
 
 # --- run layout on the box: what run.sh writes is what pull.sh pulls -------------------------------------------------
@@ -142,17 +131,17 @@ def test_config_data_root_is_the_box_bundle_dir(tmp_path, monkeypatch):
 
 def test_sweep_reconciles_a_run_whose_instance_vanished(E):
     E.launched(cap="4")
-    act = active(E)
+    act = E.active()
     act["r1"]["started"] -= 30 * 3600  # watchdog self-destroyed it at its cap long ago (G5); the Mac never heard
     act["r1"]["deadline"] -= 30 * 3600
     (E.home / "active_runs.json").write_text(json.dumps(act))
     E.state(instances={})
     E.sh("sweep_orphans.sh")
-    assert active(E) == {} and any(r["run_id"] == "r1" and r["cost_usd"] for r in E.ledger())
+    assert E.active() == {} and any(r["run_id"] == "r1" and r["cost_usd"] for r in E.ledger())
 
 
 def test_parallel_launches_cannot_jointly_pass_the_hard_stop(E):
-    E.sh("offers.sh", "RTX_4090", "--pick", "111")  # $0.55/h
+    E.pick()  # $0.55/h
     for r in ("r1", "r2", "r3"):  # 3 x 0.55 x 12 h = $19.80 worst case
         E.sh("launch.sh", "111", r, "--cap-hours", "12", "--allow-parallel", ok=None)
     assert len(E.vast("create instance")) <= 2
@@ -160,7 +149,7 @@ def test_parallel_launches_cannot_jointly_pass_the_hard_stop(E):
 
 def test_launch_projected_past_the_alarm_needs_approval(E):
     V.spent(E, 9.0)
-    E.sh("offers.sh", "RTX_4090", "--pick", "111")
+    E.pick()
     E.sh("launch.sh", "111", "r1", "--cap-hours", "4", ok=None)  # 9 + 0.55 x 4 = 11.2 > 10
     assert not E.vast("create instance")
 
@@ -173,7 +162,7 @@ def test_launch_refuses_an_active_run_id(E):
 
 @pytest.mark.parametrize("run_id", ["r1;touch${IFS}/tmp/x", "../../etc", "r1.2"])
 def test_launch_validates_run_id(E, run_id):
-    E.sh("offers.sh", "RTX_4090", "--pick", "111")
+    E.pick()
     E.sh("launch.sh", "111", run_id, ok=None)
     assert not E.vast("create instance")
 
@@ -233,9 +222,8 @@ def test_card_boundaries(gpu):
     assert "datacenter=True" in P.query(gpu, "riga") and "cpu_ram>=48" in P.query(gpu, "riga")
 
 
-@pytest.mark.parametrize(
-    "bad", [{"reliability2": 0.5}, {"rentable": False}, {"inet_down": 10}, {"direct_port_count": 0}, {"disk_space": 10}]
-)
+@pytest.mark.parametrize("bad", [{"reliability2": 0.5}, {"rentable": False}, {"inet_down": 10},
+                                 {"direct_port_count": 0}, {"disk_space": 10}])  # fmt: skip
 def test_offer_recheck_covers_the_whole_query(bad):
     assert P.reasons(V.offer(**bad), "RTX_4090", "lidc")
 
@@ -258,8 +246,8 @@ def test_riga_identity_only_on_the_decrypt_stdin_for_the_whole_session(E):
     assert V.IDENTITY not in json.dumps(dec["argv"]) and dec["stdin"].strip() == V.IDENTITY
     assert not any(c["env_has_identity"] for c in E.calls())
     assert V.IDENTITY not in "".join(o.stdout + o.stderr for o in outs)
-    state = [p for d in (E.home, E.runs, E.bundles) for p in d.rglob("*") if p.is_file()]  # not bin/ (the fakes)
-    assert state and V.IDENTITY not in "".join(p.read_text(errors="replace") for p in state)
+    state = V.files_text(E.home, E.runs, E.bundles)  # not bin/ (the fakes)
+    assert state and V.IDENTITY not in state
 
 
 def test_destroy_never_stop(E):

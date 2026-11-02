@@ -62,9 +62,10 @@ SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]*")  # Vast label, shell text and tmux name on the box, local path (BK4-16)
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
 IMPORT_CHECK = "import objdel._polycore, experiments.phase1.reward_gates, tests.oracles.reward_harness"
-MARGIN_S = 600  # run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull
-GRACE_S = 600  # sweep: a run younger than this may not be listed yet, so it is never closed as vanished
-PULL_S = 600  # added to --cap-hours: the watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min
+# MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
+# never closes a run younger than this as vanished (it may not be listed yet). PULL_S: added to --cap-hours, as the
+# watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min.
+MARGIN_S = GRACE_S = PULL_S = 600
 OPS = {"=": operator.eq, ">": operator.gt, ">=": operator.ge, "<=": operator.le}
 
 
@@ -72,17 +73,12 @@ def home() -> Path:
     return Path(os.environ.get("VAST_HOME", HERE))
 
 
-def dry() -> bool:
-    return os.environ.get("DRY_RUN") == "1"
-
-
 def die(msg: str):
     sys.exit(f"vast: {msg}")
 
 
 def is_raw(p: Path) -> bool:
-    parts = Path(p).resolve().parts
-    return any(a == "data" and b == "raw" for a, b in zip(parts, parts[1:], strict=False))
+    return "/data/raw/" in f"{Path(p).resolve().as_posix()}/"
 
 
 # --- offers: the §4.2 filter as data; `query` sends it, `reasons` re-checks it on the returned JSON -------------------
@@ -136,10 +132,8 @@ def reasons(o: dict, gpu: str, dataset: str, disk: int = 80) -> list[str]:
 
 def governance(dataset: str, o: dict, allow: dict) -> list[str]:
     """H-GOV (D16): LIDC anywhere verified; RIGA only with recorded written permission AND a datacenter offer."""
-    if dataset == "lidc":
-        return []
     if dataset != "riga":
-        return [f"unknown bundle {dataset}"]
+        return [] if dataset == "lidc" else [f"unknown bundle {dataset}"]
     perm = allow.get("riga_permission") or {}
     why = [] if perm.get("granted") is True and perm.get("evidence") else ["no recorded RIGA permission"]
     if o.get("hosting_type") != 1 or o.get("datacenter", True) is not True:
@@ -164,11 +158,16 @@ def ledger(**row) -> None:
         w.writerow({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **row})
 
 
-def active(update: dict | None = None) -> dict:
-    f = home() / "active_runs.json"
-    if update is not None:
-        f.write_text(json.dumps(update, indent=1))
+def load(name: str) -> dict:
+    """A JSON state file under VAST_HOME ({} when absent): active_runs.json, .vast-allowlist, offers/<id>.json."""
+    f = home() / name
     return json.loads(f.read_text()) if f.exists() else {}
+
+
+def active(update: dict | None = None) -> dict:
+    if update is not None:
+        (home() / "active_runs.json").write_text(json.dumps(update, indent=1))
+    return load("active_runs.json")
 
 
 def accrued(r: dict, t: float) -> float:
@@ -184,11 +183,6 @@ def spend(committed: bool = False) -> float:
     return closed + sum(accrued(r, max(now, r["deadline"]) if committed else now) for r in active().values())
 
 
-def allowlist() -> dict:
-    f = home() / ".vast-allowlist"
-    return json.loads(f.read_text()) if f.exists() else {}
-
-
 @functools.cache
 def secret(service: str) -> str:
     cmd = ["security", "find-generic-password", "-s", service, "-w"]
@@ -202,9 +196,7 @@ def secret(service: str) -> str:
 
 
 def vast(*args: str, tries: int = 1):
-    env = dict(os.environ)
-    if "VAST_API_KEY" not in env:
-        env["VAST_API_KEY"] = secret("objdel-vast-scoped")
+    env = dict(os.environ, VAST_API_KEY=os.environ.get("VAST_API_KEY") or secret("objdel-vast-scoped"))
     for i in range(tries):
         p = subprocess.run(["vastai", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
         if not p.returncode and (p.stdout.strip() or "--raw" not in args):  # an API error exits 0 with empty stdout (V0)
@@ -214,28 +206,25 @@ def vast(*args: str, tries: int = 1):
     die(f"vastai {args[:2]} failed: {p.stderr.strip()[-300:]}")
 
 
-def sh(cmd: list[str], stdin: str | None = None, what: str = "") -> int:
-    """ssh / rsync: printed under DRY_RUN=1 (stdin shown only as a label), otherwise run."""
-    if dry():
+def sh(cmd: list[str], stdin: str | None = None, what: str = "") -> None:
+    """ssh / rsync: printed under DRY_RUN=1 (stdin shown only as a label), otherwise run; a failure stops."""
+    if os.environ.get("DRY_RUN") == "1":
         print("DRY_RUN:", shlex.join(cmd), f"<stdin: {what}>" if stdin is not None else "")
-        return 0
-    return subprocess.run(cmd, input=stdin, text=True, stdin=None if stdin else subprocess.DEVNULL).returncode
+    elif subprocess.run(cmd, input=stdin, text=True, stdin=None if stdin else subprocess.DEVNULL).returncode:
+        die(f"{cmd[0]} failed: {shlex.join(cmd[-2:])[:160]}")
 
 
-def ssh_cmd(run: dict) -> list[str]:
-    opts = f"-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={home() / 'known_hosts'}"
-    return ["ssh", "-p", str(run["port"]), *opts.split(), f"root@{run['ip']}"]
+def ssh(run: dict) -> list[str]:
+    known = f"UserKnownHostsFile={home() / 'known_hosts'}"
+    return ["ssh", "-p", str(run["port"]), "-o", "StrictHostKeyChecking=accept-new", "-o", known]
 
 
 def remote(run: dict, command: str, stdin: str | None = None, what: str = "") -> None:
-    if sh([*ssh_cmd(run), command], stdin, what):
-        die(f"remote command failed: {command[:120]}")
+    sh([*ssh(run), f"root@{run['ip']}", command], stdin, what)
 
 
 def rsync(run: dict, src: str, dst: str, *extra: str) -> None:
-    e = shlex.join(ssh_cmd(run)[:-1])
-    if sh(["rsync", "-az", "--exclude=data/raw/", *extra, "-e", e, src, dst]):
-        die(f"rsync {src} -> {dst} failed")
+    sh(["rsync", "-az", "--exclude=data/raw/", *extra, "-e", shlex.join(ssh(run)), src, dst])
 
 
 def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None:
@@ -275,11 +264,9 @@ def cmd_offers(a) -> None:
     got = vast("search", "offers", query(a.gpu, ds, a.disk), "-o", "dph_total", "--storage", str(a.disk), "--raw")
     ok = [o for o in got if not reasons(o, a.gpu, ds, a.disk)][:5]
     for o in ok:
-        print(
-            f"{o['id']:>10}  ${o['dph_total']:.3f}/h  {o['gpu_ram'] / 1024:.0f} GB  {o['cpu_cores_effective']} cores"
-            f"  {o['cpu_ram'] / 1000:.0f} GB RAM  cuda {o['cuda_max_good']}  hosting_type {o.get('hosting_type')}"
-            f"  ${o['inet_up_cost']}/GB up"
-        )
+        print(f"{o['id']:>10}  ${o['dph_total']:.3f}/h  {o['gpu_ram'] / 1024:.0f} GB  {o['cpu_cores_effective']} cores"
+              f"  {o['cpu_ram'] / 1000:.0f} GB RAM  cuda {o['cuda_max_good']}  hosting_type {o.get('hosting_type')}"
+              f"  ${o['inet_up_cost']}/GB up")  # fmt: skip
     if a.pick is None:
         return
     o = ok[0] if a.pick == "top" and ok else next((o for o in ok if str(o["id"]) == a.pick), None)  # top: no race
@@ -292,14 +279,12 @@ def cmd_offers(a) -> None:
 
 
 def cmd_launch(a) -> None:
-    f = home() / "offers" / f"{a.offer}.json"
     if not RUN_ID_RE.fullmatch(a.run_id):
         die(f"run_id must match {RUN_ID_RE.pattern}")
     if a.run_id in active():
         die(f"run {a.run_id} is still active (teardown.sh first)")
-    if not f.exists():
+    if not (o := load(f"offers/{a.offer}.json")):
         die(f"offer {a.offer} was not picked with offers.sh --pick")
-    o = json.loads(f.read_text())
     if why := reasons(o, o["_gpu"], o["_dataset"], o["_disk"]):
         die("; ".join(why))
     cap_s, now = int(a.cap_hours * 3600) + PULL_S, time.time()
@@ -313,7 +298,7 @@ def cmd_launch(a) -> None:
             "with the owner's written approval (G10, §4.6)")  # fmt: skip
     if (live := vast("show", "instances", "--raw")) and not a.allow_parallel:
         die(f"{len(live)} instance(s) already exist; one instance at a time unless --allow-parallel")
-    allow = allowlist()
+    allow = load(".vast-allowlist")
     image = allow.get("image") or die("no image in .vast-allowlist")
     login = f"-u {allow.get('ghcr_user', '')} -p {secret('objdel-ghcr-read')} ghcr.io"
     flags = ["--ssh", "--direct", "--cancel-unavail", "--label", a.run_id, "--raw"]
@@ -364,13 +349,12 @@ def code_files() -> list[str]:
 
 def cmd_sync_up(a) -> None:
     run = get_run(a.run_id)
-    o = json.loads((home() / "offers" / f"{run['offer']}.json").read_text())
-    allow = allowlist()
+    o, allow = json.loads((home() / "offers" / f"{run['offer']}.json").read_text()), load(".vast-allowlist")
     if why := governance(a.bundle, o, allow):
         die("H-GOV refuses: " + "; ".join(why))
     name = "bundle-riga.tar.age" if a.bundle == "riga" else f"bundle-{a.bundle}.tar"
     files = [a.bundle_dir / name, a.bundle_dir / f"{name}.sha256"]
-    if is_raw(a.bundle_dir) or any(is_raw(f) for f in files):
+    if any(map(is_raw, [a.bundle_dir, *files])):
         die("refusing to send anything under data/raw")
     lst = home() / "code_files.txt"
     lst.write_text("\n".join(code_files()) + "\n")
@@ -381,18 +365,18 @@ def cmd_sync_up(a) -> None:
     if a.code_only:  # a code fix mid-session: the bundle is already on the box
         return ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], detail="code only")
     rsync(run, *map(str, files), f"{host}/workspace/data/")
-    verify, detail = f"cd /workspace/data && sha256sum -c {name}.sha256", ""
+    verify = f"cd /workspace/data && sha256sum -c {name}.sha256"
+    unpack = "mkdir -p {d} && {x} -C {d} && cd {d} && sha256sum -c --quiet SHA256SUMS"
     if a.bundle == "riga":  # D16: identity streamed into age over this session's stdin; plaintext only in /dev/shm
         # BK4-19: Docker's /dev/shm defaults to 64 MB and V0 has not shown Vast's; refuse before decrypting
         need = -(-(a.bundle_dir / name).stat().st_size * 11 // 10240)  # KB, ciphertext + 10 %
         shm = f"avail=$(df -Pk /dev/shm | awk 'NR==2 {{print $4}}') && [ \"$avail\" -ge {need} ]"
-        cmd = (f"{verify} && {shm} && mkdir -p /dev/shm/riga && age -d -i /dev/stdin {name} | tar -x -C /dev/shm/riga"
-               " && cd /dev/shm/riga && sha256sum -c --quiet SHA256SUMS")  # fmt: skip
-        remote(run, cmd, secret("objdel-riga-age") + "\n", "age identity from the keychain")
+        unpack = unpack.format(d="/dev/shm/riga", x=f"age -d -i /dev/stdin {name} | tar -x")
+        remote(run, f"{verify} && {shm} && {unpack}", secret("objdel-riga-age") + "\n", "age identity from the keychain")
         detail = f"recipient={allow.get('riga_recipient', '')} shm=UNVERIFIED until V0 (BK4-19)"
     else:
-        remote(run, f"{verify} && mkdir -p {a.bundle} && tar -xf {name} -C {a.bundle}"
-                    f" && cd {a.bundle} && sha256sum -c --quiet SHA256SUMS")  # fmt: skip
+        remote(run, f"{verify} && " + unpack.format(d=a.bundle, x=f"tar -xf {name}"))
+        detail = ""
     ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], bundle=name, detail=detail)
 
 
@@ -458,11 +442,10 @@ def cmd_run(a) -> None:
 
     rd = f"/workspace/runs/{a.run_id}"
     jobs = " && ".join([*guard, *map(job, stages)])
-    inner = (  # EXIT is removed first: the watchdog's idle destroy needs it (BK4-11); `;` keeps cd/export in this shell
-        f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} && mkdir -p {rd} && rm -f {rd}/EXIT || exit 1; "
-        f"(while :; do date -u +%s > {rd}/HEARTBEAT; sleep 60; done) & "
-        f"timeout {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1"
-    )
+    # EXIT is removed first: the watchdog's idle destroy needs it (BK4-11); `;` keeps cd/export in this shell
+    inner = (f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} && mkdir -p {rd} && rm -f {rd}/EXIT || exit 1; "
+             f"(while :; do date -u +%s > {rd}/HEARTBEAT; sleep 60; done) & "
+             f"timeout {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1")  # fmt: skip
     remote(run, f"tmux new-session -d -s {a.run_id}-{name} {shlex.quote('bash -c ' + shlex.quote(inner))}")
     ledger(event="run", run_id=a.run_id, instance_id=run["instance"], detail=f"{a.module} cap_s={cap}")
 
@@ -497,7 +480,7 @@ def cmd_teardown(a) -> None:
 
 def alert(msg: str) -> None:
     print(f"vast ALERT: {msg}", file=sys.stderr)
-    if sys.platform == "darwin" and not dry():
+    if sys.platform == "darwin" and os.environ.get("DRY_RUN") != "1":
         subprocess.run(["osascript", "-e", f'display notification {json.dumps(msg)} with title "objdel vast"'])
 
 
@@ -524,26 +507,29 @@ def cmd_sweep_orphans(a) -> None:
         alert(f"alarm: ${usd:.2f} spent >= ${ALARM} (G10)")
 
 
+FLAG = {"action": "store_true"}
+CLI = {  # subcommand -> its arguments, in order
+    "offers": {"gpu": {}, "--riga": FLAG, "--pick": {}, "--disk": {"type": int, "default": 80}},
+    "launch": {"offer": {"type": int}, "run_id": {}, "--cap-hours": {"type": float, "default": 4},
+               "--allow-parallel": FLAG, "--owner-approved": FLAG,
+               "--idle-minutes": {"type": float, "default": 30, "help": "watchdog idle destroy after a pulled EXIT"}},
+    "sync_up": {"run_id": {}, "--bundle": {"default": "lidc", "choices": ["lidc", "riga"]},
+                "--bundle-dir": {"type": Path, "default": ROOT / "build" / "bundles"}, "--code-only": FLAG},
+    "run": {"run_id": {}, "module": {}, "--cap-hours": {"type": float, "default": 24},
+            "args": {"nargs": argparse.REMAINDER}},
+    "pull": {"run_id": {"nargs": "?"}},
+    "teardown": {"run_id": {}},
+    "sweep_orphans": {},
+}  # fmt: skip
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="vast", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("offers")
-    p.add_argument("gpu"), p.add_argument("--riga", action="store_true"), p.add_argument("--pick")
-    p.add_argument("--disk", type=int, default=80)
-    p = sub.add_parser("launch")
-    p.add_argument("offer", type=int), p.add_argument("run_id"), p.add_argument("--cap-hours", type=float, default=4)
-    p.add_argument("--allow-parallel", action="store_true"), p.add_argument("--owner-approved", action="store_true")
-    p.add_argument("--idle-minutes", type=float, default=30, help="watchdog idle destroy after a pulled EXIT")
-    p = sub.add_parser("sync_up")
-    p.add_argument("run_id"), p.add_argument("--bundle", default="lidc", choices=["lidc", "riga"])
-    p.add_argument("--bundle-dir", type=Path, default=ROOT / "build" / "bundles")
-    p.add_argument("--code-only", action="store_true")
-    p = sub.add_parser("run")
-    p.add_argument("run_id"), p.add_argument("module"), p.add_argument("--cap-hours", type=float, default=24)
-    p.add_argument("args", nargs=argparse.REMAINDER)
-    sub.add_parser("pull").add_argument("run_id", nargs="?")
-    sub.add_parser("teardown").add_argument("run_id")
-    sub.add_parser("sweep_orphans")
+    for cmd, args in CLI.items():
+        p = sub.add_parser(cmd)
+        for name, kw in args.items():
+            p.add_argument(name, **kw)
     a = ap.parse_args(argv)
     globals()[f"cmd_{a.cmd}"](a)
 
