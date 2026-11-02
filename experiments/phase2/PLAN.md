@@ -283,6 +283,7 @@ built at Phase 3 start only. Rebuilt only when pins change; tag `p2-<pinhash>`; 
 | onstart watchdog | env → `/etc/environment` (V9); self-destroy via `CONTAINER_API_KEY` | uptime > cap, or GPU idle 30 min and `PULLED_OK` exists |
 | `run.sh <config>` | `timeout -k 120 <cap> /opt/venv/bin/python -I -m experiments.phase2.<script> …` in tmux; heartbeat | wall-clock cap per config |
 | `pull.sh <run_id>` | touch `PULLED_OK.next`; rsync `runs/<run_id>/` → Mac without `rolling/ decay/ stable/` (full checkpoints); checksums; rename to `PULLED_OK` (the pull's start time) | — |
+| `push_hf.sh <run_id> <config>` | refuse a keychain HF token that is not fine-grained and scoped to `svenk029/objdel-sft` write only; ssh `hf_push` with the token on stdin: the selected branch + base LICENSE + model card, one commit on repo branch `<output_dir>`; refused on the box for a public repo, no selected branch or a non-LIDC run | licence (RIGA, LFM §4) |
 | `teardown.sh <run_id>` | final pull (3 tries) → always `vastai destroy instance <id> -y` → verify absent → invoices to ledger | — |
 | `sweep_orphans.sh` (launchd, hourly) | destroy instances not in `active_runs.json` or past their cap; alert | catches forgotten instances |
 
