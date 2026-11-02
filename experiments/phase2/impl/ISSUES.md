@@ -97,3 +97,19 @@ tests/ and experiments/, reporting 77 % for a library that is at 94 %).
 | `k3_harness` exit 0 on a failed gate; `c2_analyze` read the wrong report key; rx8 / R-diag configs without `sampler: hf`; g_probe wrote bare NaN | gates that cannot fail; C2 crash; vLLM after its parity failure | fixed; R-diag views now buildable (`build_views --no-dihedral / --no-window-jitter`, same draws except that component) |
 | Dead / stale code | — | removed `serve.ref_loader` and root-less `CacheRef`, `configs.DTYPE`, unbuilt C++ files; test-only probe answerers moved to `tests/probe_models.py`; one `dataset.prompts` for select_ckpt's rows; duplicate fixture and `.gitignore` merged; docs corrected |
 | Open (low) | — | onstart gzip not yet seen on a real box (check in the first minute); spend estimate counts 15 GB download per launch (conservative); GHCR PAT on the Mac's `vastai create` argv |
+
+## V1 rerun (2026-11-02, box 58836372, RTX 4090 Quebec, $0.401/h, billed $0.727)
+
+- Launch: three offers vanished between search and create (no cost); a New York 5090 was still loading at the 15 min
+  launch timeout and was destroyed (~$0.20 estimated). The gzip watchdog onstart ran on the real box.
+- R0 rerun: G-vision reference (LFM) and hf_rate: 0.132 s/sample on base weights (5.9 % of samples hit 1024 tokens);
+  project_r1 GO 2.70 h. Trained branches sampled at ~0.048 s/sample, so R1 took ~1.5 h, not 2.7.
+- R1 training finished: 1,542 stable steps at 0.69 s/step; peaks stable 20.8, e0.5 17.8, e1 20.8, e2 20.9 GiB (no OOM);
+  G-vision ok at 386 / 771 / 1542 (ratio 1.00 / 0.96 / 0.84).
+- select_ckpt crashed at its CPU G-vision check: transformers 5.20 runs LFM2's short conv through the CUDA-only
+  `causal_conv1d` on any device (R0's reference runs only the tower, the Mac has no such package). Fixed (024089f):
+  select_ckpt blocks the package. Select + probe rerun from the saved branches.
+- Selection (D12): e2 ineligible (legal 87.0 % < 90 %, though pass rate 0.69 vs e1 0.48 on 256 items); e1 selected.
+- e1 gates: FAIL. G-format, G-signal, G-vision, G-prior-b pass; G-geometry fails (median IoU_tc shifted 0.495 < 0.60,
+  rescaled 0.092, rescaled legal 71 %); G-precision and G-topology-a probes fail. R2 G-probe skipped (gates failed).
+- Branches on the Mac: runs/v1/r1-lfm/branches/{e0.5,e1,e2}. Open: why rescaled collapses; next rung (Qwen3.5 LoRA).
