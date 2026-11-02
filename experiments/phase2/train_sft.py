@@ -10,7 +10,8 @@ data position) at every b, and each branch is a new trainer resumed from it whos
 (sft_config(steps, branch_at=b)): bit-identical to an uninterrupted WSD run decaying at b (impl/M8.md). Colliding
 branch points and 0-step decays are refused. `branches: []` = stable only, one epoch, nothing saved (R0 timing and
 Qwen3.5 arm). Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor; LoRA runs (D6) saved merged.
-Rolling checkpoints (optimizer included, limit 3) every `rolling_minutes`, each with the G-vision check
+Rolling checkpoints (optimizer included, limit 3; stable/e<b> hard-links one; rolling/ is deleted once every stable/e<b>
+exists, decay/<b> once branches/<b> does) every `rolling_minutes`, each with the G-vision check
 (objdel.eval.vision, §5.1) on the training device and dtype (the reference is CPU float32, B1): ratio < 0.5 **and**
 TV < 0.002 aborts with the reason in manifest.json (exit 3; D7 repair: freeze_vision), one alone warns.
 
@@ -26,9 +27,11 @@ Data: view_rows in view-epoch order, length-grouped within each epoch (seed data
 b passes over fresh views (D10); the view must hold max(b) + its decay epochs (checked before anything loads). No
 sampling here: select_ckpt starts after exit (D13). manifest.json: config, view hash, code SHA-256, step plan, G-vision
 log, pid, status and `timing` (stable optimizer steps, mean s/step after WARM steps, samples/s, effective batch, peak
-CUDA GiB or null, rows per view epoch: project_r1's inputs). `--resume true` continues a crashed run (status
-"running", same config and view): the newest complete rolling checkpoint, then each unsaved branch (from its own decay
-checkpoint when there is one).
+CUDA GiB or null, rows per view epoch: project_r1's inputs; a resumed segment keeps the first) and `peak_memory_gib` per
+phase (stable, e<b>). `--resume true` continues a crashed run (status "running", same config and view): the newest
+complete rolling checkpoint (refused if it is past a branch point whose stable/e<b> is missing), then each unsaved
+branch (from its own decay checkpoint when there is one). Full-FT checkpoints are loaded through from_pretrained (its
+key conversion; missing or unexpected keys raise). PYTORCH_ALLOC_CONF=expandable_segments:True unless set (D4).
 
 `deterministic: true` (D24, R0 timing arms): CUBLAS_WORKSPACE_CONFIG=:4096:8 unless set, and
 torch.use_deterministic_algorithms(True, warn_only=True), before anything loads; never `sft: full_determinism` (it
@@ -45,6 +48,7 @@ References:
 - WSD: Hu et al., MiniCPM (2404.06395); Hägele et al. (2405.18392)
 """
 
+import gc
 import hashlib
 import json
 import math
@@ -117,14 +121,18 @@ def plan(args: RunArgs, steps_per_epoch: int) -> dict:
     return {"steps_per_epoch": steps_per_epoch, "stable": stable, "warmup": round(WARMUP * stable), "branches": br}
 
 
-def timing(stamps: list[float], batch: int) -> dict:
-    """Step-end perf_counter stamps of one trainer -> mean s/step after the first WARM steps and peak CUDA memory."""
+def peak_gib() -> float | None:
+    """Peak CUDA memory allocated since the last reset_peak_memory_stats (each trainer resets it), None on CPU."""
     import torch
 
+    return torch.cuda.max_memory_allocated() / 2**30 if torch.cuda.is_available() else None
+
+
+def timing(stamps: list[float], batch: int) -> dict:
+    """Step-end perf_counter stamps of one trainer -> mean s/step after the first WARM steps and peak CUDA memory."""
     s = (stamps[-1] - stamps[WARM - 1]) / (len(stamps) - WARM) if len(stamps) > WARM else None
-    mem = torch.cuda.max_memory_allocated() / 2**30 if torch.cuda.is_available() else None
     return {"steps": len(stamps), "warmup_excluded": WARM, "s_per_step": s, "samples_per_s": s and batch / s,
-            "batch": batch, "max_memory_gib": mem}  # fmt: skip
+            "batch": batch, "max_memory_gib": peak_gib()}  # fmt: skip
 
 
 def probed_depth(path: Path) -> float:
@@ -246,6 +254,7 @@ def main(argv=None) -> int:
 
 
 def train(args: RunArgs) -> int:
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")  # D4, read at the first CUDA allocation
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor, TrainerCallback
     from transformers.trainer_pt_utils import get_length_grouped_indices
@@ -283,9 +292,9 @@ def train(args: RunArgs) -> int:
         same = old and all(old["config"][k] == man["config"][k] for k in SAME_RUN)
         if not (same and old["status"] == "running" and old["view"]["view_hash"] == man["view"]["view_hash"]):
             raise ValueError(f"--resume: {out} is not a crashed run of this config and view")
-        man |= {k: old[k] for k in ("vision", "log", "started")} | {"resumed": old.get("resumed", []) + [time.time()]}
+        man |= {k: old[k] for k in ("vision", "log", "started", "timing", "peak_memory_gib") if k in old} | {"resumed": old.get("resumed", []) + [time.time()]}
     man |= {"pid": os.getpid(), "host": socket.gethostname(), "status": "running",
-            "started": man.get("started", time.time())}
+            "started": man.get("started", time.time()), "peak_memory_gib": man.get("peak_memory_gib", {})}
     write_json(out / "manifest.json", man)
     src = args.model_path or configs.MODELS[args.model]
     proc = AutoProcessor.from_pretrained(src, **configs.processor_kwargs(args.model, "lidc"))
@@ -300,6 +309,11 @@ def train(args: RunArgs) -> int:
     need = max([b["at"] + b["decay"] for b in p["branches"].values()] or [p["stable"]]) * gbs
     if need > len(rows):
         raise ValueError(f"{args.view}: {len(rows)} rows, the deepest branch and its decay need {need}")
+    last = latest(out / "rolling")
+    for name, b in p["branches"].items():  # a crash between a branch point's rolling save and its stable copy
+        if last and int(last.rsplit("-", 1)[1]) >= b["at"] and not (out / "stable" / name).is_dir():
+            raise ValueError(f"--resume: {last} is past branch {name} (step {b['at']}) but {out}/stable/{name} is "
+                             f"missing: copy {out}/rolling/checkpoint-{b['at']} there if it exists, else start over")
 
     class Trainer(SFTTrainer):
         def _get_train_sampler(self, train_dataset=None):  # view epochs in order, length-grouped inside each
@@ -310,6 +324,20 @@ def train(args: RunArgs) -> int:
                 g = torch.Generator().manual_seed(self.args.data_seed + e)
                 order += [idx[j] for j in get_length_grouped_indices([lengths[i] for i in idx], bs, generator=g)]
             return order
+
+        def _load_from_checkpoint(self, resume_from_checkpoint, model=None):
+            """Full FT through from_pretrained, which applies the checkpoint key conversion: LFM2.5-VL saves its
+            tower as model.vision_tower.vision_model.*, and the parent's load_state_dict(strict=False) skipped all of
+            it with a warning (every branch and crash resume restarted the tower from base). Adapters: the parent."""
+            if (Path(resume_from_checkpoint) / "adapter_config.json").exists():
+                return super()._load_from_checkpoint(resume_from_checkpoint, model)
+            saved, info = AutoModelForImageTextToText.from_pretrained(
+                resume_from_checkpoint, dtype=dtype, output_loading_info=True)
+            bad = {k: sorted(map(str, info[k])) for k in ("missing_keys", "unexpected_keys", "mismatched_keys")}
+            bad["missing_keys"] = [k for k in bad["missing_keys"] if k not in saved.all_tied_weights_keys]
+            if any(bad.values()):
+                raise ValueError(f"{resume_from_checkpoint}: not this model's full checkpoint: {bad}")
+            (model or self.model).load_state_dict(saved.state_dict())  # strict: same class, same keys
 
     class Rolling(TrainerCallback):
         def __init__(self, keep_at=(), stop_at=None):
@@ -325,7 +353,8 @@ def train(args: RunArgs) -> int:
             self.last, step = time.monotonic(), state.global_step
             if step in self.keep_at:
                 ckpt = Path(a.output_dir, f"checkpoint-{step}")
-                replace_dir(lambda tmp: shutil.copytree(ckpt, tmp), out / "stable" / self.keep_at[step])
+                replace_dir(lambda tmp: shutil.copytree(ckpt, tmp, copy_function=os.link),  # hard links: no copy
+                            out / "stable" / self.keep_at[step])
             if vis:  # vision.check restores the module modes; training_step calls model.train() anyway
                 prm = next(model.parameters())
                 res = vision_check(model, proc, vis) | {"device": str(prm.device), "dtype": str(prm.dtype)}
@@ -333,6 +362,8 @@ def train(args: RunArgs) -> int:
                 write_json(out / "manifest.json", man)
 
     def trainer(out_dir, branch_at=None, keep_at=(), stop_at=None):
+        if torch.cuda.is_available():  # this phase's peak (R0's 30-step arm: 16.4 GiB, R1's stable phase: 20.9)
+            torch.cuda.reset_peak_memory_stats()
         model = AutoModelForImageTextToText.from_pretrained(src, dtype=dtype)
         o = {"seed": args.seed, "data_seed": args.seed, "save_strategy": "no", "save_total_limit": 3}
         o |= {"logging_steps": 10}
@@ -362,18 +393,26 @@ def train(args: RunArgs) -> int:
     if not (keep and (out / "stable" / keep[p["stable"]]).is_dir()):  # stable phase not finished yet
         t = trainer(out / "rolling", p["stable"] if keep else None, keep, p["stable"])
         t.train(resume_from_checkpoint=latest(out / "rolling") if args.resume else None)
-        man["log"]["stable"] = t.state.log_history
-        man["timing"] = timing(t.pop_callback(Rolling).stamps, gbs) | {"rows_per_epoch": rows0}
+        man["log"]["stable"], man["peak_memory_gib"]["stable"] = t.state.log_history, peak_gib()
+        man.setdefault("timing", timing(t.pop_callback(Rolling).stamps, gbs) | {"rows_per_epoch": rows0})
         write_json(out / "manifest.json", man)
+    if all((out / "stable" / n).is_dir() for n in keep.values()):  # rolling/ holds full AdamW checkpoints
+        shutil.rmtree(out / "rolling", ignore_errors=True)
     for name, b in p["branches"].items():
         if "abort" in man:
             break
         if not (out / "branches" / name).is_dir():
+            t = model = None  # V1 R1: the previous trainer's model, grads and AdamW state (~7 GB) made e1 OOM
+            gc.collect()
+            torch.cuda.empty_cache()
             t = trainer(out / "decay" / name, branch_at=b["at"])
             t.train(resume_from_checkpoint=(args.resume and latest(out / "decay" / name)) or str(out / "stable" / name))
+            man["log"][name], man["peak_memory_gib"][name] = t.state.log_history, peak_gib()
+            if "abort" in man:  # G-vision stopped the decay: the branch is unfinished
+                break
             model = t.model.merge_and_unload() if hasattr(t.model, "merge_and_unload") else t.model  # D6: merged
             replace_dir(lambda tmp: (model.save_pretrained(tmp), proc.save_pretrained(tmp)), out / "branches" / name)
-            man["log"][name] = t.state.log_history
+            shutil.rmtree(out / "decay" / name, ignore_errors=True)
         finish(out / "stable" / name)  # frees the optimizer state once its branch exists
         write_json(out / "manifest.json", man)
     for d in (out / "stable").glob("e*"):  # after an abort too

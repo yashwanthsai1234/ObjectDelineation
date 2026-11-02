@@ -92,9 +92,6 @@ def lora(model: str, force: bool = False) -> LoraConfig | None:
     return LoraConfig(r=16, lora_alpha=32, target_modules="all-linear", exclude_modules=VISION, task_type="CAUSAL_LM")
 
 
-DTYPE = {m: dtype(m, m in _LORA) for m in MODELS}  # each model's default mode (lora(m)); prefer dtype(m, lora)
-
-
 def param_groups(model, base_lr: float) -> list[dict]:
     """Optimizer groups for full fine-tuning (D7): the language model at base_lr, vision tower + projector at 0.1x;
     frozen parameters are left out. torch.optim.AdamW(param_groups(model, lr)) -> Trainer(optimizers=(opt, None))."""

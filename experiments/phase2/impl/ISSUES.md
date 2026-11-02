@@ -67,3 +67,33 @@ tests/ and experiments/, reporting 77 % for a library that is at 94 %).
 | Invoice (BK4-18) | `show invoices-v1 --charges` lists one Instance row, $0.022 for the ~11 min; credit 4.660 -> 4.639 |
 | On-box checks (BK4-19: /dev/shm, `CONTAINER_API_KEY`, watchdog.log, GPU imports) | NOT RUN: `~/.ssh/id_ed25519` has a passphrase and is not in the agent (the box accepted the key ~1 min after `running`). Owner runs `ssh-add --apple-use-keychain ~/.ssh/id_ed25519`, then a short re-check before V1 |
 | Cap vs pull | The 10-min cap counts the image pull (5.7 min); V1 caps must allow ~6 min of pull |
+
+## V1 day 1 (2026-11-02): RTX 4090, Texas instance 58762863, offer 41247264 at $0.440/h; paused by the owner
+
+| Item | Result |
+|---|---|
+| Launch | 5 boxes. Thailand and Nevada (twice): layer `f5e58e423bc0` (5.61 GB of 5.88, both venvs) kept retrying, > 15-30 min; Quebec: pulled in ~5 min but ssh refused (`authorized_keys` modes, vast-cli #336); Texas (6.7 Gb/s down): pulled in ~5 min. Fixes: US/CA-only hosts as a fixed admissibility rule (owner rule), onstart key repair, teardown always destroys (f6f5eb1, 787c096). Open (low): split the venv layer if slow pulls recur |
+| Box bugs | Fixed with tests (77ed632): Vast's login tmux broke `ssh host CMD` (`~/.no_auto_tmux`); `git ls-files` split paths with spaces; two-source rsync made the `.sha256` the destination; `run.sh` silently ignored flags after the config |
+| R0 | image_check pass (165 of 168 bf16 TFLOPS, /dev/shm 50 GB); xarch 23/26 identical + accepted (the `eval` diff was a stale Oct-19 Mac reference, refreshed); K3 idle done; LFM timing 0.68 s/step (6 workers, det off), 16.4 GB peak; stop rule GO (R1 0.67 h vs 3.4 h) |
+| Sampler parity (H-A5-2) | FAIL for both: prompt ids 32/32, median token diff LFM 1.4e-5 / Qwen3.5 1.8e-3 nats, but per-sequence p99 1.11 / 1.44 > 0.5. D13 fallback applied: `sampler: hf` in R1/C2 configs (b37917b). Owner question: is 0.5 nats on a summed bf16 sequence (~160 tokens) too strict? |
+| GDN route (D15) | Qwen3.5 gated delta rule runs the PyTorch reference path although fla imports; causal-conv1d via hub kernels |
+| Qwen3.5 arm | OOM at step 0 (full FT, batch 8, no checkpointing, > 23.4 GB): D6 says LoRA r16 for that rung; s/step not measured |
+| R1 | Stable phase (rolling checkpoint 1,542) and branch e0.5 saved, then branch e1 OOM at step 0: the branch loop kept every earlier trainer (model, grads, fp32 AdamW ~7 GB) alive. Fixed with a test (trainers freed before each branch). Checkpoints (29 GB) not pulled: R1 reruns from scratch (~20 min); manifest kept in `runs/v1/r1-lfm-oom/` |
+| Cost | Texas box $0.627 (billed); credit 4.59 -> 3.96 |
+
+## Pre-rerun scan (2026-11-02): six reviewers (train_sft, HF sampling, Vast tooling, R0/analysis, CPU chain dry run, dead code), all fixed test-first
+
+| Finding | Effect if unfixed | Fix |
+|---|---|---|
+| Branch decays and crash resumes reset the LFM vision tower to base (checkpoint keys `vision_tower.vision_model.*` vs live `vision_tower.*`; Trainer's non-strict load only warned) | every LFM branch = trained LM + untrained tower; G-vision blind on branches | `_load_from_checkpoint` via `from_pretrained` (key conversion), missing / unexpected keys raise; real-weights test |
+| HF evaluation as chained: no `--items 256`, one item per `generate`, timeouts restart from zero | R1 eval ≈ 14 GPU-h (9-23) vs ~1 h planned: past the box cap and the credit | chain passes `--items 256` for `sampler: hf`; `hf_sample` batches 16 items, resumes whole batches; `sample.sample` batches items; SIGTERM kills the sampler group |
+| HF sampling dtype: from_pretrained "auto" kept fp32 for trained branches, bf16 for base weights | R0's rate undercounts R1 by up to 2x | the GPU always samples in bf16 (D13's dtype) |
+| `project_r1` eval allowance fixed at the vLLM 0.3 h | GO not shown for the HF path | R0 step `hf_rate` (32 items x K 8 per model); `project_r1 --hf_rate` from the chain's real item-samples; settings checked against the arm; exit 2 = bad input |
+| Qwen3.5 configs `lora: false` after R0's OOM | Qwen3.5 R1 OOM at step 0 | `lora: true` (D6) in r1_qwen35 and r0_qwen35_arm |
+| `rolling/` (full AdamW checkpoints) kept to the end; stable/e* copied | ~33 GB LFM, ~60 GB Qwen3.5 full FT on an 80 GB disk | stable/e* hard-linked; `rolling/` deleted once every stable/e* exists, `decay/<b>` once branches/<b> does |
+| No `PYTORCH_ALLOC_CONF`; one peak for the whole run | fragmentation OOM (1.15 GB reserved unallocated at R1's crash); peaks hidden | `expandable_segments:True` (D4); `peak_memory_gib` per phase |
+| Resume edge cases | lost stable copy found hours later; partial timing overwrote the first; an aborted decay saved as a branch | refused up front; first timing kept; no branch saved on abort |
+| Vast: no excludes on pull; PULLED_OK stamped after rsync; region only a search filter; teardown missed Ctrl-C; `timeout` without `-k`; create/poll orphan window; onstart size unchecked; box with no job idles to the cap | GBs of checkpoint bandwidth per pull; results lost to the watchdog; a non-NA host launchable; boxes billing to the cap | `PULL_EXCLUDE` (rolling, decay, stable) shared with the watchdog; `PULLED_OK.next` → `PULLED_OK`; US/CA in `reasons()` (no `--region`); teardown retries then always destroys; `timeout -k 120`; launch cleanup covers create, poll tries 3; onstart gzip + length check, run_id ≤ 40; watchdog destroys a never-started box after 2 x idle |
+| `k3_harness` exit 0 on a failed gate; `c2_analyze` read the wrong report key; rx8 / R-diag configs without `sampler: hf`; g_probe wrote bare NaN | gates that cannot fail; C2 crash; vLLM after its parity failure | fixed; R-diag views now buildable (`build_views --no-dihedral / --no-window-jitter`, same draws except that component) |
+| Dead / stale code | — | removed `serve.ref_loader` and root-less `CacheRef`, `configs.DTYPE`, unbuilt C++ files; test-only probe answerers moved to `tests/probe_models.py`; one `dataset.prompts` for select_ckpt's rows; duplicate fixture and `.gitignore` merged; docs corrected |
+| Open (low) | — | onstart gzip not yet seen on a real box (check in the first minute); spend estimate counts 15 GB download per launch (conservative); GHCR PAT on the Mac's `vastai create` argv |

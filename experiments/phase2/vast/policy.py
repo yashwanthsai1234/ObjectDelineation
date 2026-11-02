@@ -2,11 +2,12 @@
 `*.sh` files next to this module are symlinks to the one shim `vast.sh` (the link's name is the command), and
 `watchdog.sh` is the only logic that runs on the box.
 
-    offers.sh GPU [--riga] [--disk GB] [--region US,CA] [--pick OFFER_ID|top]   search (§4.2 filter), top 5; --pick saves the offer
+    offers.sh GPU [--riga] [--disk GB] [--pick OFFER_ID|top]   search (§4.2 filter, US/CA hosts), top 5; --pick saves it
     launch.sh OFFER_ID RUN_ID [--cap-hours H] [--idle-minutes M] [--allow-parallel] [--owner-approved]
     sync_up.sh RUN_ID [--bundle lidc|riga] [--bundle-dir DIR] [--code-only]   code (git ls-files) + bundle, SHA-256
     run.sh RUN_ID MODULE|CONFIG.yaml [ARGS]                    timeout + tmux + heartbeat; a config runs its chain
-    pull.sh [RUN_ID]                                           rsync runs/<id>/ to the Mac, touch PULLED_OK (no id: all)
+    pull.sh [RUN_ID]                                           rsync runs/<id>/ to the Mac (not PULL_EXCLUDE), then
+                                                               PULLED_OK = the pull's start time (no id: all)
     teardown.sh RUN_ID                                         final pull, destroy, verify absent, invoices, ledger
     sweep_orphans.sh                                           destroy unknown / overdue instances, close vanished runs;
                                                                $10 alarm, $15 stop
@@ -27,6 +28,7 @@ import argparse
 import base64
 import csv
 import functools
+import gzip
 import json
 import operator
 import os
@@ -59,7 +61,7 @@ FIELDS = tuple(
     "bundle cost_usd detail".split()
 )
 SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
-RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]*")  # Vast label, shell text and tmux name on the box, local path (BK4-16)
+RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
 IMPORT_CHECK = "import objdel._polycore, experiments.phase1.reward_gates, tests.oracles.reward_harness"
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
@@ -67,6 +69,11 @@ IMPORT_CHECK = "import objdel._polycore, experiments.phase1.reward_gates, tests.
 # watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min.
 MARGIN_S = GRACE_S = PULL_S = 600
 OPS = {"=": operator.eq, ">": operator.gt, ">=": operator.ge, "<=": operator.le}
+REGION = ("US", "CA")  # owner (2026-11-02): North American hosts only; V1: a Thailand host could not pull the image
+# Not pulled, and ignored by the watchdog's "nothing newer than PULLED_OK" (it gets this list in the onstart env):
+# full checkpoints with optimizer state (R1: 29 GB; branches/ is model-only and is pulled) and the pull's own markers.
+PULL_EXCLUDE = ("rolling/", "decay/", "stable/", "PULLED_OK", "PULLED_OK.next")
+ONSTART_MAX = 4048  # Vast API spec
 
 
 def home() -> Path:
@@ -111,6 +118,7 @@ def terms(gpu: str, dataset: str, disk: int = 80) -> list[tuple]:
         ("bandwidth", f"inet_up_cost<={INET_CEIL}", "inet_up_cost", "<=", INET_CEIL, 1),
         ("bandwidth", f"inet_down_cost<={INET_CEIL}", "inet_down_cost", "<=", INET_CEIL, 1),
         ("datacenter", "datacenter=True", "hosting_type", "=", 1, 1) if dataset == "riga" else None,
+        ("region", f"geolocation in [{','.join(REGION)}]", None, None, None, None),  # checked in reasons()
     ]
     return [r for r in rows if r]
 
@@ -127,6 +135,8 @@ def reasons(o: dict, gpu: str, dataset: str, disk: int = 80) -> list[str]:
         if key and (v is None or isinstance(v, str) != isinstance(limit, str) or not OPS[op](
                 v.replace(" ", "_") if isinstance(v, str) else v * scale, limit)):  # fmt: skip
             bad.append(why)
+    if (o.get("geolocation") or "").rsplit(", ", 1)[-1] not in REGION:  # "Texas, US"; none or unknown fails
+        bad.append("region")
     return [f"{r} fails the §4.2 filter" for r in dict.fromkeys(bad)]
 
 
@@ -248,16 +258,19 @@ def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None
 
 def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: int = 1800) -> str:
     """--onstart-cmd: unpack the watchdog and start it; carries no secret (CONTAINER_API_KEY is injected by Vast).
-    Vast's API spec limits onstart to 4048 characters (gzip+base64 beyond)."""
-    b64 = base64.b64encode((HERE / "watchdog.sh").read_bytes()).decode()
+    Vast's API spec limits onstart to ONSTART_MAX characters."""
+    b64 = base64.b64encode(gzip.compress((HERE / "watchdog.sh").read_bytes(), mtime=0)).decode()  # gzip: Debian essential
     created = int(created or time.time())
     env = (f"RUN_ID={run_id} WATCHDOG_CAP_S={cap_s} WATCHDOG_IDLE_S={idle_s} WATCHDOG_CREATED={created} "
-           f"WATCHDOG_PULLED_OK=/workspace/runs/{run_id}/PULLED_OK")  # fmt: skip
+           f"WATCHDOG_PULLED_OK=/workspace/runs/{run_id}/PULLED_OK WATCHDOG_SKIP={','.join(PULL_EXCLUDE)}")  # fmt: skip
     k = "/root/.ssh/authorized_keys"  # V1: some hosts write it with a foreign owner and sshd refuses it (vast-cli #336)
     fix = (f"(for i in $(seq 60); do [ -f {k} ] && chown root:root {k} && chmod 600 {k} && chmod 700 /root/.ssh "
            f"&& chmod go-w /root; sleep 2; done) & ")
     tmux = "touch /root/.no_auto_tmux; "  # V1: Vast's login tmux broke every `ssh host CMD` ("not a terminal")
-    return tmux + fix + f"printf %s {b64} | base64 -d > /root/watchdog.sh && {env} nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &"
+    cmd = tmux + fix + f"printf %s {b64} | base64 -d | gunzip > /root/watchdog.sh && {env} nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &"
+    if len(cmd) > ONSTART_MAX:
+        die(f"onstart is {len(cmd)} characters, over Vast's {ONSTART_MAX} (shorten watchdog.sh or the run_id)")
+    return cmd
 
 
 def offer_cols(o: dict) -> dict:
@@ -265,11 +278,9 @@ def offer_cols(o: dict) -> dict:
 
 
 def cmd_offers(a) -> None:
-    ds, where = "riga" if a.riga else "lidc", a.region.split(",") if a.region else []
-    q = query(a.gpu, ds, a.disk) + (f" geolocation in [{a.region}]" if where else "")  # V1: far hosts pulled too slowly
-    got = vast("search", "offers", q, "-o", "dph_total", "--storage", str(a.disk), "--raw")
-    ok = [o for o in got if not reasons(o, a.gpu, ds, a.disk)
-          and (not where or (o.get("geolocation") or "").rsplit(", ", 1)[-1] in where)]  # --pick ID: any of them (V1: the 5 cheapest were far)
+    ds = "riga" if a.riga else "lidc"
+    got = vast("search", "offers", query(a.gpu, ds, a.disk), "-o", "dph_total", "--storage", str(a.disk), "--raw")
+    ok = [o for o in got if not reasons(o, a.gpu, ds, a.disk)]  # --pick ID: any of them, not only the 5 shown
     for o in ok[:5]:
         print(f"{o['id']:>10}  ${o['dph_total']:.3f}/h  {o['gpu_ram'] / 1024:.0f} GB  {o['cpu_cores_effective']} cores"
               f"  {o['cpu_ram'] / 1000:.0f} GB RAM  cuda {o['cuda_max_good']}  hosting_type {o.get('hosting_type')}"
@@ -310,18 +321,20 @@ def cmd_launch(a) -> None:
     login = f"-u {allow.get('ghcr_user', '')} -p {secret('objdel-ghcr-read')} ghcr.io"
     flags = ["--ssh", "--direct", "--cancel-unavail", "--label", a.run_id, "--raw"]
     sigs = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-    for s in sigs:  # an interrupt after `create` must reach the destroy below (BK4-3)
+    onstart = onstart_cmd(a.run_id, cap_s, now, int(a.idle_minutes * 60))
+    for s in sigs:  # an interrupt from `create` on must reach the destroy below (BK4-3)
         signal.signal(s, signal.default_int_handler)
-    out = vast("create", "instance", str(a.offer), "--image", image, "--login", login, "--disk", str(o["_disk"]),
-               "--onstart-cmd", onstart_cmd(a.run_id, cap_s, now, int(a.idle_minutes * 60)), *flags)  # fmt: skip
-    run["instance"] = iid = int(out["new_contract"])
+    iid = None
     try:  # G8: any failure or interrupt from here on destroys the instance
+        out = vast("create", "instance", str(a.offer), "--image", image, "--login", login, "--disk", str(o["_disk"]),
+                   "--onstart-cmd", onstart, *flags)  # fmt: skip
+        run["instance"] = iid = int(out["new_contract"])
         active({**active(), a.run_id: run})
         ledger(event="launch", run_id=a.run_id, instance_id=iid, offer_id=a.offer, gpu=o["_gpu"], **offer_cols(o),
                detail=f"cap_s={cap_s} image={image}" + " owner_approved=yes" * a.owner_approved)  # fmt: skip
         t0, timeout = time.time(), float(os.environ.get("VAST_LAUNCH_TIMEOUT_S", 900))
         while True:
-            inst = vast("show", "instance", str(iid), "--raw")
+            inst = vast("show", "instance", str(iid), "--raw", tries=3)
             status, port = inst.get("actual_status"), ((inst.get("ports") or {}).get("22/tcp") or [{}])[0]
             if status == "running" and inst.get("public_ipaddr") and port.get("HostPort"):  # BK4-4: ports come late
                 run.update(ip=inst["public_ipaddr"], port=int(port["HostPort"]))
@@ -334,7 +347,10 @@ def cmd_launch(a) -> None:
     except BaseException:
         for s in sigs:
             signal.signal(s, signal.SIG_IGN)
-        destroy(iid, a.run_id, "destroy")
+        # create failed or its reply was lost: a box may exist all the same, found by its label
+        ids = [iid] if iid else [i["id"] for i in vast("show", "instances", "--raw", tries=3) if i.get("label") == a.run_id]
+        for i in ids:
+            destroy(i, a.run_id, "destroy")
         raise
 
 
@@ -401,13 +417,14 @@ def chain(cfg: Path, run_id: str) -> list[list[str]]:
         return [[str(x).format(rd=rd, data=data) for x in s] for s in c["steps"]]
     run, ev, prep = f"{rd}/{c['output_dir']}", f"{data}/eval_views", f"{data}/prepared"
     v, samp = c.get("vision"), ["--sampler", c["sampler"]] if c.get("sampler") else []
+    items = ["--items", "256"] if c.get("sampler") == "hf" else []  # D13: HF path selects on 256 shifted-val items
     ref = v and (f"{rd}/{v['reference']}" if isinstance(v["reference"], str) else v["reference"])  # a number as is
     vis = ["--vision", json.dumps({"prepared": f"{data}/{v['prepared']}", "reference": ref})] if v else ["--no-vision"]
     select = ["-m", "experiments.phase2.select_ckpt", "--run", run, "--prepared", prep, "--probes", ev, *samp]
     table = {
         "train": ["-m", "experiments.phase2.train_sft", "--config", Path(cfg).resolve().relative_to(ROOT).as_posix()],
         "select": [*select, "--shifted", f"{ev}/lidc-val-shifted", "--rescaled", f"{ev}/lidc-val-rescaled",
-                   "--rotated", f"{ev}/lidc-val-rotated", *vis],
+                   "--rotated", f"{ev}/lidc-val-rotated", *items, *vis],
         "topology": [*select, "--only", "topology"],
         "probe": ["-m", "experiments.phase2.g_probe", "--model", c["model"], "--select", f"{run}/select", "--train",
                   prep, "--probe", f"{ev}/lidc-val-shifted", "--out", f"{run}/g_probe"],
@@ -454,18 +471,21 @@ def cmd_run(a) -> None:
     # EXIT is removed first: the watchdog's idle destroy needs it (BK4-11); `;` keeps cd/export in this shell
     inner = (f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} && mkdir -p {rd} && rm -f {rd}/EXIT || exit 1; "
              f"(while :; do date -u +%s > {rd}/HEARTBEAT; sleep 60; done) & "
-             f"timeout {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1")  # fmt: skip
+             f"timeout -k 120 {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1")  # fmt: skip
     remote(run, f"tmux new-session -d -s {a.run_id}-{name} {shlex.quote('bash -c ' + shlex.quote(inner))}")
     ledger(event="run", run_id=a.run_id, instance_id=run["instance"], detail=f"{a.module} cap_s={cap}")
 
 
 def cmd_pull(a) -> None:
-    """rsync verifies every transferred file with a whole-file checksum; only then is PULLED_OK touched."""
+    """rsync verifies every transferred file with a whole-file checksum; only then does PULLED_OK appear, carrying
+    the pull's start time (PULLED_OK.next, touched before rsync), so a file written during the pull is newer."""
     for run_id in [a.run_id] if a.run_id else list(active()):
         run, dst = get_run(run_id), Path(os.environ.get("VAST_RUNS", ROOT / "runs")) / run_id
         dst.mkdir(parents=True, exist_ok=True)
-        rsync(run, f"root@{run['ip']}:/workspace/runs/{run_id}/", f"{dst}/", opts=("--exclude=PULLED_OK",))
-        remote(run, f"touch /workspace/runs/{run_id}/PULLED_OK")
+        rd = f"/workspace/runs/{run_id}"
+        remote(run, f"touch {rd}/PULLED_OK.next")
+        rsync(run, f"root@{run['ip']}:{rd}/", f"{dst}/", opts=tuple(f"--exclude={x}" for x in PULL_EXCLUDE))
+        remote(run, f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK")
 
 
 def billed(charges: dict, iid: int) -> float | None:
@@ -475,13 +495,17 @@ def billed(charges: dict, iid: int) -> float | None:
 
 
 def cmd_teardown(a) -> None:
-    run = get_run(a.run_id)
+    run, lost = get_run(a.run_id), None
     try:
-        cmd_pull(a)
-        lost = None
-    except SystemExit as e:  # V1: ssh refused, so the pull failed; the box must still go (G8)
-        lost = e
-    destroy(run["instance"], a.run_id, "teardown")
+        for _ in range(3):
+            try:
+                cmd_pull(a)
+                lost = None
+                break
+            except SystemExit as e:  # V1: ssh refused, so the pull failed; the box must still go (G8)
+                lost = e
+    finally:  # Ctrl-C included
+        destroy(run["instance"], a.run_id, "teardown")
     inv = vast("show", "invoices-v1", "--charges", "--raw", "--limit", "100", tries=3)
     (home() / "invoices").mkdir(exist_ok=True)
     (home() / "invoices" / f"{a.run_id}.json").write_text(json.dumps(inv, indent=1))
@@ -524,8 +548,7 @@ def cmd_sweep_orphans(a) -> None:
 
 FLAG = {"action": "store_true"}
 CLI = {  # subcommand -> its arguments, in order
-    "offers": {"gpu": {}, "--riga": FLAG, "--pick": {}, "--disk": {"type": int, "default": 80},
-               "--region": {"default": "US,CA", "help": "country codes (Vast geolocation); owner: North America only"}},
+    "offers": {"gpu": {}, "--riga": FLAG, "--pick": {}, "--disk": {"type": int, "default": 80}},
     "launch": {"offer": {"type": int}, "run_id": {}, "--cap-hours": {"type": float, "default": 4},
                "--allow-parallel": FLAG, "--owner-approved": FLAG,
                "--idle-minutes": {"type": float, "default": 30, "help": "watchdog idle destroy after a pulled EXIT"}},

@@ -38,8 +38,5 @@ set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=address")
 
 
 # Register the tests with CTest.
-add_test(NAME AllTests COMMAND test_main)
-
-# Optional: enable GoogleTest auto-discovery.
 include(GoogleTest)
 gtest_discover_tests(test_main_3)

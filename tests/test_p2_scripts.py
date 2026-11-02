@@ -226,7 +226,8 @@ def test_items_subset_is_seeded_not_the_first_n(monkeypatch):
     from experiments.phase2 import select_ckpt as SC
     from objdel.train import dataset as D
 
-    recs = [{"item_id": f"lidc/n{i:03d}/z0", "rl": i % 5 != 0, "W": 50, "H": 50} for i in range(100)]
+    recs = [{"item_id": f"lidc/n{i:03d}/z0", "rl": i % 5 != 0, "disagreement": False, "W": 50, "H": 50}
+            for i in range(100)]
     monkeypatch.setattr(D, "records", lambda root, ds, split: recs)
     monkeypatch.setattr(D, "_verified", lambda root, rs: rs)
     rl = [r["item_id"] for r in recs if r["rl"]]

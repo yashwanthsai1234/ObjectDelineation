@@ -26,6 +26,11 @@ HOOK = """    k = " ".join(argv[:2])
         st["fail"][k] -= 1
         save()
         sys.exit("fake vastai: transient HTTP 502")
+    if k == "create instance" and st.get("create_lost"):  # the box is created, the reply is lost
+        iid = st["next_id"]; st["next_id"] += 1
+        st["instances"][str(iid)] = {"id": iid, "label": argv[argv.index("--label") + 1], "dph_total": 0.6,
+                                     "start_date": time.time()}
+        save(); print(st["create_lost"]["out"]); sys.exit(st["create_lost"]["code"])
     if k == "show instance" and st.get("no_ports"):
         print(json.dumps(dict(st["instances"][argv[2]], actual_status="running")))
         sys.exit(0)
@@ -71,9 +76,29 @@ def test_ci_dev_only_job_skips_instead_of_failing(node):
 
 def test_launch_destroys_when_polling_fails(E):
     E.pick()
-    knob(E, fail={"show instance": 1})
+    knob(E, fail={"show instance": 3})
     E.sh("launch.sh", "111", "r1", ok=False)
     assert E.instances() == {}
+
+
+def test_launch_survives_one_status_poll_hiccup(E):
+    """One failed `show instance` destroyed a good box: the poll retries (tries=3)."""
+    E.pick()
+    knob(E, fail={"show instance": 1})
+    E.sh("launch.sh", "111", "r1")
+    assert list(E.instances()) == ["4242"] and E.active()["r1"]["port"] == 40022
+
+
+@pytest.mark.parametrize("out,code", [('{"success": true}', 0), ("", 1), ("not json", 0)])
+def test_launch_destroys_a_box_whose_create_reply_is_lost(E, out, code):
+    """An error, an interrupt or a reply without `new_contract` from `create` came before the cleanup: the box was
+    created and nothing destroyed it. The cleanup finds it by its label."""
+    E.state(instances={"9": {"id": 9, "label": "other", "dph_total": 0.3, "start_date": time.time()}})
+    E.pick()
+    knob(E, create_lost={"out": out, "code": code})
+    E.sh("launch.sh", "111", "r1", "--allow-parallel", ok=False)
+    assert list(E.instances()) == ["9"] and E.vast("destroy instance") == [["destroy", "instance", "4242", "-y"]]
+    assert E.ledger()[-1]["event"] == "destroy" and E.active() == {}
 
 
 def test_launch_destroys_when_running_reply_lacks_ports(E):
@@ -160,7 +185,7 @@ def test_launch_refuses_an_active_run_id(E):
     assert len(E.vast("create instance")) == 1
 
 
-@pytest.mark.parametrize("run_id", ["r1;touch${IFS}/tmp/x", "../../etc", "r1.2"])
+@pytest.mark.parametrize("run_id", ["r1;touch${IFS}/tmp/x", "../../etc", "r1.2", "r" * 41])
 def test_launch_validates_run_id(E, run_id):
     E.pick()
     E.sh("launch.sh", "111", run_id, ok=None)
@@ -184,6 +209,7 @@ def test_watchdog_keeps_box_when_outputs_are_newer_than_the_pull(E):
     ok, ckpt, now = run / "PULLED_OK", run / "checkpoint-100" / "model.safetensors", time.time()
     ok.touch()
     ckpt.write_bytes(b"w")
+    (run / "HEARTBEAT").write_text("1\n")  # a job ran (without one the never-started rule applies)
     os.utime(ok, (now + 60,) * 2)  # the Mac pulled during the idle period ...
     os.utime(ckpt, (now + 120,) * 2)  # ... and a CPU stage wrote a checkpoint after it
     p, curls = V.watchdog(E, ok, max_ticks=3, WATCHDOG_IDLE_S="0")

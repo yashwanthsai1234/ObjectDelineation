@@ -7,10 +7,13 @@
 
 Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches
 and fork the reward pool before anything imports CUDA; per branch, export the prompts and run the sampler child
-(`sample_vllm.py` under /opt/vllm, or `hf_sample`; one JSONL bridge) with CUDA asserted untouched here, a timeout,
-TRIES attempts and a completeness check (every prompt id has its n samples). Completions whose `.meta.json` stamp
-(prompts SHA-256, child command) matches are reused on a rerun. Score them on the pool (objdel.eval.metrics), build
-the B2 signal panel and run G-vision on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
+(`sample_vllm.py` under /opt/vllm, or `hf_sample`; one JSONL bridge) with CUDA asserted untouched here, a timeout
+of 600 s + --timeout_s per item-sample, and a completeness check (every prompt id has its n samples). The
+completions' `.meta.json` stamp (prompts SHA-256, child command) is written before the child starts: a matching
+stamp means the file is reused when complete and resumed otherwise (hf_sample keeps whole finished batches), on a
+retry or a rerun alike; another stamp empties it. An attempt that finishes no new item counts against TRIES.
+SIGTERM / SIGINT (the run cap's `timeout`) kill the child's process group before select_ckpt exits. Score them on
+the pool (objdel.eval.metrics), build the B2 signal panel and run G-vision on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
 G-vision; an unmeasured G-vision fails (--vision is required, --no-vision makes every branch ineligible). Rule R-B
 (prereg.select_rb) picks; none eligible -> the deepest is gated (§6.3). --items N: a seeded subset (SUBSET_SEED)
 for selection only (D13 HF path).
@@ -29,6 +32,7 @@ References: PLAN D12 (R-B), D13, §5.1, §6.1 R1; https://docs.vllm.ai/en/stable
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -47,7 +51,8 @@ from objdel.train import serve
 ROOT = Path(__file__).resolve().parents[2]
 VLLM_PYTHON = "/opt/vllm/bin/python"
 SUBSET_SEED = 0  # --items: one fixed subset for every branch and rung
-TRIES = 2  # sampler child attempts
+TRIES = 2  # sampler child attempts that finish no new item
+TIMEOUT_S = 1.0  # sampler child timeout per item-sample, plus 600 s (a retry resumes)
 
 
 def exited(run: Path) -> dict:
@@ -86,39 +91,69 @@ def complete(comps: Path, want: Counter) -> bool:
         return False
 
 
+def finished(comps: Path, want: Counter) -> int:
+    """Prompt ids with all their n completions, cut lines skipped (progress of a resumable child)."""
+    got = Counter()
+    for x in comps.read_text().splitlines() if comps.exists() else []:
+        try:
+            got[json.loads(x)["id"]] += 1
+        except (ValueError, KeyError, TypeError):
+            continue
+    return sum(got[i] == n for i, n in want.items())
+
+
 def run_group(cmd: list[str], timeout: float) -> None:
-    """subprocess.run(check=True, timeout=...) in a new session, killing the whole group on timeout: vLLM's engine is
-    a child process that holds the GPU, and the next job in the chain needs it."""
+    """subprocess.run(check=True, timeout=...) in a new session, killing the whole group on timeout and on SIGTERM /
+    SIGINT to this process (the run cap's `timeout`): vLLM's engine is a child process that holds the GPU, and the
+    next job in the chain needs it."""
     with subprocess.Popen(cmd, start_new_session=True) as p:
+
+        def kill(*_):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(p.pid, signal.SIGKILL)
+
+        def stop(sig, frame):
+            kill()
+            raise SystemExit(128 + sig)
+
+        old = {s: signal.signal(s, stop) for s in (signal.SIGTERM, signal.SIGINT)}
         try:
             if p.wait(timeout):
                 raise subprocess.CalledProcessError(p.returncode, cmd)
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, signal.SIGKILL)
+            kill()
             raise
+        finally:
+            for s, h in old.items():
+                signal.signal(s, h)
 
 
 def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: float, extra=()) -> None:
-    """The sampler child (extra: more flags, e.g. --logprobs), bounded: reuse completions of the same prompts and
-    child command (sampler, checkpoint, flags), else TRIES attempts of `timeout` s each."""
+    """The sampler child (extra: more flags, e.g. --logprobs), bounded: completions of the same prompts and child
+    command (sampler, checkpoint, flags) are reused when complete and resumed otherwise; attempts of `timeout` s
+    until TRIES of them finish no new item."""
     want = Counter({p["id"]: p["n"] for p in map(json.loads, prompts.read_text().splitlines())})
     cmd, meta = sampler_cmd(kind, prompts, model, comps, extra), comps.with_suffix(".meta.json")
     stamp = {"prompts_sha256": hashlib.sha256(prompts.read_bytes()).hexdigest(), "cmd": cmd}
-    if meta.is_file() and json.loads(meta.read_text()) == stamp and complete(comps, want):
-        return
-    meta.unlink(missing_ok=True)
-    for attempt in range(1, TRIES + 1):
+    if not (meta.is_file() and json.loads(meta.read_text()) == stamp):
+        comps.unlink(missing_ok=True)  # another sampling's completions: never resumed
+        meta.write_text(json.dumps(stamp) + "\n")
+    stalled = 0
+    while not complete(comps, want):
+        before = finished(comps, want)
         cuda_untouched()
         try:
             run_group(cmd, timeout)
-            err = None if complete(comps, want) else "partial output (an id without its n samples)"
+            err = "partial output (an id without its n samples)"
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             err = str(e)
-        if err is None:
-            meta.write_text(json.dumps(stamp) + "\n")
+        if complete(comps, want):
             return
-        print(f"select_ckpt: sampler attempt {attempt}/{TRIES} on {model}: {err}", file=sys.stderr)
-    raise RuntimeError(f"sampler failed {TRIES} times on {prompts}: {err}")
+        stalled += finished(comps, want) <= before
+        print(f"select_ckpt: sampler on {model} ({stalled}/{TRIES} attempts without progress): {err}",
+              file=sys.stderr)
+        if stalled >= TRIES:
+            raise RuntimeError(f"sampler failed {TRIES} times on {prompts}: {err}")
 
 
 def _score(job) -> dict:
@@ -133,11 +168,7 @@ def view_rows(view: Path, items: int | None = None, rl_only: bool = True) -> lis
     with caches) or, with rl_only=False, every record (probe records are rl: false); `items` = a seeded subset."""
     from objdel.train import dataset as D
 
-    recs = [r for r in D.records(view, "lidc", "val") if r["rl"] or not rl_only]
-    if items and items < len(recs):
-        recs = [recs[i] for i in sorted(np.random.default_rng(SUBSET_SEED).choice(len(recs), items, replace=False))]
-    return [{"prompt": [D._user("lidc")], "image": D._image(view, r["item_id"]), "key": r["item_id"], "W": r["W"],
-             "H": r["H"], "names": list(D.SCHEMAS["lidc"])} for r in D._verified(view, recs)]
+    return D.prompts(view, "lidc", "val", rl_only, subset=items and (items, SUBSET_SEED))
 
 
 def stop_ids(path: Path, proc) -> set[int]:
@@ -207,12 +238,13 @@ def prior_ci(model_iou: dict, prior_rows: list[dict]) -> dict:
 
 
 def score_probe(a, branch: Path, p: str, out: Path) -> dict:
-    """Probe `p` ("precision" / "topology", every record of a.probes/probe-<p>) at K = a.k -> its scorer's result."""
+    """Probe `p` ("precision" / "topology", every record of a.probes/probe-<p>) at K = a.k -> its scorer's result
+    and the sampled item ids ("ids")."""
     from objdel.eval import probes
 
     d = a.probes / f"probe-{p}"
     done = sample_view(a, branch, view_rows(d, rl_only=False), out / f"probe-{p}", a.k)
-    return getattr(probes, f"score_{p}")(list(done.values()), d)
+    return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # c2_analyze pairs seeds
 
 
 def judge(a, sel: dict, out: Path, pool) -> dict:
@@ -300,7 +332,7 @@ def main(argv=None) -> int:
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0, help="sampler seed")
     ap.add_argument("--procs", type=int, default=4)
-    ap.add_argument("--timeout_s", type=float, default=2.0, help="sampler child timeout per sample, plus 600 s")
+    ap.add_argument("--timeout_s", type=float, default=TIMEOUT_S, help="sampler timeout per sample, plus 600 s")
     vis = ap.add_mutually_exclusive_group()
     vis.add_argument("--vision", help='G-vision JSON {"prepared": root, "reference": R0 value or JSON} (required)')
     vis.add_argument("--no-vision", action="store_true", help="G-vision not measured: every branch ineligible")

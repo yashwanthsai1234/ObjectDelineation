@@ -209,7 +209,7 @@ def test_c2_analyze_cli_and_outcomes(tmp_path, monkeypatch, capsys):
     paths = []
     for i, level in enumerate((0.7, 0.68, 0.72)):
         p = tmp_path / f"s{i}.json"
-        p.write_text(json.dumps(fake_seed(rng, level)))
+        p.write_text(json.dumps({"probes": {"topology": fake_seed(rng, level) | {"ids": list(range(120))}}}))
         paths.append(str(p))
     out = tmp_path / "c2.json"
     monkeypatch.setattr(sys, "argv", ["c2_analyze", "--seeds", *paths, "--out", str(out)])

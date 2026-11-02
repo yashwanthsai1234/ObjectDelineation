@@ -116,9 +116,9 @@ Dataset`: columns `messages` (as `sft_rows`), `image` (rendered lazily via `augm
 JSONL rows `{"item_id", "samples", "truncated"}` (truncation by `rewards.truncated`).
 
 **C-SERVE (S → R).** `objdel.train.serve`: `preload(root, datasets) -> int` (fills the module store; LIDC-only
-loads no RIGA cache), `CacheRef(key)` (Mapping, pickles as its key), `ref_loader(key)`, `fork_pool(n)` (fork
+loads no RIGA cache), `CacheRef(key, root)` (Mapping, pickles as key and root), `loader(root)`, `fork_pool(n)` (fork
 context, warmed, `gc.freeze()` first; asserts `torch.cuda.is_initialized()` is False when torch is imported).
-`TRLReward(caches=serve.ref_loader, ..., pool=...)` is the scoring path.
+`TRLReward(caches=serve.loader(root), ..., pool=...)` is the scoring path.
 
 **C-EVAL (E → R, G).** `metrics(...)` gains HM-IoU16 and NSD@τ; `summarize` gains truncation and token stats.
 `objdel.eval.vision.check(model, processor, images, items) -> {"ratio", "tv", "pass", ...}` (G-vision, §5.1;

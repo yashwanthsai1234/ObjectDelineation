@@ -86,3 +86,16 @@ def char_model(tmp_path_factory):
                                  num_attention_heads=2, num_key_value_heads=2, pad_token_id=0, eos_token_id=1,
                                  bos_token_id=1, max_position_embeddings=4096)).save_pretrained(path)
     return path, tok
+
+
+@pytest.fixture
+def clean_store():
+    """An empty objdel.train.serve STORE before and after the test, and gc unfrozen (fork_pool freezes it)."""
+    import gc
+
+    from objdel.train import serve
+
+    serve.STORE.clear()
+    yield
+    serve.STORE.clear()
+    gc.unfreeze()

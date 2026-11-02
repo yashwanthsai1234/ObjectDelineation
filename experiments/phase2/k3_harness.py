@@ -7,7 +7,8 @@ workloads (RIGA-only, mixed 40 % RIGA, LIDC-only), --batches batches of 32 promp
 on --threads threads and on a fork pool of each --workers size, serial re-timed per batch beside the pool (paired
 speed-up); per-rollout latency (serial); every batch's hash (reward_gates.digest), which every executor must
 reproduce. Gate: K3 = best of serial / pool median <= 250 ms on RIGA-only and mixed; K4 = per-rollout p99 <= 5 ms;
-hashes equal; D14's C++ trigger = pool-4 RIGA-only median > 125 ms or paired speed-up < 3.
+hashes equal; D14's C++ trigger = pool-4 RIGA-only median > 125 ms or paired speed-up < 3 (reported). Exit 1 unless
+K3, K4 and the hashes all pass (R0 step 6 stops the chain).
 
     python -I -m experiments.phase2.k3_harness --out k3.json [--root data/prepared --workers 2,4,8 --batches 5]
 
@@ -23,6 +24,7 @@ import json
 import math
 import os
 import platform
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -135,7 +137,7 @@ def env() -> dict:
     }
 
 
-def main(argv=None):
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", required=True, help="JSON report path")
     ap.add_argument("--root", default="data/prepared", help="prepared root with the LIDC records and caches")
@@ -208,7 +210,8 @@ def main(argv=None):
     print(res["gate"], flush=True)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(res, indent=1) + "\n")
+    return 0 if all(res["gate"][k] for k in ("K3_pass", "K4_pass", "all_hashes_equal")) else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

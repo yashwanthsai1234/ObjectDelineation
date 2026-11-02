@@ -11,7 +11,7 @@ never train_sft, which scores nothing.
    its shutdown). Every module a worker runs must be imported before the fork: on macOS a worker that imports a
    module after the fork can crash the pool (S1-11). fork_pool imports SCORERS and `modules` (e.g. the script that
    defines the worker function, when it is not already imported) itself first.
-3. `TRLReward(caches=serve.ref_loader, stop_ids, pool=pool)`: jobs carry `CacheRef(key)`, which pickles as its
+3. `TRLReward(caches=serve.loader(root), stop_ids, pool=pool)`: jobs carry `CacheRef(key, root)`, which pickles as its
    key and root (bytes, not the 96 MB of masks a RIGA batch's ExpertCaches pickle to, re-running both EDTs in the
    worker). score_batch makes one pool.map per reward call, in chunks of one group.
 
@@ -21,10 +21,9 @@ training script's torch in every worker (lab B4 §2).
 
     serve.preload("data/prepared", ("lidc",))
     pool = serve.fork_pool(4)                 # before the model / CUDA
-    reward = TRLReward(serve.ref_loader, stop_ids, pool=pool)
+    reward = TRLReward(serve.loader("data/prepared"), stop_ids, pool=pool)
 
-Several roots (prepared val plus eval views) share item ids: preload each, then use `loader(root)`; `ref_loader`
-needs the key to be in exactly one root.
+Several roots (prepared val plus eval views) share item ids, so a CacheRef always names its root.
 
 References: https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor ,
 https://docs.python.org/3/library/gc.html#gc.freeze , experiments/phase2/lab/B4/REPORT.md.
@@ -86,13 +85,8 @@ class CacheRef(Mapping):
 
     __slots__ = ("key", "root")
 
-    def __init__(self, key: str, root: str | None = None):
-        if root is None:
-            roots = [r for r, items in STORE.items() if key in items]
-            if len(roots) != 1:
-                raise KeyError(f"{key}: in {len(roots)} preloaded roots (use serve.loader(root) for several)")
-            root = roots[0]
-        elif key not in STORE.get(root, {}):
+    def __init__(self, key: str, root: str):
+        if key not in STORE.get(root, {}):
             raise KeyError(f"{key}: not preloaded from {root}")
         self.key, self.root = key, root
 
@@ -107,11 +101,6 @@ class CacheRef(Mapping):
 
     def __reduce__(self):
         return CacheRef, (self.key, self.root)
-
-
-def ref_loader(key: str) -> CacheRef:
-    """TRLReward's `caches`: the key's CacheRef, from the one root that holds it."""
-    return CacheRef(key)
 
 
 def loader(root) -> Callable[[str], CacheRef]:

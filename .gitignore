@@ -29,3 +29,4 @@ htmlcov/
 /experiments/phase2/vast/active_runs.json
 /experiments/phase2/vast/code_files.txt
 /experiments/phase2/vast/known_hosts
+/experiments/phase2/vast/*.launchd.log

@@ -4,7 +4,7 @@
 #   build_images.sh [--check] [--push] [--prune] phase2|phase3|sampler ...
 #                               (Mac, or GitHub Actions: .github/workflows/image.yml) build from the committed locks
 #     --check  lint the Dockerfiles only (docker buildx build --check)
-#     --push   push to $IMAGE_REPO (private GHCR, e.g. ghcr.io/<owner>/objdel-vast; `docker login ghcr.io` first)
+#     --push   push to $IMAGE_REPO (private GHCR, e.g. ghcr.io/<owner>/objdel-gpu; `docker login ghcr.io` first)
 #     --prune  after the build, empty the objdel-builder cache (V0: ~24 GB of cache filled the Mac's disk)
 # locks/ (committed): train.txt = pyproject's base deps + [train] + [build-system] requires (the box runs
 # `pip install -e . --no-build-isolation`), for x86_64-manylinux_2_40 / CPython 3.12, constrained to the Mac .venv's
@@ -55,7 +55,7 @@ for w in "${WHICH[@]}"; do
     f=${w/sampler/phase2}; target=(); [ "$w" = sampler ] && target=(--target sampler)
     inputs=(train.txt vllm.txt exclude-vllm.txt dedupe.py patch_arch.py); [ "$f" = phase3 ] && inputs=(p3.txt p3.override)
     hash=$(cd "$CTX" && cat "$HERE/Dockerfile.$f" "${inputs[@]}" | shasum -a 256 | cut -c1-12)
-    tag="${IMAGE_REPO:-objdel-vast}:${w/phase/p}-$hash"
+    tag="${IMAGE_REPO:-objdel-gpu}:${w/phase/p}-$hash"
     out=(--load); [ "$PUSH" = 1 ] && out=(--push)
     t=$SECONDS
     docker buildx build --builder objdel-builder --platform linux/amd64 "${out[@]}" -t "$tag" "${target[@]}" \
