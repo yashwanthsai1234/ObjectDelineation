@@ -8,6 +8,8 @@
     run.sh RUN_ID MODULE|CONFIG.yaml [ARGS]                    timeout + tmux + heartbeat; a config runs its chain
     pull.sh [RUN_ID]                                           rsync runs/<id>/ to the Mac (not PULL_EXCLUDE), then
                                                                PULLED_OK = the pull's start time (no id: all)
+    push_hf.sh RUN_ID CONFIG.yaml                              the run's selected branch to the private HF repo
+                                                               (hf_push; after pull.sh, before teardown.sh)
     teardown.sh RUN_ID                                         final pull, destroy, verify absent, invoices, ledger
     sweep_orphans.sh                                           destroy unknown / overdue instances, close vanished runs;
                                                                $10 alarm, $15 stop
@@ -21,7 +23,8 @@ Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; 
 (pull target, default <repo>/runs), DRY_RUN=1 (ssh / rsync are printed, not run; `vastai` is still called, so tests
 put a fake one on PATH), VAST_POLL_S, VAST_LAUNCH_TIMEOUT_S. Secrets live in the macOS keychain and are read with
 `security`: objdel-vast-scoped (scoped API key, passed to vastai as VAST_API_KEY), objdel-ghcr-read (read-only GHCR
-PAT, Vast --login), objdel-riga-age (age identity: only ever the stdin of the ssh decrypt command; D16).
+PAT, Vast --login), objdel-riga-age (age identity: only ever the stdin of the ssh decrypt command; D16),
+objdel-hf-write (HF token: checked by hf_push.token_problems, then only ever the stdin of the ssh upload command).
 """
 
 import argparse
@@ -488,6 +491,22 @@ def cmd_pull(a) -> None:
         remote(run, f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK")
 
 
+def cmd_push_hf(a) -> None:
+    """hf_push on the box for CONFIG's run (repo branch = its output_dir); the token is checked here first."""
+    import yaml
+
+    from experiments.phase2 import hf_push
+
+    run, out = get_run(a.run_id), yaml.safe_load((ROOT / a.config).read_text())["output_dir"]
+    token = secret("objdel-hf-write")
+    if bad := hf_push.token_problems(hf_push.whoami(token), hf_push.REPO):
+        die(f"keychain objdel-hf-write is too broad for a rented box: {'; '.join(bad)}. Recreate it at "
+            f"huggingface.co/settings/tokens as fine-grained with only {hf_push.REPO}: write (no other boxes ticked)")
+    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push --run /workspace/runs/"
+           f"{a.run_id}/{out} --repo {hf_push.REPO} --revision {out}")  # fmt: skip
+    remote(run, cmd, token + "\n", "HF token from the keychain")
+
+
 def billed(charges: dict, iid: int) -> float | None:
     """USD Vast charged instance `iid` (V0: `invoices-v1 --charges` rows carry it only as `source` "instance-<id>")."""
     rows = [r["amount"] for r in charges.get("results", []) if r.get("source") == f"instance-{iid}"]
@@ -557,6 +576,7 @@ CLI = {  # subcommand -> its arguments, in order
     "run": {"run_id": {}, "module": {}, "--cap-hours": {"type": float, "default": 24},
             "args": {"nargs": argparse.REMAINDER}},
     "pull": {"run_id": {"nargs": "?"}},
+    "push_hf": {"run_id": {}, "config": {}},
     "teardown": {"run_id": {}},
     "sweep_orphans": {},
 }  # fmt: skip
