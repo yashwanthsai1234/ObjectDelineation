@@ -115,7 +115,7 @@ Access details are from the research notes and must be re-checked before downloa
 | 4 | GRPO, Track B (natural images) | same arms with morphological bands | Vast | ~40 | generality of H1 |
 | 5 | Level 2 controller | checker steers training; overfitting and hacking alarms | Vast | ~10 | H4 |
 | 6 | Track C | 2 of vessels, buildings, floor plans; then video | Vast | ~20 | H5 |
-| 7 | 3D (2×2×2 bit-cubes) | 3D checker; whole-nodule reward on LIDC | Mac → Vast | ~15 | certificate on all volumes; H6 |
+| 7 | 3D (2×2×2 bit-cubes) | 3D checker; whole-nodule reward on LIDC; 2.5D input arm (z−1, z, z+1 as RGB) | Mac → Vast | ~15 | certificate on all volumes; H6, H6b |
 | 8 | CUDA checker plus Track D lithography | GPU port of the checker, hash-identical to Python; lithography mask-cost proxy | cheap Vast card | ~20 (cheap) | identical hashes; Spearman ρ ≈ 1 against the reference shot counter |
 | 9 | Evaluation and release | held-out sites, deployment guard, data release, paper | both | ~5 | — |
 | | **Total** | | | **~150** | **Track A alone (2, 3, 5, 9): ~70** |
@@ -268,6 +268,22 @@ Then video, with temporal topology. This reward can be gamed by masks that never
 **3D reward.** The VLM outlines every slice of a nodule; the slices are stacked; the volume is scored against the readers' 3D answers.
 
 **H6**: fewer inconsistencies between slices than per-slice training gives.
+
+**2.5D input arm (added 2026-10-21, owner request; untested).** Same VLM, same 2D polygon answer, same 3D reward;
+only the image changes. The crop for slice z puts the windowed slices z−1, z, z+1 in the R, G, B channels instead of
+z in all three, so the model sees the nodule's 3D context directly instead of only through the reward.
+
+- Arms: per-slice input (the H6 run above) vs 2.5D input, same seeds, same steps.
+- **H6b**: 2.5D input lowers slice-to-slice inconsistency (false tunnels and cavities in the stacked volume) below
+  per-slice input, with no loss of per-slice IoU or NSD.
+- Data: the store keeps only annotated slices (`fetch_lidc_pixels`), so the slice above a nodule's top and the slice
+  below its bottom are missing. Re-fetch each series keeping ±1 neighbour slices; neighbours are matched by
+  ImagePositionPatient z, and LIDC slice thickness (0.6–5 mm) is recorded per item so the arm can be split by it.
+- Target: unchanged; built from slice z only (crop-before-trace, certified as today).
+- Risk: the pretrained vision tower expects natural colour; the channel stack is off its distribution. G-vision runs
+  on both arms. If 2.5D loses, a control with the same colour shift but no 3D context (R and B taken from slices of
+  another nodule) tells "colour shift" from "3D context does not help".
+- Cost: one extra run (plus the control only if 2.5D loses); not yet in Phase 7's ~15 GPU-h estimate.
 
 Further 3D use (research Phase 3): Flow-GRPO on an ambiguous LIDC mask generator, measured by GED.
 
