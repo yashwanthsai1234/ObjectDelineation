@@ -912,7 +912,7 @@ def test_c2_chain_trains_then_scores_only_the_topology_probe():
     assert "--shifted" not in topo
     _, select, _ = P.chain(ROOT / "experiments/phase2/configs/r1_lfm.yaml", "v1")
     assert after(select, "--rotated") == "/workspace/data/lidc/eval_views/lidc-val-rotated"
-    assert "--sampler" not in select
+    assert after(select, "--sampler") == "hf"  # V1 R0: vLLM parity failed, D13 HF fallback
 
 
 def test_chain_passes_a_numeric_g_vision_reference_as_is():
