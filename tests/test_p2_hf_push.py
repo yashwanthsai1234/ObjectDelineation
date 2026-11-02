@@ -80,6 +80,7 @@ def run_dir(tmp: Path, dataset="lidc", selected="e1") -> Path:
 
 @pytest.fixture
 def fake(monkeypatch):
+    pytest.importorskip("trl")  # hf_push.main reads objdel.train.configs (the training stack)
     api = FakeApi()
     monkeypatch.setattr(H, "api", lambda tok: api.calls.append(("token", tok)) or api)
     monkeypatch.setattr(H, "base_card", lambda base: (b"LFM OPEN LICENSE", {"license": "other",
