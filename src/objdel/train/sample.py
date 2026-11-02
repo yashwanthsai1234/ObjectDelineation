@@ -2,11 +2,12 @@
 {"item_id", "samples": [text, ...], "truncated": [bool, ...]} (plan §3.1 arrows "GRPO completions -> eval" and
 "checkpoint -> K samples per validation item -> eval", break-it B4-3).
 
-- sample(trainer, rows, k): k completions per prompt row through the GRPOTrainer's own generation
+- sample(trainer, rows, k, items): k completions per prompt row through the GRPOTrainer's own generation
   (GRPOTrainer._generate in eval mode: the same chat template, image injection (prepare_multimodal_messages),
-  sampling settings and backend, HF generate or vLLM, as training), in calls of whole groups of G = 8 identical
-  prompts (TRL's vLLM path generates n = num_generations_eval completions per G-th prompt). Truncation is the
-  reward's: objdel.train.rewards.truncated on rewards.stop_ids(model, processing class), TRL's EOS + pad rule.
+  sampling settings and backend, HF generate or vLLM, as training), `items` rows x k prompts per call, each row's k
+  as whole groups of G = 8 identical prompts (TRL's vLLM path generates n = num_generations_eval completions per
+  G-th prompt; HF generate pads the batch on the left, as in training). Truncation is the reward's:
+  objdel.train.rewards.truncated on rewards.stop_ids(model, processing class), TRL's EOS + pad rule.
 - export(paths, keys): TRL's completions tables (log_completions=True writes
   <output_dir>/completions/completions_<step>.parquet with every log_extra column; TRLReward logs key, truncated
   and group) as rows, one per run of consecutive groups of one key in a table. TRL keeps the last
@@ -45,26 +46,26 @@ from . import configs, rewards
 G = REWARD_V4.group
 
 
-def sample(trainer, rows: Iterable[dict], k: int) -> list[dict]:
-    """k completions (a multiple of G) per row of objdel.train.dataset.grpo_rows (prompt, image, key)."""
+def sample(trainer, rows: Iterable[dict], k: int, items: int = 16) -> list[dict]:
+    """k completions (a multiple of G) per row of objdel.train.dataset.grpo_rows (prompt, image, key), `items` rows
+    per generation call (a 450M model on a 4090 is overhead-bound at one row per call)."""
     if k <= 0 or k % G:
         raise ValueError(f"k = {k}: sample whole groups of {G}")
     stop = rewards.stop_ids(trainer.model, trainer.processing_class)  # the reward's rule
-    n = max(G, trainer.args.per_device_eval_batch_size // G * G)  # completions per generation call
+    rows = list(rows)
     was_training = trainer.model.training
     trainer.model.eval()  # TRL then generates as in held-out evaluation (num_generations_eval)
     out = []
     try:
-        for r in rows:
-            prompt = r["prompt"]
-            if r.get("image") is not None:
-                prompt = prepare_multimodal_messages(prompt, images=[r["image"]])
-            texts, truncated = [], []
-            for start in range(0, k, n):
-                _, ids, _, completions, *_ = trainer._generate([prompt] * min(n, k - start))
-                texts += [rewards._text(c) for c in completions]
-                truncated += [rewards.truncated(x, stop) for x in ids]
-            out.append({"item_id": r["key"], "samples": texts, "truncated": truncated})
+        for start in range(0, len(rows), items):
+            chunk = rows[start:start + items]
+            prompts = [r["prompt"] if r.get("image") is None else
+                       prepare_multimodal_messages(r["prompt"], images=[r["image"]]) for r in chunk]
+            _, ids, _, completions, *_ = trainer._generate([p for p in prompts for _ in range(k)])
+            for j, r in enumerate(chunk):
+                part = slice(j * k, (j + 1) * k)
+                out.append({"item_id": r["key"], "samples": [rewards._text(c) for c in completions[part]],
+                            "truncated": [rewards.truncated(x, stop) for x in ids[part]]})
     finally:
         trainer.model.train(was_training)
     return out

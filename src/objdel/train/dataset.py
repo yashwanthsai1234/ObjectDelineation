@@ -214,14 +214,22 @@ def sft_rows(root, dataset: str, split: str, tokenizer=None, max_tokens: int | N
     return Dataset.from_list(rows).cast_column("image", Image())
 
 
-def prompt_rows(root, dataset: str, split: str, rl_only: bool = True, oversample: int = 1) -> Dataset:
-    """Prompt rows (prompt, image, key, W, H, names) of the records: RL-eligible items only, or with rl_only=False
-    every item (probe views, whose records are rl: false); disagreement items repeated `oversample` times."""
+def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: int = 1, subset=None) -> list[dict]:
+    """Prompt rows (prompt, image path, key, W, H, names) of the records (images checked against them): RL-eligible
+    items only, or with rl_only=False every item (probe views, whose records are rl: false); disagreement items
+    repeated `oversample` times; subset = (n, seed): n records drawn once with that seed, in record order."""
     recs = [r for r in records(root, dataset, split) if r["rl"] or not rl_only]
-    rows = [{"prompt": [_user(dataset)], "image": _image(root, r["item_id"]), "key": r["item_id"], "W": r["W"],
+    if subset and subset[0] < len(recs):
+        n, seed = subset
+        recs = [recs[i] for i in sorted(np.random.default_rng(seed).choice(len(recs), n, replace=False))]
+    return [{"prompt": [_user(dataset)], "image": _image(root, r["item_id"]), "key": r["item_id"], "W": r["W"],
              "H": r["H"], "names": list(SCHEMAS[dataset])}
             for r in _verified(root, recs) for _ in range(oversample if r["disagreement"] else 1)]
-    return Dataset.from_list(rows).cast_column("image", Image())
+
+
+def prompt_rows(root, dataset: str, split: str, rl_only: bool = True, oversample: int = 1) -> Dataset:
+    """prompts() as a datasets.Dataset with decoded images (TRL GRPO)."""
+    return Dataset.from_list(prompts(root, dataset, split, rl_only, oversample)).cast_column("image", Image())
 
 
 def grpo_rows(root, dataset: str, split: str, oversample: int = 1) -> Dataset:

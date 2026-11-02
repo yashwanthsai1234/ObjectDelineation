@@ -229,7 +229,7 @@ def _hf_sample_kwargs(tmp_path, monkeypatch):
             return torch.zeros((kw["num_return_sequences"], 4), dtype=torch.long)
 
     class Proc:
-        tokenizer = SimpleNamespace(pad_token_id=0, decode=lambda t, **k: "x")
+        tokenizer = SimpleNamespace(pad_token_id=0, padding_side="left", decode=lambda t, **k: "x")
 
         def __call__(self, **kw):
             return Batch(input_ids=torch.zeros((1, 2)))

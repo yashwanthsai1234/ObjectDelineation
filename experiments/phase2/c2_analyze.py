@@ -1,11 +1,14 @@
 """C2 analysis (PLAN §5.2, D20, M8): A0' pooled hole recall on the topology probe, stratified bootstrap, per-seed
 checks and the pre-registered outcome (experiments.phase2.prereg).
 
-    .venv/bin/python -I -m experiments.phase2.c2_analyze --seeds s1.json s2.json s3.json [s4.json] --out c2.json
+    .venv/bin/python -I -m experiments.phase2.c2_analyze --seeds s1/report.json s2/report.json s3/report.json \
+        [s4/report.json] --out c2.json
 
-Per seed (A0' arm) one JSON: {"bins": [[per-item hole hit, mean over K = 8 at T = 1] x 120] x 3 hole-area bins
-(<= 10 / 11-30 / > 30 px), the same items in the same order for every seed; "false_nonsimple": share of simple
-control samples drawn non-simple; "legal": legal share}. Per-item statistic = mean over seeds; pooled recall =
+Per seed (A0' arm) the report.json of `select_ckpt --only topology`, read at probes.topology (probes.score_topology
+plus select_ckpt's "ids"): {"bins": [[per-item hole hit, mean over K = 8 at T = 1] x 120] x 3 hole-area bins
+(<= 10 / 11-30 / > 30 px), in probe record order; "false_nonsimple": share of simple control samples drawn
+non-simple; "legal": legal share; "ids": the sampled probe items}. Every seed must have sampled the same items in
+the same order (so the per-item means pair item by item; exit otherwise). Per-item statistic = mean over seeds; pooled recall =
 train-share-weighted mean of the bins; CI = within-bin item bootstrap (B3 power_c2.pooled, B = 2,000, percentile).
 Clauses (4) and (5) use the mean over seeds. Reported, not gated: per-seed CIs, the across-seed t-interval, the
 seed-discordant flag (per-seed CIs on both sides of 0.50, §5.0) and seeds_both_sides (point estimates, §5.2).
@@ -60,14 +63,23 @@ def analyze(seeds: list[dict], seed: int = 0, boot: int = 2000) -> dict:
     }
 
 
+def load(paths) -> list[dict]:
+    """Each seed's probes.topology from select_ckpt --only topology's report.json, items checked equal."""
+    seeds = [json.loads(open(p).read())["probes"]["topology"] for p in paths]
+    if any(s["ids"] != seeds[0]["ids"] for s in seeds):
+        raise SystemExit(f"c2_analyze: the seeds sampled different topology probe items: {list(paths)}")
+    return seeds
+
+
 def main():
     ap = argparse.ArgumentParser(description="C2: A0' pooled hole recall, per-seed checks and outcome.")
-    ap.add_argument("--seeds", nargs="+", required=True, help="per-seed JSON files (3, or 4 with the fourth seed)")
+    ap.add_argument("--seeds", nargs="+", required=True, help="per-seed select_ckpt --only topology report.json "
+                    "(3, or 4 with the fourth seed)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
-    res = analyze([json.loads(open(p).read()) for p in a.seeds], a.seed, a.boot)
+    res = analyze(load(a.seeds), a.seed, a.boot)
     with open(a.out, "w") as fh:
         json.dump(res, fh, indent=1)
     print(json.dumps({k: res[k] for k in ("pooled", "clauses", "outcome", "conditional")}))

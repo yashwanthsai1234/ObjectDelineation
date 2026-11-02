@@ -523,3 +523,34 @@ def test_written_view_contexts_equal_the_store():
                 ref = _reference(it, tuple(r["offset"]), r["side"], tuple(r["window"]), r["op"], r["noise_sigma"],
                                  r["noise_seed"])
                 assert np.array_equal(augment.render(r, c), ref)
+
+
+@pytest.mark.parametrize("off", ["dihedral", "window_jitter"])
+def test_leave_one_out_views_change_only_that_component(views, tmp_path, off):
+    """R-diag rules 2-3 (PLAN §6.3): rdiag_no_dihedral / rdiag_no_window_jitter train on views that differ from the
+    bundle view in one component only. Every draw is made as in the bundle view, then that component is replaced
+    (op -> "id", window -> LUNG_WINDOW), so the rest of each row is identical."""
+    from experiments.phase2 import build_views as BV
+    root, (m, _) = views
+    d = tmp_path / "loo"
+    lm = BV.build(root / "store", d, "lidc", "train", epochs=2, seed=3, nonsimple_repeat=4, procs=1, **{off: False})
+    base, loo = _rows(root / "v1" / "lidc-train"), _rows(d)
+    field = {"dihedral": "op", "window_jitter": "window"}[off]
+    fixed = {"dihedral": "id", "window_jitter": list(augment.LUNG_WINDOW)}[off]
+    assert [r["row_id"] for r in loo] == [r["row_id"] for r in base]
+    for a, b in zip(base, loo, strict=True):
+        assert b[field] == fixed
+        assert {k: v for k, v in a.items() if k not in (field, "target")} == \
+            {k: v for k, v in b.items() if k not in (field, "target")}
+    on, gone = m["config"], lm["config"]  # the manifest says what the view holds
+    assert list(on["ops"]) == list(augment.OPS)
+    assert list(gone["ops"]) == (["id"] if off == "dihedral" else list(augment.OPS))
+    assert (gone["window_jitter"] is None) == (off == "window_jitter") and on["window_jitter"] is not None
+
+
+def test_build_views_cli_has_the_leave_one_out_flags(capsys):
+    from experiments.phase2 import build_views as BV
+    with pytest.raises(SystemExit):
+        BV.main(["--help"])
+    out = capsys.readouterr().out
+    assert "--no-dihedral" in out and "--no-window-jitter" in out

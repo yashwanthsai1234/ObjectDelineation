@@ -3,13 +3,13 @@
 experiments/phase2/impl/BK2.md; a real defect is an xfail(strict=True) "BK2-<n>", every other test is a guard that
 passes today. Real-data tests are marked `data` (data/eval_views)."""
 
-import gc
 import hashlib
 import json
 import shutil
 from pathlib import Path
 
 import numpy as np
+import probe_models as M
 import pytest
 
 from experiments.phase2 import c2_analyze as C2A
@@ -127,27 +127,20 @@ def _mini_root(out: Path, n=3) -> Path:
     return out
 
 
-@pytest.fixture(autouse=True)
-def _clean_store():
-    serve.STORE.clear()
-    yield
-    serve.STORE.clear()
-    gc.unfreeze()
+pytestmark = pytest.mark.usefixtures("clean_store")  # conftest: an empty serve.STORE per test
 
 
 def test_cacheref_for_a_key_not_preloaded(tmp_path):
     root = _mini_root(tmp_path / "r")
     with pytest.raises(KeyError):
-        serve.CacheRef("lidc/1.2.0/n000/z000")
+        serve.loader(root)("lidc/1.2.0/n000/z000")
     serve.preload(root, ("lidc",))
     with pytest.raises(KeyError):
-        serve.CacheRef("lidc/nope")
+        serve.loader(root)("lidc/nope")
     with pytest.raises(KeyError):
         serve.CacheRef("lidc/1.2.0/n000/z000", str(tmp_path / "other"))
     shutil.copytree(root, tmp_path / "r2")
     serve.preload(tmp_path / "r2", ("lidc",))
-    with pytest.raises(KeyError):  # in two roots: ambiguous for ref_loader
-        serve.ref_loader("lidc/1.2.0/n000/z000")
     assert len(serve.loader(tmp_path / "r2")("lidc/1.2.0/n000/z000")) == 1
 
 
@@ -291,7 +284,7 @@ def test_divergences_and_retention_stay_in_range():
 # ================================================================ probes
 
 
-def _probe_rows(root, n=None, model=probes.model_exact):
+def _probe_rows(root, n=None, model=M.model_exact):
     recs = probes.records(root)[:n]
     rng = np.random.default_rng(0)
     return [{"item_id": r["item_id"], "samples": [model(r, rng) for _ in range(8)]} for r in recs]

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import probe_models as M
 import pytest
 
 from objdel.eval import probes as P
@@ -69,7 +70,7 @@ def test_layout_is_prepared_layout(precision_dir):
     r = recs[0]
     assert r["item_id"].startswith("lidc/") and r["view"] == {"offset": [0, 0], "side": r["W"]}
     img = precision_dir / "images" / (r["item_id"] + ".png")
-    assert img.is_file() and P.image_sha(img) == r["image_sha256"]
+    assert img.is_file() and M.image_sha(img) == r["image_sha256"]
     man = json.loads((precision_dir / "manifest.json").read_text())
     assert man["sets"]["lidc/val"]["items"] == 500 and "sha256" in man["files"]["lidc/val.jsonl"]
 
@@ -87,7 +88,7 @@ def test_surface_equals_brute_force(precision_dir):
     rng = np.random.default_rng(0)
     for r in P.records(precision_dir)[:60]:
         gt = P.gt_mask(r)
-        pred = P.gt_mask({**r, "targets": [P.model_noise(1.0)(r, rng)]})
+        pred = P.gt_mask({**r, "targets": [M.model_noise(1.0)(r, rng)]})
         if not pred.any():
             continue
         a, b = np.argwhere(P.boundary(gt)), np.argwhere(P.boundary(pred))
@@ -118,14 +119,14 @@ def test_calibration_disc_iou(precision_dir):
 )
 def test_precision_discrimination(precision_dir, name, should_pass):
     models = {
-        "exact": P.model_exact,
-        "sigma_0.25": P.model_noise(0.25),
-        "sigma_0.5": P.model_noise(0.5),
-        "sigma_1": P.model_noise(1.0),
-        "sigma_2": P.model_noise(2.0),
+        "exact": M.model_exact,
+        "sigma_0.25": M.model_noise(0.25),
+        "sigma_0.5": M.model_noise(0.5),
+        "sigma_1": M.model_noise(1.0),
+        "sigma_2": M.model_noise(2.0),
         "centroid_disc": P.model_centroid_disc,
-        "centred_prior": P.model_centred_prior({50: 8.0, 100: 15.0, 125: 20.0}),
-        "shift_1px": P.model_shift,
+        "centred_prior": M.model_centred_prior({50: 8.0, 100: 15.0, 125: 20.0}),
+        "shift_1px": M.model_shift,
     }
     res = P.score_precision(_rows(precision_dir, models[name]), precision_dir)
     assert res["n_items"] >= 200
@@ -136,7 +137,7 @@ def test_precision_discrimination(precision_dir, name, should_pass):
 
 def test_one_px_shift_detected(precision_dir):
     for r in P.records(precision_dir)[:100]:
-        a = P.score_answer(r, P.model_shift(r, np.random.default_rng(0)))
+        a = P.score_answer(r, M.model_shift(r, np.random.default_rng(0)))
         assert a["assd"] > 0 and abs(a["centroid"] - 1) < 1e-9
 
 
@@ -156,7 +157,7 @@ def test_topology_probe_composition(topology_dir):
     ("name", "recall", "controls"), [("exact", 1.0, 1.0), ("a0", 0.0, 1.0), ("centroid_disc", 0.0, 1.0)]
 )
 def test_topology_sanity(topology_dir, name, recall, controls):
-    model = {"exact": P.model_exact, "a0": P.model_a0, "centroid_disc": P.model_centroid_disc}[name]
+    model = {"exact": M.model_exact, "a0": M.model_a0, "centroid_disc": P.model_centroid_disc}[name]
     res = P.score_topology(_rows(topology_dir, model, k=2), topology_dir)
     assert res["hole_recall"]["bins"] == [recall] * 3 and res["hole_recall"]["pooled"][0] == pytest.approx(recall)
     assert res["controls_correct"] == controls and res["false_nonsimple"] == 0 and res["pass"] is True
@@ -164,7 +165,7 @@ def test_topology_sanity(topology_dir, name, recall, controls):
 
 
 def test_topology_noise_between(topology_dir):
-    res = P.score_topology(_rows(topology_dir, P.model_noise(0.5), k=8), topology_dir)
+    res = P.score_topology(_rows(topology_dir, M.model_noise(0.5), k=8), topology_dir)
     lo, hi = res["hole_recall"]["pooled"][1:]
     assert 0 < res["hole_recall"]["pooled"][0] < 1 and lo <= res["hole_recall"]["pooled"][0] <= hi
     assert res["hole_recall"]["any_of_k"][0] >= res["hole_recall"]["pooled"][0]
@@ -223,7 +224,7 @@ def test_baselines_prior_on_fixture(tmp_path, disc_mask):
                 "H": 50,
                 "rl": True,
                 "caches": {"nodule": c.save(tmp_path / "caches" / iid / "nodule.npz")},
-                "targets": [P.mask_text(st[0]), P.mask_text(st[1])],
+                "targets": [M.mask_text(st[0]), M.mask_text(st[1])],
                 "raters": ["1", "2"],
             }
         )
@@ -274,12 +275,12 @@ def test_real_built_probe_dirs_patient_disjoint():
 
 def test_topology_output_feeds_c2_analyze(topology_dir):
     c2 = pytest.importorskip("experiments.phase2.c2_analyze")
-    seeds = [P.score_topology(_rows(topology_dir, P.model_noise(0.5), k=8, seed=s), topology_dir) for s in (1, 2, 3)]
+    seeds = [P.score_topology(_rows(topology_dir, M.model_noise(0.5), k=8, seed=s), topology_dir) for s in (1, 2, 3)]
     for s in seeds:
         assert [len(b) for b in s["bins"]] == [8, 8, 8] and all(0 <= v <= 1 for b in s["bins"] for v in b)
     out = c2.analyze([{k: s[k] for k in ("bins", "false_nonsimple", "legal")} for s in seeds])
     assert out["seeds"] == 3 and 0 < out["pooled"][0] < 1 and out["outcome"]
-    exact = P.score_topology(_rows(topology_dir, P.model_exact), topology_dir)
+    exact = P.score_topology(_rows(topology_dir, M.model_exact), topology_dir)
     assert c2.analyze([exact] * 3)["pooled"][0] == pytest.approx(1.0)
 
 
@@ -291,13 +292,13 @@ def test_probe_dir_accepted_by_preload(precision_dir):
 def test_probe_outputs_through_phase2_entry(precision_dir, topology_dir):
     from objdel.eval import gates
 
-    good = P.score_precision(_rows(precision_dir, P.model_noise(0.5)), precision_dir)
+    good = P.score_precision(_rows(precision_dir, M.model_noise(0.5)), precision_dir)
     disc = _rows(precision_dir, P.model_centroid_disc)
-    topo = P.score_topology(_rows(topology_dir, P.model_a0), topology_dir)
+    topo = P.score_topology(_rows(topology_dir, M.model_a0), topology_dir)
     for prec, ok in (
         (good, True),
         (P.score_precision(disc, precision_dir), False),
-        (P.score_precision(disc, precision_dir, capacity=_rows(precision_dir, P.model_exact)), True),
+        (P.score_precision(disc, precision_dir, capacity=_rows(precision_dir, M.model_exact)), True),
     ):
         out = gates.phase2_entry({"probes": {"precision": prec, "topology": topo}}, ("lidc",))
         assert out["gates"]["G-precision"]["pass"] is ok and out["gates"]["G-topology-a"]["pass"] is True

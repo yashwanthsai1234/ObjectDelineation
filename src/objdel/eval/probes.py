@@ -374,10 +374,6 @@ def _pixels_sha(image):  # as objdel.train.dataset._pixels_sha (not imported: th
     return hashlib.sha256(repr(image.shape).encode() + image.tobytes()).hexdigest()
 
 
-def image_sha(path):
-    return _pixels_sha(cv2.cvtColor(cv2.imread(str(path), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB))
-
-
 def _write(out, name, split, items, patch_list, seed, meta):
     out, rng, recs = Path(out), np.random.default_rng(seed + 1), []
     for k, it in enumerate(items):
@@ -481,10 +477,6 @@ def records(root, split="val"):
 
 def gt_mask(rec):
     return to_mask(parse(rec["targets"][0], NAMES).objs["nodule"], rec["W"], rec["W"]).mask
-
-
-def mask_text(m):
-    return build_target({"nodule": m}, NAMES, min_area={"nodule": min_area(int(m.sum()))}).text
 
 
 def boundary(m):
@@ -620,10 +612,6 @@ def score_topology(rows, root="data/eval_views/probe-topology", split="val", B=2
 
 
 # ------------------------------------------------------------------------------------------------- synthetic models
-def _parts(rec):
-    return parse(rec["targets"][0], NAMES).objs["nodule"]
-
-
 def _text(parts):
     return serialize(canonicalize({"nodule": parts}), NAMES)
 
@@ -633,37 +621,6 @@ def _disc_text(cx, cy, r, S, n=48):
     return _text([(_ring(np.c_[cx + r * np.cos(th), cy + r * np.sin(th)], S), [])])
 
 
-def model_exact(rec, rng):
-    return rec["targets"][0]
-
-
-def model_noise(sigma):
-    def f(rec, rng):
-        k = GRID / rec["W"]
-        jit = lambda a: np.clip(np.rint(a + rng.normal(0, sigma * k, a.shape)).astype(np.int64), 0, GRID)  # noqa: E731
-        return _text([(jit(o), [jit(h) for h in hs]) for o, hs in _parts(rec)])
-
-    return f
-
-
-def model_shift(rec, rng):
-    k = GRID // rec["W"]
-    dx, dy = [(k, 0), (-k, 0), (0, k), (0, -k)][rng.integers(4)]
-    return _text([(o + [dx, dy], [h + [dx, dy] for h in hs]) for o, hs in _parts(rec)])
-
-
 def model_centroid_disc(rec, rng):
     gt = gt_mask(rec)
     return _disc_text(*centroid(gt), np.sqrt(gt.sum() / np.pi), rec["W"])
-
-
-def model_centred_prior(prior_diam):
-    def f(rec, rng):
-        S = rec["W"]
-        return _disc_text(S / 2, S / 2, prior_diam[min(prior_diam, key=lambda s: abs(s - S))] / 2, S)
-
-    return f
-
-
-def model_a0(rec, rng):
-    return _text([(o, []) for o, _ in _parts(rec)])

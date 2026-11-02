@@ -13,13 +13,15 @@ training-log form (mean logged R, steps 1-5 vs 11-20) and the step timing.
 
 --select (select_ckpt's dir): probe the selected branch, then (not PASS) the D12(c) repair: the next-earlier
 eligible branch, once. <out>/g_probe.json = the last probe's result + "probed" (names) + "earlier" (results before);
-its "ckpt" received the final verdict (C2 depth). When R1's §5.1 gates failed (selected.json "gates_pass" not true)
-nothing is probed: {"verdict": null, "skipped": "§5.1 gates failed: <gate names>", "probed": [], "gates_branch"},
-exit 0, so the chain (train_sft && select_ckpt && g_probe) ends cleanly with the reason on disk.
+its "ckpt" received the final verdict (C2 depth); NaN (e.g. Spearman of constant gains) is written as null. When
+R1's §5.1 gates failed (selected.json "gates_pass" not true) nothing is probed: {"verdict": null, "skipped": "§5.1
+gates failed: <gate names>", "probed": [], "gates_branch"}, exit 0, so the chain (train_sft && select_ckpt &&
+g_probe) ends cleanly with the reason on disk.
 """
 import argparse
 import gc
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -145,9 +147,19 @@ def main(argv=None) -> int:
     return save(a.out, docs[-1] | {"probed": [c.name for c in ckpts[: len(docs)]], "earlier": docs[:-1]})
 
 
+def finite(x):
+    """NaN / inf -> None, recursively (Spearman of constant gains is NaN; strict JSON has no NaN)."""
+    if isinstance(x, dict):
+        return {k: finite(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [finite(v) for v in x]
+    return None if isinstance(x, float) and not math.isfinite(x) else x
+
+
 def save(out: Path, doc: dict) -> int:
     out.mkdir(parents=True, exist_ok=True)
-    (out / "g_probe.json").write_text(json.dumps(doc, indent=1, default=float) + "\n")
+    doc = finite(json.loads(json.dumps(doc, default=float)))  # numpy scalars -> floats first
+    (out / "g_probe.json").write_text(json.dumps(doc, indent=1, allow_nan=False) + "\n")
     keys = ("verdict", "skipped", "h0", "gain", "probed")
     print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False))
     return 0

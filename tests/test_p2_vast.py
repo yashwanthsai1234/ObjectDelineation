@@ -3,6 +3,7 @@
 
 import base64
 import csv
+import gzip
 import hashlib
 import json
 import os
@@ -229,7 +230,7 @@ def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
 def test_real_offer_from_v0_is_admissible():
     """A 3090 offer as Vast's search returned it at V0 (2026-11-01): `verification` is a string, and cpu_ram is in
     MB with 1 GB = 1000 MB (Vast returned cpu_ram 32160 for the query cpu_ram>=32). All offers failed before."""
-    o = json.loads((Path(__file__).parent / "p2_vast_offer_3090.json").read_text())
+    o = json.loads((Path(__file__).parent / "p2_vast_offer_3090.json").read_text()) | {"geolocation": "Texas, US"}
     assert P.reasons(o, "RTX_3090", "lidc") == []
     assert any("cpu_ram" in r for r in P.reasons(dict(o, cpu_ram=31999), "RTX_3090", "lidc"))
 
@@ -278,11 +279,19 @@ def test_ledger_has_no_secret_fields(tmp_path, monkeypatch):
     assert (tmp_path / "ledger.csv").read_text().splitlines()[0] == ",".join(P.FIELDS)
 
 
+def test_onstart_length_is_checked_and_run_ids_are_short():
+    """Vast refuses an onstart over 4048 characters; the run_id appears in it twice and had no length limit."""
+    assert P.RUN_ID_RE.fullmatch("a" * 40) and not P.RUN_ID_RE.fullmatch("a" * 41)
+    assert len(P.onstart_cmd("a" * 40, 10**7, idle_s=10**6)) <= 4048
+    with pytest.raises(SystemExit, match="4048"):
+        P.onstart_cmd("a" * 1000, 7200)
+
+
 def test_onstart_carries_no_secret_and_is_the_watchdog():
     cmd = P.onstart_cmd("r1", 7200)
     assert len(cmd) <= 4000 and not [s for s in SECRETS.values() if s in cmd]
-    b64 = re.search(r"printf %s (\S+) \| base64 -d", cmd).group(1)
-    assert base64.b64decode(b64).decode() == (VAST / "watchdog.sh").read_text()
+    b64 = re.search(r"printf %s (\S+) \| base64 -d \| gunzip >", cmd).group(1)
+    assert gzip.decompress(base64.b64decode(b64)).decode() == (VAST / "watchdog.sh").read_text()
     assert "WATCHDOG_CAP_S=7200" in cmd and "CONTAINER_API_KEY" not in cmd
 
 
@@ -444,25 +453,26 @@ def test_pick_id_takes_any_admissible_offer_not_only_the_five_shown(E):
     assert "not among the admissible" in E.pick("999", ok=False).stderr  # the filter still decides
 
 
-def test_region_limits_the_search_and_pick_top_to_those_countries(E):
-    """V1 (2026-11-02): a Thailand host had not pulled the 5.9 GB image from ghcr.io in 15 min (V0's Texas host: 5.7
-    min), and Vast's search returns a different subset on each call, so `--pick ID` from an earlier listing missed.
-    `--region US,CA --pick top` is one search, filtered by Vast (`geolocation in [...]`) and checked here again."""
-    far, near = offer(1, dph_total=0.3, geolocation="Thailand, TH"), offer(2, dph_total=0.4, geolocation="Texas, US")
-    E.state(offers=[far, near, offer(3, dph_total=0.35, geolocation=None)])
-    p = E.pick("top", "--region", "US,CA")
+@pytest.mark.parametrize("geo,ok", [("Texas, US", True), ("Quebec, CA", True), ("US", True),
+                                    ("Thailand, TH", False), ("Mexico, MX", False), ("", False), (None, False)])
+def test_only_north_american_hosts_are_admissible(geo, ok):
+    """Owner (2026-11-02): US and CA hosts only. V1: a Thailand host had not pulled the 5.9 GB image in 15 min. A
+    fixed rule of the filter, so launch's re-check refuses a saved offer from elsewhere; no location fails."""
+    assert (P.reasons(offer(geolocation=geo), "RTX_4090", "lidc") == []) == ok
+
+
+def test_offers_search_and_launch_keep_to_north_america(E):
+    E.state(offers=[offer(1, dph_total=0.3, geolocation="Thailand, TH"), offer(3, dph_total=0.35, geolocation=None),
+                    offer(2, dph_total=0.4, geolocation="Quebec, CA")])  # fmt: skip
+    p = E.pick("top")
     assert "picked 2" in p.stdout and " 1 " not in p.stdout.split("picked")[0]
-    (q,) = [c for c in E.vast("search offers")]
-    assert "geolocation in [US,CA]" in q[q.index("offers") + 1]
-
-
-def test_offers_search_north_america_by_default(E):
-    """Owner (2026-11-02): use only North American hosts. --region defaults to US,CA."""
-    E.state(offers=[offer(1, dph_total=0.3, geolocation="Thailand, TH"),
-                    offer(2, dph_total=0.4, geolocation="Quebec, CA")])
-    assert "picked 2" in E.pick("top").stdout
     (q,) = E.vast("search offers")
     assert "geolocation in [US,CA]" in q[q.index("offers") + 1]
+    assert "--region" in E.pick("top", "--region", "TH", ok=False).stderr  # no flag widens the rule
+    saved = dict(offer(7, geolocation="Thailand, TH"), _gpu="RTX_4090", _dataset="lidc", _disk=80)
+    (E.home / "offers" / "7.json").write_text(json.dumps(saved))  # saved before the rule, as offers/49545596.json
+    p = E.sh("launch.sh", "7", "r1", ok=False)
+    assert "region" in p.stderr and not E.vast("create instance")
 
 
 def test_launch_needs_a_picked_admissible_offer(E):
@@ -581,7 +591,8 @@ def test_sweep_hard_stop_destroys_everything(E):
 def watchdog(E, ok_file, max_ticks=40, **env):
     e = dict(E.env, WATCHDOG_CAP_S="3600", WATCHDOG_IDLE_S="1", WATCHDOG_TICK_S="0.05", CONTAINER_ID="4242",
              WATCHDOG_MAX_TICKS=str(max_ticks), WATCHDOG_PULLED_OK=str(ok_file), CONTAINER_API_KEY="inst-key",
-             RUN_ID="r1", WATCHDOG_ENV_FILE=str(E.tmp / "environment"), WATCHDOG_STATE=str(E.tmp / "watchdog.start"))
+             RUN_ID="r1", WATCHDOG_ENV_FILE=str(E.tmp / "environment"), WATCHDOG_STATE=str(E.tmp / "watchdog.start"),
+             WATCHDOG_SKIP=re.search(r"WATCHDOG_SKIP=(\S+)", P.onstart_cmd("r1", 1)).group(1))
     e.update(env)
     p = subprocess.run(["bash", str(VAST / "watchdog.sh")], env=e, capture_output=True, text=True,
                        stdin=subprocess.DEVNULL, timeout=60)  # fmt: skip
@@ -600,6 +611,7 @@ def test_watchdog_destroys_when_idle_after_pulled_ok(E):
     run = E.tmp / "box" / "runs" / "r1"
     run.mkdir(parents=True)
     ok = run / "PULLED_OK"
+    (run / "HEARTBEAT").write_text("1\n")
     p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0", FAKE_TOUCH=str(ok))  # no EXIT: job running
     assert p.returncode == 3 and curls == []
     (run / "EXIT").write_text("0\n")
@@ -625,6 +637,7 @@ def test_watchdog_cap_counts_from_the_first_start(E):
 
 def test_watchdog_keeps_box_when_not_pulled_or_busy(E):
     ok = E.tmp / "PULLED_OK"
+    (E.tmp / "HEARTBEAT").write_text("1\n")
     p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0")  # idle, never pulled
     assert p.returncode == 3 and curls == []
     ok.touch()
@@ -632,6 +645,58 @@ def test_watchdog_keeps_box_when_not_pulled_or_busy(E):
     p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0")
     assert p.returncode == 3 and curls == []
     p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0", FAKE_GPU_UTIL="88", FAKE_TOUCH=str(ok))  # busy
+    assert p.returncode == 3 and curls == []
+
+
+def _box_run(E):
+    run = E.tmp / "box" / "runs" / "r1"
+    run.mkdir(parents=True)
+    for f in ("HEARTBEAT", "EXIT"):
+        (run / f).write_text("0\n")
+    return run
+
+
+def test_watchdog_destroys_a_box_whose_job_never_started(E):
+    """No HEARTBEAT ever (run.sh never ran) and the GPU idle 2 x IDLE_S: nothing to lose, so no wait for the cap."""
+    ok = E.tmp / "box" / "runs" / "r1" / "PULLED_OK"
+    ok.parent.mkdir(parents=True)
+    p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="2")  # idle < 4 s
+    assert p.returncode == 3 and curls == []
+    p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0", FAKE_GPU_UTIL="97")  # busy
+    assert p.returncode == 3 and curls == []
+    p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0")
+    assert p.returncode == 0 and len(curls) == 1 and "no job ever started" in p.stdout
+    (ok.parent / "HEARTBEAT").write_text("1\n")  # a job ran: only the EXIT + PULLED_OK rule may destroy
+    p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0")
+    assert p.returncode == 3 and len(curls) == 1
+
+
+def test_watchdog_ignores_the_run_dir_mtime_and_skipped_dirs(E):
+    """pull.sh's `mv PULLED_OK.next PULLED_OK` makes the run dir newer than PULLED_OK, and rolling/ decay/ stable/
+    are never pulled: neither may block the idle destroy forever."""
+    run, later = _box_run(E), time.time() + 60
+    ok = run / "PULLED_OK"
+    (run / "r1-lfm" / "rolling" / "checkpoint-9").mkdir(parents=True)
+    (run / "r1-lfm" / "rolling" / "checkpoint-9" / "optimizer.pt").write_bytes(b"o")
+    ok.touch()
+    os.utime(ok, (later,) * 2)
+    for p in (run / "r1-lfm/rolling/checkpoint-9/optimizer.pt", run / "r1-lfm/rolling", run / "r1-lfm", run):
+        os.utime(p, (later + 60,) * 2)
+    p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0")
+    assert p.returncode == 0 and len(curls) == 1
+
+
+def test_watchdog_keeps_files_written_during_the_pull(E):
+    """PULLED_OK carries the pull's start: a file written while rsync ran is newer, so the box waits for the next
+    pull (stamped at the end, it looked pulled and the box could go with final results unpulled)."""
+    run, later = _box_run(E), time.time() + 60
+    ok = run / "PULLED_OK"
+    ok.touch()
+    os.utime(ok, (later,) * 2)  # touched as PULLED_OK.next when the pull started, then renamed
+    (run / "branches").mkdir()
+    (run / "branches" / "report.json").write_text("{}")
+    os.utime(run / "branches" / "report.json", (later + 30,) * 2)  # written during the pull
+    p, curls = watchdog(E, ok, max_ticks=5, WATCHDOG_IDLE_S="0")
     assert p.returncode == 3 and curls == []
 
 
@@ -834,7 +899,7 @@ def test_r0_is_one_chain_of_the_plan_steps(E):
     line = E.tmux(R0.relative_to(ROOT))
     assert "bash experiments/phase2/docker/image_check.sh /workspace/runs/r1/image_check.json" in line
     assert "/opt/venv/bin/python -I -m experiments.phase1.bench.xarch_hashes" in line
-    assert line.count("|| echo") == 3  # box record + two parity steps continue on failure; the rest stop the chain
+    assert line.count("|| echo") == 5  # box record, two parity and two HF-rate steps go on failing; the rest stop
 
 
 def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
@@ -869,7 +934,7 @@ def _on_box(E, tmp, *run_args):
     (tmp / "bin").mkdir(exist_ok=True)
     py, calls, rd = tmp / "bin/python", tmp / "calls", tmp / "runs/r1"
     _exe(py, f'#!/bin/sh\necho "$PWD|$OBJDEL_RUN_DIR|$*" >> {calls}\n')
-    _exe(tmp / "bin/timeout", '#!/bin/sh\nshift\nexec "$@"\n')
+    _exe(tmp / "bin/timeout", '#!/bin/sh\nshift 3\nexec "$@"\n')
     for box, local in (("/workspace/src", tmp / "src"), ("/workspace/runs", tmp / "runs"), ("/opt/venv/bin/python", py),
                        ("sleep 60", "sleep 1")):  # fmt: skip
         inner = inner.replace(box, str(local))
@@ -909,10 +974,13 @@ def test_c2_chain_trains_then_scores_only_the_topology_probe():
     assert train[:2] == ["-m", "experiments.phase2.train_sft"] and train[-1] == "build/test_cfgs/c2.yaml"
     assert topo[:2] == ["-m", "experiments.phase2.select_ckpt"] and after(topo, "--only") == "topology"
     assert after(topo, "--run") == "/workspace/runs/v1/c2-x" and after(topo, "--sampler") == "hf"
-    assert "--shifted" not in topo
+    assert "--shifted" not in topo and "--items" not in topo  # --only topology scores the whole probe
     _, select, _ = P.chain(ROOT / "experiments/phase2/configs/r1_lfm.yaml", "v1")
     assert after(select, "--rotated") == "/workspace/data/lidc/eval_views/lidc-val-rotated"
     assert after(select, "--sampler") == "hf"  # V1 R0: vLLM parity failed, D13 HF fallback
+    assert after(select, "--items") == "256"  # D13: the HF path selects on a fixed 256-item shifted-val subset
+    vllm = _cfg("vllm.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nsampler: vllm\nvision: off\n")
+    assert "--items" not in P.chain(vllm, "v1")[1]
 
 
 def test_chain_passes_a_numeric_g_vision_reference_as_is():
@@ -980,6 +1048,64 @@ def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path)
     with pytest.raises(SystemExit, match="final pull failed.*destroyed"):
         P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls[0] == (7, "teardown") and "invoice" in calls
+
+
+def _teardown(monkeypatch, tmp_path, pulls):
+    """cmd_teardown with each pull attempt taking the next of `pulls` (None: success, else raised); the calls made."""
+    calls, pulls = [], list(pulls)
+
+    def pull(a):
+        calls.append("pull")
+        if (e := pulls.pop(0)) is not None:
+            raise e
+
+    monkeypatch.setattr(P, "home", lambda: tmp_path)
+    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
+    monkeypatch.setattr(P, "cmd_pull", pull)
+    monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
+    monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
+    monkeypatch.setattr(P, "ledger", lambda **kw: calls.append(kw["event"]))
+    return calls
+
+
+def test_teardown_retries_the_final_pull_twice(monkeypatch, tmp_path):
+    calls = _teardown(monkeypatch, tmp_path, [SystemExit("ssh"), SystemExit("ssh"), None])
+    P.cmd_teardown(SimpleNamespace(run_id="v1"))
+    assert calls[:4] == ["pull", "pull", "pull", (7, "teardown")]
+    calls = _teardown(monkeypatch, tmp_path, [SystemExit("ssh")] * 3)
+    with pytest.raises(SystemExit, match="final pull failed"):
+        P.cmd_teardown(SimpleNamespace(run_id="v1"))
+    assert calls[:4] == ["pull", "pull", "pull", (7, "teardown")]
+
+
+def test_teardown_destroys_on_ctrl_c_during_the_final_pull(monkeypatch, tmp_path):
+    """Only SystemExit was caught: a Ctrl-C (KeyboardInterrupt) in a long final pull skipped the destroy (G8)."""
+    calls = _teardown(monkeypatch, tmp_path, [KeyboardInterrupt()])
+    with pytest.raises(KeyboardInterrupt):
+        P.cmd_teardown(SimpleNamespace(run_id="v1"))
+    assert calls == ["pull", (7, "teardown")]
+
+
+def test_run_cap_kills_a_job_that_ignores_sigterm(E):
+    """A process stuck in CUDA can ignore timeout's SIGTERM; -k sends SIGKILL 120 s later."""
+    E.launched()
+    assert re.search(r"timeout -k 120 \d+s bash -c", E.tmux("experiments.phase2.k3_harness"))
+
+
+def test_pull_stamps_its_start_and_skips_full_checkpoints(E):
+    """PULLED_OK carries the pull's start (files written during a long pull are newer than it), and rolling/,
+    decay/ and stable/ (full checkpoints with optimizer state, 29 GB in R1) stay on the box."""
+    E.launched()
+    out = E.sh("pull.sh", "r1").stdout.splitlines()
+    rd = "/workspace/runs/r1"
+    (touch,) = [i for i, ln in enumerate(out) if f"touch {rd}/PULLED_OK.next" in ln]
+    (pull,) = [i for i, ln in enumerate(out) if ln.startswith("DRY_RUN: rsync")]
+    (mv,) = [i for i, ln in enumerate(out) if f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK" in ln]
+    assert touch < pull < mv and not [ln for ln in out if f"touch {rd}/PULLED_OK'" in ln]
+    argv = shlex.split(out[pull].removeprefix("DRY_RUN: "))
+    assert {f"--exclude={x}" for x in ("rolling/", "decay/", "stable/", "PULLED_OK", "PULLED_OK.next")} <= set(argv)
+    assert "--exclude=branches/" not in argv  # model-only branch checkpoints: select_ckpt and the Mac need them
+    assert f"WATCHDOG_SKIP={','.join(P.PULL_EXCLUDE)}" in P.onstart_cmd("r1", 600)  # one list for pull and watchdog
 
 
 def test_code_files_keep_paths_with_spaces_whole(tmp_path, monkeypatch):

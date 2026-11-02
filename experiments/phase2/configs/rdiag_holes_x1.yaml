@@ -1,8 +1,9 @@
 # R-diag (PLAN §6.3) rule 1, hole oversampling x4 -> x1; R1's design to the failing run's selected depth only (one decay; set branches).
 model: lfm2.5-vl-450m
-view: views/lidc-bundle-x1
+view: views/lidc-bundle-x1   # build_views --epochs 3 --nonsimple-repeat 1 --out data/views/lidc-bundle-x1
 output_dir: rdiag-holes_x1
 seed: 1
+sampler: hf   # D13 fallback (V1 R0 parity failed)
 branches: [1.0]   # = the failing run's selected depth (the deepest when none was eligible)
 vision: {prepared: prepared, reference: vision_ref/lfm2.5-vl-450m.json}   # reference: written in R0 by --vision_reference_only true (under run_dir)
 sft:

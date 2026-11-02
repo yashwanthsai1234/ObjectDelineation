@@ -14,7 +14,7 @@ wrong.
 |---|---|
 | Phase 0 (census and baselines) | done: [results](experiments/phase0/RESULTS.md), [model baselines](experiments/phase0/RESULTS_0b.md); scripts run against commit `faaacc4` ([note](experiments/phase0/README.md)) |
 | Phase 1 (reward and data) | done: [results and gates](experiments/phase1/RESULTS.md), [plan](experiments/phase1/PLAN.md), [execution](experiments/phase1/EXECUTION.md), [notes and issues](experiments/phase1/impl/) |
-| Phase 2 (SFT on Vast AI) | next: entry gates in [RESULTS.md §8](experiments/phase1/RESULTS.md#8-phase-2-handoff) |
+| Phase 2 (SFT on Vast AI) | in progress: V1 session (R0 done, R1 to rerun after fixes): [plan](experiments/phase2/PLAN.md), [build log](experiments/phase2/V0_V1.md), [issues](experiments/phase2/impl/ISSUES.md) |
 | Full plan | [ROADMAP.md](ROADMAP.md) |
 
 ## Layout

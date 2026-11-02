@@ -2,7 +2,7 @@
 # step except the "~" ones. {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
 #   run.sh v1 --cap-hours 1.5 experiments/phase2/configs/r0.yaml
 # Then on the Mac: pull.sh v1; xarch_hashes --compare build/x86/hashes-mac.json runs/v1/xarch_vast.json (step 5);
-# project_r1 on the timing manifests (step 9, the stop rule) before R1 starts.
+# project_r1 on the timing manifests and hf-rate-*/hf_rate.json (step 9, the stop rule) before R1 starts.
 steps:
   - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]   # step 2
   - [bash, experiments/phase2/docker/image_check.sh, "{rd}/image_check.json"]          # step 3: CUDA, bf16 peak, GDN route
@@ -13,6 +13,11 @@ steps:
      --out, "{rd}/parity-lfm"]
   - ["~", -m, experiments.phase2.r0_parity, --model, qwen3.5-0.8b, --view, "{data}/eval_views/lidc-val-shifted",
      --out, "{rd}/parity-qwen35"]
+  # step 8: HF sampling rate on base weights (32 shifted-val items x K = 8; R1 / C2 sample with HF, D13) for project_r1
+  - ["~", -m, experiments.phase2.hf_rate, --model, lfm2.5-vl-450m, --view, "{data}/eval_views/lidc-val-shifted",
+     --out, "{rd}/hf-rate-lfm"]
+  - ["~", -m, experiments.phase2.hf_rate, --model, qwen3.5-0.8b, --view, "{data}/eval_views/lidc-val-shifted",
+     --out, "{rd}/hf-rate-qwen35"]
   # step 8: G-vision base references (R1 refuses to start without them), 4 timing arms, the Qwen3.5 arm
   - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r1_lfm.yaml, --vision_reference_only, "true"]
   - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r1_qwen35.yaml, --vision_reference_only, "true"]

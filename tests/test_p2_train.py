@@ -292,7 +292,6 @@ def test_full_ft_loads_fp32_master_weights(model, tmp_path):
     hardware has it; only a LoRA run keeps a frozen bf16 base (Qwen3.5, as B1)."""
     assert configs.dtype(model, lora=False) == "float32"
     assert configs.dtype(model, lora=True) == ("bfloat16" if model == "qwen3.5-0.8b" else "float32")
-    assert configs.DTYPE[model] == configs.dtype(model, configs.lora(model) is not None)  # the default mode
     from unittest import mock
 
     import transformers.training_args

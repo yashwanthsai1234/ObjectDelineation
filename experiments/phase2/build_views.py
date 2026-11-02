@@ -47,7 +47,7 @@ NO_JITTER = {"window": None, "noise_sigma": 0.0, "noise_seed": 0}
 
 
 def _item(job):
-    it, out, epochs, seed, repeat = job
+    it, out, epochs, seed, repeat, dihedral, window_jitter = job
     if it.image is None:
         return None  # counted as skipped
     ds, names = it.dataset, SCHEMAS[it.dataset]
@@ -68,8 +68,11 @@ def _item(job):
                     stats["fallback"] += 1
                 (dx, dy), S = got or ((0, 0), policy.W)
                 ops = augment.DATASET_OPS[ds]
-                op = ops[int(rng.integers(len(ops)))]
+                op = ops[int(rng.integers(len(ops)))]  # drawn even when unused: R-diag keeps the same stream
+                op = op if dihedral else "id"
                 jit = augment.jitter(rng) if ds == "lidc" else NO_JITTER
+                if not window_jitter:  # R-diag: drawn as above (same stream), then the fixed lung window
+                    jit = jit | {"window": list(augment.LUNG_WINDOW)}
                 f = frame(bare, offset=(dx, dy), side=S)
                 src = {n: augment.apply(f.masks[n][r], op) for n in names}
                 row = {"row_id": f"{e}/{it.item_id}/{r}/{rep}", "epoch": e, "item_id": it.item_id, "dataset": ds,
@@ -91,12 +94,14 @@ def _item(job):
 
 
 def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nonsimple_repeat=4, procs=2,
-          limit=None, prepared=None) -> dict:
+          limit=None, prepared=None, dihedral=True, window_jitter=True) -> dict:
+    """dihedral / window_jitter False: the R-diag leave-one-out views (PLAN §6.3 rules 2-3). Rows are drawn exactly
+    as in the bundle view, then the op becomes "id" or the window the fixed lung window, so nothing else changes."""
     out, t0, cpu0 = Path(out), time.time(), time.process_time()
     out.mkdir(parents=True, exist_ok=True)
     rows, stats, contexts, skipped = [], Counter(), {}, 0
     its = islice(store.load(dataset, split, store_root), limit)
-    jobs = ((it, str(out), epochs, seed, nonsimple_repeat) for it in its)
+    jobs = ((it, str(out), epochs, seed, nonsimple_repeat, dihedral, window_jitter) for it in its)
     with Pool(procs) as pool:
         for got in pool.imap(_item, jobs, chunksize=8):
             if got is None:
@@ -114,8 +119,8 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
     manifest = {
         "view": out.name, "dataset": dataset, "split": split,
         "config": {"epochs": epochs, "seed": seed, "nonsimple_repeat": nonsimple_repeat, "ops": augment.DATASET_OPS[
-            dataset], "margin": augment.MARGIN, "clearance": augment.CLEARANCE, "window_jitter":
-            augment.WINDOW_JITTER if dataset == "lidc" else None, "noise_max": augment.NOISE_MAX if dataset == "lidc"
+            dataset] if dihedral else ("id",), "margin": augment.MARGIN, "clearance": augment.CLEARANCE, "window_jitter":
+            augment.WINDOW_JITTER if dataset == "lidc" and window_jitter else None, "noise_max": augment.NOISE_MAX if dataset == "lidc"
             else None, "build": BuildConfig().__dict__},
         "sources": {"store_manifest_sha256": sha(Path(store_root, "manifest.json")),
                     "prepared_manifest_sha256": sha(Path(prepared, "manifest.json")) if prepared else None},
@@ -152,8 +157,12 @@ def main(argv=None):
     ap.add_argument("--nonsimple-repeat", type=int, default=4)
     ap.add_argument("--procs", type=int, default=2)
     ap.add_argument("--limit", type=int, default=None, help="first n items (smoke test)")
+    ap.add_argument("--no-dihedral", dest="dihedral", action="store_false", help="R-diag rule 2: every op is id")
+    ap.add_argument("--no-window-jitter", dest="window_jitter", action="store_false",
+                    help="R-diag rule 3: the fixed lung window (noise unchanged)")
     a = ap.parse_args(argv)
-    m = build(a.store, a.out, a.dataset, a.split, a.epochs, a.seed, a.nonsimple_repeat, a.procs, a.limit, a.prepared)
+    m = build(a.store, a.out, a.dataset, a.split, a.epochs, a.seed, a.nonsimple_repeat, a.procs, a.limit, a.prepared,
+              a.dihedral, a.window_jitter)
     print(json.dumps(m["counts"], indent=1))
     print(report_path(a.out).read_text())
 

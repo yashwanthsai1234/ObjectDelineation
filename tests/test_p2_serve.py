@@ -59,12 +59,7 @@ def prepared(tmp_path_factory, synthetic_items):
     return _write_prepared(tmp_path_factory.mktemp("prep"), synthetic_items(("train", "val"), unanimous=True))
 
 
-@pytest.fixture(autouse=True)
-def _clean_store():
-    serve.STORE.clear()
-    yield
-    serve.STORE.clear()
-    gc.unfreeze()
+pytestmark = pytest.mark.usefixtures("clean_store")  # conftest: an empty serve.STORE per test
 
 
 @pytest.fixture
@@ -76,7 +71,7 @@ def pool():
 
 def _prompts(root, ds):
     keys = sorted(k for k in serve.STORE[str(Path(root).resolve())] if k.startswith(ds))
-    return [(SCHEMAS[ds], serve.ref_loader(k)) for k in keys]
+    return [(SCHEMAS[ds], serve.loader(root)(k)) for k in keys]
 
 
 def _workloads(root) -> dict[str, list]:
@@ -109,10 +104,10 @@ def test_preload_lidc_only_loads_no_riga_cache(prepared, monkeypatch):
     assert serve.preload(prepared, ("lidc",), threads=2) == 4  # z001 and z004 of train and val
     assert loaded and all(p.relative_to(prepared / "caches").parts[0] == "lidc" for p in loaded)
     assert not any(k.startswith("riga") for s in serve.STORE.values() for k in s)
-    ref = serve.ref_loader("lidc/1.2.1/n000/z001")
+    ref = serve.loader(prepared)("lidc/1.2.1/n000/z001")
     assert set(ref) == {"nodule"} and ref["nodule"].k == 2 and len(ref) == 1
     with pytest.raises(KeyError):
-        serve.ref_loader("lidc/1.2.1/n000/z003")  # one rater: not RL, never loaded
+        serve.loader(prepared)("lidc/1.2.1/n000/z003")  # one rater: not RL, never loaded
 
 
 def test_preload_checks_digests(prepared, tmp_path):
@@ -134,12 +129,10 @@ def test_cache_ref_pickles_as_its_key_and_roots_stay_apart(prepared, tmp_path):
     other = Path(shutil.copytree(prepared, tmp_path / "view"))  # e.g. an eval view: same item ids, other caches
     serve.preload(prepared, ("riga", "lidc"))
     key = "riga/MESSIDOR/image001"
-    ref = serve.ref_loader(key)
+    ref = serve.loader(prepared)(key)
     assert dict(ref) == serve.STORE[str(prepared.resolve())][key]
     assert len(pickle.dumps(ref)) < 300 and pickle.loads(pickle.dumps(ref))["disc"] is ref["disc"]
     serve.preload(other, ("riga",))
-    with pytest.raises(KeyError, match="2 preloaded roots"):
-        serve.ref_loader(key)  # ambiguous: name the root
     assert serve.loader(other)(key)["cup"] is serve.STORE[str(other.resolve())][key]["cup"]
     assert serve.loader(prepared)(key)["cup"] is not serve.loader(other)(key)["cup"]
 
@@ -170,7 +163,7 @@ def test_trl_reward_one_dispatch_per_generation_batch(prepared):
     ex = serve.fork_pool(2)
     try:
         cp = Counting(ex)
-        par, ser = TRLReward(serve.ref_loader, {EOS}, pool=cp), TRLReward(serve.ref_loader, {EOS})
+        par, ser = TRLReward(serve.loader(prepared), {EOS}, pool=cp), TRLReward(serve.loader(prepared), {EOS})
         pids = set(ex._processes)
         for jobs in batches:
             n0 = cp.n
