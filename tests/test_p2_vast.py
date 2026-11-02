@@ -15,6 +15,7 @@ import sys
 import tarfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -431,6 +432,28 @@ def test_pick_top_takes_the_cheapest_admissible_offer_of_the_same_search(E):
     E.state(offers=[offer(222, dph_total=0.4), offer(111, dph_total=0.5)])
     p = E.pick("top")
     assert (E.home / "offers" / "222.json").exists() and "picked 222" in p.stdout
+
+
+def test_pick_id_takes_any_admissible_offer_not_only_the_five_shown(E):
+    """V1 (2026-11-02): the five cheapest admissible 4090s were all in Asia, and a Thailand host had not pulled the
+    5.9 GB image in 15 min; a US host beyond the cheapest five could not be picked. Any admissible offer can be."""
+    cheap = [offer(100 + i, dph_total=0.3 + i / 100) for i in range(6)]
+    E.state(offers=[*cheap, offer(999, verification="unverified")])
+    p = E.pick("105")
+    assert "105" not in p.stdout.split("picked")[0] and "picked 105" in p.stdout  # not listed, still pickable
+    assert "not among the admissible" in E.pick("999", ok=False).stderr  # the filter still decides
+
+
+def test_region_limits_the_search_and_pick_top_to_those_countries(E):
+    """V1 (2026-11-02): a Thailand host had not pulled the 5.9 GB image from ghcr.io in 15 min (V0's Texas host: 5.7
+    min), and Vast's search returns a different subset on each call, so `--pick ID` from an earlier listing missed.
+    `--region US,CA --pick top` is one search, filtered by Vast (`geolocation in [...]`) and checked here again."""
+    far, near = offer(1, dph_total=0.3, geolocation="Thailand, TH"), offer(2, dph_total=0.4, geolocation="Texas, US")
+    E.state(offers=[far, near, offer(3, dph_total=0.35, geolocation=None)])
+    p = E.pick("top", "--region", "US,CA")
+    assert "picked 2" in p.stdout and " 1 " not in p.stdout.split("picked")[0]
+    (q,) = [c for c in E.vast("search offers")]
+    assert "geolocation in [US,CA]" in q[q.index("offers") + 1]
 
 
 def test_launch_needs_a_picked_admissible_offer(E):
@@ -913,3 +936,31 @@ def test_launch_idle_minutes_reach_the_watchdog(E):
     (c,) = E.vast("create instance")
     assert "WATCHDOG_IDLE_S=5400" in after(c, "--onstart-cmd") and len(after(c, "--onstart-cmd")) <= 4048
     assert "WATCHDOG_IDLE_S=1800" in P.onstart_cmd("r2", 600)  # the default, as watchdog.sh's own
+
+
+def test_onstart_repairs_the_ssh_key_file_vast_writes_with_bad_modes():
+    """V1 (2026-11-02, Quebec host): sshd refused our registered key, "Authentication refused: bad ownership or modes
+    for file /root/.ssh/authorized_keys" (vastai logs); attach ssh said "already associated". Known Vast host issue
+    (vast-cli #336): onstart runs after Vast writes the key, so it repairs owner and modes; a no-op on good hosts."""
+    cmd = P.onstart_cmd("v1", 600)
+    fix = cmd[: cmd.index("watchdog.sh")]
+    for part in ("chown root:root /root/.ssh/authorized_keys", "chmod 600 /root/.ssh/authorized_keys",
+                 "chmod 700 /root/.ssh", "chmod go-w /root"):  # fmt: skip
+        assert part in fix, part
+    assert ") &" in fix  # in the background: the watchdog starts at once
+    assert len(cmd) <= 4048 and subprocess.run(["bash", "-n", "-c", cmd]).returncode == 0
+
+
+def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path):
+    """V1 (2026-11-02): the final pull needs ssh; with ssh refused, teardown stopped before destroy and the box kept
+    billing. G8: destroy first-class, then report the failed pull."""
+    calls = []
+    monkeypatch.setattr(P, "home", lambda: tmp_path)
+    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
+    monkeypatch.setattr(P, "cmd_pull", lambda a: P.die("rsync failed: ..."))
+    monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
+    monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
+    monkeypatch.setattr(P, "ledger", lambda **kw: calls.append(kw["event"]))
+    with pytest.raises(SystemExit, match="final pull failed.*destroyed"):
+        P.cmd_teardown(SimpleNamespace(run_id="v1"))
+    assert calls[0] == (7, "teardown") and "invoice" in calls
