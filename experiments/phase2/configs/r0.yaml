@@ -1,6 +1,6 @@
 # R0 box checks (PLAN §4.7 steps 3, 5-8; V0_V1.md §4.2): one run.sh chain after sync_up, stopped by the first failing
 # step except the "~" ones. {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
-#   run.sh v1 experiments/phase2/configs/r0.yaml --cap-hours 1.5
+#   run.sh v1 --cap-hours 1.5 experiments/phase2/configs/r0.yaml
 # Then on the Mac: pull.sh v1; xarch_hashes --compare build/x86/hashes-mac.json runs/v1/xarch_vast.json (step 5);
 # project_r1 on the timing manifests (step 9, the stop rule) before R1 starts.
 steps:

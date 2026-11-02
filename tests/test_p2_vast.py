@@ -960,6 +960,13 @@ def test_onstart_repairs_the_ssh_key_file_vast_writes_with_bad_modes():
     assert len(cmd) <= 4048 and subprocess.run(["bash", "-n", "-c", cmd]).returncode == 0
 
 
+def test_onstart_turns_off_vast_auto_tmux():
+    """V1 (2026-11-02, Texas host): Vast's login script starts tmux on every ssh login, so `ssh host CMD` (remote,
+    rsync, sftp) failed with "open terminal failed: not a terminal". ~/.no_auto_tmux is Vast's documented opt-out."""
+    cmd = P.onstart_cmd("v1", 600)
+    assert cmd.startswith("touch /root/.no_auto_tmux; ")
+
+
 def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path):
     """V1 (2026-11-02): the final pull needs ssh; with ssh refused, teardown stopped before destroy and the box kept
     billing. G8: destroy first-class, then report the failed pull."""
@@ -973,3 +980,37 @@ def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path)
     with pytest.raises(SystemExit, match="final pull failed.*destroyed"):
         P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls[0] == (7, "teardown") and "invoice" in calls
+
+
+def test_code_files_keep_paths_with_spaces_whole(tmp_path, monkeypatch):
+    """V1 (2026-11-02): `git ls-files` output was split on any whitespace, so a tracked path with spaces (docs/research
+    notes) became words that rsync --files-from could not stat, and sync_up failed before sending a byte."""
+    for p in ("tests/oracles/o.py", "experiments/my dir/a b.py", "docs/notes with space/x.md"):
+        (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / p).write_text("x")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    monkeypatch.setattr(P, "ROOT", tmp_path)
+    assert sorted(P.code_files()) == ["experiments/my dir/a b.py", "tests/oracles/o.py"]
+
+
+def test_sync_up_sends_both_bundle_files_to_the_box_data_dir(E):
+    """V1 (2026-11-02): rsync(run, src, dst, *extra) was called with two sources, so the .sha256 became the destination
+    and the remote path an option ("local file in list of remote sources"). Sources first, the remote dir last."""
+    E.launched()
+    out = E.sh("sync_up.sh", "r1").stdout
+    (line,) = [ln for ln in out.splitlines() if ln.startswith("DRY_RUN: rsync") and "bundle-lidc.tar" in ln]
+    argv = shlex.split(line.removeprefix("DRY_RUN: "))
+    assert argv[-1].endswith(":/workspace/data/") and [Path(a).name for a in argv[-3:-1]] == [
+        "bundle-lidc.tar", "bundle-lidc.tar.sha256"]
+    assert not any(a.startswith("root@") for a in argv[:-1])
+
+
+def test_run_refuses_extra_arguments_after_a_config(E):
+    """V1 (2026-11-02): `run.sh v1 configs/r0.yaml --cap-hours 1.5` put the flag into the module's arguments, which a
+    config run ignores, so R0 ran under the instance cap instead of 1.5 h. Flags go before the config."""
+    E.launched()
+    r = E.sh("run.sh", "r1", "experiments/phase2/configs/r0.yaml", "--cap-hours", "1.5", ok=False)
+    assert "before the config" in r.stderr and "--cap-hours" in r.stderr
+    assert "cap_s=5400" in E.sh("run.sh", "r1", "--cap-hours", "1.5", "experiments/phase2/configs/r0.yaml").stdout + \
+        E.ledger()[-1]["detail"]
