@@ -80,7 +80,7 @@ def offer(oid=111, gpu="RTX 4090", **kw):
     return dict(id=oid, ask_contract_id=oid, gpu_name=gpu, num_gpus=1, gpu_ram=24564, cpu_ram=64000,
                 cpu_cores_effective=16, cuda_max_good=13.2, dph_total=0.55, reliability2=0.995, disk_space=200,
                 inet_down=900, direct_port_count=10, verification="verified", rentable=True, hosting_type=0, host_id=7,
-                machine_id=70, inet_up_cost=0.001, inet_down_cost=0.001) | kw  # fmt: skip
+                machine_id=70, inet_up_cost=0.001, inet_down_cost=0.001, geolocation="Texas, US") | kw  # fmt: skip
 
 
 def read_json(f: Path) -> dict:
@@ -453,6 +453,15 @@ def test_region_limits_the_search_and_pick_top_to_those_countries(E):
     p = E.pick("top", "--region", "US,CA")
     assert "picked 2" in p.stdout and " 1 " not in p.stdout.split("picked")[0]
     (q,) = [c for c in E.vast("search offers")]
+    assert "geolocation in [US,CA]" in q[q.index("offers") + 1]
+
+
+def test_offers_search_north_america_by_default(E):
+    """Owner (2026-11-02): use only North American hosts. --region defaults to US,CA."""
+    E.state(offers=[offer(1, dph_total=0.3, geolocation="Thailand, TH"),
+                    offer(2, dph_total=0.4, geolocation="Quebec, CA")])
+    assert "picked 2" in E.pick("top").stdout
+    (q,) = E.vast("search offers")
     assert "geolocation in [US,CA]" in q[q.index("offers") + 1]
 
 

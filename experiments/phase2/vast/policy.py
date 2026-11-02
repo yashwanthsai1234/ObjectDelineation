@@ -521,7 +521,7 @@ def cmd_sweep_orphans(a) -> None:
 FLAG = {"action": "store_true"}
 CLI = {  # subcommand -> its arguments, in order
     "offers": {"gpu": {}, "--riga": FLAG, "--pick": {}, "--disk": {"type": int, "default": 80},
-               "--region": {"help": "country codes, e.g. US,CA (Vast geolocation)"}},
+               "--region": {"default": "US,CA", "help": "country codes (Vast geolocation); owner: North America only"}},
     "launch": {"offer": {"type": int}, "run_id": {}, "--cap-hours": {"type": float, "default": 4},
                "--allow-parallel": FLAG, "--owner-approved": FLAG,
                "--idle-minutes": {"type": float, "default": 30, "help": "watchdog idle destroy after a pulled EXIT"}},
