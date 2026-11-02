@@ -2,7 +2,7 @@
 `*.sh` files next to this module are symlinks to the one shim `vast.sh` (the link's name is the command), and
 `watchdog.sh` is the only logic that runs on the box.
 
-    offers.sh GPU [--riga] [--disk GB] [--pick OFFER_ID|top]   search (§4.2 filter), top 5; --pick saves the offer
+    offers.sh GPU [--riga] [--disk GB] [--region US,CA] [--pick OFFER_ID|top]   search (§4.2 filter), top 5; --pick saves the offer
     launch.sh OFFER_ID RUN_ID [--cap-hours H] [--idle-minutes M] [--allow-parallel] [--owner-approved]
     sync_up.sh RUN_ID [--bundle lidc|riga] [--bundle-dir DIR] [--code-only]   code (git ls-files) + bundle, SHA-256
     run.sh RUN_ID MODULE|CONFIG.yaml [ARGS]                    timeout + tmux + heartbeat; a config runs its chain
@@ -252,7 +252,10 @@ def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: i
     created = int(created or time.time())
     env = (f"RUN_ID={run_id} WATCHDOG_CAP_S={cap_s} WATCHDOG_IDLE_S={idle_s} WATCHDOG_CREATED={created} "
            f"WATCHDOG_PULLED_OK=/workspace/runs/{run_id}/PULLED_OK")  # fmt: skip
-    return f"printf %s {b64} | base64 -d > /root/watchdog.sh && {env} nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &"
+    k = "/root/.ssh/authorized_keys"  # V1: some hosts write it with a foreign owner and sshd refuses it (vast-cli #336)
+    fix = (f"(for i in $(seq 60); do [ -f {k} ] && chown root:root {k} && chmod 600 {k} && chmod 700 /root/.ssh "
+           f"&& chmod go-w /root; sleep 2; done) & ")
+    return fix + f"printf %s {b64} | base64 -d > /root/watchdog.sh && {env} nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &"
 
 
 def offer_cols(o: dict) -> dict:
@@ -260,10 +263,12 @@ def offer_cols(o: dict) -> dict:
 
 
 def cmd_offers(a) -> None:
-    ds = "riga" if a.riga else "lidc"
-    got = vast("search", "offers", query(a.gpu, ds, a.disk), "-o", "dph_total", "--storage", str(a.disk), "--raw")
-    ok = [o for o in got if not reasons(o, a.gpu, ds, a.disk)][:5]
-    for o in ok:
+    ds, where = "riga" if a.riga else "lidc", a.region.split(",") if a.region else []
+    q = query(a.gpu, ds, a.disk) + (f" geolocation in [{a.region}]" if where else "")  # V1: far hosts pulled too slowly
+    got = vast("search", "offers", q, "-o", "dph_total", "--storage", str(a.disk), "--raw")
+    ok = [o for o in got if not reasons(o, a.gpu, ds, a.disk)
+          and (not where or (o.get("geolocation") or "").rsplit(", ", 1)[-1] in where)]  # --pick ID: any of them (V1: the 5 cheapest were far)
+    for o in ok[:5]:
         print(f"{o['id']:>10}  ${o['dph_total']:.3f}/h  {o['gpu_ram'] / 1024:.0f} GB  {o['cpu_cores_effective']} cores"
               f"  {o['cpu_ram'] / 1000:.0f} GB RAM  cuda {o['cuda_max_good']}  hosting_type {o.get('hosting_type')}"
               f"  ${o['inet_up_cost']}/GB up")  # fmt: skip
@@ -271,7 +276,7 @@ def cmd_offers(a) -> None:
         return
     o = ok[0] if a.pick == "top" and ok else next((o for o in ok if str(o["id"]) == a.pick), None)  # top: no race
     if o is None:
-        die(f"offer {a.pick} is not among the admissible offers above")
+        die(f"offer {a.pick} is not among the admissible offers")
     (home() / "offers").mkdir(exist_ok=True)
     (home() / "offers" / f"{o['id']}.json").write_text(json.dumps(dict(o, _gpu=a.gpu, _dataset=ds, _disk=a.disk)))
     ledger(event="offer", offer_id=o["id"], gpu=a.gpu, **offer_cols(o), detail=query(a.gpu, ds, a.disk))
@@ -467,7 +472,11 @@ def billed(charges: dict, iid: int) -> float | None:
 
 def cmd_teardown(a) -> None:
     run = get_run(a.run_id)
-    cmd_pull(a)
+    try:
+        cmd_pull(a)
+        lost = None
+    except SystemExit as e:  # V1: ssh refused, so the pull failed; the box must still go (G8)
+        lost = e
     destroy(run["instance"], a.run_id, "teardown")
     inv = vast("show", "invoices-v1", "--charges", "--raw", "--limit", "100", tries=3)
     (home() / "invoices").mkdir(exist_ok=True)
@@ -476,6 +485,8 @@ def cmd_teardown(a) -> None:
     usd = "pending" if usd is None else f"${usd:.3f}"
     ledger(event="invoice", run_id=a.run_id, instance_id=run["instance"],
            detail=f"billed={usd} (Vast charges accrue late; invoices/{a.run_id}.json)")
+    if lost:
+        die(f"final pull failed ({lost}); instance {run['instance']} destroyed")
 
 
 def alert(msg: str) -> None:
@@ -509,7 +520,8 @@ def cmd_sweep_orphans(a) -> None:
 
 FLAG = {"action": "store_true"}
 CLI = {  # subcommand -> its arguments, in order
-    "offers": {"gpu": {}, "--riga": FLAG, "--pick": {}, "--disk": {"type": int, "default": 80}},
+    "offers": {"gpu": {}, "--riga": FLAG, "--pick": {}, "--disk": {"type": int, "default": 80},
+               "--region": {"help": "country codes, e.g. US,CA (Vast geolocation)"}},
     "launch": {"offer": {"type": int}, "run_id": {}, "--cap-hours": {"type": float, "default": 4},
                "--allow-parallel": FLAG, "--owner-approved": FLAG,
                "--idle-minutes": {"type": float, "default": 30, "help": "watchdog idle destroy after a pulled EXIT"}},
