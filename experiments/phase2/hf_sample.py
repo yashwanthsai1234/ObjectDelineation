@@ -1,14 +1,12 @@
-"""The HF generate sampler (plan D13 fallback, Qwen3.5 HF-only path, CPU smoke): sample_vllm's JSONL contract.
+"""The HF generate sampler (PLAN D13 fallback, Qwen3.5 HF-only path, CPU smoke): sample_vllm's JSONL contract.
 
     python -I -m experiments.phase2.hf_sample --prompts P.jsonl --model DIR --out C.jsonl
 
-Runs as a child of select_ckpt, in a process of its own (select_ckpt never touches CUDA). Every D13 sampling field
-is passed explicitly (objdel.train.configs.as_names(sampling, "hf"): temperature, top_p, top_k, min_p,
-repetition_penalty, max_new_tokens, eos_token_id = the stop ids, do_sample), on top of a fresh GenerationConfig, so
-nothing comes from the checkpoint's generation_config (LFM's card has min_p 0.15 and repetition 1.05; transformers
-fills unset fields from it). HF generate has no presence / frequency penalty: as_names refuses a non-zero one.
-Prompt i is seeded with seed + i (distinct streams per item, reproducible).
-Output: one line per sample {"id", "k", "token_ids" (cut after the first stop id), "finish_reason", "text"}.
+A child of select_ckpt in its own process (select_ckpt never touches CUDA). Every D13 sampling field is passed
+explicitly (configs.as_names(sampling, "hf"), eos_token_id = the stop ids) over a fresh GenerationConfig, so nothing
+comes from the checkpoint's (LFM's card: min_p 0.15, repetition 1.05); HF has no presence / frequency penalty
+(as_names refuses one). Prompt i is seeded seed + i. Output per sample: {"id", "k", "token_ids" (cut after the
+first stop id), "finish_reason", "text"}.
 
 Reference: https://huggingface.co/docs/transformers/main_classes/text_generation
 """
@@ -42,17 +40,14 @@ def main(argv=None) -> int:
             gen = configs.as_names(s, "hf")
             x = proc(text=[p["prompt"]], images=[[Image.open(p["image"]).convert("RGB")]], return_tensors="pt", **kw)
             torch.manual_seed(s["seed"] + i)
-            stop = gen["eos_token_id"]
             with torch.no_grad():
-                ids = model.generate(
-                    **x.to(dev), **gen, num_return_sequences=p["n"], pad_token_id=proc.tokenizer.pad_token_id
-                )
+                ids = model.generate(**x.to(dev), **gen, num_return_sequences=p["n"],
+                                     pad_token_id=proc.tokenizer.pad_token_id)  # fmt: skip
             for k, row in enumerate(ids[:, x["input_ids"].shape[1] :].tolist()):
-                cut = next((j + 1 for j, t in enumerate(row) if t in stop), None)
+                cut = next((j + 1 for j, t in enumerate(row) if t in gen["eos_token_id"]), None)
                 toks = row[:cut] if cut else row
-                text = proc.tokenizer.decode(toks, skip_special_tokens=True)
                 out = {"id": p["id"], "k": k, "token_ids": toks, "finish_reason": "stop" if cut else "length"}
-                f.write(json.dumps(out | {"text": text}) + "\n")
+                f.write(json.dumps(out | {"text": proc.tokenizer.decode(toks, skip_special_tokens=True)}) + "\n")
     return 0
 
 

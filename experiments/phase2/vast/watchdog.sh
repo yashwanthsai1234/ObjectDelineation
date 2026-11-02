@@ -18,9 +18,6 @@ destroy() {
     done
     exit 0
 }
-on_mac() {
-    [ -f "$PULLED" ] && [ -f "$RUN/EXIT" ] && [ -z "$(find "$RUN" -newer "$PULLED" -print -quit)" ]
-}
 [ -f "$STATE" ] || date +%s > "$STATE"
 start=$(cat "$STATE"); created=${WATCHDOG_CREATED:-$start}
 if (( created < start )); then start=$created; fi
@@ -30,13 +27,12 @@ while :; do
     if (( now - start >= CAP_S )); then destroy "cap ${CAP_S} s reached"; fi
     util=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1) || util=
     [[ $util =~ ^[0-9]+$ ]] || util=100  # no reading counts as busy; the cap is the backstop
-    if (( util < 5 )); then
-        idle_since=${idle_since:-$now}
-        if on_mac && (( $(date -r "$PULLED" +%s) >= idle_since && now - idle_since >= IDLE_S )); then
-            destroy "GPU idle $(( now - idle_since )) s, job exited and pulled after the idle start"
-        fi
-    else
-        idle_since=
+    if (( util < 5 )); then idle_since=${idle_since:-$now}; else idle_since=; fi
+    # on the Mac: EXIT and PULLED_OK exist, nothing is newer than PULLED_OK, and the pull came after the idle start
+    if [ -n "$idle_since" ] && [ -f "$PULLED" ] && [ -f "$RUN/EXIT" ] \
+        && [ -z "$(find "$RUN" -newer "$PULLED" -print -quit)" ] \
+        && (( $(date -r "$PULLED" +%s) >= idle_since && now - idle_since >= IDLE_S )); then
+        destroy "GPU idle $(( now - idle_since )) s, job exited and pulled after the idle start"
     fi
     n=$((n + 1))
     if (( MAX_TICKS && n >= MAX_TICKS )); then exit 3; fi

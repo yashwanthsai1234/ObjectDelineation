@@ -1,28 +1,22 @@
-"""Sample K completions per prompt with vLLM offline (plan D13, C-BRIDGE); runs in /opt/vllm, never in /opt/venv.
+"""Sample K completions per prompt with vLLM offline (PLAN D13, C-BRIDGE); runs in /opt/vllm, never in /opt/venv.
 
     /opt/vllm/bin/python -I experiments/phase2/sample_vllm.py --prompts P.jsonl --model DIR --out C.jsonl
 
-Input (objdel.train.sample.export_prompts in the training env): one JSON object per prompt, {"id", "prompt" (chat
-text rendered with tokenize=False), "image" (path), "processor_kwargs" (configs.processor_kwargs minus
-padding_side, sent as mm_processor_kwargs), "sampling" (every SamplingParams field explicit: configs.sampling plus
-seed and stop_token_ids), "n"}; each request samples with request_seed(seed, id). Output: one line per completion,
-{"id", "k", "text", "token_ids", "finish_reason"}
-(+ with --logprobs: "logprobs", the sampled token's processed logprob, for the H-A5-2 teacher-forcing check, and
-"prompt_token_ids", the prompt ids vLLM built, for the H-A5-1 check; experiments/phase2/parity.py reads both), and
-<out>.meta.json with every distinct SamplingParams as vLLM built it (the echo). vLLM's token_ids end with the stop
-id when finish_reason is "stop" (B5 CPU runs: LFM id 7, SmolVLM id 49279), so the training env applies TRL's
-truncation rule (objdel.train.rewards.truncated) to them in objdel.train.sample.import_completions.
+Input (objdel.train.sample.export_prompts): per prompt {"id", "prompt" (chat text, tokenize=False), "image" (path),
+"processor_kwargs" (sent as mm_processor_kwargs), "sampling" (every SamplingParams field explicit), "n"}; each
+request is seeded request_seed(seed, id). Output: per completion {"id", "k", "text", "token_ids", "finish_reason"}
+(--logprobs adds "logprobs", the sampled tokens' processed logprobs (H-A5-2), and "prompt_token_ids", vLLM's prompt
+ids (H-A5-1); parity.py reads both) and <out>.meta.json with every distinct SamplingParams as vLLM built it. vLLM's
+token_ids end with the stop id on "stop" (B5: LFM 7, SmolVLM 49279); import_completions applies TRL's truncation
+rule (rewards.truncated).
 
 Imports nothing from objdel (its numpy / numba / torch pins differ from vLLM 0.32's, B5 Q1); vLLM, torch and PIL
-are imported inside main, so --help works anywhere. GPU sequencing (D13): the launcher (select_ckpt) has not
-initialised CUDA; this process refuses to start unless torch.cuda.mem_get_info() reports >= 90 % free, then builds
-LLM(gpu_memory_utilization=0.85). The profiling image is capped at 512 x 512 (our inputs are <= 512 px; Qwen's
-default profile is a 16k-token encoder pass, B5).
+are imported inside main, so --help works anywhere. D13: the launcher (select_ckpt) has not initialised CUDA; this
+refuses to start unless torch.cuda.mem_get_info() reports >= 90 % free, then builds LLM(gpu_memory_utilization=0.85).
+The profiling image is capped at 512 x 512 (inputs are <= 512 px; Qwen's default profile is a 16k-token pass, B5).
 
-References:
-- vLLM offline inference (LLM.generate, multi_modal_data, mm_processor_kwargs, SamplingParams):
-  https://docs.vllm.ai/en/latest/serving/offline_inference.html , https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html
-- experiments/phase2/lab/B5/vllm_parity.py and REPORT.md (prompt-id parity 64 / 64, logprob parity, CPU notes)
+References: https://docs.vllm.ai/en/latest/serving/offline_inference.html ,
+https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html , experiments/phase2/lab/B5/vllm_parity.py and REPORT.md
 """
 import argparse
 import hashlib
@@ -48,14 +42,11 @@ def request_seed(seed: int, item_id: str) -> int:
 
 def requests(lines: list[dict], SamplingParams, open_image, logprobs: bool = False) -> tuple[list, list]:
     """vLLM requests and one SamplingParams each, built from the exported fields only (the seed per item)."""
-    reqs, params = [], []
-    for x in lines:
-        req = {"prompt": x["prompt"], "multi_modal_data": {"image": open_image(x["image"])}}
-        if x["processor_kwargs"]:
-            req["mm_processor_kwargs"] = x["processor_kwargs"]
-        reqs.append(req)
-        sp = x["sampling"] | {"seed": request_seed(x["sampling"]["seed"], x["id"])}
-        params.append(SamplingParams(n=x["n"], **sp, **({"logprobs": 0} if logprobs else {})))
+    extra = {"logprobs": 0} if logprobs else {}
+    reqs = [{"prompt": x["prompt"], "multi_modal_data": {"image": open_image(x["image"])}}
+            | ({"mm_processor_kwargs": x["processor_kwargs"]} if x["processor_kwargs"] else {}) for x in lines]
+    params = [SamplingParams(n=x["n"], **x["sampling"] | {"seed": request_seed(x["sampling"]["seed"], x["id"])},
+                             **extra) for x in lines]  # fmt: skip
     return reqs, params
 
 
@@ -71,9 +62,7 @@ def outputs(lines: list[dict], results):
 
 
 def write(recs, path) -> None:
-    with open(path, "w") as f:
-        for r in recs:
-            f.write(json.dumps(r) + "\n")
+    Path(path).write_text("".join(json.dumps(r) + "\n" for r in recs))
 
 
 def main(argv=None) -> None:

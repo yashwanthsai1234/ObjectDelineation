@@ -21,18 +21,21 @@ from experiments.phase2 import train_sft as TS
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = sorted(c for c in (ROOT / "experiments/phase2/configs").glob("*.yaml")
                  if "\nsteps:" not in c.read_text())  # r0.yaml is a step list for run.sh, not a train_sft config
+CPU_SFT = {"per_device_train_batch_size": 1, "gradient_accumulation_steps": 1, "use_cpu": True, "bf16": False,
+           "logging_steps": 1, "dataloader_num_workers": 0, "dataloader_persistent_workers": False,
+           "dataloader_prefetch_factor": None}  # tiny CPU runs of train_sft
+
+
+def _module(*args, env=None, timeout=900):
+    """python -I -m <args> from the repo root, output captured."""
+    return subprocess.run([sys.executable, "-I", "-m", *args], cwd=ROOT, env=env, capture_output=True, text=True,
+                          timeout=timeout)
 
 
 @pytest.mark.parametrize("script", ["train_sft", "select_ckpt", "g_probe", "hf_sample"])
 def test_help(script):
     pytest.importorskip("trl")
-    r = subprocess.run(
-        [sys.executable, "-I", "-m", f"experiments.phase2.{script}", "--help"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    r = _module(f"experiments.phase2.{script}", "--help", timeout=300)
     assert r.returncode == 0 and "usage" in r.stdout, r.stderr[-2000:]
 
 
@@ -41,13 +44,9 @@ def test_configs_parse_as_run_args(path):
     yaml = pytest.importorskip("yaml")  # PyYAML comes with the train extra (transformers)
     cfg = yaml.safe_load(path.read_text())
     args = TS.RunArgs(**cfg)
-    assert (
-        args.model in ("lfm2.5-vl-450m", "qwen3.5-0.8b") and args.view.startswith("views/") and args.data_root == "data"
-    )
-    assert (
-        all(b > 0 for b in args.branches)
-        and args.sft.get("gradient_accumulation_steps", 4) * args.sft.get("per_device_train_batch_size", 8) == 32
-    )  # effective batch 32 (D5)
+    assert args.model in ("lfm2.5-vl-450m", "qwen3.5-0.8b") and args.view.startswith("views/")
+    assert args.data_root == "data" and all(b > 0 for b in args.branches)
+    assert args.sft.get("gradient_accumulation_steps", 4) * args.sft.get("per_device_train_batch_size", 8) == 32  # D5
 
 
 def test_config_set_complete():
@@ -63,11 +62,8 @@ def test_plan_branches_decay_warmup():
     from objdel.train import configs
 
     p = TS.plan(TS.RunArgs("lfm2.5-vl-450m", "v", "o"), 1000)
-    assert p["branches"] == {
-        "e0.5": {"at": 500, "decay": 75},
-        "e1": {"at": 1000, "decay": 150},
-        "e2": {"at": 2000, "decay": 300},
-    }
+    assert p["branches"] == {"e0.5": {"at": 500, "decay": 75}, "e1": {"at": 1000, "decay": 150},
+                             "e2": {"at": 2000, "decay": 300}}
     assert p["stable"] == 2000 and p["warmup"] == 60  # 3 % of the stable steps
     for b in p["branches"].values():  # the plan is the schedule configs.sft_config builds
         cfg = configs.sft_config("lfm2.5-vl-450m", "o", p["stable"], b["at"])
@@ -178,29 +174,12 @@ def test_wsd_resumed_decay_equals_uninterrupted_run(char_model, tmp_path):
 
     def run(out, steps, stable, decay, resume=None):
         cfg = trl.SFTConfig(
-            output_dir=str(out),
-            max_steps=steps,
-            per_device_train_batch_size=4,
-            learning_rate=1e-2,
-            lr_scheduler_type="warmup_stable_decay",
-            warmup_steps=warm,
-            lr_scheduler_kwargs={"num_stable_steps": stable, "num_decay_steps": decay},
-            use_cpu=True,
-            bf16=False,
-            report_to="none",
-            seed=0,
-            data_seed=1,
-            logging_steps=1,
-            save_strategy="no",
-            max_length=64,
-        )
-        t = trl.SFTTrainer(
-            model=LlamaForCausalLM.from_pretrained(path),
-            args=cfg,
-            train_dataset=ds,
-            processing_class=tok,
-            callbacks=[SaveAt()],
-        )
+            output_dir=str(out), max_steps=steps, per_device_train_batch_size=4, learning_rate=1e-2,
+            lr_scheduler_type="warmup_stable_decay", warmup_steps=warm,
+            lr_scheduler_kwargs={"num_stable_steps": stable, "num_decay_steps": decay}, use_cpu=True, bf16=False,
+            report_to="none", seed=0, data_seed=1, logging_steps=1, save_strategy="no", max_length=64)
+        t = trl.SFTTrainer(model=LlamaForCausalLM.from_pretrained(path), args=cfg, train_dataset=ds,
+                           processing_class=tok, callbacks=[SaveAt()])
         t.train(resume_from_checkpoint=resume)
         return t.model.state_dict(), [h["learning_rate"] for h in t.state.log_history if "learning_rate" in h]
 
@@ -310,21 +289,10 @@ def _tiny_vlm(out: Path) -> Path:
         proc = AutoProcessor.from_pretrained("LiquidAI/LFM2.5-VL-450M")
     except OSError:
         pytest.skip("LFM2.5-VL-450M config / processor not in the local HF cache")
-    cfg.text_config.update(
-        dict(
-            hidden_size=32,
-            intermediate_size=64,
-            block_dim=32,
-            block_ff_dim=64,
-            conv_dim=32,
-            conv_dim_out=32,
-            num_hidden_layers=2,
-            layer_types=["conv", "full_attention"],
-            num_attention_heads=2,
-            num_heads=2,
-            num_key_value_heads=1,
-        )
-    )
+    cfg.text_config.update(dict(
+        hidden_size=32, intermediate_size=64, block_dim=32, block_ff_dim=64, conv_dim=32, conv_dim_out=32,
+        num_hidden_layers=2, layer_types=["conv", "full_attention"], num_attention_heads=2, num_heads=2,
+        num_key_value_heads=1))
     cfg.vision_config.update(dict(hidden_size=32, intermediate_size=64, num_hidden_layers=1, num_attention_heads=2))
     cfg.projector_hidden_size = 32
     torch.manual_seed(0)
@@ -347,40 +315,15 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
     dataset.prepare(tmp_path / "store", tmp_path / "evalview", procs=1)  # eval-view layout
     run = tmp_path / "run"
-    cfg = {
-        "model": "lfm2.5-vl-450m",
-        "model_path": str(model),
-        "view": str(tmp_path / "view"),
-        "output_dir": str(run),
-        "branches": [0.5, 1.0],
-        "steps_per_epoch": 8,
-        "rolling_minutes": 1000.0,  # saves (and real G-vision checks) at the branch points only
-        "run_dir": str(tmp_path),
-        "vision": {"prepared": str(tmp_path / "evalview"), "reference": "vision_ref/lfm2.5-vl-450m.json"},
-        "sft": {
-            "per_device_train_batch_size": 1,
-            "gradient_accumulation_steps": 1,
-            "use_cpu": True,
-            "bf16": False,
-            "logging_steps": 1,
-            "dataloader_num_workers": 0,
-            "dataloader_persistent_workers": False,
-            "dataloader_prefetch_factor": None,
-        },
-    }
+    cfg = {"model": "lfm2.5-vl-450m", "model_path": str(model), "view": str(tmp_path / "view"), "output_dir": str(run),
+           "branches": [0.5, 1.0], "steps_per_epoch": 8, "run_dir": str(tmp_path), "sft": CPU_SFT,
+           "rolling_minutes": 1000.0,  # saves (and real G-vision checks) at the branch points only
+           "vision": {"prepared": str(tmp_path / "evalview"), "reference": "vision_ref/lfm2.5-vl-450m.json"}}
     (tmp_path / "run.yaml").write_text(yaml.safe_dump(cfg))
     env = os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
     ref = tmp_path / "vision_ref/lfm2.5-vl-450m.json"
-    cmd = [sys.executable, "-I", "-m", "experiments.phase2.train_sft", "--config", str(tmp_path / "run.yaml")]
     for extra in (["--vision_reference_only", "true"], []):  # R0's G-vision base reference, then the run
-        tr = subprocess.run(
-            [*cmd, *extra],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
+        tr = _module("experiments.phase2.train_sft", "--config", str(tmp_path / "run.yaml"), *extra, env=env)
         assert tr.returncode == 0, tr.stderr[-4000:]
     assert json.loads(ref.read_text())["reference"] > 0
     man = json.loads((run / "manifest.json").read_text())
@@ -388,31 +331,10 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     assert [v["step"] for v in man["vision"]] == [4, 8] and all(v["ratio"] > 0 for v in man["vision"])
     assert {p.name for p in (run / "branches").iterdir()} == {"e0.5", "e1"}
     assert not list((run / "stable").rglob("optimizer.pt"))  # stable checkpoints kept model-only
-    sel = subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            "-m",
-            "experiments.phase2.select_ckpt",
-            "--run",
-            str(run),
-            "--shifted",
-            str(tmp_path / "evalview"),
-            "--sampler",
-            "hf",
-            "--procs",
-            "1",
-            "--prepared",
-            str(tmp_path / "evalview"),
-            "--vision",
-            json.dumps({"prepared": str(tmp_path / "evalview"), "reference": str(ref)}),  # the run's own block
-        ],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
+    ev = str(tmp_path / "evalview")
+    sel = _module("experiments.phase2.select_ckpt", "--run", str(run), "--shifted", ev, "--sampler", "hf", "--procs",
+                  "1", "--prepared", ev, "--vision", json.dumps({"prepared": ev, "reference": str(ref)}),  # run's block
+                  env=env)
     assert sel.returncode == 0, sel.stderr[-4000:]
     doc = json.loads((run / "select/selected.json").read_text())
     assert set(doc["branches"]) == {"e0.5", "e1"} and doc["sampler"] == "hf" and doc["cuda_initialized"] is False
@@ -425,44 +347,12 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     k16 = json.loads((run / "select/report.json").read_text())["k16"]["datasets"]["lidc"]
     assert k16["samples"] == 16 * k16["items"] and "hm_iou" in k16["objects"]["nodule"]
     best = run / "branches" / doc["selected"] if doc["selected"] else run / "branches/e1"
-    gp = subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            "-m",
-            "experiments.phase2.g_probe",
-            "--model",
-            "lfm2.5-vl-450m",
-            "--ckpt",
-            str(best),
-            "--train",
-            str(tmp_path / "evalview"),
-            "--probe",
-            str(tmp_path / "evalview"),
-            "--out",
-            str(run / "gp"),
-            "--procs",
-            "1",
-            "--grpo",
-            json.dumps(GRPO_SMOKE),
-        ],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
+    gp = _module("experiments.phase2.g_probe", "--model", "lfm2.5-vl-450m", "--ckpt", str(best), "--train", ev,
+                 "--probe", ev, "--out", str(run / "gp"), "--procs", "1", "--grpo", json.dumps(GRPO_SMOKE), env=env)
     assert gp.returncode == 0, gp.stderr[-4000:]
     res = json.loads((run / "gp/g_probe.json").read_text())
     assert res["verdict"] in ("PASS", "FAIL", "INCONCLUSIVE") and res["lr"] == 5e-6 and res["steps"] == 20
 
 
-GRPO_SMOKE = {
-    "per_device_train_batch_size": 8,
-    "gradient_accumulation_steps": 1,
-    "per_device_eval_batch_size": 8,
-    "max_completion_length": 8,
-    "use_cpu": True,
-    "bf16": False,
-    "beta": 0.0,
-}
+GRPO_SMOKE = {"per_device_train_batch_size": 8, "gradient_accumulation_steps": 1, "per_device_eval_batch_size": 8,
+              "max_completion_length": 8, "use_cpu": True, "bf16": False, "beta": 0.0}
