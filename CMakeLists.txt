@@ -36,7 +36,10 @@ if(OBJDEL_CUDA)
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
   set_source_files_properties(cuda/gpucheck.cpp PROPERTIES LANGUAGE CUDA)
-  set_target_properties(gpucheck PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+  # A target copies CMAKE_CUDA_ARCHITECTURES when it is created, before this block: set it on the target (R0 v3, the
+  # box's default `native` left gpucheck with none; the docker check passed the archs on the command line)
+  set_target_properties(gpucheck PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON
+                                            CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
   target_link_libraries(gpucheck PUBLIC CUDA::cudart_static)  # the module needs only the driver at run time
 endif()
 nanobind_add_module(_gpucheck NB_STATIC NOMINSIZE STABLE_ABI cuda/gpucheck_py.cpp)
