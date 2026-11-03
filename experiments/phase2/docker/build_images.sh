@@ -44,7 +44,7 @@ if [ "$LOCK" = 1 ]; then
 fi
 [ ${#WHICH[@]} -gt 0 ] || { echo "$USAGE" >&2; exit 2; }
 for f in train.txt vllm.txt; do [ -f "$LOCKS/$f" ] || { echo "no $LOCKS/$f: run build_images.sh --lock on the Mac" >&2; exit 2; }; done
-cp "$LOCKS"/* "$HERE/dedupe.py" "$HERE/patch_arch.py" "$HERE/exclude-vllm.txt" "$CTX/"
+cp "$LOCKS"/* "$HERE/exclude-vllm.txt" "$CTX/"
 if [ "$CHECK" = 1 ]; then
     for w in "${WHICH[@]}"; do f=${w/sampler/phase2}; docker buildx build --check -f "$HERE/Dockerfile.$f" "$CTX"; done
     exit 0
@@ -53,7 +53,7 @@ docker buildx inspect objdel-builder >/dev/null 2>&1 || docker buildx create --n
 [ -n "${CI:-}" ] || docker update --cpus 2 --memory 4g --memory-swap 4g buildx_buildkit_objdel-builder0 >/dev/null
 for w in "${WHICH[@]}"; do
     f=${w/sampler/phase2}; target=(); [ "$w" = sampler ] && target=(--target sampler)
-    inputs=(train.txt vllm.txt exclude-vllm.txt dedupe.py patch_arch.py); [ "$f" = phase3 ] && inputs=(p3.txt p3.override)
+    inputs=(train.txt vllm.txt exclude-vllm.txt); [ "$f" = phase3 ] && inputs=(p3.txt p3.override)
     hash=$(cd "$CTX" && cat "$HERE/Dockerfile.$f" "${inputs[@]}" | shasum -a 256 | cut -c1-12)
     tag="${IMAGE_REPO:-objdel-gpu}:${w/phase/p}-$hash"
     out=(--load); [ "$PUSH" = 1 ] && out=(--push)
