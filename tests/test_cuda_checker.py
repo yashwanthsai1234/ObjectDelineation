@@ -2,6 +2,8 @@
 masks and validate totals, and polygonize's rings and bitquad counts. Runs on whichever build is installed: the CPU
 build by default, the CUDA build after `make cuda` (tests/test_cuda_checker_gpu.py then also checks it is one)."""
 import random
+import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -160,3 +162,13 @@ def test_phase0_lidc_masks(fixtures_dir, name):
         assert C.mask_diff(out, i, ref) is None, i
         r = certify(masks[i])
         assert (r.b0, r.b1) == (ref["b0"], ref["b1"])
+
+
+def test_cmake_sets_the_cuda_archs_on_the_target():
+    """R0 v3 (2026-11-03): the default `native` was set after add_library(gpucheck), and a target copies
+    CMAKE_CUDA_ARCHITECTURES only when it is created, so `make cuda` failed on the box. The docker check passed the
+    archs on the command line and never saw it; no GPU-less build can, so the file is read."""
+    text = (Path(__file__).resolve().parents[1] / "CMakeLists.txt").read_text()
+    cuda = text[text.index("if(OBJDEL_CUDA)"):text.index("endif()", text.index("enable_language(CUDA)"))]
+    archs = r'CUDA_ARCHITECTURES "\$\{CMAKE_CUDA_ARCHITECTURES\}"'
+    assert re.search(r"set_target_properties\(gpucheck PROPERTIES[^)]*" + archs, cuda)

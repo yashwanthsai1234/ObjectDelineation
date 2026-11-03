@@ -64,7 +64,8 @@ Masks per second (bit-quads + rings; python_certify = bitquad + betti + polygoni
 
 ## GPU run (CUDA box, `make cuda` build)
 
-Not run yet. It runs as the last step of R0 (`experiments/phase2/configs/r0.yaml`): the data travel in the LIDC bundle (`checker_eval/`), the results come back in `runs/<run>/cuda_checker/`. Host: any Vast card with driver >= 580 (the Phase 2 image's floor; the module is linked against the CUDA
+Ran 2026-11-03 in R0 `v3` (Vast box 58939372, RTX 4090, British Columbia). Score and diagnosis below the table.
+It runs as the last step of R0 (`experiments/phase2/configs/r0.yaml`): the data travel in the LIDC bundle (`checker_eval/`), the results come back in `runs/<run>/cuda_checker/`. Host: any Vast card with driver >= 580 (the Phase 2 image's floor; the module is linked against the CUDA
 13.0 runtime), US/CA only. Upload the repo snapshot and `data/checker_eval/` only (19 MB, LIDC; never RIGA: run_box.sh
 and eval.py refuse it). Then, from the repo root in the Phase 2 image:
 
@@ -83,5 +84,100 @@ thread, all-pairs edge tests, no sort), not a production CPU checker; polycore s
 shared with other jobs during the run, so CPU timings are indicative only.
 
 <!-- BEGIN eval:cuda -->
-(not run yet)
+Run 2026-11-03 09:09, code `999969b` + the CMake fix below, build **cuda** on NVIDIA GeForce RTX 4090, 615.71.09, Linux x86_64, 64 CPUs; wall time 73 s.
+
+| Case set | Cases | Mismatches | Exact match | First differing field (count) |
+|---|---|---|---|---|
+| (a) fuzz polygons | 8,559 | 0 | 100.000 % | none |
+| (a) fuzz masks | 6,024 | 0 | 100.000 % | none |
+| (b) LIDC polygons | 144,133 | 0 | 100.000 % | none |
+| (c) LIDC Phase 0 masks | 37,093 | 0 | 100.000 % | none |
+
+LIDC polygons by reference DEFECTS class (a case counts once per class it has):
+
+| Class | Cases | Mismatches |
+|---|---|---|
+| legal | 138,257 | 0 |
+| fewer_than_3_points | 4 | 0 |
+| zero_area | 41 | 0 |
+| self_crossing | 3,843 | 0 |
+| vertex_pinch | 2,584 | 0 |
+| collinear_overlap | 667 | 0 |
+| spike | 1,249 | 0 |
+| ring_ring_crossing | 861 | 0 |
+| ring_ring_touching | 584 | 0 |
+| hole_outside_outer | 284 | 0 |
+| nested_holes | 4 | 0 |
+| nested_outers | 723 | 0 |
+| wrong_winding | 952 | 0 |
+
+Polygons per second (validate + both masks; polycore_loop = the reward's per-shape path):
+
+| Vertices | Crop | Batch | gpucheck | polycore loop | score_batch 1 thread | score_batch 8 threads |
+|---|---|---|---|---|---|---|
+| 16 | 64 | 1 | 134 | 54,558 | 69,365 | 69,197 |
+| 16 | 64 | 64 | 6,917 | 51,462 | 169,100 | 110,755 |
+| 16 | 64 | 1024 | 54,710 | 51,743 | 174,781 | 290,142 |
+| 128 | 256 | 1 | 133 | 29,536 | 38,718 | 38,944 |
+| 128 | 256 | 64 | 4,252 | 22,886 | 42,248 | 75,440 |
+| 128 | 256 | 1024 | 4,244 | 23,016 | 42,870 | 145,895 |
+| 1000 | 512 | 1 | 105 | 7,244 | 9,085 | 9,149 |
+| 1000 | 512 | 64 | 1,409 | 6,421 | 8,457 | 32,127 |
+| 1000 | 512 | 1024 | 1,209 | 6,505 | 8,597 | 45,125 |
+
+Masks per second (bit-quads + rings; python_certify = bitquad + betti + polygonize; OpenCV = findContours + connectedComponents, a reference point, not the same output):
+
+| Masks | Shape | Batch | gpucheck | Python certify path | OpenCV |
+|---|---|---|---|---|---|
+| lidc | 22x21 | 256 | 4,043 | 2,580 | 57,348 |
+| lidc | 22x21 | 8192 | 6,389 | 2,551 | 56,581 |
+| noise512 | 512x512 | 4 | 19 | 3 | 22 |
 <!-- END eval:cuda -->
+
+### Score (RTX 4090, R0 v3)
+
+**Correctness: pass.** 195,809 of 195,809 cases equal the CPU reference bit for bit: every fuzz category, every LIDC
+source (train, eval and probe targets, 58,028 model outputs) and all 12 DEFECTS classes present in the data. No repro
+case was written.
+
+**Speed: fail.** The GPU build is slower than the CPU checker it should replace, at every polygon size and batch:
+
+| Workload | gpucheck (GPU) | best CPU path on the same box | GPU / CPU |
+|---|---|---|---|
+| 16 vertices, batch 1 | 134 /s | 69,365 /s (score_batch, 1 thread) | 0.002 |
+| 16 vertices, batch 1024 | 54,710 /s | 290,142 /s (score_batch, 8 threads) | 0.19 |
+| 128 vertices, batch 1024 | 4,244 /s | 145,895 /s | 0.03 |
+| 1000 vertices, batch 1024 | 1,209 /s | 45,125 /s | 0.03 |
+| LIDC masks 22x21, batch 8192 | 6,389 /s | 2,551 /s (Python certify path) | 2.5 |
+| noise 512x512 masks, batch 4 | 19 /s | 3 /s (Python certify path) | 6.3 |
+
+The masks beat the Python certify path, but not OpenCV (56,581 /s; a reference point, not the same output).
+
+### Where it goes wrong
+
+Read from the timings and `cuda/gpucheck.cpp`; not yet profiled with Nsight Systems (the next box step).
+
+1. **A fixed cost of about 7.5 to 9.5 ms per call.** One polygon takes 7.5 ms at 16 vertices and 9.5 ms at 1000
+   vertices; a batch of 64 small polygons takes 9.3 ms. The cost hardly depends on the work. Every call creates each
+   `Buf` with `cudaMallocManaged` + `cudaMemset` + `cudaDeviceSynchronize`, copies the input into managed memory on
+   the host (the pages then migrate to the GPU on first touch), reads the results back through page faults, and frees
+   everything. Fix: allocate device buffers once and reuse them, copy with `cudaMemcpyAsync` from pinned host memory
+   on one stream, and synchronize once per call.
+2. **All-pairs edge tests.** `EdgePairs` runs one thread per edge, and each thread tests every later edge of its
+   shape: about E^2 / 2 tests per shape (5 x 10^5 at 1000 vertices) where polycore sorts the edges and sweeps. A batch
+   of 1024 shapes of 1000 vertices takes 847 ms. The loop is also triangular, so thread k does E - k tests and a warp
+   waits for its slowest lane. Fix: sort each shape's edges by x-min once and test only the overlapping window, or
+   bin edges in a coarse grid.
+3. **Masks: 16 slot-sized buffers per call and log-depth pointer jumping.** Each mask allocates 16 arrays of
+   4 (W + 1) (H + 1) entries (about 1 M per 512 x 512 mask) through the same managed path, then runs `jump_rounds`
+   label and rank rounds, one kernel launch each. Item 1's fix applies here as well.
+
+Item 1 alone explains the small-batch numbers; items 1 and 2 together explain the large-polygon numbers. Fix order:
+1, then 2, then rerun this eval on the next box (correctness must stay at zero mismatches).
+
+### Box defect found and fixed in this run
+
+`make cuda` failed first on the box: "CUDA_ARCHITECTURES is empty for target gpucheck". `CMakeLists.txt` set the
+default `CMAKE_CUDA_ARCHITECTURES native` after `add_library(gpucheck)`, and a target copies that variable only when
+it is created. `cuda/docker_check.sh` passed because it gives the archs on the command line. Fixed by setting
+`CUDA_ARCHITECTURES` on the target; the rerun on the same box built for the 4090 and passed 21 tests (2 skipped).

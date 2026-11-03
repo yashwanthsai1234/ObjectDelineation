@@ -1,0 +1,393 @@
+{
+ "host": {
+  "build": "cuda",
+  "devices": 1,
+  "gpu": "NVIDIA GeForce RTX 4090, 615.71.09",
+  "machine": "Linux x86_64",
+  "cpu_count": 64,
+  "python": "3.12.15",
+  "numpy": "2.5.4",
+  "opencv": "5.0.0",
+  "commit": "",
+  "date": "2026-11-03 09:09"
+ },
+ "correctness": {
+  "(a) fuzz polygons": {
+   "n": 8559,
+   "mismatches": 0,
+   "exact_rate": 1.0,
+   "per_category": {
+    "caps": {
+     "n": 9,
+     "mismatches": 0
+    },
+    "degenerate": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "grid": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "halfpixel": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "holes": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "huge": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "multipart": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "rect": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_degenerate": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_grid": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_halfpixel": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_rect": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_smallgrid": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_soup": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_star": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "roles": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "rollout": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "soup": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "star": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "tiny": {
+     "n": 450,
+     "mismatches": 0
+    }
+   },
+   "first_field": {},
+   "examples": []
+  },
+  "(a) fuzz masks": {
+   "n": 6024,
+   "mismatches": 0,
+   "exact_rate": 1.0,
+   "per_category": {
+    "checker": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "empty_0x0": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "empty_0x5": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "frame": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "full": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "pixel": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "random": {
+     "n": 6000,
+     "mismatches": 0
+    },
+    "saddle_6": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "saddle_9": {
+     "n": 3,
+     "mismatches": 0
+    }
+   },
+   "first_field": {},
+   "examples": []
+  },
+  "(b) LIDC polygons": {
+   "n": 144133,
+   "mismatches": 0,
+   "exact_rate": 1.0,
+   "per_category": {
+    "eval_target": {
+     "n": 10331,
+     "mismatches": 0
+    },
+    "model_output": {
+     "n": 58028,
+     "mismatches": 0
+    },
+    "probe_target": {
+     "n": 1680,
+     "mismatches": 0
+    },
+    "train_target": {
+     "n": 74094,
+     "mismatches": 0
+    }
+   },
+   "first_field": {},
+   "examples": []
+  },
+  "(c) LIDC Phase 0 masks": {
+   "n": 37093,
+   "mismatches": 0,
+   "exact_rate": 1.0,
+   "per_category": {
+    "lidc_experts": {
+     "n": 1969,
+     "mismatches": 0
+    },
+    "lidc_full": {
+     "n": 35124,
+     "mismatches": 0
+    }
+   },
+   "first_field": {},
+   "examples": []
+  }
+ },
+ "manifest": {
+  "masks": {
+   "n": 37093,
+   "per_file": {
+    "data/fixtures/lidc_full.npz": 35124,
+    "data/fixtures/lidc_experts.npz": 1969
+   },
+   "holes": 474,
+   "multi_part": 283
+  },
+  "polygons": {
+   "n": 144133,
+   "unparsed_skipped": 815,
+   "per_src": {
+    "train_target": 74094,
+    "eval_target": 10331,
+    "probe_target": 1680,
+    "model_output": 58028
+   },
+   "illegal": 5876,
+   "illegal_model_outputs": 5876,
+   "with_holes": 4178
+  },
+  "files": {
+   "masks.npz": "6d08d00cfe361d685a5ab55baa3d6ac5e4658e5d96e4e2d5ac83cb1b00b86c5d",
+   "polygons.npz": "9519c36a46553441d121f05e65f6eebad14a153c0a686a558e4a5d74615a2e79"
+  }
+ },
+ "per_class": {
+  "legal": [
+   138257,
+   0
+  ],
+  "fewer_than_3_points": [
+   4,
+   0
+  ],
+  "zero_area": [
+   41,
+   0
+  ],
+  "self_crossing": [
+   3843,
+   0
+  ],
+  "vertex_pinch": [
+   2584,
+   0
+  ],
+  "collinear_overlap": [
+   667,
+   0
+  ],
+  "spike": [
+   1249,
+   0
+  ],
+  "ring_ring_crossing": [
+   861,
+   0
+  ],
+  "ring_ring_touching": [
+   584,
+   0
+  ],
+  "hole_outside_outer": [
+   284,
+   0
+  ],
+  "nested_holes": [
+   4,
+   0
+  ],
+  "nested_outers": [
+   723,
+   0
+  ],
+  "wrong_winding": [
+   952,
+   0
+  ]
+ },
+ "speed_polygons": [
+  {
+   "vertices": 16,
+   "crop": 64,
+   "batch": 1,
+   "gpucheck": 133.56445304284037,
+   "polycore_loop": 54558.36267773086,
+   "polycore_score_batch_1t": 69364.95229962416,
+   "polycore_score_batch_8t": 69196.97043045536
+  },
+  {
+   "vertices": 16,
+   "crop": 64,
+   "batch": 64,
+   "gpucheck": 6917.033002790831,
+   "polycore_loop": 51462.3963677621,
+   "polycore_score_batch_1t": 169100.3489841331,
+   "polycore_score_batch_8t": 110755.0980388572
+  },
+  {
+   "vertices": 16,
+   "crop": 64,
+   "batch": 1024,
+   "gpucheck": 54710.33840201024,
+   "polycore_loop": 51742.62228862584,
+   "polycore_score_batch_1t": 174781.41433733015,
+   "polycore_score_batch_8t": 290142.02739786217
+  },
+  {
+   "vertices": 128,
+   "crop": 256,
+   "batch": 1,
+   "gpucheck": 132.66582071934792,
+   "polycore_loop": 29535.549405803144,
+   "polycore_score_batch_1t": 38717.68481806719,
+   "polycore_score_batch_8t": 38943.836878938266
+  },
+  {
+   "vertices": 128,
+   "crop": 256,
+   "batch": 64,
+   "gpucheck": 4252.003491439958,
+   "polycore_loop": 22886.089654001942,
+   "polycore_score_batch_1t": 42248.07274845226,
+   "polycore_score_batch_8t": 75440.47191519702
+  },
+  {
+   "vertices": 128,
+   "crop": 256,
+   "batch": 1024,
+   "gpucheck": 4244.18824302502,
+   "polycore_loop": 23015.839637857232,
+   "polycore_score_batch_1t": 42869.855485120504,
+   "polycore_score_batch_8t": 145894.98672443678
+  },
+  {
+   "vertices": 1000,
+   "crop": 512,
+   "batch": 1,
+   "gpucheck": 105.38186230296027,
+   "polycore_loop": 7244.014759687046,
+   "polycore_score_batch_1t": 9085.293167006332,
+   "polycore_score_batch_8t": 9148.544733422796
+  },
+  {
+   "vertices": 1000,
+   "crop": 512,
+   "batch": 64,
+   "gpucheck": 1409.1768148565588,
+   "polycore_loop": 6420.634633873336,
+   "polycore_score_batch_1t": 8457.369243938203,
+   "polycore_score_batch_8t": 32126.772210792245
+  },
+  {
+   "vertices": 1000,
+   "crop": 512,
+   "batch": 1024,
+   "gpucheck": 1208.9358022297845,
+   "polycore_loop": 6505.308214227216,
+   "polycore_score_batch_1t": 8596.982670617164,
+   "polycore_score_batch_8t": 45124.695309752744
+  }
+ ],
+ "speed_masks": [
+  {
+   "masks": "lidc",
+   "shape": [
+    22,
+    21
+   ],
+   "batch": 256,
+   "gpucheck": 4042.572776301907,
+   "python_certify": 2580.2811646087284,
+   "opencv_contours_ccl": 57348.49247075915
+  },
+  {
+   "masks": "lidc",
+   "shape": [
+    22,
+    21
+   ],
+   "batch": 8192,
+   "gpucheck": 6389.406757908865,
+   "python_certify": 2550.813083259663,
+   "opencv_contours_ccl": 56581.38751210202
+  },
+  {
+   "masks": "noise512",
+   "shape": [
+    512,
+    512
+   ],
+   "batch": 4,
+   "gpucheck": 19.375862583062535,
+   "python_certify": 3.460894090964777,
+   "opencv_contours_ccl": 21.639011198131232
+  }
+ ],
+ "wall_s": 72.86444282531738
+}
