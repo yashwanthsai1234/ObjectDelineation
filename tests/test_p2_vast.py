@@ -484,6 +484,22 @@ def test_only_north_american_hosts_are_admissible(geo, ok):
     assert (P.reasons(offer(geolocation=geo), "RTX_4090", "lidc") == []) == ok
 
 
+def test_a_bad_machine_is_never_admissible():
+    """2026-11-03 v2: machine 28360's 4090 was busy and power-capped (7.4 of 165 bf16 TFLOPS)."""
+    assert P.reasons(offer(machine_id=70), "RTX_4090", "lidc") == []
+    assert any("machine 28360" in r for r in P.reasons(offer(machine_id=28360), "RTX_4090", "lidc"))
+
+
+def test_sync_up_checks_the_gpu_before_the_bundle(E):
+    """2026-11-03 v2: the GPU check ran only in R0, after a 12 min bundle upload; image_check.sh now gates it."""
+    E.launched()
+    out = E.sh("sync_up.sh", "r1").stdout.splitlines()
+    check = next(i for i, ln in enumerate(out) if "image_check.sh /workspace/runs/r1/image_check.json" in ln)
+    bundle = next(i for i, ln in enumerate(out) if ln.startswith("DRY_RUN: rsync") and "bundle-lidc.tar" in ln)
+    assert check < bundle
+    assert "image_check.sh" not in E.sh("sync_up.sh", "r1", "--code-only").stdout  # mid-session the GPU is busy
+
+
 def test_offers_search_and_launch_keep_to_north_america(E):
     E.state(offers=[offer(1, dph_total=0.3, geolocation="Thailand, TH"), offer(3, dph_total=0.35, geolocation=None),
                     offer(2, dph_total=0.4, geolocation="Quebec, CA")])  # fmt: skip
