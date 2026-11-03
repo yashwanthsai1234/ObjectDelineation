@@ -73,6 +73,8 @@ IMPORT_CHECK = "import objdel._polycore, experiments.phase1.reward_gates, tests.
 MARGIN_S = GRACE_S = PULL_S = 600
 OPS = {"=": operator.eq, ">": operator.gt, ">=": operator.ge, "<=": operator.le}
 REGION = ("US", "CA")  # owner (2026-11-02): North American hosts only; V1: a Thailand host could not pull the image
+# Machines that failed the GPU check on a paid box; never offered again
+BAD_MACHINES = {28360: "2026-11-03 v2: GPU busy before our job, power limit 150 W, 7.4 of 165 bf16 TFLOPS"}
 # Not pulled, and ignored by the watchdog's "nothing newer than PULLED_OK" (it gets this list in the onstart env):
 # full checkpoints with optimizer state (R1: 29 GB; branches/ is model-only and is pulled) and the pull's own markers.
 PULL_EXCLUDE = ("rolling/", "decay/", "stable/", "PULLED_OK", "PULLED_OK.next")
@@ -140,6 +142,8 @@ def reasons(o: dict, gpu: str, dataset: str, disk: int = 80) -> list[str]:
             bad.append(why)
     if (o.get("geolocation") or "").rsplit(", ", 1)[-1] not in REGION:  # "Texas, US"; none or unknown fails
         bad.append("region")
+    if o.get("machine_id") in BAD_MACHINES:
+        bad.append(f"machine {o['machine_id']} ({BAD_MACHINES[o['machine_id']]})")
     return [f"{r} fails the §4.2 filter" for r in dict.fromkeys(bad)]
 
 
@@ -394,6 +398,9 @@ def cmd_sync_up(a) -> None:
                 f" && cd / && /opt/venv/bin/python -I -c {shlex.quote(IMPORT_CHECK)}")  # fmt: skip
     if a.code_only:  # a code fix mid-session: the bundle is already on the box
         return ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], detail="code only")
+    # GPU check before the bundle (2026-11-03 v2: a busy, power-capped card was found only after a 12 min upload)
+    check = f"bash experiments/phase2/docker/image_check.sh /workspace/runs/{a.run_id}/image_check.json"
+    remote(run, f"cd /workspace/src && {check}")
     rsync(run, *map(str, files), f"{host}/workspace/data/")
     verify = f"cd /workspace/data && sha256sum -c {name}.sha256"
     unpack = "mkdir -p {d} && {x} -C {d} && cd {d} && sha256sum -c --quiet SHA256SUMS"
