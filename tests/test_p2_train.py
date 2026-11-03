@@ -230,17 +230,6 @@ LINEAR = {
         "model.vision_tower.encoder.layers.0.self_attn.out_proj",
         "model.vision_tower.encoder.layers.0.self_attn.q_proj",
         "model.vision_tower.encoder.layers.0.self_attn.v_proj"],
-    "qwen3.5-0.8b": [
-        "lm_head", "model.language_model.layers.0.linear_attn.in_proj_a",
-        "model.language_model.layers.0.linear_attn.in_proj_b", "model.language_model.layers.0.linear_attn.in_proj_qkv",
-        "model.language_model.layers.0.linear_attn.in_proj_z", "model.language_model.layers.0.linear_attn.out_proj",
-        "model.language_model.layers.0.mlp.down_proj", "model.language_model.layers.0.mlp.gate_proj",
-        "model.language_model.layers.0.mlp.up_proj", "model.language_model.layers.0.self_attn.k_proj",
-        "model.language_model.layers.0.self_attn.o_proj", "model.language_model.layers.0.self_attn.q_proj",
-        "model.language_model.layers.0.self_attn.v_proj", "model.visual.blocks.0.attn.proj",
-        "model.visual.blocks.0.attn.qkv", "model.visual.blocks.0.mlp.linear_fc1",
-        "model.visual.blocks.0.mlp.linear_fc2",
-        "model.visual.merger.linear_fc1", "model.visual.merger.linear_fc2"],
     "qwen3-vl-2b": [
         "lm_head", "model.language_model.layers.0.mlp.down_proj", "model.language_model.layers.0.mlp.gate_proj",
         "model.language_model.layers.0.mlp.up_proj", "model.language_model.layers.0.self_attn.k_proj",
@@ -281,17 +270,16 @@ def toy(names):
 
 
 def test_models_and_budgets():
-    assert configs.MODELS["qwen3.5-0.8b"] == "Qwen/Qwen3.5-0.8B"
-    assert {m: configs.MAX_COMPLETION[m] for m in ("lfm2.5-vl-450m", "qwen3.5-0.8b")} == {
-        "lfm2.5-vl-450m": 1024, "qwen3.5-0.8b": 1024}
+    assert configs.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
+    assert {m: configs.MAX_COMPLETION[m] for m in ("lfm2.5-vl-450m", "qwen3-vl-2b")} == {
+        "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
 
 
 @pytest.mark.parametrize("model", list(LINEAR))
 def test_full_ft_loads_fp32_master_weights(model, tmp_path):
     """S1-13: full fine-tuning loads fp32 weights (AdamW's master copy) and trains under bf16 autocast where the
-    hardware has it; only a LoRA run keeps a frozen bf16 base (Qwen3.5, as B1)."""
-    assert configs.dtype(model, lora=False) == "float32"
-    assert configs.dtype(model, lora=True) == ("bfloat16" if model == "qwen3.5-0.8b" else "float32")
+    hardware has it; only a LoRA run keeps a frozen bf16 base."""
+    assert configs.dtype(lora=False) == "float32" and configs.dtype(lora=True) == "bfloat16"
     from unittest import mock
 
     import transformers.training_args
@@ -329,7 +317,7 @@ def test_lora_targets_the_language_model_only(model):
     """PEFT's own injection on the recorded module names: no vision tower or projector module gets an adapter,
     every language-model linear layer does (B1 §2.5: the all-linear adapter collapsed vision)."""
     from peft import inject_adapter_in_model
-    cfg = configs.lora(model, force=True)
+    cfg = configs.lora("qwen3-vl-2b")  # the adapter config is the same for any model
     assert (cfg.r, cfg.lora_alpha) == (16, 32)
     names = [n for n in LINEAR[model] if n != "lm_head"]
     m = inject_adapter_in_model(cfg.__class__(**{**cfg.to_dict(), "target_modules": sorted(
@@ -341,7 +329,7 @@ def test_lora_targets_the_language_model_only(model):
 
 def test_lora_only_where_the_plan_needs_it():
     assert configs.lora("qwen3-vl-2b") is not None and configs.lora("qwen3-vl-2b").target_modules == "all-linear"
-    assert all(configs.lora(m) is None for m in ("lfm2.5-vl-450m", "qwen3.5-0.8b", "smolvlm-256m"))  # full FT
+    assert all(configs.lora(m) is None for m in ("lfm2.5-vl-450m", "smolvlm-256m"))  # full FT
 
 
 @pytest.mark.parametrize("model", list(LINEAR))
@@ -366,9 +354,7 @@ def test_sft_config_bundle(model, tmp_path):
     assert c.gradient_checkpointing == (model == "qwen3-vl-2b")
     assert c.assistant_only_loss and c.max_length is None and not c.remove_unused_columns
     assert c.learning_rate == (5e-4 if configs.lora(model) else 5e-5)
-    assert configs.sft_config(model, str(tmp_path), lora=True).learning_rate == 5e-4  # a forced adapter's LR
-    assert configs.sft_config(model, str(tmp_path), lora=False).learning_rate == 5e-5
-    assert configs.sft_config(model, str(tmp_path), lora=True, learning_rate=1e-4).learning_rate == 1e-4  # override
+    assert configs.sft_config(model, str(tmp_path), learning_rate=1e-4).learning_rate == 1e-4  # override
     c = configs.sft_config(model, str(tmp_path), dataloader_num_workers=0)  # BK3-1: R0's workers-0 timing arms
     assert (c.dataloader_num_workers, c.dataloader_persistent_workers, c.dataloader_prefetch_factor) == (0, False,
                                                                                                          None)
@@ -401,18 +387,19 @@ def test_wsd_branches_follow_the_stable_run_then_decay_to_zero(tmp_path):
         configs.sft_config("lfm2.5-vl-450m", str(tmp_path), branch_at=500)  # a branch needs the stable length
 
 
-def test_qwen35_trains_with_trls_nothink_template(char_model):
-    """The template SFTTrainer swaps in for a processor that ships Qwen3.5's non-thinking template (the 0.8B card's;
-    checked on the cached processor in impl note M2) is TRL's qwen3_5_nothink_training."""
+def test_qwen3_vl_trains_with_trls_own_template():
+    """No template swap of ours: TRL maps the processor's Qwen3-VL template to qwen3_vl_training (assistant-only
+    mask, stop token trained). Needs the Qwen3-VL-2B processor in the local HF cache."""
+    from transformers import AutoProcessor
     from trl import chat_template_utils as ct
-    _, tok = char_model
-    tok.chat_template = ct.qwen3_5_nothink_chat_template
-    assert configs.training_template("qwen3.5-0.8b", tok) == ct.qwen3_5_nothink_training_chat_template
-    assert configs.TEMPLATES["qwen3.5-0.8b"] == "qwen3_5_nothink_training"
-    tok.chat_template = ct.qwen3_5_think_chat_template
-    with pytest.raises(ValueError, match="qwen3_5_nothink_training"):
-        configs.training_template("qwen3.5-0.8b", tok)
-    assert configs.training_template("lfm2.5-vl-450m", tok) is None  # TRL's own choice
+
+    try:
+        proc = AutoProcessor.from_pretrained(configs.MODELS["qwen3-vl-2b"], local_files_only=True)
+    except OSError:
+        pytest.skip("Qwen3-VL-2B processor not in the local HF cache")
+    train = ct.get_training_chat_template(proc)
+    assert train == ct.qwen3_vl_training_chat_template and ct.has_generation_markers(train)
+    assert ct.is_chat_template_stop_token_trained(proc, chat_template=train)
 
 
 # ------------------------------------------------------------------ M9 (I45): prepare and cache_loader

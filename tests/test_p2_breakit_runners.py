@@ -46,16 +46,17 @@ def test_every_config_builds_its_sft_config(path):
 
 @pytest.mark.parametrize("path", CONFIGS, ids=[p.stem for p in CONFIGS])
 def test_configs_carry_the_plan_values(path):
-    """PLAN D5 / D6 / D13 / §5.1: LR 5e-5 full FT (both screened models are full FT), max completion 1,024,
-    probe LR 5e-6, seed = data_seed, no LoRA."""
+    """PLAN D5 / D6 / D13 / §5.1: LR 5e-5 full FT and 5e-4 LoRA (Qwen3-VL-2B), the model's completion budget, probe
+    LRs 5e-6 / 5e-5, WSD."""
     TS = _train_sft()
     from experiments.phase2.prereg import G_PROBE
     from objdel.train import configs
 
     a = TS.RunArgs(**_yaml(path))
     cfg = configs.sft_config(a.model, "o", 100, **({"dataloader_prefetch_factor": None} | a.sft))
-    assert cfg.learning_rate == 5e-5 and configs.lora(a.model) is None
-    assert configs.MAX_COMPLETION[a.model] == 1024 == configs.sampling(a.model)["max_tokens"]
+    assert cfg.learning_rate == (5e-4 if configs.lora(a.model) else 5e-5)
+    assert configs.MAX_COMPLETION[a.model] == configs.sampling(a.model)["max_tokens"] == {
+        "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}[a.model]
     assert G_PROBE["lr_full"] == 5e-6 and G_PROBE["lr_lora"] == 5e-5 and G_PROBE["steps"] == 20
     assert cfg.lr_scheduler_type == "warmup_stable_decay" and not cfg.packing and cfg.max_length is None
     assert set(a.sft) <= {f.name for f in dataclasses.fields(type(cfg))}
@@ -77,10 +78,8 @@ def test_vision_config_is_validated_up_front(vision):
         TS.RunArgs("lfm2.5-vl-450m", "views/v", "o", vision=vision)
 
 
-def test_lora_runs_are_expressible_and_merged():
-    TS = _train_sft()
+def test_lora_runs_are_merged():
     src = (ROOT / "experiments/phase2/train_sft.py").read_text()
-    assert {"lora", "force_lora"} & {f.name for f in dataclasses.fields(TS.RunArgs)}
     assert "merge_and_unload" in src  # D6: "merged after SFT"; the vLLM sampler loads a full model dir
 
 
@@ -144,7 +143,7 @@ def test_train_sft_refuses_without_g_vision_and_reads_the_r0_reference(tmp_path)
     ref = tmp_path / "ref.json"
     ref.write_text(json.dumps({"model": "lfm2.5-vl-450m", "set_sha256": "abc", "reference": 0.47}))
     assert TS.reference(str(ref), "lfm2.5-vl-450m", "abc") == 0.47 and TS.reference(0.3, "x", "y") == 0.3
-    for model, sha in (("qwen3.5-0.8b", "abc"), ("lfm2.5-vl-450m", "other")):
+    for model, sha in (("qwen3-vl-2b", "abc"), ("lfm2.5-vl-450m", "other")):
         with pytest.raises(ValueError, match="not this run"):
             TS.reference(str(ref), model, sha)
 
@@ -163,7 +162,7 @@ def test_train_sft_refuses_a_view_with_too_few_epochs(tmp_path):
 # ---------------------------------------------------------------- param groups / sampling
 
 
-@pytest.mark.parametrize("name", ["lfm2.5-vl-450m", "qwen3.5-0.8b", "qwen3-vl-2b"])
+@pytest.mark.parametrize("name", ["lfm2.5-vl-450m", "qwen3-vl-2b"])
 def test_param_groups_cover_every_parameter_once(name):
     """Full-size models on the meta device (cached configs): every trainable parameter in exactly one group, the
     0.1x group = exactly the vision tower + projector parameters."""
@@ -193,12 +192,13 @@ def test_grpo_and_bridge_get_the_same_sampling_fields():
     pytest.importorskip("trl")
     from objdel.train import configs
 
-    for m in ("lfm2.5-vl-450m", "qwen3.5-0.8b"):
+    for m in ("lfm2.5-vl-450m", "qwen3-vl-2b"):
         s = configs.sampling(m)
         same = {k: s[k] for k in ("temperature", "top_p", "top_k", "min_p", "repetition_penalty")}
         g = configs.grpo_config(m, "o", use_vllm=False, bf16=False, max_completion_length=s["max_tokens"], **same)
         assert (g.temperature, g.top_p, g.top_k, g.min_p, g.repetition_penalty) == (1.0, 1.0, 0, 0.0, 1.0)
-        assert g.max_completion_length == 1024 and s["presence_penalty"] == s["frequency_penalty"] == 0
+        assert g.max_completion_length == configs.MAX_COMPLETION[m]
+        assert s["presence_penalty"] == s["frequency_penalty"] == 0
 
 
 def _hf_sample_kwargs(tmp_path, monkeypatch):
@@ -496,12 +496,16 @@ def test_resume_after_a_crash_equals_an_uninterrupted_run(tiny_run, monkeypatch)
 
 
 @pytest.mark.slow
-def test_lora_branches_are_saved_merged(tiny_run):
-    """BK3-3 / D6: lora: true trains LM-only adapters; branches and stable checkpoints are full merged models."""
+def test_lora_branches_are_saved_merged(tiny_run, monkeypatch):
+    """BK3-3 / D6: a LoRA model trains LM-only adapters; branches and stable checkpoints are full merged models.
+    The tiny LFM stands in for Qwen3-VL-2B (the tests/test_p2_scripts.py CPU smoke runs the real architecture)."""
     from transformers import AutoModelForImageTextToText
 
+    from objdel.train import configs
+
+    monkeypatch.setattr(configs, "_LORA", {"lfm2.5-vl-450m"})
     TS, args, tmp = tiny_run
-    assert TS.train(args("lo", lora=True)) == 0
+    assert TS.train(args("lo")) == 0
     for d in ("branches/e0.5", "branches/e1", "stable/e0.5", "stable/e1"):
         files = {f.name for f in (tmp / "lo" / d).iterdir()}
         assert "model.safetensors" in files and not {f for f in files if f.startswith("adapter_")}, (d, files)

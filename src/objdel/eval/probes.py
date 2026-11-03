@@ -1,7 +1,7 @@
 """Synthetic precision (D19) and topology (D20) probes: build them as eval-view directories, score sampled answers.
 
     stats = lidc_stats("data/store")                                   # train diameters, hole and part records
-    build_precision(out, patches("data/store", "train", half="val"), stats["diams"], n=1000, seed=2026)
+    build_precision(out, patches("data/store", "val"), stats["diams"], n=1000, seed=2026)
     build_topology(out, patches("data/store", "val"), stats["holes"], stats["multis"], stats["diams"], seed=2027)
     score_precision(rows, out); score_topology(rows, out)             # rows: {"item_id", "samples": [text, ...]}
 
@@ -23,8 +23,8 @@ Directory = the data/prepared layout (images/<item_id>.png, caches/, lidc/<split
 record has one "rater" ("gt") whose certified target text is pixel-exact to the ground truth (checked at build), plus
 "view" and "probe" (family, diam, bin, hole_area). Images: the object composited on a real LIDC lung patch
 (partial-volume blur, solid or ground-glass HU, CT noise), lung window, Pillow bicubic upscale to 512 px.
-Precision: lidc/val.jsonl = probe-test (1,000 items, patches of the "val" half of the LIDC train patients by a
-seeded patient hash), lidc/train.jsonl = probe-train (the 20k capacity set, built on demand, the other half).
+Precision: lidc/val.jsonl = probe-test (1,000 items on patches of LIDC val patients, never seen in SFT training),
+lidc/train.jsonl = probe-train (the 20k capacity set, built on demand, on patches of LIDC train patients).
 
 Metrics (frame px): boundary = foreground pixels with a 4-adjacent background pixel; ASSD pooled over both
 directions; HD95 = max of the directed 95th percentiles; centroid error between pixel-centre centroids.
@@ -48,6 +48,7 @@ from scipy import ndimage, stats
 from objdel.checker import signature, size_filter
 from objdel.checker.topology import min_area
 from objdel.geometry import GRID, canonicalize, parse, serialize, to_mask
+from objdel.reward.cache import boundary  # foreground pixels with a 4-adjacent background pixel
 from objdel.targets import build_target
 from objdel.targets.frame import DIVISORS, LUNG_WINDOW
 
@@ -323,19 +324,14 @@ def lidc_stats(store_root):
     }
 
 
-def precision_half(group_id: str) -> str:
-    """Seeded patient hash: LIDC train patients -> probe-"train" (capacity set) or probe-"val" (probe-test)."""
-    return ("train", "val")[hashlib.sha256(f"probe-precision:{group_id}".encode()).digest()[0] & 1]
-
-
-def patches(store_root, split, half=None, n=200, side=125, per_patient=3, seed=11):
+def patches(store_root, split, n=200, side=125, per_patient=3, seed=11):
     """[(group_id, HU patch)]: lung-parenchyma windows away from the nodules (lab/B3 background_patches)."""
     from objdel.data import store
 
     rng, out, count = np.random.default_rng(seed), [], {}
     for it in store.load("lidc", split, store_root):
         g = it.group_id
-        if len(out) >= n or (half and precision_half(g) != half) or count.get(g, 0) >= per_patient:
+        if len(out) >= n or count.get(g, 0) >= per_patient:
             continue
         hu, busy = it.image, ndimage.binary_dilation(it.masks["nodule"].any(0), iterations=12)
         for _ in range(20):
@@ -425,10 +421,8 @@ def _write(out, name, split, items, patch_list, seed, meta):
 
 
 def build_precision(out, patch_list, diams, n=1000, seed=2026, split="val"):
-    """Precision probe: probe-test (split "val") or probe-train ("train") on patches of that patient half."""
-    for g, _ in patch_list:
-        if precision_half(g) != split:
-            raise ValueError(f"patch of {g} is from the probe-{precision_half(g)} patient half, not probe-{split}")
+    """Precision probe: probe-test (split "val", patches of LIDC val patients) or probe-train ("train", the capacity
+    set, patches of LIDC train patients)."""
     t0, rng = time.time(), np.random.default_rng(seed)
     fams, p = [f for f, _ in MIX], np.array([w for _, w in MIX])
     items = []
@@ -477,10 +471,6 @@ def records(root, split="val"):
 
 def gt_mask(rec):
     return to_mask(parse(rec["targets"][0], NAMES).objs["nodule"], rec["W"], rec["W"]).mask
-
-
-def boundary(m):
-    return m & ~ndimage.binary_erosion(m, structure=C4, border_value=0)
 
 
 def surface(gt, pred):

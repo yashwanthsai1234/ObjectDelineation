@@ -32,7 +32,7 @@ def build(a):
     if a.only in (None, "precision"):
         for split, n, seed in (("val", a.n_test, 2026), ("train", a.n_train, 2025)):
             if n:
-                pt = P.patches(a.store, "train", half=split, n=200 if split == "val" else 400)
+                pt = P.patches(a.store, split, n=200 if split == "val" else 400)
                 P.build_precision(out / "probe-precision", pt, stats["diams"], n=n, seed=seed, split=split)
                 print(f"precision {split}: {n} items, {len(pt)} patches ({time.time() - t0:.0f} s)", flush=True)
     if a.only in (None, "topology"):

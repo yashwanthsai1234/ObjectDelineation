@@ -18,6 +18,7 @@ from objdel.targets.frame import CLEARANCE, DIVISORS, union_box, upscale
 
 ROOT = Path(__file__).resolve().parents[1]
 PREPARED, STORE = ROOT / "data" / "prepared", ROOT / "data" / "store"
+BUNDLE, EVAL_VIEWS = ROOT / "data" / "views" / "lidc-bundle-v2", ROOT / "data" / "eval_views"  # the bundle trained on
 FRAME_SHA = {  # targets.frame before the Phase 2 change (box, masks, image bytes)
     "lidc/1.2.1/n000/z001": "d70579514adab44459d219e6a20e28496a5d970cdb95606050afc020ee9f8d92",
     "lidc/1.2.1/n000/z002": "b6df0facfcecd3c313c4efa31de3cc7b6b16f9dde59a9c8596d586fa4fd80aba",
@@ -137,12 +138,20 @@ def test_draw_invariants(items, seed):
         assert f.scale == 1 and x0 - f.box[0] >= 2 and f.box[2] - x1 >= 2 and y0 - f.box[1] >= 2 and f.box[3] - y1 >= 2
 
 
-def test_scale_draw_moves_s_between_divisors(items):
-    it = next(i for i in items if i.item_id.endswith("z001"))  # 25 px union: need 41..55 -> S 50 or 100
-    sides = Counter(augment.draw(it, np.random.default_rng(s))[1] for s in range(200))
-    assert set(sides) == {50, 100}
-    rg = next(i for i in items if i.dataset == "riga")  # 65 px union: need 81..143 -> 100, 125, 200
-    assert {augment.draw(rg, np.random.default_rng(s))[1] for s in range(200)} == {100, 125, 200}
+def test_scale_draw_covers_every_eval_side(items):
+    """D10: S is uniform over the policy side and its LADDER neighbours, so the draw gives every side the shifted
+    (policy S) and rescaled (augment.neighbour_side) eval views can ask for, each about equally often."""
+    for it in items:
+        S0, n = frame(it).W, 300
+        drawn = Counter(augment.draw(it, np.random.default_rng(s))[1] for s in range(n))
+        rescaled = {got[1] for s in range(100) if (got := augment.neighbour_side(it, S0, np.random.default_rng(s)))}
+        assert {S0} | rescaled <= set(drawn) <= set(augment.sides(it))
+        assert min(drawn.values()) > n / len(drawn) / 2, (it.item_id, drawn)
+    it = next(i for i in items if i.item_id.endswith("z001"))  # 25 px union, policy S 50: the margin draw gave 50 / 100
+    assert augment.sides(it) == [50, 100]
+    rg = next(i for i in items if i.dataset == "riga")  # 65 px union, policy S 100: 50 cannot hold 65 + 2 x 2 px
+    assert augment.sides(rg) == [50, 100, 125]
+    assert {augment.draw(rg, np.random.default_rng(s))[1] for s in range(200)} == {100, 125}
 
 
 def test_draw_never_shows_another_nodule(items):
@@ -500,7 +509,7 @@ def test_real_lidc_variants_are_certified_and_pixel_exact():
 
 @pytest.mark.data
 def test_real_view_is_pixel_exact_and_pins_its_contexts():
-    d = ROOT / "data" / "views" / "lidc-train"
+    d = BUNDLE
     _need(d / "manifest.json")
     m = json.loads((d / "manifest.json").read_text())
     assert all(v["exact"] == v["rows"] and not v["error"] for v in m["counts"]["per_op"].values())
@@ -510,47 +519,64 @@ def test_real_view_is_pixel_exact_and_pins_its_contexts():
 
 @pytest.mark.data
 def test_written_view_contexts_equal_the_store():
-    d = ROOT / "data" / "views" / "lidc-train"
+    d = BUNDLE
     _need(d / "rows.jsonl", STORE)
     rows = _rows(d)
-    want = {r["item_id"] for r in rows[::500]}
+    want = {r["item_id"]: [] for r in rows[::2000]}
+    for r in rows:
+        want.get(r["item_id"], []).append(r)
     for it in store.load("lidc", "train", STORE):
         if it.item_id in want:
             c = augment.load_context(d, it.item_id)
             x0, y0 = int(c["x0"]), int(c["y0"])
             assert np.array_equal(c["pixels"], it.image[y0:y0 + c["pixels"].shape[0], x0:x0 + c["pixels"].shape[1]])
-            for r in (r for r in rows if r["item_id"] == it.item_id):
+            for r in want.pop(it.item_id):
                 ref = _reference(it, tuple(r["offset"]), r["side"], tuple(r["window"]), r["op"], r["noise_sigma"],
                                  r["noise_seed"])
                 assert np.array_equal(augment.render(r, c), ref)
+            if not want:
+                break
+    assert not want
 
 
-@pytest.mark.parametrize("off", ["dihedral", "window_jitter"])
-def test_leave_one_out_views_change_only_that_component(views, tmp_path, off):
-    """R-diag rules 2-3 (PLAN §6.3): rdiag_no_dihedral / rdiag_no_window_jitter train on views that differ from the
-    bundle view in one component only. Every draw is made as in the bundle view, then that component is replaced
-    (op -> "id", window -> LUNG_WINDOW), so the rest of each row is identical."""
-    from experiments.phase2 import build_views as BV
-    root, (m, _) = views
-    d = tmp_path / "loo"
-    lm = BV.build(root / "store", d, "lidc", "train", epochs=2, seed=3, nonsimple_repeat=4, procs=1, **{off: False})
-    base, loo = _rows(root / "v1" / "lidc-train"), _rows(d)
-    field = {"dihedral": "op", "window_jitter": "window"}[off]
-    fixed = {"dihedral": "id", "window_jitter": list(augment.LUNG_WINDOW)}[off]
-    assert [r["row_id"] for r in loo] == [r["row_id"] for r in base]
-    for a, b in zip(base, loo, strict=True):
-        assert b[field] == fixed
-        assert {k: v for k, v in a.items() if k not in (field, "target")} == \
-            {k: v for k, v in b.items() if k not in (field, "target")}
-    on, gone = m["config"], lm["config"]  # the manifest says what the view holds
-    assert list(on["ops"]) == list(augment.OPS)
-    assert list(gone["ops"]) == (["id"] if off == "dihedral" else list(augment.OPS))
-    assert (gone["window_jitter"] is None) == (off == "window_jitter") and on["window_jitter"] is not None
+def _eval_recs(kind):
+    return [json.loads(line) for line in open(EVAL_VIEWS / f"lidc-val-{kind}" / "lidc" / "val.jsonl")]
 
 
-def test_build_views_cli_has_the_leave_one_out_flags(capsys):
-    from experiments.phase2 import build_views as BV
-    with pytest.raises(SystemExit):
-        BV.main(["--help"])
-    out = capsys.readouterr().out
-    assert "--no-dihedral" in out and "--no-window-jitter" in out
+@pytest.mark.data
+def test_eval_view_windows_are_unchanged():
+    """The pre-registered eval views are fixed (plan §5.0): augment.draw with the policy side and neighbour_side still
+    give every recorded window, so a change to the training draw cannot move them."""
+    _need(STORE, *(EVAL_VIEWS / f"lidc-val-{k}" / "manifest.json" for k in ("shifted", "rescaled")))
+    kinds = ("shifted", "rescaled")
+    seed = {k: json.loads((EVAL_VIEWS / f"lidc-val-{k}" / "manifest.json").read_text())["seed"] for k in kinds}
+    want = {(k, r["item_id"]): (r["view"]["offset"], r["view"]["side"]) for k in kinds for r in _eval_recs(k)}
+    got = {}
+    for it in store.load("lidc", "val", STORE):
+        bare = replace(it, image=None)
+        S0 = frame(bare).W
+        for k in kinds:
+            rng = augment.row_rng(seed[k], k, it.item_id)
+            w = (augment.neighbour_side(bare, S0, rng) if k == "rescaled" else None) or augment.draw(bare, rng, side=S0)
+            got[k, it.item_id] = (list(w[0]), w[1])
+    assert got == want
+
+
+@pytest.mark.data
+def test_bundle_covers_every_eval_view():
+    """D10 revision: no category (side, nodule extent as share of the frame, position) that an eval view has at >= 5 %
+    is under 1 % of training rows (epoch 0), and each such share is at least a third of the eval view's (R1 bundle:
+    nodules under 10 % of the frame 0.5 % of rows vs 27.1 % of the rescaled val)."""
+    from objdel.eval import coverage
+    kinds = ("shifted", "rescaled", "rotated")
+    _need(BUNDLE / "rows.jsonl", *(EVAL_VIEWS / f"lidc-val-{k}" / "lidc" / "val.jsonl" for k in kinds))
+    keys = ("W", "ext", "pos")
+    rows = [coverage.props(r["target"], r["side"], r["op"]) for r in _rows(BUNDLE) if r["epoch"] == 0]
+    train = coverage.distribution([r for r in rows if r])
+    for kind in kinds:
+        exam = coverage.distribution([p for r in _eval_recs(kind) for t in r["targets"] if t
+                                      if (p := coverage.props(t, r["W"], r["view"]["op"]))])
+        assert not [g for g in coverage.gaps(train, exam) if g["key"] in keys], kind
+        for k in keys:
+            for cat, share in exam[k].items():
+                assert share < coverage.EVAL_MIN or train[k].get(cat, 0) >= share / 3, (kind, k, cat)

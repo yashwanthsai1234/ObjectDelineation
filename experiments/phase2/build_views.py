@@ -1,14 +1,15 @@
 """Build a Phase 2 training view (plan §6.0 bundle, D9-D11; C-VIEW): per-epoch row specs with certified targets.
 
-    .venv/bin/python -I -m experiments.phase2.build_views [--store data/store] [--out data/views/lidc-train]
+    .venv/bin/python -I -m experiments.phase2.build_views --out data/views/lidc-bundle-v2 [--store data/store]
         [--dataset lidc] [--split train] [--epochs 3] [--seed 0] [--nonsimple-repeat 4] [--procs 2] [--limit N]
 
 Per item with pixels (objdel.data.store): the policy frame gives the reward's size rule (min_areas: shift-, scale-
 and D4-invariant while the union stays inside) and the voting raters (objdel.reward.voters: non-empty size-filtered
 signature; I27, B2-4). Per epoch, voting rater and repeat (non-simple targets, i.e. any object other than one part
 without holes, are repeated `nonsimple_repeat` times, each repeat with its own draw), one row spec drawn from
-augment.row_rng(seed, epoch, item_id, rater_index, rep): the window (augment.draw: margin in [8 px, 60 %] so S
-moves between divisors, uniform shift with the union inside and 2 px clearance, no other outlined nodule), the op
+augment.row_rng(seed, epoch, item_id, rater_index, rep): the window (augment.draw: S uniform over the policy side
+and its ladder neighbours, the sides of the shifted and rescaled eval views, uniform shift with the union inside and
+2 px clearance, no other outlined nodule), the op
 (D4 for LIDC, id / fh for RIGA), and for LIDC the CT window (L -300 +- 60, W 1400 +- 80) and noise (sigma <= 10 HU).
 The target is build_target on the op applied to the rater's mask in that window (certified, and pixel-exact for
 LIDC, or ValueError); its raster is compared pixel for pixel with the mask for the per-op exact share (RIGA < 1).
@@ -47,7 +48,7 @@ NO_JITTER = {"window": None, "noise_sigma": 0.0, "noise_seed": 0}
 
 
 def _item(job):
-    it, out, epochs, seed, repeat, dihedral, window_jitter = job
+    it, out, epochs, seed, repeat = job
     if it.image is None:
         return None  # counted as skipped
     ds, names = it.dataset, SCHEMAS[it.dataset]
@@ -68,11 +69,8 @@ def _item(job):
                     stats["fallback"] += 1
                 (dx, dy), S = got or ((0, 0), policy.W)
                 ops = augment.DATASET_OPS[ds]
-                op = ops[int(rng.integers(len(ops)))]  # drawn even when unused: R-diag keeps the same stream
-                op = op if dihedral else "id"
+                op = ops[int(rng.integers(len(ops)))]
                 jit = augment.jitter(rng) if ds == "lidc" else NO_JITTER
-                if not window_jitter:  # R-diag: drawn as above (same stream), then the fixed lung window
-                    jit = jit | {"window": list(augment.LUNG_WINDOW)}
                 f = frame(bare, offset=(dx, dy), side=S)
                 src = {n: augment.apply(f.masks[n][r], op) for n in names}
                 row = {"row_id": f"{e}/{it.item_id}/{r}/{rep}", "epoch": e, "item_id": it.item_id, "dataset": ds,
@@ -94,14 +92,12 @@ def _item(job):
 
 
 def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nonsimple_repeat=4, procs=2,
-          limit=None, prepared=None, dihedral=True, window_jitter=True) -> dict:
-    """dihedral / window_jitter False: the R-diag leave-one-out views (PLAN §6.3 rules 2-3). Rows are drawn exactly
-    as in the bundle view, then the op becomes "id" or the window the fixed lung window, so nothing else changes."""
+          limit=None, prepared=None) -> dict:
     out, t0, cpu0 = Path(out), time.time(), time.process_time()
     out.mkdir(parents=True, exist_ok=True)
     rows, stats, contexts, skipped = [], Counter(), {}, 0
     its = islice(store.load(dataset, split, store_root), limit)
-    jobs = ((it, str(out), epochs, seed, nonsimple_repeat, dihedral, window_jitter) for it in its)
+    jobs = ((it, str(out), epochs, seed, nonsimple_repeat) for it in its)
     with Pool(procs) as pool:
         for got in pool.imap(_item, jobs, chunksize=8):
             if got is None:
@@ -118,10 +114,12 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
               for op in augment.DATASET_OPS[dataset]}
     manifest = {
         "view": out.name, "dataset": dataset, "split": split,
-        "config": {"epochs": epochs, "seed": seed, "nonsimple_repeat": nonsimple_repeat, "ops": augment.DATASET_OPS[
-            dataset] if dihedral else ("id",), "margin": augment.MARGIN, "clearance": augment.CLEARANCE, "window_jitter":
-            augment.WINDOW_JITTER if dataset == "lidc" and window_jitter else None, "noise_max": augment.NOISE_MAX if dataset == "lidc"
-            else None, "build": BuildConfig().__dict__},
+        "config": {
+            "epochs": epochs, "seed": seed, "nonsimple_repeat": nonsimple_repeat,
+            "ops": augment.DATASET_OPS[dataset],
+            "scale": "policy side or a LADDER neighbour, uniform", "clearance": augment.CLEARANCE,
+            "window_jitter": augment.WINDOW_JITTER if dataset == "lidc" else None,
+            "noise_max": augment.NOISE_MAX if dataset == "lidc" else None, "build": BuildConfig().__dict__},
         "sources": {"store_manifest_sha256": sha(Path(store_root, "manifest.json")),
                     "prepared_manifest_sha256": sha(Path(prepared, "manifest.json")) if prepared else None},
         "counts": {"items": len({r["item_id"] for r in rows}), "skipped_no_image": skipped, "rows": len(rows),
@@ -149,7 +147,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--store", default="data/store")
     ap.add_argument("--prepared", default="data/prepared")
-    ap.add_argument("--out", default="data/views/lidc-train")
+    ap.add_argument("--out", required=True, help="e.g. data/views/lidc-bundle-v2")
     ap.add_argument("--dataset", default="lidc", choices=sorted(SCHEMAS))
     ap.add_argument("--split", default="train")
     ap.add_argument("--epochs", type=int, default=3)
@@ -157,12 +155,8 @@ def main(argv=None):
     ap.add_argument("--nonsimple-repeat", type=int, default=4)
     ap.add_argument("--procs", type=int, default=2)
     ap.add_argument("--limit", type=int, default=None, help="first n items (smoke test)")
-    ap.add_argument("--no-dihedral", dest="dihedral", action="store_false", help="R-diag rule 2: every op is id")
-    ap.add_argument("--no-window-jitter", dest="window_jitter", action="store_false",
-                    help="R-diag rule 3: the fixed lung window (noise unchanged)")
     a = ap.parse_args(argv)
-    m = build(a.store, a.out, a.dataset, a.split, a.epochs, a.seed, a.nonsimple_repeat, a.procs, a.limit, a.prepared,
-              a.dihedral, a.window_jitter)
+    m = build(a.store, a.out, a.dataset, a.split, a.epochs, a.seed, a.nonsimple_repeat, a.procs, a.limit, a.prepared)
     print(json.dumps(m["counts"], indent=1))
     print(report_path(a.out).read_text())
 

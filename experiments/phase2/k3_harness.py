@@ -126,7 +126,8 @@ def per_rollout_ms(jobs) -> list[float]:
 def env() -> dict:
     cpu = platform.processor()
     if Path("/proc/cpuinfo").is_file():
-        cpu = next((ln.split(":", 1)[1].strip() for ln in open("/proc/cpuinfo") if ln.startswith("model name")), cpu)
+        lines = Path("/proc/cpuinfo").read_text().splitlines()
+        cpu = next((ln.split(":", 1)[1].strip() for ln in lines if ln.startswith("model name")), cpu)
     return {
         "python": platform.python_version(),
         "machine": platform.machine(),

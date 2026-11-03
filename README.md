@@ -14,7 +14,7 @@ wrong.
 |---|---|
 | Phase 0 (census and baselines) | done: [results](experiments/phase0/RESULTS.md), [model baselines](experiments/phase0/RESULTS_0b.md); scripts run against commit `faaacc4` ([note](experiments/phase0/README.md)) |
 | Phase 1 (reward and data) | done: [results and gates](experiments/phase1/RESULTS.md), [plan](experiments/phase1/PLAN.md), [execution](experiments/phase1/EXECUTION.md), [notes and issues](experiments/phase1/impl/) |
-| Phase 2 (SFT on Vast AI) | in progress: R1 rung 1 (LFM2.5-VL-450M) trained, fails the entry gates: [results](experiments/phase2/RESULTS.md), [plan](experiments/phase2/PLAN.md), [build log](experiments/phase2/V0_V1.md), [issues](experiments/phase2/impl/ISSUES.md) |
+| Phase 2 (SFT on Vast AI) | in progress: rung 1 (LFM2.5-VL-450M) failed the entry gates; next rung Qwen3-VL-2B (LoRA): [results](experiments/phase2/RESULTS.md), [plan](experiments/phase2/PLAN.md), [build log](experiments/phase2/V0_V1.md), [issues](experiments/phase2/impl/ISSUES.md) |
 | Full plan | [ROADMAP.md](ROADMAP.md) |
 
 ## Layout
@@ -32,7 +32,7 @@ src/objdel/        installable library
   eval/            metrics harness, hack audit, Phase 2 entry gates
 tests/             pytest suite (oracles in tests/oracles/)
 experiments/       one folder per phase: plan, scripts, results; frozen once the phase is done
-cuda/              the original C++/CUDA engine (CMake, GoogleTest)
+cuda/              the C++/CUDA checker engine (CMake, GoogleTest); its eval is in experiments/cuda_checker/
 docs/research/     research reports and notes behind the direction
 data/              downloaded datasets (git-ignored, never committed)
 ```
@@ -57,7 +57,8 @@ make cov          # fast suite with line coverage of src/objdel (fails below 90 
 make build        # rebuild the C++ extension only
 make fuzz         # native polycore fuzz under ASan/UBSan
 make wheels       # manylinux wheels in Docker (cibuildwheel)
-make cuda         # build the C++/CUDA engine
+make cuda         # build the C++/CUDA engine (the CUDA checker)
+make preflight    # prove data, checker and code on the Mac before any GPU is rented (CONFIG=...)
 ```
 
 ```python

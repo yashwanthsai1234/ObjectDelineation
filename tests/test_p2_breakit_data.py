@@ -7,6 +7,7 @@ import hashlib
 import json
 import shutil
 import tarfile
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -209,14 +210,24 @@ def test_contexts_cover_every_admissible_window(tmp_path):
         rng = np.random.default_rng(1)
         for _ in range(60):
             augment.render(_row(it, rng), ctx)
-        ux0, uy0, ux1, uy1 = box = union_box(it)
-        ext = max(ux1 - ux0, uy1 - uy0)
-        S = augment._side(ext, augment._margins(box)[2], "lidc")
+        ux0, uy0, ux1, uy1 = union_box(it)
+        S = max(augment.sides(it))
         cx, cy = centred(it, S)
         for dx in (ux1 + CLEARANCE - S - cx, ux0 - CLEARANCE - cx):
             for dy in (uy1 + CLEARANCE - S - cy, uy0 - CLEARANCE - cy):
                 if not crowded(it, (cx + dx, cy + dy, cx + dx + S, cy + dy + S)):
                     augment.render(_row(it, rng, offset=[dx, dy], side=S), ctx)
+
+
+def test_small_unions_are_drawn_small_in_frame():
+    """The rescaled eval view moves a small union's S from 50 to 100, where it fills <= 15 % of the frame. The margin
+    draw ([8 px, 60 % of the extent]) pinned every union under 23 px at S = 50 (min_side), so training had 0.5 % of
+    rows under 10 % of the frame against the rescaled val's 27 %; the side draw puts about half of them at S = 100."""
+    for it in (_items()[i] for i in (2, 8, 10, 11)):  # 9-15 px unions (one crowded, one at the image corner)
+        x0, y0, x1, y1 = union_box(it)
+        assert frame(it).W == 50 and max(x1 - x0, y1 - y0) <= 15
+        drawn = Counter(augment.draw(it, np.random.default_rng(s))[1] for s in range(400))
+        assert set(drawn) == {50, 100} and 0.4 < drawn[100] / 400 < 0.6, (it.item_id, drawn)
 
 
 def test_s200_targets_are_exact_with_tau_below_half_a_pixel():
@@ -432,6 +443,8 @@ def bundled(tmp_path_factory, synthetic_items):
     for n in B.LIDC_EVAL:
         (data / "eval_views" / n).mkdir(parents=True)
         (data / "eval_views" / n / "manifest.json").write_text("{}")
+    (data / "checker_eval").mkdir()
+    (data / "checker_eval" / "manifest.json").write_text("{}")
     tar = B.build("lidc", data, root / "out")
     box = root / "box"
     with tarfile.open(tar) as t:
@@ -455,7 +468,7 @@ def test_bundle_carries_no_wall_clock_file(bundled):
 
 
 # ------------------------------------------------------------------------------------------------ real data
-REAL = ROOT / "data" / "views" / "lidc-train"
+REAL = ROOT / "data" / "views" / "lidc-bundle-v2"  # the bundle trained on
 
 
 def _need(*paths):

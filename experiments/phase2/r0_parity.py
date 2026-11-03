@@ -3,8 +3,7 @@
     python -I -m experiments.phase2.r0_parity --model lfm2.5-vl-450m --view <eval_views>/lidc-val-shifted \
         --out <run_dir>/parity-lfm [--items 32] [--logprob-items 8] [--k 8]
 
-Base weights: snapshot_download(configs.MODELS[model]), one local directory that vLLM and transformers both load
-(no generation config for Qwen3.5: select_ckpt.stop_ids). The seeded --items subset (select_ckpt.view_rows) is
+Base weights: snapshot_download(configs.MODELS[model]), one local directory that vLLM and transformers both load. The seeded --items subset (select_ckpt.view_rows) is
 sampled at n = --k by `sample_vllm.py --logprobs` through select_ckpt.sample_view (CUDA untouched, timeout, retries,
 completeness; files in <out>/samples/). Then parity.compare in bfloat16: (a) H-A5-1 prompt ids equal on every item;
 (b) H-A5-2 HF teacher forcing of the first --logprob-items x n (PLAN: 8 x 8) within parity.MEDIAN["bfloat16"]

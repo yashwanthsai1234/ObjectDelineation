@@ -8,8 +8,8 @@ default 0.5 / 1 / 2) a linear decay to 0 over 15 % of b. The stable run uses the
 at its point, so every branch point sits at LR factor 1; it saves a full checkpoint (model, optimizer, scheduler, RNG,
 data position) at every b, and each branch is a new trainer resumed from it whose schedule ends at b + d
 (sft_config(steps, branch_at=b)): bit-identical to an uninterrupted WSD run decaying at b (impl/M8.md). Colliding
-branch points and 0-step decays are refused. `branches: []` = stable only, one epoch, nothing saved (R0 timing and
-Qwen3.5 arm). Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor; LoRA runs (D6) saved merged.
+branch points and 0-step decays are refused. `branches: []` = stable only, one epoch, nothing saved (R0
+timing). Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor; LoRA runs (D6) saved merged.
 Rolling checkpoints (optimizer included, limit 3; stable/e<b> hard-links one; rolling/ is deleted once every stable/e<b>
 exists, decay/<b> once branches/<b> does) every `rolling_minutes`, each with the G-vision check
 (objdel.eval.vision, §5.1) on the training device and dtype (the reference is CPU float32, B1): ratio < 0.5 **and**
@@ -66,7 +66,7 @@ ABORTED = 3  # exit code of a G-vision abort
 WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator and loader warm-up)
 ROOT = Path(__file__).resolve().parents[2]
 BOX_DATA, BOX_RUNS = Path("/workspace/data/lidc"), Path("/workspace/runs")  # sync_up / pull.sh on a Vast box (M7)
-SAME_RUN = ("model", "branches", "a0", "freeze_vision", "lora", "seed", "steps_per_epoch", "sft")  # resume check
+SAME_RUN = ("model", "branches", "a0", "freeze_vision", "seed", "steps_per_epoch", "sft")  # resume check
 TRAINER_FILES = ("optimizer", "scheduler", "rng_state", "trainer_state", "adapter_")
 
 
@@ -84,7 +84,6 @@ class RunArgs:
     branches: list[float] = field(default_factory=lambda: [0.5, 1.0, 2.0], metadata={"help": "epochs ([] = timing)"})
     a0: bool = field(default=False, metadata={"help": "empty every holes list (A0)"})
     freeze_vision: bool = field(default=False, metadata={"help": "D7 repair: tower and projector frozen"})
-    lora: bool = field(default=False, metadata={"help": "D6: LM-only LoRA r16 (Qwen3.5 if R0's peak memory says so)"})
     seed: int = 1
     rolling_minutes: float = 10.0
     vision: dict = field(default_factory=dict, metadata={"help": "{prepared, reference} for G-vision, or off"})
@@ -219,8 +218,12 @@ def sha256(path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+CODE = ("src/objdel/**/*.py", "src/objdel/*.cpp", "cpp/**/*.hpp", "cuda/*.h", "cuda/*.cpp", "experiments/phase2/*.py",
+        "experiments/phase2/vast/*.py", "CMakeLists.txt", "pyproject.toml")  # everything that runs on the box
+
+
 def code_hashes() -> dict:
-    files = sorted((ROOT / "src" / "objdel").rglob("*.py")) + [Path(__file__)]
+    files = sorted({p for g in CODE for p in ROOT.glob(g)})
     h = hashlib.sha256(b"".join(p.relative_to(ROOT).as_posix().encode() + bytes.fromhex(sha256(p)) for p in files))
     git = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True)
     return {"objdel_and_script_sha256": h.hexdigest(), "git_head": git.stdout.strip() or None, "files": len(files)}
@@ -300,9 +303,8 @@ def train(args: RunArgs) -> int:
     proc = AutoProcessor.from_pretrained(src, **configs.processor_kwargs(args.model, "lidc"))
     rows = dataset.view_rows(args.view, proc.tokenizer, configs.MAX_COMPLETION[args.model], a0=args.a0)
     epochs, lengths = list(rows["epoch"]), list(rows["length"])
-    configs.training_template(args.model, proc)  # ValueError if Qwen3.5's template is not TRL's no-think one
-    peft = configs.lora(args.model, force=args.lora)
-    dtype = getattr(torch, configs.dtype(args.model, lora=peft is not None))  # fp32 for full FT (bf16 autocast)
+    peft = configs.lora(args.model)  # D6: LM-only LoRA r16 for Qwen3-VL-2B, else full FT
+    dtype = getattr(torch, configs.dtype(peft is not None))  # fp32 for full FT (bf16 autocast), bf16 frozen LoRA base
     gbs = args.sft.get("per_device_train_batch_size", 8) * args.sft.get("gradient_accumulation_steps", 1)  # 1 GPU
     rows0 = epochs.count(min(epochs, default=0))  # rows of one view epoch
     p = man["plan"] = plan(args, args.steps_per_epoch or rows0 // gbs)
@@ -367,7 +369,7 @@ def train(args: RunArgs) -> int:
         model = AutoModelForImageTextToText.from_pretrained(src, dtype=dtype)
         o = {"seed": args.seed, "data_seed": args.seed, "save_strategy": "no", "save_total_limit": 3}
         o |= {"logging_steps": 10}
-        cfg = configs.sft_config(args.model, str(out_dir), p["stable"], branch_at, lora=bool(peft), **(o | args.sft))
+        cfg = configs.sft_config(args.model, str(out_dir), p["stable"], branch_at, **(o | args.sft))
         opt = None
         if not peft:  # full FT: vision tower + projector at 0.1x (D7), or frozen (the D7 repair)
             lm, vision = configs.param_groups(model, cfg.learning_rate)

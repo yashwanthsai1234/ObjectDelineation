@@ -1,6 +1,6 @@
-"""The HF generate sampler (PLAN D13 fallback, Qwen3.5 HF-only path, CPU smoke): sample_vllm's JSONL contract.
+"""The HF generate sampler (PLAN D13 fallback, CPU smoke): sample_vllm's JSONL contract.
 
-    python -I -m experiments.phase2.hf_sample --prompts P.jsonl --model DIR --out C.jsonl [--batch_items 16]
+    python -I -m experiments.phase2.hf_sample --prompts P.jsonl --model DIR --out C.jsonl [--batch_items 8]
         [--timing T.json]
 
 A child of select_ckpt in its own process (select_ckpt never touches CUDA). Every D13 sampling field is passed
@@ -11,8 +11,9 @@ comes from the checkpoint's (LFM's card: min_p 0.15, repetition 1.05); HF has no
 
 Batches: --batch_items prompts per generate call (each expanded to its n samples, num_return_sequences), padded on
 the left (the processor is loaded with padding_side="left"; each item's text carries its own image tokens and the
-models mask the padding, LFM2's short convolutions and Qwen3.5's linear attention included), so a 450M model is not
-overhead-bound at one item per call. All prompts must share sampling, n and processor_kwargs.
+models mask the padding, LFM2's short convolutions included), so a small model is not overhead-bound at one item
+per call. 8 items x 8 samples = 64 sequences: the KV cache of Qwen3-VL-2B (112 KB per token) is then 13 GB at 1,856
+tokens, so one runaway sample (1,536 tokens) cannot overflow a 24 GB card; 16 items would need 27 GB. All prompts must share sampling, n and processor_kwargs.
 
 Seeding and reproducibility: batch b (prompts b*B .. b*B+B-1 of the file, B = --batch_items) is seeded seed + b*B.
 The same prompts file, --batch_items, model and hardware / library versions give the same samples; another
@@ -98,7 +99,7 @@ def main(argv=None) -> int:
     ap.add_argument("--prompts", type=Path, required=True)
     ap.add_argument("--model", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--batch_items", type=int, default=16, help="prompts per generate call (x n samples each)")
+    ap.add_argument("--batch_items", type=int, default=8, help="prompts per generate call (x n samples each)")
     ap.add_argument("--timing", type=Path, help="write generate seconds per item-sample here (R0 rate, hf_rate)")
     a = ap.parse_args(argv)
     ps = [json.loads(x) for x in a.prompts.read_text().splitlines()]

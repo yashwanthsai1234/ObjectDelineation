@@ -17,9 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 B3 = ROOT / "experiments" / "phase2" / "lab" / "B3"
 
 
-def _patches(n=6, side=125, seed=0, half="val"):
+def _patches(n=6, side=125, seed=0):
     rng = np.random.default_rng(seed)
-    groups = [g for g in (f"LIDC-IDRI-{i:04d}" for i in range(100)) if P.precision_half(g) == half][:n]
+    groups = [f"LIDC-IDRI-{i:04d}" for i in range(n)]
     return [(g, rng.normal(-850, 40, (side, side)).astype(np.int16)) for g in groups]
 
 
@@ -180,20 +180,6 @@ def test_stratified_bootstrap_equals_power_c2():
     assert np.allclose(got, ref, rtol=0, atol=1e-12)
 
 
-def test_patient_halves_disjoint():
-    groups = [f"LIDC-IDRI-{i:04d}" for i in range(1, 1013)]
-    half = {g: P.precision_half(g) for g in groups}
-    tr, te = {g for g, h in half.items() if h == "train"}, {g for g, h in half.items() if h == "val"}
-    assert not tr & te and tr | te == set(groups) and 0.4 < len(tr) / len(groups) < 0.6
-    assert half == {g: P.precision_half(g) for g in groups}  # deterministic
-
-
-def test_build_rejects_wrong_patient_half(tmp_path):
-    bad = _patches(2, half="train")
-    with pytest.raises(ValueError, match="probe-train"):
-        P.build_precision(tmp_path, bad, _diams(), n=5, seed=0, split="val")
-
-
 @pytest.mark.parametrize("script", ["probes", "baselines"])
 def test_cli_help(script):
     out = subprocess.run(
@@ -261,15 +247,14 @@ def test_real_built_probe_dirs_patient_disjoint():
     root = ROOT / "data" / "eval_views" / "probe-precision"
     if not (root / "lidc" / "val.jsonl").is_file():
         pytest.skip("probe-precision not built")
-    test_pat = {r["group_id"] for r in P.records(root)}
-    assert all(P.precision_half(g) == "val" for g in test_pat)
+    from objdel.data import store
+
+    val = {it.group_id for it in store.load("lidc", "val", ROOT / "data" / "store")}
+    assert {r["group_id"] for r in P.records(root)} <= val  # probe-test: val patients only, never SFT-trained
     if (root / "lidc" / "train.jsonl").is_file():
-        assert not test_pat & {r["group_id"] for r in P.records(root, split="train")}
+        assert not val & {r["group_id"] for r in P.records(root, split="train")}
     topo = ROOT / "data" / "eval_views" / "probe-topology"
     if (topo / "lidc" / "val.jsonl").is_file():
-        from objdel.data import store
-
-        val = {it.group_id for it in store.load("lidc", "val", ROOT / "data" / "store")}
         assert {r["group_id"] for r in P.records(topo)} <= val
 
 

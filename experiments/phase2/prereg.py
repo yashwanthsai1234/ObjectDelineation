@@ -13,7 +13,6 @@ Rules:
 - G-probe (§5.1): PASS / FAIL / INCONCLUSIVE against the step-0 null (two step-0 draws, different sampler seeds).
 - C2 (§5.2, §5.0): clauses (1)-(5), the 3-seed rule (>= 2 of 3 seeds >= 0.50, none < 0.30) and the fourth-seed
   clause (>= 3 of 4), outcome pass / partial / fail with at most one conditional run (owner approval required).
-- §6.3 fallback: the component removed by the single bundle-level diagnostic.
 """
 
 import argparse
@@ -143,36 +142,12 @@ def fourth_seed_eligible(seed_points, pooled: float, other: dict[str, bool]) -> 
     return c2_outcome(pooled, other | {"2": True}) != c2_outcome(pooled, other | {"2": False})
 
 
-# ---------------------------------------------------------------- §6.3 bundle-level fallback
-FALLBACK_TRIGGERS = ("G-format", "G-geometry", "G-prior-b", "G-precision", "G-topology-a")
-HOLE_DEFECT_SHARE = 0.50
-
-
-def fallback_component(failed, hole_defect_share: float, legal: float, used: bool = False) -> str | None:
-    """Component removed by the single §6.3 diagnostic, or None (no trigger, or the diagnostic was already used).
-    failed = the selected checkpoint's failed gates (G-precision after its capacity run); hole_defect_share = share
-    of illegal samples with a hole-related defect; legal = legal share at T = 1."""
-    failed = set(failed) & set(FALLBACK_TRIGGERS)
-    if used or not failed:
-        return None
-    if hole_defect_share >= HOLE_DEFECT_SHARE or "G-topology-a" in failed:
-        return "hole_oversampling"
-    if failed & {"G-geometry", "G-prior-b", "G-precision"} and legal >= C2["legal_min"]:
-        return "dihedral"
-    return "window_jitter"
-
-
 def rules() -> dict:
     return {
         "C1": {"gates": c1_gates(), "report_only": REPORT_ONLY, "G_PRIOR_A_THRESHOLD": G_PRIOR_A_THRESHOLD},
         "RB": RB,
         "G_PROBE": G_PROBE,
         "C2": C2,
-        "fallback": {
-            "triggers": FALLBACK_TRIGGERS,
-            "hole_defect_share": HOLE_DEFECT_SHARE,
-            "order": ("hole_oversampling", "dihedral", "window_jitter"),
-        },
     }
 
 

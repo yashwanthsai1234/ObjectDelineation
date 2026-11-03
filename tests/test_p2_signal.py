@@ -288,20 +288,9 @@ def test_c1_stop_rule_and_prior_a_slot():
     gates = dict.fromkeys(P.c1_gates(), True)
     rungs = [
         ("lfm", gates | {"G-geometry": False}),
-        ("qwen3.5", gates | {"G-topology-b": False, "G-probe": False}),
-        ("qwen3-vl-2b", gates),
+        ("qwen3-vl-2b", gates | {"G-topology-b": False, "G-probe": False}),
+        ("larger", gates),
     ]
-    assert P.c1_stop(rungs) == ("qwen3.5", ["G-probe warning"])
+    assert P.c1_stop(rungs) == ("qwen3-vl-2b", ["G-probe warning"])
     assert P.c1_stop(rungs[:1]) == (None, [])
     assert "G-prior-a" in P.c1_gates(prior_a_threshold=0.6)
-
-
-def test_fallback_component_rule():
-    f = P.fallback_component
-    assert f({"G-signal"}, 0.0, 0.95) is None and f({"G-vision"}, 0.0, 0.95) is None
-    assert f({"G-format"}, 0.6, 0.85) == "hole_oversampling"
-    assert f({"G-topology-a"}, 0.0, 0.95) == "hole_oversampling"
-    assert f({"G-geometry"}, 0.1, 0.92) == "dihedral"
-    assert f({"G-precision"}, 0.1, 0.85) == "window_jitter"
-    assert f({"G-format"}, 0.1, 0.85) == "window_jitter"
-    assert f({"G-format"}, 0.6, 0.85, used=True) is None

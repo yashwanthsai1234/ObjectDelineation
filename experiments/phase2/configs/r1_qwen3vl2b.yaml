@@ -1,0 +1,15 @@
+# R1 rung 2 (owner decision 2026-11-02, replaces the LFM and Qwen3.5 rungs): Qwen3-VL-2B, LM-only LoRA r16 (D6).
+# Same bundle recipe as r1_lfm.yaml: A0', seed 1, WSD 2 epochs + decay branches 0.5 / 1 / 2.
+model: qwen3-vl-2b
+view: views/lidc-bundle-v2   # the data fix (scale ladder, PLAN §6.0); build_views --epochs 3. Name: the data agent's build.
+output_dir: r1-qwen3vl2b
+seed: 1
+sampler: hf   # D13: vLLM parity failed in R0 (2026-11-02); the HF sampler is the path for every model
+branches: [0.5, 1.0, 2.0]
+vision: {prepared: prepared, reference: vision_ref/qwen3-vl-2b.json}   # written in R0 by --vision_reference_only true
+sft:
+  per_device_train_batch_size: 4   # not 8: Qwen3-VL's 152k-token vocabulary makes the logits of a long batch ~12 GB
+  gradient_accumulation_steps: 8   # effective batch 32 (D5)
+  dataloader_num_workers: 6
+  dataloader_persistent_workers: true
+  # gradient checkpointing is on for this model (configs.sft_config)

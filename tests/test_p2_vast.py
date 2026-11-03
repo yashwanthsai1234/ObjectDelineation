@@ -21,6 +21,7 @@ from unittest import mock
 
 import pytest
 
+from experiments.phase2 import preflight as PF
 from experiments.phase2.vast import bundle as B
 from experiments.phase2.vast import policy as P
 
@@ -96,6 +97,17 @@ def after(argv: list[str], flag: str) -> str:
     return argv[argv.index(flag) + 1]
 
 
+def PF_config(tmp: Path) -> Path:
+    """A run config over a tiny data root (a view manifest and the exam views' manifests): enough to hash."""
+    data = tmp / "data"
+    for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in PF.EXAMS)):
+        (data / d).mkdir(parents=True)
+        (data / d / "manifest.json").write_text(json.dumps({"view_hash": "h", "dir": d}))
+    cfg = tmp / "pf_run.yaml"
+    cfg.write_text(f"model: lfm2.5-vl-450m\nview: views/v\noutput_dir: x\ndata_root: {data}\n")
+    return cfg
+
+
 class Env:
     def __init__(self, tmp: Path):
         self.tmp, self.fake, self.home, self.runs = tmp, tmp / "fake", tmp / "home", tmp / "runs"
@@ -116,7 +128,16 @@ class Env:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("VAST", "DRY_RUN"))}
         self.env = dict(env, PATH=f"{bin_}{os.pathsep}{env['PATH']}", PYTHON=sys.executable, FAKE_DIR=str(self.fake),
                         VAST_HOME=str(self.home), VAST_RUNS=str(self.runs), DRY_RUN="1", VAST_POLL_S="0.01",
-                        VAST_LAUNCH_TIMEOUT_S="3")
+                        VAST_LAUNCH_TIMEOUT_S="3", OBJDEL_RUN_DIR=str(tmp / "pf"))
+        self.config = PF_config(tmp)
+        self.stamp()
+
+    def stamp(self, ok=True, **hashes):
+        """The preflight stamp launch.sh checks (the gate): passing and current, or as given."""
+        path = PF.ROOT / self.env["OBJDEL_RUN_DIR"] / "preflight" / f"{self.config.stem}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = {"pass": ok, "checks": {"x": {"pass": ok}}, "hashes": PF.hashes(self.config) | hashes}
+        path.write_text(json.dumps(stamp))
 
     def state(self, statuses=("loading", "running"), instances=None, offers=None, charges=None):
         old = read_json(self.fake / "state.json")
@@ -132,6 +153,8 @@ class Env:
         (self.home / ".vast-allowlist").write_text(json.dumps({k: v for k, v in new.items() if v is not None}))
 
     def sh(self, script, *args, ok=True, **env):
+        if script == "launch.sh" and "--config" not in args:
+            args = (*args, "--config", self.config)
         p = subprocess.run(["bash", str(VAST / script), *map(str, args)], env=dict(self.env, **env),
                            capture_output=True, text=True, timeout=60)  # fmt: skip
         assert ok is None or (p.returncode == 0) == ok, p.stdout + p.stderr
@@ -334,8 +357,8 @@ def test_launch_destroys_on_sigterm_while_polling(E):
     E.state(statuses=["loading"])
     E.pick()
     env = dict(E.env, VAST_LAUNCH_TIMEOUT_S="60", VAST_POLL_S="0.05")
-    p = subprocess.Popen(["bash", str(VAST / "launch.sh"), "111", "r1"], env=env, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True)  # fmt: skip
+    argv = ["bash", str(VAST / "launch.sh"), "111", "r1", "--config", str(E.config)]
+    p = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     t0 = time.time()
     while len(E.vast("show instance")) < 2 and time.time() - t0 < 30:
         time.sleep(0.05)
@@ -760,6 +783,7 @@ def data_tree(root: Path) -> Path:
                                         "riga/val.jsonl", "images/riga/r.png", "caches/riga/c.npz")]  # fmt: skip
     files += [f"views/{s}" for s in ("lidc-train/rows.jsonl", "lidc-train/context/1.2.3.npz", "riga-train/rows.jsonl")]
     files += [f"eval_views/{n}/{f}" for n in LIDC_EVAL for f in ("manifest.json", "lidc/val.jsonl", "images/x.png")]
+    files += ["views/lidc-old/rows.jsonl", "checker_eval/manifest.json", "checker_eval/polygons.npz"]
     for f in files:
         (d / f).parent.mkdir(parents=True, exist_ok=True)
         (d / f).write_bytes(f.encode() * 3)
@@ -788,6 +812,7 @@ def test_bundle_lidc_members_manifest_and_determinism(tmp_path):
     assert names[0] == "SHA256SUMS" and names[1:] == sorted(names[1:]) and set(sums) == set(names[1:])
     assert "prepared/images/lidc/1.2.3/a.png" in names and "views/lidc-train/context/1.2.3.npz" in names
     assert all(f"eval_views/{n}/manifest.json" in names for n in LIDC_EVAL)
+    assert "checker_eval/polygons.npz" in names and "views/lidc-old/rows.jsonl" in names  # default: every view
     assert not [n for n in names if "riga" in n or "raw" in n]
     assert list(man["files"]) == ["lidc/val.jsonl"] and list(man["sets"]) == ["lidc/val"] and "prompts" in man
 
@@ -826,6 +851,21 @@ def test_bundle_riga_only_encrypted_to_recorded_recipient(E, monkeypatch):
         B.build("riga", d, E.tmp / "out3")
 
 
+def test_bundle_ships_only_the_named_view(tmp_path):
+    d = data_tree(tmp_path)
+    names = [n for n, _ in B.members("lidc", d, ["lidc-train"])]
+    assert "views/lidc-train/rows.jsonl" in names and not [n for n in names if n.startswith("views/lidc-old/")]
+    with pytest.raises(SystemExit):
+        B.members("lidc", d, ["lidc-nope"])
+
+
+def test_bundle_lidc_needs_the_checker_eval_set(tmp_path):
+    d = data_tree(tmp_path)
+    shutil.rmtree(d / "checker_eval")
+    with pytest.raises(SystemExit):
+        B.members("lidc", d)
+
+
 @pytest.mark.data
 def test_bundle_real_lidc_selection():
     d = ROOT / "data"
@@ -862,7 +902,7 @@ def test_run_chain_for_an_r1_config(E):
     words = ("experiments.phase2.train_sft", "experiments.phase2.select_ckpt", "--vision", "experiments.phase2.g_probe",
              "/workspace/runs/r1/r1-lfm/select", "OBJDEL_RUN_DIR=/workspace/runs/r1")  # fmt: skip
     assert [w for w in words if w not in line] == []
-    (timing,) = P.chain(ROOT / "experiments/phase2/configs/r0_timing_w0_det_off.yaml", "r1")  # branches []: train only
+    (timing,) = P.chain(ROOT / "experiments/phase2/configs/r0_qwen3vl_arm.yaml", "r1")  # branches []: train only
     assert timing[:2] == ["-m", "experiments.phase2.train_sft"]
 
 
@@ -871,35 +911,37 @@ def test_r1_refuses_on_the_box_without_its_g_vision_reference(E):
     line, ref = E.tmux("experiments/phase2/configs/r1_lfm.yaml"), "/workspace/runs/r1/vision_ref/lfm2.5-vl-450m.json"
     assert f"test -f {ref}" in line and "configs/r0.yaml first" in line  # refused on the box, with the remedy
     assert line.index(f"test -f {ref}") < line.index("experiments.phase2.train_sft")
-    qwen = P.vision_refs(ROOT / "experiments/phase2/configs/r1_qwen35.yaml", "r1")
-    assert qwen == ["/workspace/runs/r1/vision_ref/qwen3.5-0.8b.json"]
+    qwen = P.vision_refs(ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "r1")
+    assert qwen == ["/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"]
 
 
 R0 = ROOT / "experiments/phase2/configs/r0.yaml"
 
 
 def test_r0_is_one_chain_of_the_plan_steps(E):
-    """PLAN §4.7 steps 3, 5-8 as one run.sh chain: image check, x86 hashes, idle K3, parity (both models; a failure
-    is recorded, not blocking: the HF-only path is pre-decided, D13), G-vision references, 4 timing arms, Qwen3.5."""
+    """PLAN §4.7 as one run.sh chain for Qwen3-VL-2B: image check, x86 hashes, idle K3, sampler parity and HF sampling
+    rate (a failure is recorded, not blocking), the G-vision reference, the 30-step timing arm, then the CUDA checker
+    on the GPU (last, not blocking: `make cuda` reinstalls objdel)."""
     steps = P.chain(R0, "v1")
     assert steps[0][:3] == ["~", "bash", "-c"] and "nvidia-smi -q" in steps[0][3] and "cpu.max" in steps[0][3]  # step 2
     assert steps[1] == ["bash", "experiments/phase2/docker/image_check.sh", "/workspace/runs/v1/image_check.json"]
     mods = [after(s, "-m") for s in steps if "-m" in s]
     assert mods[:2] == ["experiments.phase1.bench.xarch_hashes", "experiments.phase2.k3_harness"]
-    assert mods.count("experiments.phase2.r0_parity") == 2 and mods.count("experiments.phase2.train_sft") == 7
+    assert mods.count("experiments.phase2.r0_parity") == 1 and mods.count("experiments.phase2.train_sft") == 2
     k3 = next(s for s in steps if "experiments.phase2.k3_harness" in s)
     assert after(k3, "--root") == "/workspace/data/lidc/prepared"
     cfgs = [after(s, "--config") for s in steps if "--config" in s]
-    assert all((ROOT / c).exists() for c in cfgs) and len(cfgs) == 7
+    assert all((ROOT / c).exists() for c in cfgs) and len(cfgs) == 2
     refs = [after(s, "--config") for s in steps if "--vision_reference_only" in s]
-    assert refs == ["experiments/phase2/configs/r1_lfm.yaml", "experiments/phase2/configs/r1_qwen35.yaml"]
-    arms = {f"r0_timing_w{w}_det_{d}.yaml" for w in (0, 6) for d in ("on", "off")} | {"r0_qwen35_arm.yaml"}
-    assert {c.split("/")[-1] for c in cfgs[2:]} == arms
+    assert refs == ["experiments/phase2/configs/r1_qwen3vl2b.yaml"]
+    assert cfgs[1] == "experiments/phase2/configs/r0_qwen3vl_arm.yaml"
     E.launched()
     line = E.tmux(R0.relative_to(ROOT))
     assert "bash experiments/phase2/docker/image_check.sh /workspace/runs/r1/image_check.json" in line
     assert "/opt/venv/bin/python -I -m experiments.phase1.bench.xarch_hashes" in line
-    assert line.count("|| echo") == 5  # box record, two parity and two HF-rate steps go on failing; the rest stop
+    assert "DATA=/workspace/data/lidc/checker_eval bash experiments/cuda_checker/run_box.sh" in steps[-1][3]
+    assert steps[-1][0] == "~" and "/workspace/runs/v1/cuda_checker" in steps[-1][3]
+    assert line.count("|| echo") == 4  # box record, parity, HF rate and the CUDA checker go on failing; the rest stop
 
 
 def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
@@ -1140,3 +1182,21 @@ def test_run_refuses_extra_arguments_after_a_config(E):
     assert "before the config" in r.stderr and "--cap-hours" in r.stderr
     assert "cap_s=5400" in E.sh("run.sh", "r1", "--cap-hours", "1.5", "experiments/phase2/configs/r0.yaml").stdout + \
         E.ledger()[-1]["detail"]
+
+
+def test_launch_gate_refuses_without_a_passing_current_preflight(E):
+    """Missing, failed and stale (code, data or config changed) stamps each stop the rental before any Vast call."""
+    E.pick()
+    for stamp, why in (("missing", "no preflight stamp"), ("failed", "FAILED preflight"),
+                       ("data", "stale (data"), ("code", "stale (code"), ("config", "stale (config")):  # fmt: skip
+        if stamp == "missing":
+            (Path(E.env["OBJDEL_RUN_DIR"]) / "preflight" / f"{E.config.stem}.json").unlink()
+        elif stamp == "failed":
+            E.stamp(ok=False)
+        else:
+            E.stamp(**{stamp: "0" * 64})
+        p = E.sh("launch.sh", "111", "r1", ok=False)
+        assert why in p.stdout + p.stderr and not E.vast("create instance")
+    E.stamp()
+    E.sh("launch.sh", "111", "r1")  # a passing, current stamp launches
+    assert E.vast("create instance")
