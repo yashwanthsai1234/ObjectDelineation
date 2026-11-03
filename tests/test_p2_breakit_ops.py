@@ -312,13 +312,6 @@ def test_bundle_refuses_a_symlinked_view_directory(tmp_path):
 # --- image (D15) -----------------------------------------------------------------------------------------------------
 
 
-def test_dockerfile_extras_are_pinned():
-    text = (V.DOCKER / "Dockerfile.phase2").read_text()
-    for pkg in ("flash-linear-attention", "kernels"):
-        assert re.search(rf"\b{pkg}==\d", text), pkg
-    assert "causal_conv1d-1.7.0.tar.gz" in text and re.search(r"CCD_SHA256=[0-9a-f]{64}", text)  # sdist, built in `ccd`
-
-
 def test_image_check_peaks_and_threshold():
     text = (V.DOCKER / "image_check.sh").read_text()
     peak = ast.literal_eval(re.search(r"^PEAK = (\{.*\})$", text, re.M).group(1))

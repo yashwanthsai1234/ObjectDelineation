@@ -755,8 +755,7 @@ def test_image_check_python_compiles():
     assert blocks
     for b in blocks:
         compile(b, "image_check", "exec")
-    words = ("chunk_gated_delta_rule", "fused_recurrent_gated_delta_rule", "causal_conv1d_fn", "causal_conv1d_update",
-             "0.6", "objdel._polycore", "/opt/vllm/bin/python")  # fmt: skip
+    words = ("0.6", "objdel._polycore", "/opt/vllm/bin/python")
     assert [w for w in words if w not in text] == []
 
 
@@ -764,8 +763,7 @@ def test_dockerfile_phase2():
     text = (DOCKER / "Dockerfile.phase2").read_text()
     lab = (ROOT / "experiments/phase2/lab/B5/Dockerfile.phase2").read_text()
     digest = re.search(r"python:3\.12-slim-trixie@sha256:[0-9a-f]{64}", lab).group(0)
-    words = ("/opt/venv", "/opt/vllm", "train.txt", "vllm.txt", "flash-linear-attention", "causal-conv1d", "kernels",
-             " age ", "openssh-server", "rsync", "tmux", digest)  # fmt: skip
+    words = ("/opt/venv", "/opt/vllm", "train.txt", "vllm.txt", " age ", "openssh-server", "rsync", "tmux", digest)
     assert [w for w in words if w not in text] == []
     assert "COPY src" not in text and "COPY . " not in text  # code is never baked in
     assert digest in (DOCKER / "Dockerfile.phase3").read_text()

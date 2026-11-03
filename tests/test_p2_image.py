@@ -1,77 +1,13 @@
-"""Phase 2 image size and causal-conv1d (V0, 2026-11-01): the first push held two copies of the CUDA wheels both venvs
-pin (3.94 + 3.40 GB compressed), and causal-conv1d fell back silently because the image has no nvcc."""
+"""Phase 2 image: locks, layers and the CI build. 2026-11-03: one 5.61 GB layer (both venvs, hardlinked) kept
+restarting on weak hosts; each venv now installs in four layers."""
 
-import importlib.util
-import os
 import re
-import shutil
 import tomllib
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKER = ROOT / "experiments" / "phase2" / "docker"
 LOCKS = DOCKER / "locks"
-
-
-def load(name):
-    spec = importlib.util.spec_from_file_location(name, DOCKER / f"{name}.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_dedupe_hardlinks_identical_files_across_venvs(tmp_path):
-    dedupe = load("dedupe")
-    a, b = tmp_path / "vllm", tmp_path / "venv"
-    for root in (a, b):
-        (root / "nvidia/cublas/lib").mkdir(parents=True)
-        (root / "nvidia/cublas/lib/libcublas.so.13").write_bytes(b"same" * 300_000)
-    (a / "torch.so").write_bytes(b"2.13" * 300_000)  # same size, different bytes
-    (b / "torch.so").write_bytes(b"2.14" * 300_000)
-    (a / "small.py").write_text("x")
-    (b / "small.py").write_text("x")
-    (b / "link.so").symlink_to(b / "torch.so")
-    saved = dedupe.dedupe([a, b], min_size=1000)
-    assert saved == 1_200_000
-    assert os.path.samefile(a / "nvidia/cublas/lib/libcublas.so.13", b / "nvidia/cublas/lib/libcublas.so.13")
-    assert not os.path.samefile(a / "torch.so", b / "torch.so") and (b / "torch.so").read_bytes()[:4] == b"2.14"
-    assert not os.path.samefile(a / "small.py", b / "small.py")  # below min_size
-    assert (b / "link.so").is_symlink()
-    assert dedupe.dedupe([a, b], min_size=1000) == 0  # idempotent
-
-
-def test_dedupe_keeps_different_modes_apart(tmp_path):
-    dedupe = load("dedupe")
-    (tmp_path / "a").mkdir(), (tmp_path / "b").mkdir()
-    (tmp_path / "a/x").write_bytes(b"1" * 5000), (tmp_path / "b/x").write_bytes(b"1" * 5000)
-    os.chmod(tmp_path / "b/x", 0o755)
-    assert dedupe.dedupe([tmp_path / "a", tmp_path / "b"], min_size=1000) == 0
-
-
-def test_patch_arch_keeps_only_our_cards(tmp_path):
-    patch = load("patch_arch")
-    src = (
-        "def append_nvcc_threads(nvcc_extra_args):\n"
-        "    return nvcc_extra_args + [\"--threads\", \"4\"]\n"
-        "    else:\n"
-        "        cc_flag.append(\"-gencode\")\n"
-        "        cc_flag.append(\"arch=compute_75,code=sm_75\")\n"
-        "        cc_flag.append(\"-gencode\")\n"
-        "        cc_flag.append(\"arch=compute_80,code=sm_80\")\n"
-        "        if bare_metal_version >= Version(\"13.0\"):\n"
-        "            cc_flag.append(\"arch=compute_121,code=sm_121\")\n"
-        "\n"
-        "    # HACK: The compiler flag -D_GLIBCXX_USE_CXX11_ABI is set\n"
-    )
-    out = patch.patch(src)
-    assert "compute_75" not in out and "compute_121" not in out and "bare_metal_version >=" not in out
-    assert re.findall(r"arch=compute_\d+,code=\w+", out) == [
-        "arch=compute_80,code=sm_80", "arch=compute_120,code=sm_120", "arch=compute_120,code=compute_120"]
-    assert '["--threads", "1"]' in out and '"--threads", "4"' not in out  # V0: --threads 4 OOM-killed bwd at 4 GB
-    with pytest.raises(ValueError):
-        patch.patch("no gencode block here")
 
 
 def run_steps(text):
@@ -79,32 +15,20 @@ def run_steps(text):
     return [re.sub(r"\\\n\s*", " ", r) for r in re.findall(r"^RUN .*?(?<!\\)$", text, re.M | re.S)]
 
 
-def test_dockerfile_builds_both_venvs_in_one_layer_and_dedupes():
+def test_dockerfile_installs_each_venv_in_small_layers():
+    """No RUN builds both venvs (a 5.61 GB layer of both kept restarting on weak hosts); each venv takes four RUNs:
+    cuBLAS + cuDNN, the other CUDA wheels, torch, the rest."""
     text = (DOCKER / "Dockerfile.phase2").read_text()
-    phase2 = text[text.index(" AS phase2"):]
-    steps = [s for s in run_steps(phase2) if "/opt/venv" in s or "/opt/vllm" in s]
-    one = [s for s in steps if "uv venv" in s and "/opt/vllm" in s and "/opt/venv" in s and "dedupe.py" in s]
-    assert len(one) == 1, "both venvs and the dedupe must be one RUN: a hardlink across layers is a copy"
-
-
-def test_dockerfile_compiles_causal_conv1d_in_a_builder_and_fails_loudly():
-    text = (DOCKER / "Dockerfile.phase2").read_text()
-    assert "MISSING" not in text and "||" not in text  # the silent fallback hid the missing nvcc
-    builder = text[text.index(" AS ccd"):text.index(" AS sampler")]
-    assert 'cuda-toolkit[nvcc,cccl]==13.0.3' in builder  # torch 2.14.1 pins cuda-toolkit==13.0.3
-    assert re.search(r"sha256sum -c", builder) and "patch_arch.py" in builder
-    assert "CAUSAL_CONV1D_FORCE_BUILD=TRUE" in builder
-    assert "ln -sf libcudart.so.13 $CUDA_HOME/lib/libcudart.so" in builder  # the PyPI runtime ships only .so.13
-    phase2 = text[text.index(" AS phase2"):]
-    assert "COPY --from=ccd" in phase2 and "causal_conv1d" in phase2
-    assert "cuda-toolkit" not in phase2  # the compiler stays in the builder
-
-
-@pytest.mark.skipif(not shutil.which("bash"), reason="bash")
-def test_build_images_copies_the_helpers_into_the_context():
-    text = (DOCKER / "build_images.sh").read_text()
-    for name in ("dedupe.py", "patch_arch.py"):
-        assert name in text
+    steps = run_steps(text[text.index(" AS phase2"):])
+    assert not [s for s in steps if "/opt/venv/" in s and "/opt/vllm/" in s]
+    for venv, lock in (("/opt/venv/", "requirements.txt"), ("/opt/vllm/", "requirements-vllm.txt")):
+        mine = [s for s in steps if venv in s]
+        assert len(mine) == 4, venv
+        assert "nvidia-(cublas|cudnn)" in mine[0] and "(nvidia|cuda)-" in mine[1]
+        assert "(torch|torchvision|triton)" in mine[2]
+        assert all("--no-deps" in s for s in mine[:3]) and f"-r /opt/{lock}" in mine[3]
+    installs = " ".join(run_steps(text))
+    assert "causal" not in installs and "flash-linear-attention" not in installs and "dedupe" not in installs
 
 
 # The box never runs these: Mac dev tools, raw-DICOM fetchers, Phase 0's Qwen2.5-VL helper and its video decoder
