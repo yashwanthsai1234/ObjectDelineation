@@ -110,13 +110,13 @@ Access details are from the research notes and must be re-checked before downloa
 | 0 ✅ | Census and baselines | checker built; experts disagree; MedSAM makes structure errors IoU misses | Mac | 0 | done (`experiments/phase0/RESULTS*.md`) |
 | 1 ✅ | Reward and data | **Done: [experiments/phase1/RESULTS.md](experiments/phase1/RESULTS.md)** (plan: [PLAN.md](experiments/phase1/PLAN.md)). C++ polygon core, exact reward v4 (topology-conditional IoU, self-calibrated band, rater-frequency topology term, area guard), SFT target builder, full RIGA/LIDC data and splits, TRL integration, eval harness | Mac | 0 | Phase 1 exit gates in the plan, §7: all pass on the Mac (exactness and determinism also on x86-64 in Docker) or are re-registered / accepted with reasons (RESULTS §2); native x86 reward timing and the first CI run are Phase 2 entry steps |
 | 1c | Natural-image census | share of objects with holes or several parts in SA-1B / refCOCO | Mac | 0 | numbers for Track B's enriched split |
-| 2 | **SFT** | pick the smallest VLM that learns polygons; outer rings with all parts (A0) vs hole-aware polygons (A0′) | Vast | ~6 (plan: see Phase 2 PLAN §4.9) | ≥ 90 % valid; A0′ recovers holes that A0 cannot (parts are already expressible in A0; experiments/phase2/PLAN.md C2) |
+| 2 | **SFT** (in progress) | rung 1 LFM2.5-VL-450M failed the entry gates; next rung Qwen3-VL-2B with LoRA; then outer rings with all parts (A0) vs hole-aware polygons (A0′) | Vast | rung 2 about 3–5 (plan §4.9) | ≥ 90 % valid; A0′ recovers holes that A0 cannot (parts are already expressible in A0; experiments/phase2/PLAN.md C2) |
 | 3 | **GRPO, Track A (medical)** | arms A1–A9 plus best-of-8 and DPO, on rater sets | Vast | ~50 | decision on H1–H3 |
 | 4 | GRPO, Track B (natural images) | same arms with morphological bands | Vast | ~40 | generality of H1 |
 | 5 | Level 2 controller | checker steers training; overfitting and hacking alarms | Vast | ~10 | H4 |
 | 6 | Track C | 2 of vessels, buildings, floor plans; then video | Vast | ~20 | H5 |
 | 7 | 3D (2×2×2 bit-cubes) | 3D checker; whole-nodule reward on LIDC; 2.5D input arm (z−1, z, z+1 as RGB) | Mac → Vast | ~15 | certificate on all volumes; H6, H6b |
-| 8 | CUDA checker plus Track D lithography | GPU port of the checker, hash-identical to Python; lithography mask-cost proxy | cheap Vast card | ~20 (cheap) | identical hashes; Spearman ρ ≈ 1 against the reference shot counter |
+| 8 | CUDA checker (built now, with Phase 2) plus Track D lithography (later) | GPU port of the checker, hash-identical to Python (`cuda/`, `experiments/cuda_checker/`); lithography mask-cost proxy | cheap Vast card | ~20 (cheap) | identical hashes; Spearman ρ ≈ 1 against the reference shot counter |
 | 9 | Evaluation and release | held-out sites, deployment guard, data release, paper | both | ~5 | — |
 | | **Total** | | | **~150** | **Track A alone (2, 3, 5, 9): ~70** |
 
@@ -162,11 +162,11 @@ Phases 1c, 7 and 8 do not block training. They run on the Mac, or on a small GPU
 
 ### Phase 2: SFT
 
-**Model: the smallest VLM that passes the gate.** Short SFT runs (about 1 GPU-hour each) on SmolVLM-256M,
-SmolVLM-500M and Qwen3-VL-2B (the smallest Qwen3-VL). Keep the smallest that reaches ≥ 90 % valid polygons
-with IoU near MedSAM.
-
-SmolVLM's language model is not Qwen, so it can also serve as the non-Qwen control (Qwen bases gain even under random rewards).
+**Model: the smallest VLM that passes the gate.** The plan ([PLAN.md](experiments/phase2/PLAN.md)) screens rungs one at a time
+and stops at the first that passes. Rung 1, LFM2.5-VL-450M, was trained and failed the entry gates
+([RESULTS.md §1](experiments/phase2/RESULTS.md)). It is not trained again. The next rung is Qwen3-VL-2B with LoRA on one
+RTX 4090 (owner decision, 2026-11-02). SmolVLM stays a control only (its language model is not Qwen, so it can serve as
+the non-Qwen control: Qwen bases gain even under random rewards). "IoU near MedSAM" is reported, not gated.
 
 | | |
 |---|---|
@@ -289,6 +289,10 @@ Further 3D use (research Phase 3): Flow-GRPO on an ambiguous LIDC mask generator
 
 ### Phase 8: CUDA checker and lithography
 
+**The CUDA checker is built now** (owner decision, 2026-11-02), in parallel with Phase 2 and not blocking it: `cuda/` and
+`experiments/cuda_checker/` (CPU reference comparison on the Mac, then one GPU run on a cheap card). **Lithography stays
+later.**
+
 - Port the array-only design (bit-quads, edges, successor, pointer jumping, list ranking) to CUDA, building on the original code.
 - Then add the fill-rule polygon rasterizer: even-odd and nonzero in one pass.
 - **Equivalence**: identical ring hashes on all 67,009 Phase 0 masks.
@@ -350,7 +354,7 @@ The first Vast session measures the real step time and replaces these numbers.
 
 ## GPUs
 
-The GPU is chosen when we reach Phase 2, from the first session's measured memory use and speed. The tables are the starting estimate.
+Phase 2 uses one RTX 4090 for all rungs so far (LFM full fine-tuning; Qwen3-VL-2B with LoRA, since full fine-tuning needs about 34 GB). Later phases are chosen from measured memory and speed. The tables are the starting estimate.
 
 **Memory per model.**
 - Full fine-tuning needs about 16 bytes per parameter (weights, gradients, optimizer state).

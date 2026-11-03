@@ -16,6 +16,7 @@ seed-discordant flag (per-seed CIs on both sides of 0.50, §5.0) and seeds_both_
 
 import argparse
 import json
+from pathlib import Path
 
 import numpy as np
 from scipy import stats
@@ -65,7 +66,7 @@ def analyze(seeds: list[dict], seed: int = 0, boot: int = 2000) -> dict:
 
 def load(paths) -> list[dict]:
     """Each seed's probes.topology from select_ckpt --only topology's report.json, items checked equal."""
-    seeds = [json.loads(open(p).read())["probes"]["topology"] for p in paths]
+    seeds = [json.loads(Path(p).read_text())["probes"]["topology"] for p in paths]
     if any(s["ids"] != seeds[0]["ids"] for s in seeds):
         raise SystemExit(f"c2_analyze: the seeds sampled different topology probe items: {list(paths)}")
     return seeds
@@ -80,8 +81,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     res = analyze(load(a.seeds), a.seed, a.boot)
-    with open(a.out, "w") as fh:
-        json.dump(res, fh, indent=1)
+    Path(a.out).write_text(json.dumps(res, indent=1))
     print(json.dumps({k: res[k] for k in ("pooled", "clauses", "outcome", "conditional")}))
 
 

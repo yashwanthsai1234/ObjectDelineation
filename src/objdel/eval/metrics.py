@@ -160,13 +160,19 @@ def soft_dice(samples: np.ndarray, raters: np.ndarray) -> float:
     return float(np.mean([_dice(p >= t, r >= t) for t in THRESHOLDS]))
 
 
+def _joint_box(masks: np.ndarray) -> tuple[slice, slice] | None:
+    """Bounding box (row slice, column slice) of the foreground of all masks (n, H, W); None if there is none."""
+    rows, cols = np.flatnonzero(masks.any((0, 2))), np.flatnonzero(masks.any((0, 1)))
+    return (slice(rows[0], rows[-1] + 1), slice(cols[0], cols[-1] + 1)) if rows.size else None
+
+
 def _pairwise_iou(masks: np.ndarray) -> np.ndarray:
     """IoU of every pair of masks (n, H, W); two empty masks: 1. One matrix product over the distinct masks on their
     joint bounding box (duplicates, e.g. a deterministic model's K samples, are computed once)."""
-    rows, cols = np.flatnonzero(masks.any((0, 2))), np.flatnonzero(masks.any((0, 1)))
-    if not rows.size:
+    box = _joint_box(masks)
+    if box is None:
         return np.ones((len(masks), len(masks)))
-    crop = masks[:, rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1].reshape(len(masks), -1)
+    crop = masks[(slice(None), *box)].reshape(len(masks), -1)
     _, first, inv = np.unique(np.packbits(crop, axis=1), axis=0, return_index=True, return_inverse=True)
     x = crop[first].astype(np.float64)
     inter = x @ x.T  # exact: integer counts far below 2**53
@@ -212,10 +218,10 @@ def _nsd_best(drawn: np.ndarray, raters: np.ndarray, tau: float) -> np.ndarray:
     """Per sample, the maximum NSD over the raters, on the joint bounding box (distances are unchanged by the crop);
     each distinct mask once."""
     both = np.concatenate([drawn, raters])
-    rows, cols = np.flatnonzero(both.any((0, 2))), np.flatnonzero(both.any((0, 1)))
-    if not rows.size:
+    box = _joint_box(both)
+    if box is None:
         return np.ones(len(drawn))
-    crop = both[:, rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
+    crop = both[(slice(None), *box)]
     rs = [_surface(r) for r in crop[len(drawn):]]
     seen = {}
     for m in crop[:len(drawn)]:

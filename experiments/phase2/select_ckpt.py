@@ -172,8 +172,8 @@ def view_rows(view: Path, items: int | None = None, rl_only: bool = True) -> lis
 
 
 def stop_ids(path: Path, proc) -> set[int]:
-    """rewards.stop_ids of a checkpoint directory. Base weights may have no generation_config.json (Qwen3.5-0.8B,
-    whose eos is only text_config's): then the model config's, as from_pretrained falls back for a loaded model."""
+    """rewards.stop_ids of a checkpoint directory. Base weights may have no generation_config.json (eos only in
+    text_config): then the model config's, as from_pretrained falls back for a loaded model."""
     from types import SimpleNamespace
 
     from transformers import AutoConfig, GenerationConfig

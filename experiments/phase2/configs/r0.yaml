@@ -1,28 +1,26 @@
-# R0 box checks (PLAN §4.7 steps 3, 5-8; V0_V1.md §4.2): one run.sh chain after sync_up, stopped by the first failing
-# step except the "~" ones. {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
-#   run.sh v1 --cap-hours 1.5 experiments/phase2/configs/r0.yaml
-# Then on the Mac: pull.sh v1; xarch_hashes --compare build/x86/hashes-mac.json runs/v1/xarch_vast.json (step 5);
-# project_r1 on the timing manifests and hf-rate-*/hf_rate.json (step 9, the stop rule) before R1 starts.
+# R0 box checks for the Qwen3-VL-2B run (PLAN §4.7; V0_V1.md §4.2): one run.sh chain after sync_up, stopped by the
+# first failing step except the "~" ones. {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
+#   run.sh v1 --cap-hours 0.6 experiments/phase2/configs/r0.yaml
+# Then on the Mac: pull.sh v1; xarch_hashes --compare build/x86/hashes-mac.json runs/v1/xarch_vast.json;
+# project_r1 --model qwen3-vl-2b on the arm's manifest and hf-rate-qwen3vl/hf_rate.json (the stop rule) before R1 starts.
+# Not repeated: the LFM timing arms (workers 6, determinism off, decided).
 steps:
-  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]   # step 2
-  - [bash, experiments/phase2/docker/image_check.sh, "{rd}/image_check.json"]          # step 3: CUDA, bf16 peak, GDN route
-  - [-m, experiments.phase1.bench.xarch_hashes, --out, "{rd}/xarch_vast.json"]          # step 5: compared on the Mac
-  - [-m, experiments.phase2.k3_harness, --root, "{data}/prepared", --out, "{rd}/k3_idle.json"]   # step 6: K3/K4 idle
-  # step 7: parity on base weights; a failure selects the pre-decided HF-only sampler (D13), so it does not stop R0
-  - ["~", -m, experiments.phase2.r0_parity, --model, lfm2.5-vl-450m, --view, "{data}/eval_views/lidc-val-shifted",
-     --out, "{rd}/parity-lfm"]
-  - ["~", -m, experiments.phase2.r0_parity, --model, qwen3.5-0.8b, --view, "{data}/eval_views/lidc-val-shifted",
-     --out, "{rd}/parity-qwen35"]
-  # step 8: HF sampling rate on base weights (32 shifted-val items x K = 8; R1 / C2 sample with HF, D13) for project_r1
-  - ["~", -m, experiments.phase2.hf_rate, --model, lfm2.5-vl-450m, --view, "{data}/eval_views/lidc-val-shifted",
-     --out, "{rd}/hf-rate-lfm"]
-  - ["~", -m, experiments.phase2.hf_rate, --model, qwen3.5-0.8b, --view, "{data}/eval_views/lidc-val-shifted",
-     --out, "{rd}/hf-rate-qwen35"]
-  # step 8: G-vision base references (R1 refuses to start without them), 4 timing arms, the Qwen3.5 arm
-  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r1_lfm.yaml, --vision_reference_only, "true"]
-  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r1_qwen35.yaml, --vision_reference_only, "true"]
-  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_timing_w0_det_off.yaml]
-  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_timing_w6_det_off.yaml]
-  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_timing_w0_det_on.yaml]
-  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_timing_w6_det_on.yaml]
-  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_qwen35_arm.yaml]
+  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
+  - [bash, experiments/phase2/docker/image_check.sh, "{rd}/image_check.json"]          # CUDA, bf16 peak
+  - [-m, experiments.phase1.bench.xarch_hashes, --out, "{rd}/xarch_vast.json"]          # compared on the Mac
+  - [-m, experiments.phase2.k3_harness, --root, "{data}/prepared", --out, "{rd}/k3_idle.json"]   # K3/K4 idle
+  # Sampler parity for this model (D13): LFM failed it, Qwen3-VL may not. A pass lets R1 sample with vLLM (hours
+  # saved): flip `sampler: hf` to `vllm` in r1_qwen3vl2b.yaml. A failure does not stop R0.
+  - ["~", -m, experiments.phase2.r0_parity, --model, qwen3-vl-2b, --view, "{data}/eval_views/lidc-val-shifted",
+     --out, "{rd}/parity-qwen3vl"]
+  # HF sampling rate on base weights (32 shifted-val items x K = 8) for project_r1; a failure leaves project_r1 without a rate
+  - ["~", -m, experiments.phase2.hf_rate, --model, qwen3-vl-2b, --view, "{data}/eval_views/lidc-val-shifted",
+     --out, "{rd}/hf-rate-qwen3vl"]
+  # G-vision base reference (R1 refuses to start without it), then the 30-step timing arm (memory, s/step)
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r1_qwen3vl2b.yaml, --vision_reference_only, "true"]
+  - [-m, experiments.phase2.train_sft, --config, experiments/phase2/configs/r0_qwen3vl_arm.yaml]
+  # CUDA checker on the GPU (experiments/cuda_checker/RESULTS.md), last: `make cuda` reinstalls objdel. Results and any
+  # mismatch repro cases to {rd}/cuda_checker; a failure does not stop R0.
+  - ["~", bash, -c, "DATA={data}/checker_eval bash experiments/cuda_checker/run_box.sh; s=$?; mkdir -p {rd}/cuda_checker;
+     cp -r experiments/cuda_checker/results experiments/cuda_checker/RESULTS.md {rd}/cuda_checker/;
+     cp -r {data}/checker_eval/repro {rd}/cuda_checker/ 2>/dev/null; exit $s"]

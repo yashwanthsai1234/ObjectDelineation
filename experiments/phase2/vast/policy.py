@@ -3,7 +3,7 @@
 `watchdog.sh` is the only logic that runs on the box.
 
     offers.sh GPU [--riga] [--disk GB] [--pick OFFER_ID|top]   search (§4.2 filter, US/CA hosts), top 5; --pick saves it
-    launch.sh OFFER_ID RUN_ID [--cap-hours H] [--idle-minutes M] [--allow-parallel] [--owner-approved]
+    launch.sh OFFER_ID RUN_ID --config CONFIG.yaml [--cap-hours H] [--idle-minutes M] [--allow-parallel] [--owner-approved]
     sync_up.sh RUN_ID [--bundle lidc|riga] [--bundle-dir DIR] [--code-only]   code (git ls-files) + bundle, SHA-256
     run.sh RUN_ID MODULE|CONFIG.yaml [ARGS]                    timeout + tmux + heartbeat; a config runs its chain
     pull.sh [RUN_ID]                                           rsync runs/<id>/ to the Mac (not PULL_EXCLUDE), then
@@ -304,6 +304,10 @@ def cmd_launch(a) -> None:
         die(f"run_id must match {RUN_ID_RE.pattern}")
     if a.run_id in active():
         die(f"run {a.run_id} is still active (teardown.sh first)")
+    from experiments.phase2 import preflight
+
+    if why := preflight.refusal(Path(a.config)):  # the mandatory Mac preflight (make preflight): no pass, no rental
+        die(f"preflight gate: {why}")
     if not (o := load(f"offers/{a.offer}.json")):
         die(f"offer {a.offer} was not picked with offers.sh --pick")
     if why := reasons(o, o["_gpu"], o["_dataset"], o["_disk"]):
@@ -568,7 +572,8 @@ def cmd_sweep_orphans(a) -> None:
 FLAG = {"action": "store_true"}
 CLI = {  # subcommand -> its arguments, in order
     "offers": {"gpu": {}, "--riga": FLAG, "--pick": {}, "--disk": {"type": int, "default": 80}},
-    "launch": {"offer": {"type": int}, "run_id": {}, "--cap-hours": {"type": float, "default": 4},
+    "launch": {"offer": {"type": int}, "run_id": {}, "--config": {"required": True, "help": "the run's config.yaml"},
+               "--cap-hours": {"type": float, "default": 4},
                "--allow-parallel": FLAG, "--owner-approved": FLAG,
                "--idle-minutes": {"type": float, "default": 30, "help": "watchdog idle destroy after a pulled EXIT"}},
     "sync_up": {"run_id": {}, "--bundle": {"default": "lidc", "choices": ["lidc", "riga"]},

@@ -35,11 +35,9 @@ def _view(tmp_path, epochs):
 # ---------------------------------------------------------------- 1. deterministic mode (D24)
 
 
-def test_timing_arms_use_deterministic_not_full_determinism():
+def test_no_config_uses_full_determinism():
     for p in CONFIGS.glob("*.yaml"):
         assert "full_determinism" not in _yaml(p).get("sft", {}), p.name  # it sets CUDA_LAUNCH_BLOCKING=1
-    for p in CONFIGS.glob("r0_timing_*.yaml"):
-        assert _yaml(p).get("deterministic", False) is p.stem.endswith("_det_on"), p.name
 
 
 def test_deterministic_is_applied_before_anything_loads(TS, tmp_path, monkeypatch):
@@ -265,11 +263,14 @@ def test_branch_resume_refuses_a_checkpoint_missing_weights(TS, tmp_path, synthe
         _resume_branch(TS, tmp_path, synthetic_items, monkeypatch, base, tmp_path / "ckpt")
 
 
-@pytest.mark.parametrize("name", ["r1_qwen35", "r0_qwen35_arm"])
-def test_qwen35_trains_with_lora_after_r0(name):
-    """R0 (2026-11-02, RTX 4090): the Qwen3.5 arm's full FT at batch 8 OOMed at step 0 (> 23.4 GiB), so D6 selects
-    LM-only LoRA r16; the arm is rerun with it to measure s/step."""
-    assert _yaml(CONFIGS / f"{name}.yaml")["lora"] is True
+@pytest.mark.parametrize("name", ["r1_qwen3vl2b", "r0_qwen3vl_arm", "c2_a0p_seed2"])
+def test_qwen3_vl_configs_train_as_one_recipe(name):
+    """The 30-step arm and the C2 runs train exactly as R1 does: LM-only LoRA r16 (a 24 GB card cannot hold full
+    fine-tuning of 2B parameters), micro-batch 4 x 8 (152k-token vocabulary logits), checkpointing on (the model's
+    default, so no `gradient_checkpointing` key may switch it off)."""
+    c = _yaml(CONFIGS / f"{name}.yaml")
+    assert c["model"] == "qwen3-vl-2b" and "lora" not in c and "gradient_checkpointing" not in c["sft"]
+    assert (c["sft"]["per_device_train_batch_size"], c["sft"]["gradient_accumulation_steps"]) == (4, 8)
 
 
 # ---------------------------------------------------------------- 4. C2 depth from R2 (branches_from)
@@ -278,7 +279,7 @@ def test_qwen35_trains_with_lora_after_r0(name):
 def test_c2_configs_take_their_depth_from_g_probe():
     for p in C2:
         c = _yaml(p)
-        assert c["branches_from"] == "r1-lfm/g_probe/g_probe.json" and "branches" not in c, p.name
+        assert c["branches_from"] == "r1-qwen3vl2b/g_probe/g_probe.json" and "branches" not in c, p.name
         assert c["stages"] == ["train", "topology"], p.name
 
 

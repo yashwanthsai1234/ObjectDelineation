@@ -6,13 +6,16 @@ k = 1, 2, 3, counter-clockwise as displayed); "fh" (x mirrored), "fv" (y mirrore
 pixel lattice onto itself, so masks are transformed exactly and targets are rebuilt from them (build_target: the
 top-left tie rule is not mirror-symmetric, issue I7); vertices are never transformed.
 
-draw(item, rng, side=None): one D10 window: side S from a margin drawn uniformly from [8 px, 60 % of the union's
-extent] (S the smallest divisor of 1000 >= the need and >= min_side, at most max_side, scale 1), then an offset
-uniform over the windows that keep the union inside with CLEARANCE px and meet no other outlined nodule (rejection
-sampling, so uniform over the admissible set). neighbour_side: the eval "rescaled" view's S (plan §5.0).
+draw(item, rng, side=None): one D10 window: side S uniform over `sides(item)`, the policy side and its LADDER
+neighbours (scale 1), i.e. every side the shifted and rescaled eval views ask for (plan §5.0), then an offset uniform
+over the windows that keep the union inside with CLEARANCE px and meet no other outlined nodule (rejection sampling,
+so uniform over the admissible sides and offsets). neighbour_side: the eval "rescaled" view's S (plan §5.0).
+The side set is the eval views' on purpose: a margin draw ([8 px, 60 % of the union's extent], the R1 bundle) pinned
+every union under 23 px at S = 50 (min_side), so 27 % of the rescaled val's nodules fill < 10 % of the frame against
+0.5 % of those training rows.
 
-Context crops (C-VIEW): per item the image region every admissible window of every side up to the largest the scale
-draw can give (and the policy window) can show, clipped to the image: int16 Hounsfield units for LIDC (window
+Context crops (C-VIEW): per item the image region every admissible window of every side the scale draw can give
+(and the policy window) can show, clipped to the image: int16 Hounsfield units for LIDC (window
 jitter and noise act on raw HU, D10), uint8 RGB for RIGA. render(spec, context) = frame(item, offset, side, window)
 on the context with the spec's HU noise added, the op applied at frame resolution, then the Pillow upscale; with
 op "id", sigma 0 and the policy window and side it is the prepared PNG byte for byte (tests/test_p2_views.py).
@@ -28,13 +31,12 @@ import numpy as np
 
 from objdel.data import Item
 
-from .frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, centred, crowded, pixels, rgb, union_box
+from .frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, centred, crowded, pixels, policy_side, rgb, union_box
 
 OPS = ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")
 DATASET_OPS = {"lidc": OPS, "riga": ("id", "fh")}
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 LADDER = tuple(d for d in DIVISORS if 50 <= d <= 500)  # 50, 100, 125, 200, 250, 500
-MARGIN = (8, 60)  # scale jitter: margin from 8 px to 60 % of the union's extent (D10)
 WINDOW_JITTER = ((-300, 60), (1400, 80))  # CT level and width, centre and half-range in HU (D10)
 NOISE_MAX = 10.0  # HU, Gaussian sigma upper bound (D10)
 
@@ -68,24 +70,25 @@ def shift(item: Item, side: int, rng, tries: int = 200, box=None) -> tuple[int, 
     return None
 
 
-def _margins(box) -> tuple[int, int, int]:
-    """(union extent, smallest, largest margin) of the scale draw."""
-    extent = max(box[2] - box[0], box[3] - box[1])
-    return extent, MARGIN[0], max(MARGIN[0], -(-extent * MARGIN[1] // 100))
+def _neighbours(side: int) -> list[int]:
+    i = LADDER.index(side)
+    return [LADDER[j] for j in (i - 1, i + 1) if 0 <= j < len(LADDER)]
 
 
-def _side(extent: int, margin: int, dataset: str) -> int:
-    cfg = FRAMES[dataset]
-    return min(min(d for d in DIVISORS if d >= max(extent + 2 * margin, cfg.min_side)), cfg.max_side)
+def sides(item: Item, box=None) -> list[int]:
+    """The sides of the scale draw (D10): the policy side and its LADDER neighbours up to max_side, ascending."""
+    cfg = FRAMES[item.dataset]
+    S0 = policy_side(box or union_box(item), cfg)[1]
+    return sorted(s for s in (S0, *_neighbours(S0)) if s <= cfg.max_side)
 
 
 def draw(item: Item, rng, side: int | None = None, tries: int = 20) -> tuple[tuple[int, int], int] | None:
-    """((dx, dy), S) of one D10 window (module docstring; a fixed `side` draws the shift only), or None when no
-    admissible window was found."""
+    """((dx, dy), S) of one D10 window (module docstring; a fixed `side`, as in the eval views, draws the shift
+    only), or None when no admissible window was found."""
     box = union_box(item)
-    extent, m0, m1 = _margins(box)
+    choices = [side] if side else sides(item, box)
     for _ in range(tries):
-        S = side or _side(extent, int(rng.integers(m0, m1 + 1)), item.dataset)
+        S = side or choices[int(rng.integers(len(choices)))]
         if (off := shift(item, S, rng, box=box)) is not None:
             return off, S
     return None
@@ -94,8 +97,7 @@ def draw(item: Item, rng, side: int | None = None, tries: int = 20) -> tuple[tup
 def neighbour_side(item: Item, side: int, rng) -> tuple[tuple[int, int], int] | None:
     """The rescaled view (plan §5.0): S moved to a neighbouring LADDER divisor where an admissible shifted window
     exists (one drawn uniformly when both do), with a uniform shift; None when neither neighbour is admissible."""
-    i = LADDER.index(side)
-    for s in rng.permutation([LADDER[j] for j in (i - 1, i + 1) if 0 <= j < len(LADDER)]).tolist():
+    for s in rng.permutation(_neighbours(side)).tolist():
         if s <= FRAMES[item.dataset].max_side and (off := shift(item, s, rng)) is not None:
             return off, s
     return None
@@ -111,10 +113,9 @@ def jitter(rng) -> dict:
 
 
 def context_box(item: Item, policy_box) -> tuple[int, int, int, int]:
-    """The region (clipped to the image) that any admissible window up to max_side, or the policy window, shows."""
+    """The region (clipped to the image) that any admissible window of a `sides` side, or the policy window, shows."""
     x0, y0, x1, y1 = box = union_box(item)
-    extent, _, m1 = _margins(box)
-    S = _side(extent, m1, item.dataset)  # the largest side the scale draw can give
+    S = max(sides(item, box))  # the largest side the scale draw can give
     H, W = next(iter(item.masks.values())).shape[-2:]
     bx0, by0 = min(x1 + CLEARANCE - S, policy_box[0]), min(y1 + CLEARANCE - S, policy_box[1])
     bx1, by1 = max(x0 - CLEARANCE + S, policy_box[2]), max(y0 - CLEARANCE + S, policy_box[3])

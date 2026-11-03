@@ -44,7 +44,7 @@ def test_configs_parse_as_run_args(path):
     yaml = pytest.importorskip("yaml")  # PyYAML comes with the train extra (transformers)
     cfg = yaml.safe_load(path.read_text())
     args = TS.RunArgs(**cfg)
-    assert args.model in ("lfm2.5-vl-450m", "qwen3.5-0.8b") and args.view.startswith("views/")
+    assert args.model in ("lfm2.5-vl-450m", "qwen3-vl-2b") and args.view.startswith("views/")
     assert args.data_root == "data" and all(b > 0 for b in args.branches)
     assert args.sft.get("gradient_accumulation_steps", 4) * args.sft.get("per_device_train_batch_size", 8) == 32  # D5
 
@@ -52,8 +52,7 @@ def test_configs_parse_as_run_args(path):
 def test_config_set_complete():
     yaml = pytest.importorskip("yaml")
     names = {p.stem for p in CONFIGS}
-    assert {"r1_lfm", "r1_qwen35", "r0_qwen35_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1"} <= names
-    assert sum(n.startswith("r0_timing") for n in names) == 4 and sum(n.startswith("rdiag") for n in names) == 3
+    assert names == {"r1_lfm", "r1_qwen3vl2b", "r0_qwen3vl_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1"}
     assert yaml.safe_load((ROOT / "experiments/phase2/configs/c2_a0_seed1.yaml").read_text())["a0"] is True
 
 
@@ -279,23 +278,38 @@ def test_sample_vllm_refuses_below_90_percent_free():
 # ---------------------------------------------------------------- CPU smoke (slow)
 
 
-def _tiny_vlm(out: Path) -> Path:
-    """A random 2-layer LFM2-VL with the cached LFM2.5-VL-450M processor (no download)."""
+TINY = {  # model key -> (cached hub id, config fields of a random 2-layer model)
+    "lfm2.5-vl-450m": ("LiquidAI/LFM2.5-VL-450M", dict(
+        text=dict(hidden_size=32, intermediate_size=64, block_dim=32, block_ff_dim=64, conv_dim=32, conv_dim_out=32,
+                  num_hidden_layers=2, layer_types=["conv", "full_attention"], num_attention_heads=2, num_heads=2,
+                  num_key_value_heads=1),
+        vision=dict(hidden_size=32, intermediate_size=64, num_hidden_layers=1, num_attention_heads=2))),
+    "qwen3-vl-2b": ("Qwen/Qwen3-VL-2B-Instruct", dict(
+        text=dict(hidden_size=64, intermediate_size=128, num_hidden_layers=2, num_attention_heads=4,
+                  num_key_value_heads=2, head_dim=16,
+                  rope_parameters={"rope_type": "default", "rope_theta": 5e6, "mrope_interleaved": True,
+                                   "mrope_section": [2, 3, 3]}),
+        vision=dict(hidden_size=32, intermediate_size=64, depth=2, num_heads=2, out_hidden_size=64,
+                    deepstack_visual_indexes=[0, 1]))),
+}
+
+
+def _tiny_vlm(out: Path, model: str = "lfm2.5-vl-450m") -> Path:
+    """A random 2-layer model of `model` with its cached processor (no download)."""
     torch = pytest.importorskip("torch")
     from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
 
+    hub, dims = TINY[model]
     os.environ["HF_HUB_OFFLINE"] = "1"
     try:
-        cfg = AutoConfig.from_pretrained("LiquidAI/LFM2.5-VL-450M")
-        proc = AutoProcessor.from_pretrained("LiquidAI/LFM2.5-VL-450M")
+        cfg = AutoConfig.from_pretrained(hub)
+        proc = AutoProcessor.from_pretrained(hub)
     except OSError:
-        pytest.skip("LFM2.5-VL-450M config / processor not in the local HF cache")
-    cfg.text_config.update(dict(
-        hidden_size=32, intermediate_size=64, block_dim=32, block_ff_dim=64, conv_dim=32, conv_dim_out=32,
-        num_hidden_layers=2, layer_types=["conv", "full_attention"], num_attention_heads=2, num_heads=2,
-        num_key_value_heads=1))
-    cfg.vision_config.update(dict(hidden_size=32, intermediate_size=64, num_hidden_layers=1, num_attention_heads=2))
-    cfg.projector_hidden_size = 32
+        pytest.skip(f"{hub} config / processor not in the local HF cache")
+    cfg.text_config.update(dims["text"])
+    cfg.vision_config.update(dims["vision"])
+    if model == "lfm2.5-vl-450m":
+        cfg.projector_hidden_size = 32
     torch.manual_seed(0)
     AutoModelForImageTextToText.from_config(cfg).save_pretrained(out)
     proc.save_pretrained(out)
@@ -303,7 +317,11 @@ def _tiny_vlm(out: Path) -> Path:
 
 
 @pytest.mark.slow
-def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
+@pytest.mark.parametrize("name, select", [("lfm2.5-vl-450m", True), ("qwen3-vl-2b", False)],
+                         ids=["lfm-full-ft", "qwen3-vl-lora"])  # full FT; LoRA with checkpointing (D6)
+def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
+    """train_sft (G-vision at the branch points, WSD branches) then, for the LFM only, select_ckpt and g_probe: a random
+    Qwen3-VL never stops, so its 1,536-token samples would take hours on a CPU."""
     pytest.importorskip("trl")
     import yaml
 
@@ -311,18 +329,18 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     from objdel.data import store
     from objdel.train import dataset
 
-    model = _tiny_vlm(tmp_path / "tiny")
+    model = _tiny_vlm(tmp_path / "tiny", name)
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
     dataset.prepare(tmp_path / "store", tmp_path / "evalview", procs=1)  # eval-view layout
     run = tmp_path / "run"
-    cfg = {"model": "lfm2.5-vl-450m", "model_path": str(model), "view": str(tmp_path / "view"), "output_dir": str(run),
+    cfg = {"model": name, "model_path": str(model), "view": str(tmp_path / "view"), "output_dir": str(run),
            "branches": [0.5, 1.0], "steps_per_epoch": 8, "run_dir": str(tmp_path), "sft": CPU_SFT,
            "rolling_minutes": 1000.0,  # saves (and real G-vision checks) at the branch points only
-           "vision": {"prepared": str(tmp_path / "evalview"), "reference": "vision_ref/lfm2.5-vl-450m.json"}}
+           "vision": {"prepared": str(tmp_path / "evalview"), "reference": f"vision_ref/{name}.json"}}
     (tmp_path / "run.yaml").write_text(yaml.safe_dump(cfg))
     env = os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
-    ref = tmp_path / "vision_ref/lfm2.5-vl-450m.json"
+    ref = tmp_path / f"vision_ref/{name}.json"
     for extra in (["--vision_reference_only", "true"], []):  # R0's G-vision base reference, then the run
         tr = _module("experiments.phase2.train_sft", "--config", str(tmp_path / "run.yaml"), *extra, env=env)
         assert tr.returncode == 0, tr.stderr[-4000:]
@@ -332,27 +350,32 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     assert [v["step"] for v in man["vision"]] == [4, 8] and all(v["ratio"] > 0 for v in man["vision"])
     assert {p.name for p in (run / "branches").iterdir()} == {"e0.5", "e1"}
     assert not list((run / "stable").rglob("optimizer.pt"))  # stable checkpoints kept model-only
+    for d in ("branches/e0.5", "branches/e1", "stable/e1"):  # LoRA is merged: a plain model dir, no adapter files
+        files = {f.name for f in (run / d).iterdir()}
+        assert "model.safetensors" in files and not {f for f in files if f.startswith("adapter_")}, (d, files)
     ev = str(tmp_path / "evalview")
-    sel = _module("experiments.phase2.select_ckpt", "--run", str(run), "--shifted", ev, "--sampler", "hf", "--procs",
-                  "1", "--prepared", ev, "--vision", json.dumps({"prepared": ev, "reference": str(ref)}),  # run's block
-                  env=env)
-    assert sel.returncode == 0, sel.stderr[-4000:]
-    doc = json.loads((run / "select/selected.json").read_text())
-    assert set(doc["branches"]) == {"e0.5", "e1"} and doc["sampler"] == "hf" and doc["cuda_initialized"] is False
-    for b in ("e0.5", "e1"):
-        lines = (run / "select" / b / "shifted/completions.jsonl").read_text().splitlines()
-        assert lines and all(np.isfinite(json.loads(x)["k"]) for x in lines)
-    gates = json.loads((run / "select/gates.json").read_text())
-    assert "ci_lo/shifted/lidc/nodule" in gates["gates"]["G-prior-b"]["values"]
-    assert gates["gates"]["G-vision"]["values"]["ratio"] is not None  # measured on every branch
-    k16 = json.loads((run / "select/report.json").read_text())["k16"]["datasets"]["lidc"]
-    assert k16["samples"] == 16 * k16["items"] and "hm_iou" in k16["objects"]["nodule"]
-    best = run / "branches" / doc["selected"] if doc["selected"] else run / "branches/e1"
-    gp = _module("experiments.phase2.g_probe", "--model", "lfm2.5-vl-450m", "--ckpt", str(best), "--train", ev,
+    if select:
+        vision = json.dumps({"prepared": ev, "reference": str(ref)})  # the run's block
+        sel = _module("experiments.phase2.select_ckpt", "--run", str(run), "--shifted", ev, "--sampler", "hf",
+                      "--procs", "1", "--prepared", ev, "--vision", vision, env=env)
+        assert sel.returncode == 0, sel.stderr[-4000:]
+        doc = json.loads((run / "select/selected.json").read_text())
+        assert set(doc["branches"]) == {"e0.5", "e1"} and doc["sampler"] == "hf" and doc["cuda_initialized"] is False
+        for b in ("e0.5", "e1"):
+            lines = (run / "select" / b / "shifted/completions.jsonl").read_text().splitlines()
+            assert lines and all(np.isfinite(json.loads(x)["k"]) for x in lines)
+        gates = json.loads((run / "select/gates.json").read_text())
+        assert "ci_lo/shifted/lidc/nodule" in gates["gates"]["G-prior-b"]["values"]
+        assert gates["gates"]["G-vision"]["values"]["ratio"] is not None  # measured on every branch
+        k16 = json.loads((run / "select/report.json").read_text())["k16"]["datasets"]["lidc"]
+        assert k16["samples"] == 16 * k16["items"] and "hm_iou" in k16["objects"]["nodule"]
+    best = run / "branches" / (doc["selected"] or "e1") if select else run / "branches/e1"
+    gp = _module("experiments.phase2.g_probe", "--model", name, "--ckpt", str(best), "--train", ev,
                  "--probe", ev, "--out", str(run / "gp"), "--procs", "1", "--grpo", json.dumps(GRPO_SMOKE), env=env)
     assert gp.returncode == 0, gp.stderr[-4000:]
     res = json.loads((run / "gp/g_probe.json").read_text())
-    assert res["verdict"] in ("PASS", "FAIL", "INCONCLUSIVE") and res["lr"] == 5e-6 and res["steps"] == 20
+    assert res["verdict"] in ("PASS", "FAIL", "INCONCLUSIVE") and res["steps"] == 20
+    assert res["lr"] == (5e-5 if name == "qwen3-vl-2b" else 5e-6)
 
 
 GRPO_SMOKE = {"per_device_train_batch_size": 8, "gradient_accumulation_steps": 1, "per_device_eval_batch_size": 8,

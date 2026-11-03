@@ -3,7 +3,8 @@
 Plan: [PLAN.md](PLAN.md). Build log: [V0_V1.md](V0_V1.md). Issue ledger: [impl/ISSUES.md](impl/ISSUES.md).
 
 **Status: in progress.** R1 rung 1 (LFM2.5-VL-450M) is done and frozen below: trained, selected, judged; it fails the
-§5.1 entry gates. Later rungs are added as new sections; nothing in a frozen section changes. Hashes are SHA-256 (first
+§5.1 entry gates. The next rung is Qwen3-VL-2B (PLAN revision 9); its results will be a new section. Nothing in a frozen
+section changes; corrections are dated notes below it. Hashes are SHA-256 (first
 16 hex digits); `runs/` and `data/` are git-ignored, so the hashes pin the local files.
 
 ## 1. R1, rung 1: LFM2.5-VL-450M, full fine-tune (2026-11-02, frozen)
@@ -61,5 +62,17 @@ G-probe (R2) not run: §5.1 runs it only after the gates pass (`g_probe.json`: s
 | baselines | `data/eval/baselines_lidc_v1.json` (prior, MedSAM, MedSAM jitter; shifted + rescaled, every 2nd item) | `486ef19699d775bc` |
 | gallery | `runs/v1/r1-lfm/gallery/*.png` | — |
 
-**Open (decided outside this section).** The ladder's next rung (Qwen3.5-0.8B, LoRA) or a data change for small
-nodules in large crops; holes are C2 / Phase 3 work by design (§5.2).
+**Open (decided outside this section).** The ladder's next rung or a data change for small nodules in large crops; holes
+are C2 / Phase 3 work by design (§5.2). Decided on 2026-11-02: see the note below.
+
+### Correction note (2026-11-02, added after the freeze; the table above is not changed)
+
+1. **G-precision is not final.** The table shows the zero-shot probe. PLAN §5.1 says a zero-shot fail is followed by the
+   capacity run (20k-item probe training, about 0.3 GPU-h) and only that run decides the rung. It was not run. The verdict
+   "fail" holds for the zero-shot check only. Rung 1's other failures (G-geometry, G-topology-a) stand.
+2. **Why G-topology-a failed.** The simple controls were 6.3 % wrong: 4.3 % illegal, 1.3 % unreadable, 0.7 % with a false hole.
+   Hole oversampling explains at most the 0.7 %. The pre-registered fallback rule 1 (oversampling x4 to x1) therefore
+   targeted the wrong cause. It is dropped, with the rest of PLAN §6.3.
+3. **Cause of the geometry failure, data side.** Train rows with a nodule under 10 % of the crop were 0.5 %; the rescaled
+   exam view had 27 %. The scale jitter (D10) did not cover that view. The training data are rebuilt (`lidc-bundle-v2`).
+4. **Decisions.** The LFM is not trained again; Qwen3.5-0.8B is skipped; the next rung is Qwen3-VL-2B (PLAN revision 9).

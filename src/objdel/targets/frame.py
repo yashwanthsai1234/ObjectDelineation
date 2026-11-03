@@ -162,15 +162,20 @@ def upscale(image: np.ndarray, side: int | None) -> np.ndarray:
     return np.array(Image.fromarray(image).resize((side, side), Image.Resampling.BICUBIC))  # writable
 
 
+def policy_side(box, cfg: FrameConfig) -> tuple[int, int]:
+    """(f, S) of the policy frame of a union box: reduction factor and frame side (module docstring)."""
+    extent = max(box[2] - box[0], box[3] - box[1])
+    need = extent + 2 * max(cfg.margin_px, -(-extent * cfg.margin_pct // 100))
+    f = -(-need // cfg.max_side)
+    return f, min(d for d in DIVISORS if d >= max(-(-need // f), cfg.min_side))
+
+
 def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: int | None = None,
           window=None) -> Frame:
     cfg = cfg or FRAMES[item.dataset]
     stacks = {n: as_mask(s, 3) for n, s in item.masks.items()}
     ux0, uy0, ux1, uy1 = ub = union_box(item)
-    extent = max(ux1 - ux0, uy1 - uy0)
-    need = extent + 2 * max(cfg.margin_px, -(-extent * cfg.margin_pct // 100))
-    f = -(-need // cfg.max_side)
-    S = min(d for d in DIVISORS if d >= max(-(-need // f), cfg.min_side))
+    f, S = policy_side(ub, cfg)
     dx, dy = (int(v) for v in offset)
     moved = (dx, dy) != (0, 0) or side is not None and (side, f) != (S, 1)
     if side is not None:

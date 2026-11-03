@@ -1,0 +1,393 @@
+{
+ "host": {
+  "build": "cpu",
+  "devices": 0,
+  "gpu": "",
+  "machine": "Darwin arm64",
+  "cpu_count": 8,
+  "python": "3.12.11",
+  "numpy": "2.5.4",
+  "opencv": "5.0.0",
+  "commit": "f8aa4ef",
+  "date": "2026-11-02 21:55"
+ },
+ "correctness": {
+  "(a) fuzz polygons": {
+   "n": 8559,
+   "mismatches": 0,
+   "exact_rate": 1.0,
+   "per_category": {
+    "caps": {
+     "n": 9,
+     "mismatches": 0
+    },
+    "degenerate": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "grid": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "halfpixel": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "holes": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "huge": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "multipart": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "rect": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_degenerate": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_grid": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_halfpixel": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_rect": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_smallgrid": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_soup": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "ring_star": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "roles": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "rollout": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "soup": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "star": {
+     "n": 450,
+     "mismatches": 0
+    },
+    "tiny": {
+     "n": 450,
+     "mismatches": 0
+    }
+   },
+   "first_field": {},
+   "examples": []
+  },
+  "(a) fuzz masks": {
+   "n": 6024,
+   "mismatches": 0,
+   "exact_rate": 1.0,
+   "per_category": {
+    "checker": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "empty_0x0": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "empty_0x5": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "frame": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "full": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "pixel": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "random": {
+     "n": 6000,
+     "mismatches": 0
+    },
+    "saddle_6": {
+     "n": 3,
+     "mismatches": 0
+    },
+    "saddle_9": {
+     "n": 3,
+     "mismatches": 0
+    }
+   },
+   "first_field": {},
+   "examples": []
+  },
+  "(b) LIDC polygons": {
+   "n": 144133,
+   "mismatches": 0,
+   "exact_rate": 1.0,
+   "per_category": {
+    "eval_target": {
+     "n": 10331,
+     "mismatches": 0
+    },
+    "model_output": {
+     "n": 58028,
+     "mismatches": 0
+    },
+    "probe_target": {
+     "n": 1680,
+     "mismatches": 0
+    },
+    "train_target": {
+     "n": 74094,
+     "mismatches": 0
+    }
+   },
+   "first_field": {},
+   "examples": []
+  },
+  "(c) LIDC Phase 0 masks": {
+   "n": 37093,
+   "mismatches": 0,
+   "exact_rate": 1.0,
+   "per_category": {
+    "lidc_experts": {
+     "n": 1969,
+     "mismatches": 0
+    },
+    "lidc_full": {
+     "n": 35124,
+     "mismatches": 0
+    }
+   },
+   "first_field": {},
+   "examples": []
+  }
+ },
+ "manifest": {
+  "masks": {
+   "n": 37093,
+   "per_file": {
+    "data/fixtures/lidc_full.npz": 35124,
+    "data/fixtures/lidc_experts.npz": 1969
+   },
+   "holes": 474,
+   "multi_part": 283
+  },
+  "polygons": {
+   "n": 144133,
+   "unparsed_skipped": 815,
+   "per_src": {
+    "train_target": 74094,
+    "eval_target": 10331,
+    "probe_target": 1680,
+    "model_output": 58028
+   },
+   "illegal": 5876,
+   "illegal_model_outputs": 5876,
+   "with_holes": 4178
+  },
+  "files": {
+   "masks.npz": "6d08d00cfe361d685a5ab55baa3d6ac5e4658e5d96e4e2d5ac83cb1b00b86c5d",
+   "polygons.npz": "9519c36a46553441d121f05e65f6eebad14a153c0a686a558e4a5d74615a2e79"
+  }
+ },
+ "per_class": {
+  "legal": [
+   138257,
+   0
+  ],
+  "fewer_than_3_points": [
+   4,
+   0
+  ],
+  "zero_area": [
+   41,
+   0
+  ],
+  "self_crossing": [
+   3843,
+   0
+  ],
+  "vertex_pinch": [
+   2584,
+   0
+  ],
+  "collinear_overlap": [
+   667,
+   0
+  ],
+  "spike": [
+   1249,
+   0
+  ],
+  "ring_ring_crossing": [
+   861,
+   0
+  ],
+  "ring_ring_touching": [
+   584,
+   0
+  ],
+  "hole_outside_outer": [
+   284,
+   0
+  ],
+  "nested_holes": [
+   4,
+   0
+  ],
+  "nested_outers": [
+   723,
+   0
+  ],
+  "wrong_winding": [
+   952,
+   0
+  ]
+ },
+ "speed_polygons": [
+  {
+   "vertices": 16,
+   "crop": 64,
+   "batch": 1,
+   "gpucheck": 100847.1648053629,
+   "polycore_loop": 98560.98254229606,
+   "polycore_score_batch_1t": 110338.67219434654,
+   "polycore_score_batch_8t": 114285.60432133259
+  },
+  {
+   "vertices": 16,
+   "crop": 64,
+   "batch": 64,
+   "gpucheck": 62004.23847784729,
+   "polycore_loop": 54773.04231758108,
+   "polycore_score_batch_1t": 277406.9393201129,
+   "polycore_score_batch_8t": 157514.22514633214
+  },
+  {
+   "vertices": 16,
+   "crop": 64,
+   "batch": 1024,
+   "gpucheck": 66848.82097965437,
+   "polycore_loop": 30793.326906349226,
+   "polycore_score_batch_1t": 143762.1749350692,
+   "polycore_score_batch_8t": 195641.549441954
+  },
+  {
+   "vertices": 128,
+   "crop": 256,
+   "batch": 1,
+   "gpucheck": 5229.893049394859,
+   "polycore_loop": 30284.21046100041,
+   "polycore_score_batch_1t": 52287.58140398399,
+   "polycore_score_batch_8t": 37617.3233340851
+  },
+  {
+   "vertices": 128,
+   "crop": 256,
+   "batch": 64,
+   "gpucheck": 3861.6979917970025,
+   "polycore_loop": 15965.98843021891,
+   "polycore_score_batch_1t": 30377.348440021888,
+   "polycore_score_batch_8t": 45032.74757526868
+  },
+  {
+   "vertices": 128,
+   "crop": 256,
+   "batch": 1024,
+   "gpucheck": 3333.5580447206344,
+   "polycore_loop": 4916.965182647947,
+   "polycore_score_batch_1t": 12173.487075568999,
+   "polycore_score_batch_8t": 109623.75037877925
+  },
+  {
+   "vertices": 1000,
+   "crop": 512,
+   "batch": 1,
+   "gpucheck": 351.3781216019107,
+   "polycore_loop": 16460.906184576263,
+   "polycore_score_batch_1t": 17241.382125076743,
+   "polycore_score_batch_8t": 17518.198144769944
+  },
+  {
+   "vertices": 1000,
+   "crop": 512,
+   "batch": 64,
+   "gpucheck": 161.81205921076807,
+   "polycore_loop": 5520.880408053772,
+   "polycore_score_batch_1t": 7400.4840213747,
+   "polycore_score_batch_8t": 24136.147501012085
+  },
+  {
+   "vertices": 1000,
+   "crop": 512,
+   "batch": 1024,
+   "gpucheck": 137.41774708260485,
+   "polycore_loop": 2853.030950331014,
+   "polycore_score_batch_1t": 4571.048501321622,
+   "polycore_score_batch_8t": 36608.79961482922
+  }
+ ],
+ "speed_masks": [
+  {
+   "masks": "lidc",
+   "shape": [
+    22,
+    21
+   ],
+   "batch": 256,
+   "gpucheck": 3107.5456607398933,
+   "python_certify": 1711.4001140640005,
+   "opencv_contours_ccl": 41462.52573831422
+  },
+  {
+   "masks": "lidc",
+   "shape": [
+    22,
+    21
+   ],
+   "batch": 8192,
+   "gpucheck": 2006.2881002280312,
+   "python_certify": 2620.1236498841,
+   "opencv_contours_ccl": 54306.77161455622
+  },
+  {
+   "masks": "noise512",
+   "shape": [
+    512,
+    512
+   ],
+   "batch": 4,
+   "gpucheck": 4.674901729723784,
+   "python_certify": 1.1610422295082021,
+   "opencv_contours_ccl": 8.599219405670837
+  }
+ ],
+ "wall_s": 213.2020959854126
+}

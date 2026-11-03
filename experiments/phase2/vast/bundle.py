@@ -1,10 +1,11 @@
 """Data bundles for the Vast box (PLAN §4.4, D16): one deterministic tar per dataset with a SHA256SUMS manifest.
 
-    .venv/bin/python -I -m experiments.phase2.vast.bundle lidc|riga [--data data] [--out build/bundles]
+    .venv/bin/python -I -m experiments.phase2.vast.bundle lidc|riga [--view NAME ...] [--data data] [--out build/bundles]
 
 Members (sorted, mtime 0, uid/gid 0, mode 0644; SHA256SUMS first, so two builds of the same tree are byte-identical):
-`prepared/{manifest.json, <ds>/, images/<ds>/, caches/<ds>/}`, `views/<ds>-*/`, and `eval_views/<ds>-*/` (LIDC also
-`probe-*`; LIDC requires lidc-val-shifted, lidc-val-rescaled, probe-precision and probe-topology). Symlinks (also a
+`prepared/{manifest.json, <ds>/, images/<ds>/, caches/<ds>/}`, `views/<view>/` (the --view names, the run's training
+view; default every `<ds>-*`), and `eval_views/<ds>-*/` (LIDC also `probe-*`; LIDC requires lidc-val-shifted,
+lidc-val-rescaled, probe-precision and probe-topology, and `checker_eval/`, the CUDA checker eval set). Symlinks (also a
 symlinked view or prepared directory, BK4-14) and anything under data/raw are refused; `build_report.json` (wall clock)
 is skipped (BK1-7); `prepared/manifest.json` is rewritten to list only the bundled dataset's files (BK1-2). LIDC writes `bundle-lidc.tar`; RIGA streams the tar straight into
 `age -r <riga_recipient from .vast-allowlist>`, so only `bundle-riga.tar.age` touches the disk (age output is not
@@ -44,13 +45,15 @@ def manifest(ds: str, prep: Path) -> bytes:
     return (json.dumps(m, indent=1, sort_keys=True) + "\n").encode()
 
 
-def members(ds: str, data: Path) -> list[tuple[str, Path | bytes]]:
+def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[str, Path | bytes]]:
     if is_raw(data):
         die("refusing to bundle anything under data/raw")
     prep = data / "prepared"
     picked = [f for sub in (ds, f"images/{ds}", f"caches/{ds}") for f in walk(data, prep / sub, f"prepared/{sub}")]
     for kind in ("views", "eval_views"):
-        names = {p.name for p in (data / kind).glob(f"{ds}-*")}
+        names = set(views) if kind == "views" and views else {p.name for p in (data / kind).glob(f"{ds}-*")}
+        if missing := [n for n in names if not (data / kind / n).is_dir()]:
+            die(f"{kind} missing: {missing}")
         if kind == "eval_views" and ds == "lidc":
             if missing := [n for n in LIDC_EVAL if not (data / kind / n).is_dir()]:
                 die(f"eval views missing: {missing}")
@@ -58,6 +61,10 @@ def members(ds: str, data: Path) -> list[tuple[str, Path | bytes]]:
         if not names:
             die(f"no {ds} {kind} under {data / kind}")
         picked += [f for n in sorted(names) for f in walk(data, data / kind / n, f"{kind}/{n}")]
+    if ds == "lidc":  # the CUDA checker eval set (LIDC only; experiments/cuda_checker/prepare_data.py)
+        if not (data / "checker_eval" / "manifest.json").is_file():
+            die("data/checker_eval missing: run experiments.cuda_checker.prepare_data")
+        picked += walk(data, data / "checker_eval", "checker_eval")
     if bad := [p for _, p in picked if is_raw(p) or not p.is_file()]:
         die(f"refusing (data/raw or not a file): {bad[:3]}")
     return sorted([*picked, ("prepared/manifest.json", manifest(ds, prep))])
@@ -82,8 +89,8 @@ def write_tar(fileobj, files: list[tuple[str, Path | bytes]]) -> None:
                 t.addfile(info, f)
 
 
-def build(ds: str, data: Path, out: Path) -> Path:
-    files = members(ds, data)
+def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Path:
+    files = members(ds, data, views)
     out.mkdir(parents=True, exist_ok=True)
     target = out / ("bundle-riga.tar.age" if ds == "riga" else f"bundle-{ds}.tar")
     tmp = target.with_name(target.name + ".part")
@@ -108,10 +115,11 @@ def build(ds: str, data: Path, out: Path) -> Path:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dataset", choices=["lidc", "riga"])
+    ap.add_argument("--view", action="append", help="training view to ship (repeatable; default every <ds>-*)")
     ap.add_argument("--data", type=Path, default=ROOT / "data")
     ap.add_argument("--out", type=Path, default=ROOT / "build" / "bundles")
     a = ap.parse_args(argv)
-    build(a.dataset, a.data, a.out)
+    build(a.dataset, a.data, a.out, a.view)
 
 
 if __name__ == "__main__":

@@ -112,4 +112,24 @@ tests/ and experiments/, reporting 77 % for a library that is at 94 %).
 - Selection (D12): e2 ineligible (legal 87.0 % < 90 %, though pass rate 0.69 vs e1 0.48 on 256 items); e1 selected.
 - e1 gates: FAIL. G-format, G-signal, G-vision, G-prior-b pass; G-geometry fails (median IoU_tc shifted 0.495 < 0.60,
   rescaled 0.092, rescaled legal 71 %); G-precision and G-topology-a probes fail. R2 G-probe skipped (gates failed).
-- Branches on the Mac: runs/v1/r1-lfm/branches/{e0.5,e1,e2}. Open: why rescaled collapses; next rung (Qwen3.5 LoRA).
+- Branches on the Mac: runs/v1/r1-lfm/branches/{e0.5,e1,e2}. Open then: why rescaled collapses (answered below); next rung (decided below).
+
+## Rung 1 post-mortem and the revision 9 review (2026-11-02)
+
+Cause of the rung-1 failure and the owner decisions: RESULTS §1 (correction note) and PLAN revision 9. The review found
+these problems. "Fixed" means fixed in this change; owner names the file's owner.
+
+| id | sev | where | finding | state |
+|---|---|---|---|---|
+| R9-1 | high | D10 / `augment.draw` | Train scale jitter did not cover the rescaled exam: nodules under 10 % of the crop were 0.5 % of train rows, 27 % of the exam. No check compared the training distribution with the exam views before renting | data work: `lidc-bundle-v2`, `eval/coverage.py` |
+| R9-2 | high | PLAN §6.3 rule 1 | Hole oversampling x4 to x1 targets G-topology (a), but the control failures are 4.3 % illegal, 1.3 % unreadable, 0.7 % false holes | rule and its three configs dropped; `prereg.fallback_component` and its test removed |
+| R9-3 | high | G-precision | PLAN §5.1 says "zero-shot fail, then the capacity run". No runner config or chain stage trains it; `gates.phase2_entry` counts a missing capacity result as a fail. Rung 1's G-precision verdict is zero-shot only | RESULTS correction note. Open: build the capacity stage only if rung 2 fails zero-shot (`probes --n-train 20000` and the scorer slot exist) |
+| R9-4 | high | `hf_sample` default 16 items x 8 | Qwen3-VL-2B KV cache is 112 KB per token: 128 sequences x 1,856 tokens = 27 GB. One runaway answer (1,536 tokens) overflows a 24 GB card | fixed: default 8 items (13 GB) |
+| R9-5 | medium | `r1_*.yaml` micro-batch 8 | With a 152k-token vocabulary the logits of one long batch are about 12 GB; LFM (65k) peaked at 20.8 GiB without them | fixed: Qwen3-VL-2B uses 4 x 8; R0 arm measures the peak on the longest batch (length grouping puts it first) |
+| R9-6 | medium | `select_ckpt` chain | K = 16 and the rotated check are report-only but cost 26,016 of 62,944 samples (41 %): about 1.8 h of HF sampling for Qwen3-VL-2B | open: `select_ckpt` / `vast/policy.py` (PLAN §4.9) |
+| R9-7 | medium | `project_r1` | Stop value was 2 x a hand-written high estimate, blind to the credit | fixed: explicit stop value per model (5.0 h for Qwen3-VL-2B) |
+| R9-8 | medium | LoRA path | `train_sft` LoRA (branch decays, merge, G-vision on a PEFT model) was covered only by a tiny LFM with a flag, never by the real architecture | fixed: slow CPU smoke trains a tiny Qwen3-VL (LoRA, checkpointing, G-vision, merged branches) and runs G-probe on it; `hf_sample` batching is tested on it too (left padding, different image grids). `select_ckpt` on it is not smoke-tested (a random model never stops: 1,536 tokens x hours on a CPU) |
+| R9-9 | medium | G-probe on Qwen3-VL-2B | GRPO micro-batch 8 (= G), completions up to 1,536 tokens, 152k vocabulary, no gradient checkpointing in `grpo_config`: memory not estimated | open: measure before R2 (only if the gates pass) |
+| R9-10 | low | configs | `lora`, `force_lora`, `TEMPLATES`, `training_template`, `_BF16_BASE`, `qwen3.5-0.8b` entries, 4 timing arms, Qwen3.5 arm and rung configs, 3 R-diag configs: dead after the decisions | removed with their tests |
+| R9-11 | low | `docker/` | Image holds Qwen3.5-only extras (`fla`, `causal-conv1d`, `kernels`) and `image_check.sh` records the GDN route; `build_views --no-dihedral / --no-window-jitter` and `test_leave_one_out_views_change_only_that_component` served only R-diag | open: other owners; owner decision on the image diet (PLAN §8.3) |
+| R9-12 | low | docs | PLAN header, D1, D6, D13, D15, D22, run graph, §4.7–4.9, §6.1–6.4, §8; RESULTS "Open"; V0_V1 Part 4 and 5.7; EXECUTION waves; ROADMAP Phase 2 / 8 / GPUs; README status | fixed |

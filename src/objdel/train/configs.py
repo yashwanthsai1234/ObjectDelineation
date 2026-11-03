@@ -1,4 +1,4 @@
-"""TRL 1.16 SFT and GRPO configurations for the three screened models (plan D8, D10, D12; lab t_stack).
+"""TRL 1.16 SFT and GRPO configurations for the screened models (plan D8, D10, D12; lab t_stack).
 
 GRPO (D8): loss_type="dr_grpo" (constant length normaliser, no std scaling), clip epsilon 0.2 / epsilon_high 0.28
 (DAPO clip-higher), beta = 1e-3 from the start (with full fine-tuning a beta of 0 at init loads no reference
@@ -22,10 +22,12 @@ Generation: HF generate for SmolVLM, because TRL + vLLM re-expands SmolVLM/Idefi
 (issue #6294 and fix PR #6718 still open on 2026-10-19); vLLM colocate for LFM2.5-VL and Qwen3-VL, whose image
 placeholder expands to one contiguous run (lab t_stack T5).
 
-SFT: assistant-only loss (vision datasets need transformers >= 5.18), max_length=None (truncation can cut image
-tokens), no packing. Full fine-tuning lr 5e-5, LoRA r16 on all linear layers lr 5e-4 (lab T4). LoRA only for
-Qwen3-VL-2B (a 24 GB card does not hold full fine-tuning of 2B parameters with AdamW plus generation); SmolVLM-256M
-and LFM2.5-VL-450M are trained in full. GRPO learning rates: 1e-6 full, 1e-5 LoRA (lab K12 used 1e-5 with LoRA).
+SFT: assistant-only loss (vision datasets need transformers >= 5.18; TRL swaps in its own training template for
+the processor's chat template, qwen3_vl_training for Qwen3-VL and lfm2_training for LFM2.5-VL), max_length=None
+(truncation can cut image tokens), no packing. Full fine-tuning lr 5e-5, LoRA r16 on the language model's linear
+layers lr 5e-4 (lab T4). LoRA only for Qwen3-VL-2B (full fine-tuning with AdamW needs ~34 GB for weights, gradients
+and optimizer state, more than a 24 GB card has; LoRA with a frozen bf16 base peaks far below); SmolVLM-256M and
+LFM2.5-VL-450M are trained in full. GRPO learning rates: 1e-6 full, 1e-5 LoRA (lab K12 used 1e-5 with LoRA).
 Precision: bf16 exactly where transformers accepts it (transformers.utils.is_torch_bf16_gpu_available: CUDA with
 bf16 support, i.e. Ampere or newer such as the Vast cards, MPS on macOS >= 14, XPU / NPU / TPU), else fp32. TRL's
 own default (bf16=True unless fp16) makes TrainingArguments raise "Your setup doesn't support bf16/gpu" on a
@@ -55,7 +57,6 @@ import re
 from peft import LoraConfig
 from transformers.utils import is_torch_bf16_gpu_available
 from trl import GRPOConfig, SFTConfig
-from trl import chat_template_utils as ct
 
 from objdel.reward import REWARD_V4
 
@@ -65,29 +66,26 @@ MODELS = {
     "smolvlm-256m": "HuggingFaceTB/SmolVLM-256M-Instruct",
     "lfm2.5-vl-450m": "LiquidAI/LFM2.5-VL-450M",
     "qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct",
-    "qwen3.5-0.8b": "Qwen/Qwen3.5-0.8B",
 }
-MAX_COMPLETION = {"smolvlm-256m": 1536, "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536, "qwen3.5-0.8b": 1024}
-TEMPLATES = {"qwen3.5-0.8b": "qwen3_5_nothink_training"}  # TRL's assistant-only template the plan names
+MAX_COMPLETION = {"smolvlm-256m": 1536, "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
 _LORA = {"qwen3-vl-2b"}
-_BF16_BASE = {"qwen3.5-0.8b"}  # a frozen LoRA base may load in bf16 (B1); trained weights never do (S1-13)
 _GRAD_CKPT = {"qwen3-vl-2b"}
 # vision tower + projector of every model (recorded module names in tests/test_p2_train.py; lab/B1/common.VISION)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
 WARMUP, DECAY = 0.03, 0.15  # D5: of the stable run's steps; of the branch point's steps
 
 
-def dtype(model: str, lora: bool) -> str:
+def dtype(lora: bool) -> str:
     """from_pretrained(dtype=...). Full fine-tuning loads fp32 weights, AdamW's master copy, and trains under
     bf16 autocast (sft_config's bf16=True): updates below bf16 resolution are not lost (S1-13). Only a LoRA base,
-    which is frozen, loads in bf16, and only where B1 ran it so (Qwen3.5)."""
-    return "bfloat16" if lora and model in _BF16_BASE else "float32"
+    which is frozen, loads in bf16."""
+    return "bfloat16" if lora else "float32"
 
 
-def lora(model: str, force: bool = False) -> LoraConfig | None:
+def lora(model: str) -> LoraConfig | None:
     """LoRA r16 on the language model's linear layers (vision tower and projector excluded, D6 / D7) for the models
-    trained with adapters (or any model with force, e.g. Qwen3.5 if R0's peak memory says so), else None."""
-    if model not in _LORA and not force:
+    trained with adapters, else None (full fine-tuning)."""
+    if model not in _LORA:
         return None
     return LoraConfig(r=16, lora_alpha=32, target_modules="all-linear", exclude_modules=VISION, task_type="CAUSAL_LM")
 
@@ -103,8 +101,8 @@ def param_groups(model, base_lr: float) -> list[dict]:
 
 
 def sampling(model: str, api: str = "vllm") -> dict:
-    """Every sampling field explicit (D13): T 1 and no filter or penalty, overriding the cards' defaults (Qwen3.5
-    T 0.7 / top_p 0.8 / top_k 20 / presence 1.5; LFM T 0.1 / min_p 0.15 / repetition 1.05). One source of values,
+    """Every sampling field explicit (D13): T 1 and no filter or penalty, overriding the cards' defaults (Qwen3-VL
+    T 0.7 / top_p 0.8 / top_k 20; LFM T 0.1 / min_p 0.15 / repetition 1.05). One source of values,
     spelled for api "vllm" (SamplingParams), "grpo" (GRPOConfig) or "hf" (GenerationConfig), see as_names."""
     s = {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "min_p": 0.0, "repetition_penalty": 1.0,
          "presence_penalty": 0.0, "frequency_penalty": 0.0, "max_tokens": MAX_COMPLETION[model]}
@@ -128,22 +126,6 @@ def as_names(s: dict, api: str) -> dict:
     return out | {"do_sample": True} if api == "hf" else out
 
 
-def training_template(model: str, processor) -> str | None:
-    """The chat template SFTTrainer swaps in for assistant-only loss (TRL get_training_chat_template), checked
-    against TEMPLATES (Qwen3.5: non-thinking, prefix-consistent with the generation prompt, B1 §4.5, B5 Q2);
-    None for models without an entry (TRL's own choice)."""
-    if model not in TEMPLATES:
-        return None
-    want = getattr(ct, TEMPLATES[model] + "_chat_template")
-    try:
-        got = ct.get_training_chat_template(processor)
-    except ValueError:
-        got = None
-    if got != want:
-        raise ValueError(f"{model}: the processor's chat template does not map to TRL's {TEMPLATES[model]}")
-    return got
-
-
 def processor_kwargs(model: str, dataset: str) -> dict:
     """AutoProcessor.from_pretrained(MODELS[model], **processor_kwargs(model, dataset))."""
     size = {"size": {"longest_edge": {"riga": 1024, "lidc": 512}[dataset]}} if model == "smolvlm-256m" else {}
@@ -156,14 +138,14 @@ def _bf16(overrides: dict) -> bool:
 
 
 def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at: int | None = None,
-               lora: bool | None = None, **overrides) -> SFTConfig:
+               **overrides) -> SFTConfig:
     """The bundle's SFT settings (§6.0). Schedule (D5, WSD): linear warmup over 3 % of the stable run's `steps`,
     then constant; `branch_at=s` is a decay branch from the stable run's step-s checkpoint, decaying linearly to 0
     over 15 % of s (max_steps = s + that), identical to the stable run up to s. steps=None (smoke tests): 3 %
     warmup of max_steps, no decay. Loader (D4): group_by_length on the `length` column, 6 persistent workers,
     prefetch 2 (with dataloader_num_workers=0 neither, as TrainingArguments requires; BK3-1); gradient checkpointing
     only for Qwen3-VL-2B. bf16 is autocast over the fp32 weights of dtype() for full fine-tuning. lr: 5e-4 with
-    LoRA (lora=None: the model's default mode, as lora(model)), else 5e-5; an explicit learning_rate wins."""
+    LoRA (the models in _LORA), else 5e-5; an explicit learning_rate wins."""
     if branch_at is not None and steps is None:
         raise ValueError("a decay branch needs the stable run's steps")
     warmup = WARMUP if steps is None else round(WARMUP * steps)
@@ -173,7 +155,7 @@ def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at:
     workers = overrides.get("dataloader_num_workers", 6)
     return SFTConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "assistant_only_loss": True, "max_length": None,
-        "packing": False, "learning_rate": 5e-4 if (model in _LORA if lora is None else lora) else 5e-5,
+        "packing": False, "learning_rate": 5e-4 if model in _LORA else 5e-5,
         "lr_scheduler_type": "warmup_stable_decay", "warmup_steps": warmup, "lr_scheduler_kwargs": sched,
         **({"max_steps": stable_end + decay} if steps is not None else {}),
         "train_sampling_strategy": "group_by_length", "length_column_name": "length",
