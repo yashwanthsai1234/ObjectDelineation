@@ -163,16 +163,19 @@ Read from the timings and `cuda/gpucheck.cpp`; not yet profiled with Nsight Syst
    the host (the pages then migrate to the GPU on first touch), reads the results back through page faults, and frees
    everything. Fix: allocate device buffers once and reuse them, copy with `cudaMemcpyAsync` from pinned host memory
    on one stream, and synchronize once per call.
-2. **All-pairs edge tests.** `EdgePairs` runs one thread per edge, and each thread tests every later edge of its
-   shape: about E^2 / 2 tests per shape (5 x 10^5 at 1000 vertices) where polycore sorts the edges and sweeps. A batch
-   of 1024 shapes of 1000 vertices takes 847 ms. The loop is also triangular, so thread k does E - k tests and a warp
-   waits for its slowest lane. Fix: sort each shape's edges by x-min once and test only the overlapping window, or
-   bin edges in a coarse grid.
+2. **Brute-force loops in two steps.** `RasterRows` runs one thread per pixel row, and each row thread reads every
+   edge of its shape: H x E tests per shape (512 x 1000 = 5 x 10^5). `EdgePairs` runs one thread per edge, and each
+   thread tests every later edge of its shape: about E^2 / 2 tests (5 x 10^5 at 1000 vertices). polycore sorts the
+   edges and sweeps, so it skips most of these tests. A batch of 1024 shapes of 1000 vertices takes 847 ms: about
+   10^9 tests, each reading its edge from global memory (no shared-memory reuse). The raster thread also keeps a
+   256-entry array, which the compiler puts in local (off-chip) memory. Fix: one block per shape with its edges in
+   shared memory; for the raster, each edge writes its row crossings and the rows sort them; for the pairs, sort the
+   edges by x-min and test only the overlapping window.
 3. **Masks: 16 slot-sized buffers per call and log-depth pointer jumping.** Each mask allocates 16 arrays of
    4 (W + 1) (H + 1) entries (about 1 M per 512 x 512 mask) through the same managed path, then runs `jump_rounds`
    label and rank rounds, one kernel launch each. Item 1's fix applies here as well.
 
-Item 1 alone explains the small-batch numbers; items 1 and 2 together explain the large-polygon numbers. Fix order:
+Item 1 alone explains the small-batch numbers (a batch of 16 edges also fills 16 of the 4090's 16,384 cores); items 1 and 2 together explain the large-polygon numbers. Fix order:
 1, then 2, then rerun this eval on the next box (correctness must stay at zero mismatches).
 
 ### Box defect found and fixed in this run

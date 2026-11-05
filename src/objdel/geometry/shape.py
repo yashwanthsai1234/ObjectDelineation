@@ -23,6 +23,7 @@ References:
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import NamedTuple
 
 import numpy as np
@@ -80,3 +81,29 @@ def to_mask(parts: list[Part], W: int, H: int) -> Geometry:
     defects = {d: int(c) for d, c in zip(polycore.DEFECTS, counts, strict=True) if c}
     mask = np.asarray(polycore.rasterize(shape, W, H, G=GRID)["evenodd"], bool)
     return Geometry(mask, not defects, defects)
+
+
+def to_masks(objs: Sequence[tuple[list[Part], int, int]]) -> list[Geometry]:
+    """to_mask of many objects, each (parts, W, H), on the CUDA checker: one objdel._gpucheck.check_polygons call for
+    all of them. On a CUDA box it runs on the GPU (`make cuda`; policy.chain builds it before any scoring stage);
+    elsewhere the same source is compiled for the CPU. Masks and defects equal to_mask's (tests/test_gpu_scoring.py).
+    This is the reward's and the exam's checker; to_mask (polycore) stays for building targets and as the reference."""
+    from objdel import _gpucheck
+
+    rings, roles, shape_start = [], [], [0]
+    for parts, _, _ in objs:
+        first = len(rings)
+        for outer, holes in parts:
+            roles += [-1] + [len(rings) - first] * len(holes)  # a hole's role: its outer ring's index in the object
+            rings += [outer, *holes]
+        shape_start.append(len(rings))
+    xy, off = polycore.pack(rings)
+    dims = np.array([(W, H) for _, W, H in objs], np.int32).reshape(-1, 2)
+    r = _gpucheck.check_polygons(xy, off.astype(np.int64), np.array(shape_start, np.int64), np.array(roles, np.int32),
+                                 np.ascontiguousarray(dims[:, 0]), np.ascontiguousarray(dims[:, 1]), GRID)
+    out = []
+    for i, (_, W, H) in enumerate(objs):
+        defects = {d: int(c) for d, c in zip(polycore.DEFECTS, r["defects"][i], strict=True) if c}
+        mask = r["evenodd"][r["mask_start"][i]:r["mask_start"][i + 1]].reshape(H, W)
+        out.append(Geometry(mask, not defects, defects))
+    return out

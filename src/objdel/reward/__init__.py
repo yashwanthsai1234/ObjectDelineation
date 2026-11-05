@@ -13,6 +13,7 @@ from .score import (
     rater_answers,
     score_batch,
     score_completion,
+    score_many,
     score_mask,
     score_objects,
     sig_id,
@@ -22,5 +23,5 @@ from .spec import REWARD_V4, TERMS, fingerprint
 __all__ = [
     "NUMERIC", "REWARD_V4", "TERMS", "ExpertCache", "ObjectTerms", "StaleCacheError", "advantages_v4", "area_guard",
     "fingerprint", "legal_gate", "loo_bias", "rater_answers", "rl_eligible", "score_batch", "score_completion",
-    "score_mask", "score_objects", "sig_id", "topology_reward", "topology_valid", "voters",
+    "score_many", "score_mask", "score_objects", "sig_id", "topology_reward", "topology_valid", "voters",
 ]

@@ -39,7 +39,7 @@ import cv2
 import numpy as np
 
 from objdel.checker.topology import signature
-from objdel.geometry import parse, to_mask
+from objdel.geometry import parse, to_masks
 
 from .cache import ExpertCache, band_depth
 from .spec import REWARD_V4
@@ -117,35 +117,48 @@ def score_completion(text: str, truncated: bool, names: Sequence[str], caches: M
                      W: int, H: int) -> dict:
     """One completion -> {format_ok, legal, iou_tc, iou_min, f5, g_area, topo_any, topo_freq, sig_id, error,
     defects}."""
-    return score_objects(text, truncated, names, caches, W, H)[0]
+    return score_many([(text, truncated, names, caches, W, H)])[0][0]
 
 
 def score_objects(text: str, truncated: bool, names: Sequence[str], caches: Mapping[str, ExpertCache],
                   W: int, H: int) -> tuple[dict, dict[str, np.ndarray] | None, dict[str, ObjectTerms]]:
     """score_completion's terms plus, when the completion parses, its mask and ObjectTerms per object (else None, {}):
     one pass for callers that need both (objdel.eval)."""
-    answers = rater_answers(caches, names)
-    p = parse(text, names, truncated)
-    if not p.ok:
-        return _FAILED | {"error": p.error, "defects": {}}, None, {}
-    legal, defects, masks, terms = True, {}, {}, {}
-    for n in names:
-        g = to_mask(p.objs[n], W, H)
-        legal &= g.legal
-        for d, c in g.defects.items():
-            defects[d] = defects.get(d, 0) + c
-        masks[n], terms[n] = g.mask, score_mask(g.mask, caches[n])
-    ts = list(terms.values())
-    sigs = tuple(t.sig for t in ts)
-    joint = len(answers.get(sigs, ())) / sum(map(len, answers.values()))
-    return {"format_ok": 1.0, "legal": float(legal), "iou_tc": float(np.mean([t.iou_tc for t in ts])),
-            "iou_min": float(min(t.iou_tc for t in ts)), "f5": float(np.mean([t.f5 for t in ts])),
-            "g_area": float(np.mean([t.g_area for t in ts])), "topo_any": float(joint > 0), "topo_freq": joint,
-            "sig_id": sig_id(sigs), "error": "", "defects": defects}, masks, terms
+    return score_many([(text, truncated, names, caches, W, H)])[0]
+
+
+def score_many(jobs: Sequence[tuple]) -> list[tuple[dict, dict[str, np.ndarray] | None, dict[str, ObjectTerms]]]:
+    """score_objects of every job (tuples of its arguments), in order. The masks of all parsed objects come from one
+    objdel.geometry.to_masks call: one CUDA checker call per score_many."""
+    answers = [rater_answers(caches, names) for _, _, names, caches, _, _ in jobs]
+    parsed = [parse(text, names, truncated) for text, truncated, names, _, _, _ in jobs]
+    objs = [(p.objs[n], W, H) for p, (_, _, names, _, W, H) in zip(parsed, jobs, strict=True) if p.ok for n in names]
+    geoms = iter(to_masks(objs))
+    out = []
+    for p, a, (_, _, names, caches, _, _) in zip(parsed, answers, jobs, strict=True):
+        if not p.ok:
+            out.append((_FAILED | {"error": p.error, "defects": {}}, None, {}))
+            continue
+        legal, defects, masks, terms = True, {}, {}, {}
+        for n in names:
+            g = next(geoms)
+            legal &= g.legal
+            for d, c in g.defects.items():
+                defects[d] = defects.get(d, 0) + c
+            masks[n], terms[n] = g.mask, score_mask(g.mask, caches[n])
+        ts = list(terms.values())
+        sigs = tuple(t.sig for t in ts)
+        joint = len(a.get(sigs, ())) / sum(map(len, a.values()))
+        out.append(({"format_ok": 1.0, "legal": float(legal), "iou_tc": float(np.mean([t.iou_tc for t in ts])),
+                     "iou_min": float(min(t.iou_tc for t in ts)), "f5": float(np.mean([t.f5 for t in ts])),
+                     "g_area": float(np.mean([t.g_area for t in ts])), "topo_any": float(joint > 0),
+                     "topo_freq": joint, "sig_id": sig_id(sigs), "error": "", "defects": defects}, masks, terms))
+    return out
 
 
 def score_batch(jobs: Sequence[tuple], pool: Executor | None = None, chunk: int = REWARD_V4.group) -> dict:
-    """score_completion over jobs (tuples of its arguments) in input order, serially or on an executor.
+    """score_completion over jobs (tuples of its arguments) in input order, serially or on an executor. The masks
+    come from the CUDA checker: one call for a serial batch, one per executor chunk.
 
     Jobs go to the executor in chunks of `chunk` consecutive jobs (one prompt's group), so a process pool
     pickles each prompt's caches once per chunk (ExpertCache pickles as its rater masks, tau and T5). With a
@@ -163,4 +176,4 @@ def score_batch(jobs: Sequence[tuple], pool: Executor | None = None, chunk: int 
 
 
 def _score_chunk(jobs: Sequence[tuple]) -> list[dict]:
-    return [score_completion(*j) for j in jobs]
+    return [terms for terms, _, _ in score_many(jobs)]

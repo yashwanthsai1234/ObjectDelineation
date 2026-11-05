@@ -6,7 +6,8 @@ Checks, in order; the stage (DATA / CHECKER / CODE) with a failure is finished, 
   DATA     bundle integrity (rows.jsonl and context hashes, eval-view file hashes), patients shared between training and
            any exam (or probe) view, coverage of every exam view by the training view (objdel.eval.coverage), prompt
            text identical, CT window consistent, every training target parses and is legal for the reference checker
-  CHECKER  the CPU checker exactness tests, then tests/test_cuda_checker*.py when they exist
+  CHECKER  tests/test_cuda_checker*.py when they exist, the scorers on the CUDA checker (tests/test_gpu_scoring.py:
+           equal to polycore), then the CPU checker exactness tests (polycore: targets and the reference)
   CODE     a quick test subset, the CPU dry run of train -> select on a tiny model, the projected GPU hours and dollars
 Writes runs/preflight/<config>.json: pass per check and the code, data and config hashes. vast launch (policy.py)
 refuses unless that stamp passes and all three hashes still match: refusal(). Exit 0 = every check passed.
@@ -201,7 +202,7 @@ def pytest(*args: str) -> list[str]:
 
 def checker_tests(a, cfg) -> list[str]:
     cuda = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "tests").glob("test_cuda_checker*.py"))
-    return pytest("-m", "not slow", *cuda, *CHECKER_TESTS)  # CUDA equivalence first when present
+    return pytest("-m", "not slow", *cuda, "tests/test_gpu_scoring.py", *CHECKER_TESTS)  # CUDA equivalence first
 
 
 def projection(a, cfg) -> list[str]:

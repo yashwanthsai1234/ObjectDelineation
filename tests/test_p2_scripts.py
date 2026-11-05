@@ -361,6 +361,7 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
         assert sel.returncode == 0, sel.stderr[-4000:]
         doc = json.loads((run / "select/selected.json").read_text())
         assert set(doc["branches"]) == {"e0.5", "e1"} and doc["sampler"] == "hf" and doc["cuda_initialized"] is False
+        assert doc["checker"] == "cpu"  # the exam scored through objdel._gpucheck (its CPU build on this machine)
         for b in ("e0.5", "e1"):
             lines = (run / "select" / b / "shifted/completions.jsonl").read_text().splitlines()
             assert lines and all(np.isfinite(json.loads(x)["k"]) for x in lines)

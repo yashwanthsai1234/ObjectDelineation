@@ -1,6 +1,6 @@
 """Evaluation metrics of K sampled completions per item against its raters (plan §4.7, judge R10).
 
-Everything goes through the training path: objdel.reward.score_objects (score_completion's parse, polycore raster,
+Everything goes through the training path: objdel.reward.score_many (score_completion's parse, CUDA checker raster,
 size-filtered signatures and per-object score_mask, with the masks and per-object terms kept) and advantages_v4 on
 the item's ExpertCaches. Per item (`metrics`):
 
@@ -101,8 +101,8 @@ from objdel.reward import (
     advantages_v4,
     legal_gate,
     rater_answers,
+    score_many,
     score_mask,
-    score_objects,
     sig_id,
     topology_valid,
 )
@@ -243,17 +243,19 @@ def ged(samples: np.ndarray, raters: np.ndarray) -> float:
     return _ged(_pairwise_iou(np.concatenate([samples, raters])), len(samples))
 
 
-def _sample(text: str, truncated: bool, names, caches, W: int, H: int) -> dict:
-    """Training-path terms of one distinct completion, its per-object masks and terms (empty masks for a failed
-    sample), and its duplicate hash."""
-    terms, masks, objects = score_objects(text, truncated, names, caches, W, H)
-    if masks is None:
-        masks = {n: np.zeros((H, W), bool) for n in names}
-        objects = {n: score_mask(masks[n], caches[n]) for n in names}
-    h = hashlib.sha256(bytes([int(terms["format_ok"]), int(terms["legal"])]))
-    for n in names:
-        h.update(np.packbits(masks[n]).tobytes())
-    return {"terms": terms, "masks": masks, "objects": objects, "hash": h.hexdigest()}
+def _samples(keys: Sequence[tuple[str, bool]], names, caches, W: int, H: int) -> list[dict]:
+    """Training-path terms of distinct completions (text, truncated), from one score_many call: per completion its
+    terms, per-object masks and terms (empty masks for a failed sample), and its duplicate hash."""
+    out = []
+    for terms, masks, objects in score_many([(t, tr, names, caches, W, H) for t, tr in keys]):
+        if masks is None:
+            masks = {n: np.zeros((H, W), bool) for n in names}
+            objects = {n: score_mask(masks[n], caches[n]) for n in names}
+        h = hashlib.sha256(bytes([int(terms["format_ok"]), int(terms["legal"])]))
+        for n in names:
+            h.update(np.packbits(masks[n]).tobytes())
+        out.append({"terms": terms, "masks": masks, "objects": objects, "hash": h.hexdigest()})
+    return out
 
 
 def _native(x) -> list:
@@ -265,7 +267,8 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
             caches: Mapping[str, ExpertCache] | None = None, tokens: Sequence[int] | None = None,
             nsd_tau: Mapping[str, float] = NSD_TAU) -> dict:
     """Metrics of one item: K completions (texts) against the rater masks {name: bool (k, H, W)} on a W x H frame;
-    tokens: completion token counts (optional); nsd_tau: NSD tolerance per structure, px.
+    tokens: completion token counts (optional); nsd_tau: NSD tolerance per structure, px. The masks come from one
+    CUDA checker call per item (objdel.reward.score_many).
 
     Returns JSON-native values: per-sample lists under "samples" and "objects"[name], item scalars otherwise
     (module docstring). Raises ValueError for fewer than 2 raters or samples, or mismatched lengths."""
@@ -278,7 +281,8 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
     caches = caches or {n: ExpertCache.build(raters[n]) for n in names}  # ValueError for < 2 raters
     K, k = len(samples), caches[names[0]].k
     keys = [(str(t), tr) for t, tr in zip(samples, truncated, strict=True)]
-    distinct = {x: _sample(*x, names, caches, W, H) for x in dict.fromkeys(keys)}  # each distinct completion once
+    uniq = list(dict.fromkeys(keys))  # each distinct completion once
+    distinct = dict(zip(uniq, _samples(uniq, names, caches, W, H), strict=True))
     rows = [distinct[x] for x in keys]
     T = {t: np.array([r["terms"][t] for r in rows]) for t in NUMERIC}  # failed samples: every term 0 (reward rule)
     legal = legal_gate(T)  # the reward's legality gate; legal implies parsed
