@@ -88,7 +88,8 @@ class TRLReward:
     """caches(key) -> {object name: ExpertCache} for one prompt (objdel.train.dataset.cache_loader); stop_ids: the
     ids TRL treats as the end of a completion (`stop_ids(model, processor)`); pool: optional executor for
     score_batch, one map per reward call. Scoring processes use caches=serve.loader(root) with
-    pool=serve.fork_pool(4) (objdel.train.serve, plan D14): jobs then pickle as cache keys, not masks."""
+    pool=serve.fork_pool(4) (objdel.train.serve, plan D14): jobs then pickle as cache keys, not masks. Masks come
+    from the CUDA checker: one call per reward call without a pool, one per group on a pool."""
 
     def __init__(self, caches: Callable[[str], Mapping[str, ExpertCache]], stop_ids: Iterable[int],
                  pool: Executor | None = None):

@@ -422,8 +422,10 @@ def chain(cfg: Path, run_id: str) -> list[list[str]]:
     `steps:` (R0) lists them literally with {rd} / {data} filled in; a leading "~" lets a step fail without stopping
     the chain. Otherwise `stages:` (default train, select, probe; C2: train, topology) picks from train_sft, then on
     the saved branches select_ckpt (G-vision block, rotated view, `sampler:`) or its topology-only form, and g_probe;
-    a config without branches (timing arms) only trains. Box paths: data /workspace/data/lidc, runs
-    /workspace/runs/<id>."""
+    a config without branches (timing arms) only trains. A chain that scores (select, topology or probe) first builds
+    the CUDA checker (run_box.sh --build-only) and checks the scorers on it against polycore (tests/test_gpu_scoring.py),
+    so a failed build or a difference stops the chain before training: scoring runs on the GPU only. Box
+    paths: data /workspace/data/lidc, runs /workspace/runs/<id>."""
     import yaml
 
     c, data, rd = yaml.safe_load(Path(cfg).read_text()), "/workspace/data/lidc", f"/workspace/runs/{run_id}"
@@ -444,7 +446,9 @@ def chain(cfg: Path, run_id: str) -> list[list[str]]:
                   prep, "--probe", f"{ev}/lidc-val-shifted", "--out", f"{run}/g_probe"],
     }  # fmt: skip
     stages = c.get("stages", ["train", "select", "probe"]) if c.get("branches") or c.get("branches_from") else ["train"]
-    return [table[s] for s in stages]
+    gpu = [["bash", "-c", "bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -m pytest -q "
+                          "-p no:cacheprovider tests/test_gpu_scoring.py"]] if set(stages) - {"train"} else []
+    return gpu + [table[s] for s in stages]
 
 
 def vision_refs(cfg: Path, run_id: str) -> list[str]:

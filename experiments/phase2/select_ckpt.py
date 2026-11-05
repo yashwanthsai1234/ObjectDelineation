@@ -45,6 +45,7 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel import _gpucheck
 from objdel.eval import gates, metrics  # imported before the pool forks: a forked child must not import (macOS objc)
 from objdel.train import serve
 
@@ -203,7 +204,8 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
 
 
 def score_items(pool, rows: list[dict], done: dict, root: Path) -> tuple[list[dict], list[dict]]:
-    """_score on the pool for every row (done: {key: completions row}) -> (per-item metrics, signal groups)."""
+    """_score on the pool for every row (done: {key: completions row}) -> (per-item metrics, signal groups); one CUDA
+    checker call per item."""
     from objdel.eval import signal
 
     jobs = [(r["key"], done[r["key"]]["samples"], done[r["key"]]["truncated"], r["W"], r["H"], r["names"], str(root))
@@ -286,7 +288,7 @@ def topology_only(a, out: Path) -> int:
     if a.probes is None or len(names) != 1:
         raise SystemExit(f"select_ckpt --only topology: needs --probes and one branch, found {names}")
     topo = score_probe(a, a.run / "branches" / names[0], "topology", out / names[0])
-    dump(out / "report.json", {"only": "topology", "branch": names[0], "sampler": a.sampler, "k": a.k,
+    dump(out / "report.json", {"only": "topology", "branch": names[0], "sampler": a.sampler, "checker": _gpucheck.build(), "k": a.k,
                                "probes": {"topology": topo}})
     print(json.dumps({"branch": names[0], "pass": topo.get("pass")}))
     return 0
@@ -370,7 +372,7 @@ def main(argv=None) -> int:
         "run": str(a.run),  # g_probe --select reads the branches from here
         "selected": name, "reasons": why, "gates_branch": judged, "gates_pass": gate and gate["pass"],
         "gates_failed": [n for n, g in gate["gates"].items() if not g["pass"]] if gate else [],
-        "sampler": a.sampler, "k": a.k, "items": a.items,
+        "sampler": a.sampler, "checker": _gpucheck.build(), "k": a.k, "items": a.items,
         "branches": {x["name"]: {k: x[k] for k in ("depth", "eligible", "vision")}
                      | {"summary": x["summary"]["datasets"]["lidc"], "panel": x["panel"]["summary"]} for x in branches},
     })  # fmt: skip

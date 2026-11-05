@@ -902,7 +902,8 @@ def test_bundle_help():
 
 def test_run_chain_for_an_r1_config(E):
     cfg, box = ROOT / "experiments/phase2/configs/r1_lfm.yaml", "/workspace/data/lidc"
-    train, select, probe = P.chain(cfg, "r1")
+    gpu, train, select, probe = P.chain(cfg, "r1")
+    assert gpu[:2] == ["bash", "-c"] and "run_box.sh --build-only" in gpu[2]  # scoring runs on the CUDA checker
     assert train[:2] == ["-m", "experiments.phase2.train_sft"] and "--config" in train
     assert select[:2] == ["-m", "experiments.phase2.select_ckpt"] and "--no-vision" not in select
     vision = json.loads(after(select, "--vision"))
@@ -1026,23 +1027,23 @@ def test_c2_chain_trains_then_scores_only_the_topology_probe():
     rotated view reach select_ckpt."""
     c2 = _cfg("c2.yaml", "model: lfm2.5-vl-450m\noutput_dir: c2-x\nbranches_from: r1-lfm/g_probe/g_probe.json\n"
                          "stages: [train, topology]\nsampler: hf\nvision: off\n")  # fmt: skip
-    train, topo = P.chain(c2, "v1")
+    _, train, topo = P.chain(c2, "v1")
     assert train[:2] == ["-m", "experiments.phase2.train_sft"] and train[-1] == "build/test_cfgs/c2.yaml"
     assert topo[:2] == ["-m", "experiments.phase2.select_ckpt"] and after(topo, "--only") == "topology"
     assert after(topo, "--run") == "/workspace/runs/v1/c2-x" and after(topo, "--sampler") == "hf"
     assert "--shifted" not in topo and "--items" not in topo  # --only topology scores the whole probe
-    _, select, _ = P.chain(ROOT / "experiments/phase2/configs/r1_lfm.yaml", "v1")
+    _, _, select, _ = P.chain(ROOT / "experiments/phase2/configs/r1_lfm.yaml", "v1")
     assert after(select, "--rotated") == "/workspace/data/lidc/eval_views/lidc-val-rotated"
     assert after(select, "--sampler") == "hf"  # V1 R0: vLLM parity failed, D13 HF fallback
     assert after(select, "--items") == "256"  # D13: the HF path selects on a fixed 256-item shifted-val subset
     vllm = _cfg("vllm.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nsampler: vllm\nvision: off\n")
-    assert "--items" not in P.chain(vllm, "v1")[1]
+    assert "--items" not in P.chain(vllm, "v1")[2]
 
 
 def test_chain_passes_a_numeric_g_vision_reference_as_is():
     """RunArgs accepts R0's base distance as a number; select_ckpt reads a str reference as a file path."""
     num = _cfg("num.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nvision: {prepared: prepared, reference: 0.25}\n")
-    _, select, _ = P.chain(num, "v1")
+    _, _, select, _ = P.chain(num, "v1")
     assert json.loads(after(select, "--vision")) == {"prepared": "/workspace/data/lidc/prepared", "reference": 0.25}
 
 
