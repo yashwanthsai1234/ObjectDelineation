@@ -1,5 +1,6 @@
 """hf_push (box) and push_hf.sh (Mac): the selected branch to the private HF repo, nothing else, never RIGA."""
 
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -144,7 +145,7 @@ def test_push_hf_streams_the_token_over_stdin_only(monkeypatch):
     sent = _mac(monkeypatch, token())
     P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/r1_lfm.yaml"))
     ((cmd, stdin, what),) = sent
-    assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "keychain" in what
+    assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.secrets" in what
     assert "-m experiments.phase2.hf_push --run /workspace/runs/v1/r1-lfm" in cmd
     assert f"--repo {REPO} --revision r1-lfm" in cmd
 
@@ -174,3 +175,24 @@ def test_push_from_the_mac_takes_a_local_copy_of_the_view_with_the_same_hash(tmp
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     with pytest.raises(SystemExit, match="view_hash"):
         H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-lfm", "--view", str(local)])
+
+
+@pytest.mark.parametrize("license", ["apache-2.0", "other"])
+def test_base_card_without_a_license_file_uses_apache_only_when_the_card_declares_it(monkeypatch, license):
+    """Qwen/Qwen3-VL-2B-Instruct (2026-11-05) has no LICENSE file; its card says apache-2.0."""
+    import huggingface_hub
+    from huggingface_hub.errors import EntryNotFoundError
+
+    def missing(*a, **k):
+        raise EntryNotFoundError("no LICENSE")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", missing)
+    card = SimpleNamespace(data=SimpleNamespace(to_dict=lambda: {"license": license}))
+    monkeypatch.setattr(huggingface_hub.ModelCard, "load", lambda base, token=None: card)
+    if license == "other":
+        with pytest.raises(EntryNotFoundError):
+            H.base_card("x/y")
+        return
+    text, meta = H.base_card("Qwen/Qwen3-VL-2B-Instruct")
+    assert meta == {"license": "apache-2.0"} and b"Apache License" in text and b"Version 2.0, January 2004" in text
+    assert hashlib.sha256(text).hexdigest().startswith("cfc7749b")

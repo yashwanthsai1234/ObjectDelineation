@@ -253,7 +253,7 @@ def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
 def test_real_offer_from_v0_is_admissible():
     """A 3090 offer as Vast's search returned it at V0 (2026-11-01): `verification` is a string, and cpu_ram is in
     MB with 1 GB = 1000 MB (Vast returned cpu_ram 32160 for the query cpu_ram>=32). All offers failed before."""
-    o = json.loads((Path(__file__).parent / "p2_vast_offer_3090.json").read_text()) | {"geolocation": "Texas, US"}
+    o = json.loads((Path(__file__).parent / "vast_offer_3090.json").read_text()) | {"geolocation": "Texas, US"}
     assert P.reasons(o, "RTX_3090", "lidc") == []
     assert any("cpu_ram" in r for r in P.reasons(dict(o, cpu_ram=31999), "RTX_3090", "lidc"))
 
@@ -390,7 +390,7 @@ def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     assert (E.home / "invoices" / "r1.json").exists()
 
 
-CHARGES_V0 = json.loads((ROOT / "tests" / "p2_vast_charges_v0.json").read_text())
+CHARGES_V0 = json.loads((ROOT / "tests" / "vast_charges_v0.json").read_text())
 
 
 def test_billed_reads_the_instance_charges_vast_returned_in_v0():
@@ -782,7 +782,7 @@ def test_dockerfile_phase2():
     words = ("/opt/venv", "/opt/vllm", "train.txt", "vllm.txt", " age ", "openssh-server", "rsync", "tmux", digest)
     assert [w for w in words if w not in text] == []
     assert "COPY src" not in text and "COPY . " not in text  # code is never baked in
-    assert digest in (DOCKER / "Dockerfile.phase3").read_text()
+    assert digest in (DOCKER / "Dockerfile.vllm_native").read_text()
 
 
 # --- bundle builder (§4.4) ------------------------------------------------------------------------------------------

@@ -4,7 +4,9 @@
         --train data/prepared --probe data/eval_views/lidc-val-shifted --out runs/r1/g_probe
 
 configs.grpo_config with prereg.G_PROBE: LR 5e-6 (full FT) or 5e-5 (LoRA), constant, 20 steps, G = 8, 32 LIDC train
-prompts per step (disagreement items x4), HF generation, sampling from configs.sampling(model, "grpo") (D13);
+prompts per step (disagreement items x4), vLLM colocate generation (owner 2026-11-06, perf F1: HF generate of 256
+sequences needs 20-51 GiB of KV cache; needs the Phase 3 single-venv image, D15), sampling from
+configs.sampling(model, "grpo") (D13);
 TRLReward on the preloaded caches and a fork pool made before the model loads. Probe set: a seeded subset of `items`
 (128) shifted-val records (select_ckpt.view_rows), K = 8 through the trainer's own generation (sample.sample), twice
 at step 0 (the null, h0) and once at step 20; per item the raw composite R. Verdict: prereg.g_probe, step-0 legal =
@@ -79,12 +81,13 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
     proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
     peft = configs.lora(a.model)
     lr = G_PROBE["lr_lora"] if peft else G_PROBE["lr_full"]
-    over = {"learning_rate": lr, "max_steps": G_PROBE["steps"], "use_vllm": False, "save_strategy": "no"}
+    over = {"learning_rate": lr, "max_steps": G_PROBE["steps"], "save_strategy": "no"}
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
     funcs, _ = rewards.TRLReward(serve.loader(a.train), rewards.stop_ids(model, proc), pool=pool).funcs()
     trainer = GRPOTrainer(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, processing_class=proc,
                           peft_config=peft)  # fmt: skip
+    trainer.floating_point_ops = lambda inputs: 0  # perf F3: no per-micro-batch walk over ~2.5k PEFT modules
     t0 = time.time()
     s0a, s0b = (score(trainer, rows, a.probe.resolve(), pool, s) for s in SEEDS[:2])
     t1 = time.time()

@@ -1,26 +1,26 @@
 accelerate==1.15.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   peft
     #   trl
 agent-detector==2.0.0
     # via fastapi-cloud-cli
 aiohappyeyeballs==2.7.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   aiohttp
 aiohttp==3.14.5
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   fsspec
     #   vllm
 aiosignal==1.4.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   aiohttp
 annotated-doc==0.0.5
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   fastapi
     #   typer
 annotated-types==0.8.0
@@ -29,7 +29,7 @@ anthropic==2.3.0
     # via vllm
 anyio==4.15.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   anthropic
     #   httpx
     #   httpx2
@@ -51,13 +51,13 @@ astor==0.8.1
     # via depyf
 attrs==26.1.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   aiohttp
     #   jsonschema
     #   referencing
 av==19.0.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   qwen-vl-utils
 blake3==1.0.11
     # via vllm
@@ -67,7 +67,7 @@ cbor2==6.2.0.post1
     # via vllm
 certifi==2026.7.22
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   httpcore
     #   httpx
     #   requests
@@ -76,11 +76,11 @@ cffi==2.1.1
     # via cryptography
 charset-normalizer==3.5.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   requests
 click==8.5.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   flashinfer-python
     #   huggingface-hub
     #   rich-toolkit
@@ -93,11 +93,11 @@ compressed-tensors==0.17.0
     # via vllm
 contourpy==1.4.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   matplotlib
 coverage==7.16.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pytest-cov
 cryptography==50.0.2
     # via pyjwt
@@ -130,11 +130,11 @@ cuda-toolkit==13.0.3.0
     # via torch
 cycler==0.12.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   matplotlib
 datasets==5.1.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   trl
 depyf==0.20.0
     # via vllm
@@ -142,7 +142,7 @@ detect-installer==0.2.1
     # via fastapi-cloud-cli
 dill==0.4.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   datasets
     #   depyf
     #   multiprocess
@@ -175,7 +175,7 @@ fastsafetensors==0.5.0
     # via vllm
 filelock==4.2.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   datasets
     #   huggingface-hub
     #   torch
@@ -184,16 +184,16 @@ flashinfer-python==0.7.0.post1
     # via vllm
 fonttools==4.67.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   matplotlib
 frozenlist==1.8.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   aiohttp
     #   aiosignal
 fsspec==2026.7.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   datasets
     #   huggingface-hub
     #   torch
@@ -205,19 +205,19 @@ grpcio==1.85.1
     # via opentelemetry-exporter-otlp-proto-grpc
 h11==0.16.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   httpcore
     #   httpcore2
     #   uvicorn
 hf-xet==1.7.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   huggingface-hub
 httpcore==1.0.9
     # via httpx
 httpcore2==2.13.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   httpx2
 httptools==0.9.0
     # via uvicorn
@@ -228,14 +228,14 @@ httpx==0.28.1
     #   model-hosting-container-standards
 httpx2==2.13.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   anthropic
     #   huggingface-hub
     #   mcp
     #   openai
 huggingface-hub==2.2.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   accelerate
     #   datasets
     #   peft
@@ -246,10 +246,10 @@ huggingface-hub==2.2.0
 humming-kernels==0.1.17
     # via vllm
 hypothesis==6.170.2
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 idna==3.20
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   anyio
     #   email-validator
     #   httpx
@@ -260,11 +260,11 @@ ijson==3.6.0
     # via vllm
 imageio==2.38.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   scikit-image
 iniconfig==2.3.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pytest
 instanttensor==0.2.2
     # via vllm
@@ -272,7 +272,7 @@ interegular==0.3.3
     # via lm-format-enforcer
 jinja2==3.1.6
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   fastapi
     #   humming-kernels
     #   torch
@@ -292,19 +292,19 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 kiwisolver==1.5.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   matplotlib
 lark==1.2.2
     # via vllm
 lazy-loader==0.6
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   scikit-image
 llguidance==1.7.6
     # via vllm
 llvmlite==0.50.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   numba
 lm-format-enforcer==0.11.3
     # via vllm
@@ -312,15 +312,15 @@ loguru==0.7.3
     # via compressed-tensors
 markdown-it-py==4.2.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   rich
 markupsafe==3.0.4
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   jinja2
 matplotlib==3.11.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pylidc
 mcp==2.3.0
     # via vllm
@@ -328,7 +328,7 @@ mcp-types==2.3.0
     # via mcp
 mdurl==0.1.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   markdown-it-py
 mistral-common==1.13.0
     # via vllm
@@ -338,21 +338,21 @@ model-hosting-container-standards==0.1.16
     # via vllm
 mpmath==1.3.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   sympy
 msgspec==0.22.0
     # via vllm
 multidict==7.1.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   aiohttp
     #   yarl
 multiprocess==0.70.19
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   datasets
 nanobind==3.1.0
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 nccl-extensions==0.1.0
     # via flashinfer-python
 nccl4py==0.6.0
@@ -361,7 +361,7 @@ nccl4py==0.6.0
     #   nccl-extensions
 networkx==3.7
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   scikit-image
     #   torch
 ninja==1.13.2
@@ -370,13 +370,13 @@ ninja==1.13.2
     #   vllm
 numba==0.68.0
     # via
-    #   --override experiments/phase2/docker/locks/p3.override
-    #   -r build/images/ctx/p3.in
+    #   --override experiments/phase2/docker/locks/vllm_native.override
+    #   -r build/images/ctx/vllm_native.in
     #   vllm
 numpy==2.5.4
     # via
-    #   --override experiments/phase2/docker/locks/p3.override
-    #   -r build/images/ctx/p3.in
+    #   --override experiments/phase2/docker/locks/vllm_native.override
+    #   -r build/images/ctx/vllm_native.in
     #   accelerate
     #   contourpy
     #   cuda-core
@@ -486,7 +486,7 @@ openai==3.42.0
     # via vllm
 opencv-python-headless==5.0.0.93
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   mistral-common
     #   vllm
 opentelemetry-api==1.45.2
@@ -539,7 +539,7 @@ outlines-core==0.2.14
     # via vllm
 packaging==26.3
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   accelerate
     #   datasets
     #   flashinfer-python
@@ -558,20 +558,20 @@ packaging==26.3
     #   trl
 pandas==3.0.6
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   datasets
     #   trl
 partial-json-parser==0.2.1.1.post7
     # via vllm
 pathspec==1.1.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   scikit-build-core
 peft==0.21.2
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 pillow==13.0.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   imageio
     #   matplotlib
     #   mistral-common
@@ -581,7 +581,7 @@ pillow==13.0.0
     #   vllm
 pluggy==1.7.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pytest
     #   pytest-cov
 prometheus-client==0.26.0
@@ -592,7 +592,7 @@ prometheus-fastapi-instrumentator==8.1.0
     # via vllm
 propcache==0.5.4
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   aiohttp
     #   yarl
 protobuf==7.36.2
@@ -606,7 +606,7 @@ protobuf==7.36.2
     #   vllm
 psutil==7.2.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   accelerate
     #   peft
     #   tilelang
@@ -616,7 +616,7 @@ py-cpuinfo==9.0.0
     # via vllm
 pyarrow==26.0.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   datasets
     #   trl
 pybase64==1.5.1
@@ -652,32 +652,32 @@ pydantic-settings==2.16.2
     # via fastapi
 pydicom==3.0.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pylidc
 pygments==2.21.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pytest
     #   rich
 pyjwt==2.15.1
     # via mcp
 pylidc==0.2.3
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 pynvvideocodec==2.0.4
     # via vllm
 pyparsing==3.3.3
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   matplotlib
 pytest==9.1.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pytest-cov
 pytest-cov==7.1.0
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 python-dateutil==2.9.0.post0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   matplotlib
     #   pandas
 python-dotenv==1.2.4
@@ -692,7 +692,7 @@ python-multipart==0.0.33
     #   mcp
 pyyaml==6.0.3
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   accelerate
     #   datasets
     #   huggingface-hub
@@ -707,20 +707,20 @@ pyzmq==27.2.0
 quack-kernels==0.6.5
     # via vllm
 qwen-vl-utils==0.0.14
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
 regex==2026.9.29
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   tiktoken
     #   transformers
     #   vllm
 requests==2.34.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   flashinfer-python
     #   mistral-common
     #   opentelemetry-exporter-http-transport
@@ -730,7 +730,7 @@ requests==2.34.2
     #   vllm
 rich==15.0.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   rich-toolkit
     #   typer
 rich-toolkit==0.20.6
@@ -744,24 +744,24 @@ rpds-py==2026.9.1
     #   jsonschema
     #   referencing
 ruff==0.17.1
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 safetensors==0.8.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   accelerate
     #   humming-kernels
     #   peft
     #   transformers
     #   vllm
 scikit-build-core==1.1.1
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 scikit-image==0.26.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pylidc
 scipy==1.18.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pylidc
     #   scikit-image
 sentencepiece==0.2.2
@@ -777,11 +777,11 @@ setuptools==80.10.2
     #   vllm
 shellingham==1.5.4
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   typer
 six==1.17.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   python-dateutil
     #   vllm
 sniffio==1.3.1
@@ -790,11 +790,11 @@ sniffio==1.3.1
     #   openai
 sortedcontainers==2.4.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   hypothesis
 sqlalchemy==2.1.5
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   pylidc
 sse-starlette==3.6.0
     # via mcp
@@ -810,7 +810,7 @@ supervisor==4.3.0
     # via model-hosting-container-standards
 sympy==1.14.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   torch
 tabulate==0.10.0
     # via
@@ -818,7 +818,7 @@ tabulate==0.10.0
     #   humming-kernels
 tifffile==2026.10.15
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   scikit-image
 tiktoken==0.14.0
     # via
@@ -828,7 +828,7 @@ tilelang==0.1.12
     # via vllm
 tokenizers==0.23.3
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   transformers
     #   vllm
 tokenspeed-mla==0.2.15
@@ -837,7 +837,7 @@ tokenspeed-triton==3.9.10.post20261028
     # via tokenspeed-mla
 torch==2.13.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   accelerate
     #   compressed-tensors
     #   flashinfer-python
@@ -849,6 +849,7 @@ torch==2.13.0
     #   tokenspeed-mla
     #   torch-c-dlpack-ext
     #   torchvision
+    #   trl
     #   vllm
     #   xgrammar
 torch-c-dlpack-ext==0.1.5
@@ -861,11 +862,11 @@ torchcodec==0.17.0
     # via vllm
 torchvision==0.28.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   vllm
 tqdm==4.70.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   datasets
     #   flashinfer-python
     #   huggingface-hub
@@ -876,7 +877,7 @@ tqdm==4.70.1
     #   vllm
 transformers==5.19.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   compressed-tensors
     #   peft
     #   trl
@@ -887,23 +888,23 @@ triton==3.7.1
     #   humming-kernels
     #   torch
     #   xgrammar
-trl==1.16.0
-    # via -r build/images/ctx/p3.in
+trl==1.17.1
+    # via -r build/images/ctx/vllm_native.in
 truststore==0.10.5
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   httpcore2
     #   httpx2
 typer==0.27.3
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   fastapi-cli
     #   fastapi-cloud-cli
     #   fastsafetensors
     #   transformers
 typing-extensions==4.16.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   aiohttp
     #   aiosignal
     #   anthropic
@@ -947,7 +948,7 @@ typing-inspection==0.4.4
     #   pydantic-settings
 urllib3==2.8.0
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   requests
     #   sentry-sdk
 uvicorn==0.54.0
@@ -959,7 +960,7 @@ uvicorn==0.54.0
 uvloop==0.23.0
     # via uvicorn
 vllm==0.32.0
-    # via -r build/images/ctx/p3.in
+    # via -r build/images/ctx/vllm_native.in
 watchfiles==1.3.0
     # via
     #   uvicorn
@@ -970,11 +971,11 @@ xgrammar==0.2.8
     # via vllm
 xxhash==4.0.2
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   datasets
 yarl==1.25.1
     # via
-    #   -r build/images/ctx/p3.in
+    #   -r build/images/ctx/vllm_native.in
     #   aiohttp
 z3-solver==4.15.4.0
     # via tilelang

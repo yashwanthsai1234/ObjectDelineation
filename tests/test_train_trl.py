@@ -295,7 +295,7 @@ def scripted_trainer(char_model, out, policy, steps=2, **kw):
             i = seen[k] = seen.get(k, -1) + 1
             text, eos = policy[0](k)[i % G]
             ids.append(tok(text, add_special_tokens=False)["input_ids"] + ([tok.eos_token_id] if eos else []))
-        return ids, None
+        return ids, None, None  # (completion_ids, logprobs, sampling_mask): TRL 1.17
 
     trainer._generate_and_score_completions = hook
     trainer._generate_single_turn = generate
@@ -436,8 +436,9 @@ def test_sampler_returns_k_completions_per_row_with_trls_truncation_rule(char_mo
     tok, key = trainer.processing_class, [None]
 
     def generate(prompt_ids, *a, **kw):  # one call of 16 prompts (per_device_eval_batch_size)
+        # (completion_ids, logprobs, sampling_mask): TRL 1.17
         return [tok(t, add_special_tokens=False)["input_ids"] + ([tok.eos_token_id] if e else [])
-                for t, e in (script[key[0]] * 2)[:len(prompt_ids)]], None
+                for t, e in (script[key[0]] * 2)[:len(prompt_ids)]], None, None
 
     trainer._generate_single_turn = generate
     trainer._generate_and_score_completions = None  # the sampler neither scores nor trains

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# PLAN §4.3: build the Phase 2 (and, at Phase 3 start, Phase 3) Vast images for linux/amd64.
+# PLAN §4.3: build the Vast images for linux/amd64: phase2 (two venvs), its sampler stage, and vllm_native
+# (training + vLLM in one venv, D15; RL, owner 2026-11-06).
 #   build_images.sh --lock      (Mac) rewrite locks/ from pyproject.toml and the Mac .venv; commit the result
-#   build_images.sh [--check] [--push] [--prune] phase2|phase3|sampler ...
+#   build_images.sh [--check] [--push] [--prune] phase2|vllm_native|sampler ...
 #                               (Mac, or GitHub Actions: .github/workflows/image.yml) build from the committed locks
 #     --check  lint the Dockerfiles only (docker buildx build --check)
 #     --push   push to $IMAGE_REPO (private GHCR, e.g. ghcr.io/<owner>/objdel-gpu; `docker login ghcr.io` first)
@@ -9,19 +10,19 @@
 # locks/ (committed): train.txt = pyproject's base deps + [train] + [build-system] requires (the box runs
 # `pip install -e . --no-build-isolation`), for x86_64-manylinux_2_40 / CPython 3.12, constrained to the Mac .venv's
 # versions so the box runs what the Mac tested (V0 audit: the old lock was the .venv freeze itself and carried 31 dev and
-# download packages); vllm.txt = vllm==0.32.0 for the same platform; p3.txt + p3.override (B5 Q1). Tag p2-<pinhash> /
-# p3-<pinhash> (first 12 hex of the SHA-256 over the Dockerfile and its inputs), so the image is rebuilt only when the
+# download packages); vllm.txt = vllm==0.32.0 for the same platform; vllm_native.txt + vllm_native.override (B5 Q1). Tag
+# p2-<pinhash> / sampler-<pinhash> / vllm_native-<pinhash> (first 12 hex of the SHA-256 over the Dockerfile and its inputs), so the image is rebuilt only when the
 # pins change; record the pushed digest in .vast-allowlist ("image": "<repo>:p2-<hash>@sha256:..."). On the Mac the
 # builder is capped at 2 CPUs / 4 GB (B5); a CI runner (CI=true) gives it the whole machine.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/../../.." && pwd); CTX=$ROOT/build/images/ctx; LOCKS=$HERE/locks
-USAGE="usage: build_images.sh --lock | [--check] [--push] [--prune] phase2|phase3|sampler ..."
+USAGE="usage: build_images.sh --lock | [--check] [--push] [--prune] phase2|vllm_native|sampler ..."
 LOCK=0; CHECK=0; PUSH=0; PRUNE=0; WHICH=()
 for a in "$@"; do
     case $a in
         --lock) LOCK=1 ;; --check) CHECK=1 ;; --push) PUSH=1 ;; --prune) PRUNE=1 ;;
         -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
-        phase2|phase3|sampler) WHICH+=("$a") ;;
+        phase2|vllm_native|sampler) WHICH+=("$a") ;;
         *) echo "$USAGE" >&2; exit 2 ;;
     esac
 done
@@ -35,10 +36,10 @@ if [ "$LOCK" = 1 ]; then
     compile pyproject.toml --extra train "$c/build.in" -c "$c/mac.txt" -o "$l/train.txt"
     echo "vllm==0.32.0" > "$c/vllm.in" && compile "$c/vllm.in" -o "$l/vllm.txt"
     sed -e 's/^torch==.*/torch==2.13.0/' -e 's/^torchvision==.*/torchvision==0.28.0/' \
-        -e 's/^transformers==.*/transformers==5.19.0/' -e '/^setuptools==/d' "$c/mac.txt" > "$c/p3.in"
-    echo "vllm==0.32.0" >> "$c/p3.in"
-    printf 'numba==0.68.0\nnumpy==2.5.4\n' > "$l/p3.override"
-    compile "$c/p3.in" --override "$l/p3.override" -o "$l/p3.txt"
+        -e 's/^transformers==.*/transformers==5.19.0/' -e '/^setuptools==/d' "$c/mac.txt" > "$c/vllm_native.in"
+    echo "vllm==0.32.0" >> "$c/vllm_native.in"
+    printf 'numba==0.68.0\nnumpy==2.5.4\n' > "$l/vllm_native.override"
+    compile "$c/vllm_native.in" --override "$l/vllm_native.override" -o "$l/vllm_native.txt"
     echo "locks written: $(cd "$l" && echo *)"
     exit 0
 fi
@@ -53,7 +54,7 @@ docker buildx inspect objdel-builder >/dev/null 2>&1 || docker buildx create --n
 [ -n "${CI:-}" ] || docker update --cpus 2 --memory 4g --memory-swap 4g buildx_buildkit_objdel-builder0 >/dev/null
 for w in "${WHICH[@]}"; do
     f=${w/sampler/phase2}; target=(); [ "$w" = sampler ] && target=(--target sampler)
-    inputs=(train.txt vllm.txt exclude-vllm.txt); [ "$f" = phase3 ] && inputs=(p3.txt p3.override)
+    inputs=(train.txt vllm.txt exclude-vllm.txt); [ "$f" = vllm_native ] && inputs=(vllm_native.txt vllm_native.override)
     hash=$(cd "$CTX" && cat "$HERE/Dockerfile.$f" "${inputs[@]}" | shasum -a 256 | cut -c1-12)
     tag="${IMAGE_REPO:-objdel-gpu}:${w/phase/p}-$hash"
     out=(--load); [ "$PUSH" = 1 ] && out=(--push)

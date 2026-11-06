@@ -20,7 +20,9 @@ for selection only (D13 HF path).
 
 The selected (or gated) branch is then judged on the full views: shifted and rescaled at K = 8 (gates), shifted at
 K = 16 (report-only), G-prior (b) (--prepared), both probes on every probe record (--probes) and the rotated-vs-
-identity attribution check (--rotated, report-only, §6.1). Writes <out>/selected.json ("gates_pass" /
+identity attribution check (--rotated, report-only, §6.1). With --sampler vllm, `hf_check` then re-samples that
+branch with HF on HF_CHECK_ITEMS shifted-val items; a vLLM - HF metric difference outside its 95 % CI fails the gates
+(gate "G-hf-check", D13, owner 2026-11-05). Writes <out>/selected.json ("gates_pass" /
 "gates_failed" are what g_probe --select reads), report.json and gates.json (prereg.entry); samples stay in
 <out>/<branch>/<view>/ for re-scoring on the Mac.
 
@@ -54,6 +56,8 @@ VLLM_PYTHON = "/opt/vllm/bin/python"
 SUBSET_SEED = 0  # --items: one fixed subset for every branch and rung
 TRIES = 2  # sampler child attempts that finish no new item
 TIMEOUT_S = 1.0  # sampler child timeout per item-sample, plus 600 s (a retry resumes)
+HF_CHECK_ITEMS = 64  # D13 (owner 2026-11-05): HF re-samples the vLLM-judged branch on this seeded shifted-val subset
+HF_CHECK_KEYS = ("format_ok", "legal", "iou_tc", "f5", "g_area")
 
 
 def exited(run: Path) -> dict:
@@ -277,6 +281,27 @@ def judge(a, sel: dict, out: Path, pool) -> dict:
     return report
 
 
+def hf_check(a, name: str, out: Path, pool) -> dict:
+    """D13 (owner 2026-11-05): with --sampler vllm, do vLLM's answers score like HF's on the trained model? HF samples
+    branch `name` on HF_CHECK_ITEMS seeded shifted-val items at K; vLLM's answers are that branch's shifted samples
+    (<out>/<name>/shifted/items.jsonl). Per metric, the per-item mean difference vLLM - HF with the nodule-cluster
+    bootstrap 95 % CI (PLAN G-parity: every difference inside its CI); pass = 0 inside every CI."""
+    from objdel.eval import signal
+
+    rows = view_rows(a.shifted, HF_CHECK_ITEMS)
+    hf = argparse.Namespace(**vars(a) | {"sampler": "hf"})
+    done = sample_view(hf, a.run / "branches" / name, rows, out / name / "hf-check", a.k)
+    got = {"hf": {r["item_id"]: r["samples"] for r in score_items(pool, rows, done, a.shifted.resolve())[0]}}
+    lines = (out / name / "shifted" / "items.jsonl").read_text().splitlines()
+    got["vllm"] = {r["item_id"]: r["samples"] for r in map(json.loads, lines)}
+    ids = [i for i in got["hf"] if i in got["vllm"]]
+    D = signal.draws(ids)
+    diff = {k: signal.ci(np.array([np.mean(got["vllm"][i][k]) - np.mean(got["hf"][i][k]) for i in ids]), D)
+            for k in HF_CHECK_KEYS}  # fmt: skip
+    return {"branch": name, "items": len(ids), "k": a.k, "vllm_minus_hf": diff,
+            "pass": len(ids) == len(rows) and all(lo <= 0 <= hi for _, lo, hi in diff.values())}
+
+
 def dump(path: Path, doc: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=1, default=str) + "\n")
@@ -363,6 +388,11 @@ def main(argv=None) -> int:
     if judged:
         report = judge(a, next(x for x in branches if x["name"] == judged), out / judged, pool)
         gate = prereg.entry(report, ["lidc"])  # phase2_entry with the pre-registered G-prior (a) slot
+        if a.sampler == "vllm":  # D13: the gates stand only if vLLM's answers score like HF's
+            report["hf_check"] = check = hf_check(a, judged, out, pool)
+            gate["gates"]["G-hf-check"] = {"requirement": "every vLLM - HF metric difference: 0 inside its 95 % CI",
+                                           "values": check["vllm_minus_hf"], "pass": check["pass"]}
+            gate["passed"]["G-hf-check"], gate["pass"] = check["pass"], gate["pass"] and check["pass"]
         dump(out / "report.json", report)
         dump(out / "gates.json", gate)
     pool.shutdown()

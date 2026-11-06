@@ -574,6 +574,30 @@ def test_vision_tv_equals_a_numpy_reference(vlm):
     assert 0.0 < got["black"] <= 1.0
 
 
+def test_next_token_probs_keeps_every_input_on_the_model_device(monkeypatch):
+    """R1 2026-11-05: on CUDA, mm_token_type_ids was extended with CPU zeros (the target ids stayed on the CPU) and
+    G-vision crashed at the first rolling checkpoint. "meta" stands in for the GPU on the Mac."""
+    from types import SimpleNamespace
+
+    import torch
+
+    from objdel.eval import vision
+
+    dev = torch.device("meta")
+    monkeypatch.setattr(vision, "_batch", lambda *a: {
+        "input_ids": torch.zeros(1, 4, dtype=torch.long, device=dev),
+        "attention_mask": torch.ones(1, 4, dtype=torch.long, device=dev),
+        "mm_token_type_ids": torch.zeros(1, 4, dtype=torch.long, device=dev)})
+    proc = SimpleNamespace(tokenizer=lambda *a, **k: {"input_ids": torch.tensor([[5, 6, 7]])})  # on the CPU
+
+    def model(**b):
+        assert {k: v.device for k, v in b.items()} == {k: dev for k in b} and b["mm_token_type_ids"].shape == (1, 7)
+        return SimpleNamespace(logits=torch.zeros(1, 7, 11))
+
+    p = vision.next_token_probs(model, proc, None, "x", T=3)
+    assert p.shape == (3, 11) and np.allclose(p.sum(-1), 1.0)
+
+
 @pytest.mark.parametrize("ratio,tv_black,tv_other,action", [
     (0.9, 0.01, 0.01, "ok"), (0.4, 0.01, 0.01, "warn"), (0.9, 0.001, 0.01, "warn"), (0.9, 0.01, 0.0019, "warn"),
     (0.49, 0.0, 0.0, "abort"), (0.5, 0.002, 0.002, "ok"),

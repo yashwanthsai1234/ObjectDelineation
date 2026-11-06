@@ -106,7 +106,8 @@ def next_token_probs(model, processor, image, target: str, prompt=None, T: int =
     b = _batch(model, processor, image, prompt)
     n = b["input_ids"].shape[1]
     tgt = processor.tokenizer(target, add_special_tokens=False, return_tensors="pt")["input_ids"][:, :T]
-    b["input_ids"] = torch.cat([b["input_ids"], tgt.to(b["input_ids"].device)], 1)
+    tgt = tgt.to(b["input_ids"].device)  # on the model's device: mm_token_type_ids is extended with its zeros below
+    b["input_ids"] = torch.cat([b["input_ids"], tgt], 1)
     b["attention_mask"] = torch.ones_like(b["input_ids"])
     if "mm_token_type_ids" in b:
         b["mm_token_type_ids"] = torch.cat([b["mm_token_type_ids"], torch.zeros_like(tgt)], 1)

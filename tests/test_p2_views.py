@@ -18,7 +18,7 @@ from objdel.targets.frame import CLEARANCE, DIVISORS, union_box, upscale
 
 ROOT = Path(__file__).resolve().parents[1]
 PREPARED, STORE = ROOT / "data" / "prepared", ROOT / "data" / "store"
-BUNDLE, EVAL_VIEWS = ROOT / "data" / "views" / "lidc-bundle-v2", ROOT / "data" / "eval_views"  # the bundle trained on
+BUNDLE, EVAL_VIEWS = ROOT / "data" / "views" / "lidc-bundle-v3", ROOT / "data" / "eval_views"  # the bundle trained on
 FRAME_SHA = {  # targets.frame before the Phase 2 change (box, masks, image bytes)
     "lidc/1.2.1/n000/z001": "d70579514adab44459d219e6a20e28496a5d970cdb95606050afc020ee9f8d92",
     "lidc/1.2.1/n000/z002": "b6df0facfcecd3c313c4efa31de3cc7b6b16f9dde59a9c8596d586fa4fd80aba",

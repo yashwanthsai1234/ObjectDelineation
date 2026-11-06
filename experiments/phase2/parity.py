@@ -5,9 +5,12 @@
 Inputs (C-BRIDGE): export_prompts' prompts JSONL and `sample_vllm.py --logprobs` completions (vLLM's processed
 logprob of every sampled token). Each completion is teacher-forced through HF: the processor on the exported prompt
 text and image (TRL GRPO's prompt ids, B5: equal to vLLM's), the sampled ids appended, one forward in --dtype,
-float32 log_softmax. Δ = vLLM - HF per token and its per-sequence sum. Pass (pre-registered, lab/B5/REPORT.md):
-median |Δ| <= 1e-3 in float32 (0.02 in bfloat16), p99 per-sequence |ΣΔ| <= 0.5 nats, and (H-A5-1) every item's
-prompt ids as vLLM echoed them equal the processor's.
+float32 log_softmax. Δ = vLLM - HF per token and its per-sequence sum. Pass: median |Δ| <= 1e-3 in float32 (0.02
+in bfloat16) and (H-A5-1) every item's prompt ids as vLLM echoed them equal the processor's. The p99 per-sequence
+|ΣΔ| (pre-registered limit 0.5 nats, lab/B5/REPORT.md) is report-only since the owner's decision of 2026-11-05
+(PLAN D13): bf16 rounding adds up over ~500-token answers (Qwen3-VL-2B R0: token median 4.6e-6, sequence p99 1.79),
+and the question it stood for, whether vLLM's answers score like HF's, is measured directly on the trained model
+(select_ckpt's HF check, D13).
 """
 import argparse
 import json
@@ -16,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 MEDIAN = {"float32": 1e-3, "bfloat16": 0.02}
-SEQ_P99 = 0.5
+SEQ_P99 = 0.5  # report-only (D13, 2026-11-05)
 
 
 def encode(processor, x: dict):
@@ -76,9 +79,8 @@ def compare(model_dir, prompts_path, comps_path, dtype: str, teach=None) -> dict
     t, s = np.abs(np.concatenate(deltas)), np.abs([d.sum() for d in deltas])
     r = {"dtype": dtype, "tokens": int(t.size), "sequences": len(deltas), "median_abs": float(np.median(t)),
          "p99_abs": float(np.quantile(t, 0.99)), "max_abs": float(t.max()), "seq_p99_abs": float(np.quantile(s, 0.99))}
-    ok = r["median_abs"] <= MEDIAN[dtype] and r["seq_p99_abs"] <= SEQ_P99
-    return r | {"thresholds": {"median_abs": MEDIAN[dtype], "seq_p99_abs": SEQ_P99}, "prompt_ids": ids,
-                "pass": ok and ids["pass"]}
+    return r | {"thresholds": {"median_abs": MEDIAN[dtype]}, "report_only": {"seq_p99_abs": SEQ_P99}, "prompt_ids": ids,
+                "pass": r["median_abs"] <= MEDIAN[dtype] and ids["pass"]}
 
 
 def main(argv=None) -> dict:

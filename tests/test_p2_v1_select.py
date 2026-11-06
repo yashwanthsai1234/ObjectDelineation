@@ -78,6 +78,53 @@ def test_select_records_the_failed_gate_names(tmp_path, monkeypatch):
     assert doc["gates_pass"] is False and failed and doc["gates_failed"] == failed
 
 
+@pytest.mark.parametrize("ok", [True, False])
+def test_vllm_select_gates_on_the_hf_check(tmp_path, monkeypatch, ok):
+    """D13 (owner 2026-11-05): with --sampler vllm the judged branch's HF check is a gate; --sampler hf has none."""
+    from tests.test_p2_breakit_runners import _fake_select
+
+    SC_, base, _ = _fake_select(tmp_path, monkeypatch, hf_check=ok)
+    assert SC_.main(base + ["--vision", '{"prepared": "p", "reference": 1}']) == 0
+    doc = json.loads((tmp_path / "sel/selected.json").read_text())
+    gates = json.loads((tmp_path / "sel/gates.json").read_text())
+    report = json.loads((tmp_path / "sel/report.json").read_text())
+    assert report["hf_check"]["branch"] == doc["gates_branch"] == "e1"
+    assert gates["gates"]["G-hf-check"]["pass"] is ok and gates["passed"]["G-hf-check"] is ok
+    assert ("G-hf-check" in doc["gates_failed"]) is not ok
+    SC_, base, _ = _fake_select(tmp_path / "hf", monkeypatch, hf_check=ok)
+    assert SC_.main(base + ["--sampler", "hf", "--vision", '{"prepared": "p", "reference": 1}']) == 0
+    hf = json.loads((tmp_path / "hf/sel/selected.json").read_text())
+    assert "G-hf-check" not in json.loads((tmp_path / "hf/sel/gates.json").read_text())["gates"]
+    assert doc["gates_pass"] is (hf["gates_pass"] and ok)  # the other gates are the same in both runs
+
+
+@pytest.mark.parametrize(("shift", "ok"), [(0.0, True), (0.3, False)])
+def test_hf_check_compares_vllm_and_hf_metrics_per_item(tmp_path, monkeypatch, shift, ok):
+    """hf_check: HF samples HF_CHECK_ITEMS seeded items of the branch; each metric's per-item vLLM - HF difference
+    needs 0 inside its nodule-cluster bootstrap CI."""
+    keys = [f"lidc/s{i}/n000/z{i}" for i in range(SC.HF_CHECK_ITEMS)]
+    rng = np.random.default_rng(1)
+    vals = {i: rng.uniform(0.2, 0.8, 8) for i in keys}
+
+    def samples(i, d):
+        return {k: list(vals[i] + d) for k in SC.HF_CHECK_KEYS}
+
+    seen = {}
+    monkeypatch.setattr(SC, "view_rows", lambda view, items=None: seen.setdefault("items", items) and
+                        [{"key": i} for i in keys])  # fmt: skip
+    monkeypatch.setattr(SC, "sample_view", lambda a, b, rows, out, k: seen.update(sampler=a.sampler, out=out) or {})
+    monkeypatch.setattr(SC, "score_items", lambda pool, rows, done, root: (
+        [{"item_id": r["key"], "samples": samples(r["key"], 0.0)} for r in rows], []))
+    (tmp_path / "e1/shifted").mkdir(parents=True)
+    (tmp_path / "e1/shifted/items.jsonl").write_text(
+        "".join(json.dumps({"item_id": i, "samples": samples(i, shift)}) + "\n" for i in keys))
+    a = SimpleNamespace(shifted=tmp_path / "view", run=tmp_path / "run", k=8, sampler="vllm")
+    r = SC.hf_check(a, "e1", tmp_path, None)
+    assert seen == {"items": SC.HF_CHECK_ITEMS, "sampler": "hf", "out": tmp_path / "e1/hf-check"}
+    assert r["items"] == SC.HF_CHECK_ITEMS and r["pass"] is ok and set(r["vllm_minus_hf"]) == set(SC.HF_CHECK_KEYS)
+    assert r["vllm_minus_hf"]["iou_tc"][0] == pytest.approx(shift)
+
+
 # ---------------------------------------------------------------- select_ckpt --only topology (C2)
 
 
@@ -166,6 +213,15 @@ def test_stop_ids_of_base_weights_without_generation_config(tmp_path):
     assert SC.stop_ids(tmp_path, proc) == {7, 248044, 248046}
 
 
+def test_sample_vllm_turns_off_the_flashinfer_sampler_before_importing_vllm():
+    """R1 2026-11-05: FlashInfer's sampler JIT-compiles with nvcc (absent from /opt/vllm); vLLM reads env at import."""
+    import inspect
+
+    src = inspect.getsource(V.main)
+    assert V.ENV == {"VLLM_USE_FLASHINFER_SAMPLER": "0"}
+    assert -1 < src.index("os.environ.update(ENV)") < src.index("import vllm")
+
+
 def test_sample_vllm_echoes_prompt_ids_with_logprobs():
     lp = [{9: SimpleNamespace(logprob=-3.0), 5: SimpleNamespace(logprob=-0.5)}, {7: SimpleNamespace(logprob=-0.1)}]
     c = SimpleNamespace(text="t", token_ids=[5, 7], finish_reason="stop", logprobs=lp)
@@ -234,7 +290,7 @@ def test_r0_parity_passes_on_matching_ids_and_logprobs(tmp_path, monkeypatch):
     doc = json.loads((out / "parity.json").read_text())
     assert doc["pass"] is True and doc["dtype"] == "bfloat16" and doc["sequences"] == 64
     assert doc["prompt_ids"] == {"items": 32, "equal": 32, "mismatched": [], "pass": True}
-    assert doc["thresholds"] == {"median_abs": 0.02, "seq_p99_abs": 0.5}
+    assert doc["thresholds"] == {"median_abs": 0.02} and doc["report_only"] == {"seq_p99_abs": 0.5}  # D13, 2026-11-05
     assert doc["model"] == "lfm2.5-vl-450m" and doc["weights"] == str(tmp_path / "base")
 
 

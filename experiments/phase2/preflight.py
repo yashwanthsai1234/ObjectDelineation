@@ -29,7 +29,7 @@ CHECKER_TESTS = ["tests/test_checker.py", "tests/test_polycore.py", "tests/test_
                  "tests/test_polycore_props.py", "tests/test_topology.py", "tests/test_geometry.py",
                  "tests/test_geometry_mask.py", "tests/test_geometry_oracle.py"]  # fmt: skip
 QUICK_TESTS = ["tests/test_eval_coverage.py", "tests/test_preflight.py", "tests/test_p2_scripts.py",
-               "tests/test_train_configs.py", "tests/test_p2_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
+               "tests/test_train_configs.py", "tests/test_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
 DRY_RUN = "tests/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select on a tiny model, CPU
 HF_RATE = {"lfm2.5-vl-450m": "hf-rate-lfm", "qwen3-vl-2b": "hf-rate-qwen3vl"}  # runs/<run>/<dir>/hf_rate.json (R0)
 DPH_CEILING = 1.00  # $/h, the RTX 4090 ceiling of policy.CARDS: a bound, not a quote
@@ -215,10 +215,10 @@ def projection(a, cfg) -> list[str]:
     arms = [p for p in sorted(ROOT.glob("runs/*/r0-*/manifest.json"))
             if json.loads(p.read_text())["config"]["model"] == a.model]  # this model's R0 timing arm(s)
     rates = sorted(ROOT.glob(f"runs/*/{HF_RATE.get(a.model, '-')}/hf_rate.json"))
-    if not arms or (a.sampler == "hf" and not rates):
+    if not arms or not rates:
         print(f"    no R0 measurement of {a.model} yet: R0 measures it on the box; project_r1 is the stop rule before R1")
         return []
-    argv = ["--model", a.model, *map(str, arms)] + (["--hf_rate", str(rates[-1])] if a.sampler == "hf" else [])
+    argv = ["--model", a.model, *map(str, arms), "--hf_rate", str(rates[-1])]
     import contextlib
     import io
 

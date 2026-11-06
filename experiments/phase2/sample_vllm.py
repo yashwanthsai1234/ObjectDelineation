@@ -14,6 +14,9 @@ Imports nothing from objdel (its numpy / numba / torch pins differ from vLLM 0.3
 are imported inside main, so --help works anywhere. D13: the launcher (select_ckpt) has not initialised CUDA; this
 refuses to start unless torch.cuda.mem_get_info() reports >= 90 % free, then builds LLM(gpu_memory_utilization=0.85).
 The profiling image is capped at 512 x 512 (inputs are <= 512 px; Qwen's default profile is a 16k-token pass, B5).
+ENV is set before vLLM is imported: R1 (2026-11-05) failed at engine start because FlashInfer's top-k sampler compiles
+with nvcc, which /opt/vllm does not have (R0 sampled with --logprobs, another path). vLLM's PyTorch sampler draws from
+the same distribution (top_k 0, top_p 1: the full softmax).
 
 References: https://docs.vllm.ai/en/latest/serving/offline_inference.html ,
 https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html , experiments/phase2/lab/B5/vllm_parity.py and REPORT.md
@@ -21,6 +24,7 @@ https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html , experiments/phase
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -65,6 +69,9 @@ def write(recs, path) -> None:
     Path(path).write_text("".join(json.dumps(r) + "\n" for r in recs))
 
 
+ENV = {"VLLM_USE_FLASHINFER_SAMPLER": "0"}  # the PyTorch sampler: no JIT build (module docstring)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--prompts", required=True, help="JSONL from objdel.train.sample.export_prompts")
@@ -78,6 +85,7 @@ def main(argv=None) -> None:
     a = ap.parse_args(argv)
     import torch
     check_memory(torch.cuda.mem_get_info)
+    os.environ.update(ENV)  # before vLLM reads its environment
     import vllm
     from PIL import Image
 

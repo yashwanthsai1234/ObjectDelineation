@@ -1,8 +1,9 @@
 name: image
 
-# Builds and pushes the Phase 2 Vast image (experiments/phase2/docker) on a native x86-64 runner. The Mac's emulated
-# build needs ~35 GB of scratch disk the Mac cannot spare (V0, 2026-11-01). Manual only: each run is a choice.
-# Inputs come from the repo: Dockerfile.phase2 and the committed locks (build_images.sh --lock, on the Mac).
+# Builds and pushes one Vast image (experiments/phase2/docker; input `which`: phase2 or vllm_native) on a native x86-64
+# runner. The Mac's emulated build needs ~35 GB of scratch disk the Mac cannot spare (V0, 2026-11-01). Manual only: each run is a choice.
+# Inputs come from the repo: Dockerfile.phase2 / Dockerfile.vllm_native and the committed locks (build_images.sh --lock, on
+# the Mac).
 # The repository token pushes. A package first pushed by a workflow is linked to its repository, so the token may write
 # to it, and a new package is private:
 # https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions
@@ -11,6 +12,12 @@ name: image
 
 on:
   workflow_dispatch:
+    inputs:
+      which:
+        description: "image: phase2 (two venvs) or vllm_native (training + vLLM colocate in one venv, D15; RL, 2026-11-06)"
+        type: choice
+        options: [phase2, vllm_native]
+        default: phase2
 
 permissions:
   contents: read
@@ -36,7 +43,9 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
       - id: build
-        run: experiments/phase2/docker/build_images.sh --push phase2
+        env:
+          WHICH: ${{ inputs.which }}
+        run: experiments/phase2/docker/build_images.sh --push "$WHICH"
       - name: Image reference for .vast-allowlist
         env:
           TAG: ${{ steps.build.outputs.tag }}
