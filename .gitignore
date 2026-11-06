@@ -33,3 +33,17 @@ htmlcov/
 /.secrets
 /experiments/phase2/vast/known_hosts
 /experiments/phase2/vast/*.launchd.log
+
+# RIGA-derived results stay local: no permission to share RIGA data (repo public, owner 2026-11-06)
+/experiments/phase0/results/medsam_riga.csv
+/experiments/phase0/results/riga/
+/experiments/phase0/results/riga_outlines/
+/experiments/phase0/results/vlm_box/
+/experiments/phase0/results/vlm_polygon/
+/experiments/phase1/lab/t_reward/results/h5_items.csv
+/experiments/phase1/lab/t_data/riga/out_maxrg_check/
+/experiments/phase1/lab/t_data/riga/maxrg_vs_prime.json
+/experiments/phase1/lab/t_data/splits/out/riga_images.csv
+/experiments/phase1/lab/t_reward/results/advantage_groups.json
+/experiments/phase1/lab/t_reward/results/iter3_r5_raw.json
+/experiments/phase1/lab/t_stack/results/t[24]_*.json

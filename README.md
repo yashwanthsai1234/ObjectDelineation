@@ -83,3 +83,10 @@ The datasets are LIDC-IDRI (TCIA) and RIGA. Each is downloaded separately under 
 Rebuilding `data/` (store, prepared RL set, SFT targets) from the raw downloads uses the Phase 1 scripts in order
 (`fetch_lidc_pixels`, `build_data`, `prepare_rl`, `build_targets`). The commands, timings and expected hashes are
 in [RESULTS.md §8](experiments/phase1/RESULTS.md#8-phase-2-handoff).
+
+## Licence
+
+The code is under the [MIT licence](LICENSE). The licence covers the code only, not the datasets:
+- No images or annotations from either dataset are in this repository.
+- Some result tables hold per-series statistics computed from LIDC-IDRI (TCIA, CC BY 3.0).
+- RIGA-derived tables are not shared: they stay on the owner's machine (git-ignored).
