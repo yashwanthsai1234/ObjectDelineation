@@ -57,11 +57,22 @@ def api(token: str):
     return HfApi(token=token)
 
 
-def base_card(base: str) -> tuple[bytes, dict]:
-    """The base model's LICENSE and card metadata (public repos: no token)."""
-    from huggingface_hub import ModelCard, hf_hub_download
+APACHE = Path(__file__).with_name("licenses") / "Apache-2.0.txt"  # apache.org/licenses/LICENSE-2.0.txt, sha256 cfc7749b...
 
-    return Path(hf_hub_download(base, "LICENSE", token=False)).read_bytes(), ModelCard.load(base, token=False).data.to_dict()
+
+def base_card(base: str) -> tuple[bytes, dict]:
+    """The base model's LICENSE and card metadata (public repos: no token). A repo with no LICENSE file whose card
+    declares apache-2.0 (Qwen/Qwen3-VL-2B-Instruct, 2026-11-05) gets the Apache-2.0 text (§4(a): give a copy)."""
+    from huggingface_hub import ModelCard, hf_hub_download
+    from huggingface_hub.errors import EntryNotFoundError
+
+    meta = ModelCard.load(base, token=False).data.to_dict()
+    try:
+        return Path(hf_hub_download(base, "LICENSE", token=False)).read_bytes(), meta
+    except EntryNotFoundError:
+        if meta.get("license") != "apache-2.0":
+            raise
+        return APACHE.read_bytes(), meta
 
 
 def card(base: str, meta: dict, man: dict, sel: dict, run: Path) -> str:

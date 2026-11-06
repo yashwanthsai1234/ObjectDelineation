@@ -7,7 +7,7 @@ Base weights: snapshot_download(configs.MODELS[model]), one local directory that
 sampled at n = --k by `sample_vllm.py --logprobs` through select_ckpt.sample_view (CUDA untouched, timeout, retries,
 completeness; files in <out>/samples/). Then parity.compare in bfloat16: (a) H-A5-1 prompt ids equal on every item;
 (b) H-A5-2 HF teacher forcing of the first --logprob-items x n (PLAN: 8 x 8) within parity.MEDIAN["bfloat16"]
-(0.02) and parity.SEQ_P99 (0.5). Writes <out>/parity.json (compare's report plus model, weights, view, items,
+(0.02); parity.SEQ_P99 (0.5) is reported only (D13, 2026-11-05). Writes <out>/parity.json (compare's report plus model, weights, view, items,
 logprob_items, k); exit 1 on a fail (-> the HF sampler is that model's gate path, D13).
 """
 

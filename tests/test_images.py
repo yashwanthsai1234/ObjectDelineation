@@ -100,4 +100,6 @@ def test_image_workflow_is_manual_pinned_and_pushes_with_the_repo_token():
     uses = re.findall(r"uses: (\S+)", wf)
     assert uses and all(re.search(r"@[0-9a-f]{40}$", u) for u in uses)
     assert "secrets.GITHUB_TOKEN" in wf and "secrets." not in wf.replace("secrets.GITHUB_TOKEN", "")
-    assert "build_images.sh --push phase2" in wf
+    assert 'build_images.sh --push "$WHICH"' in wf and "options: [phase2, vllm_native]" in on
+    runs = re.findall(r"run: (.*)", wf)
+    assert not any("${{" in r for r in runs)  # inputs reach the shell through env, never pasted into the script

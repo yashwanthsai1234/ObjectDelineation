@@ -86,7 +86,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
             i = seen[k] = seen.get(k, -1) + 1
             text, eos = script[k][i % G]
             ids.append(tok(text, add_special_tokens=False)["input_ids"] + ([tok.eos_token_id] if eos else []))
-        return ids, None
+        return ids, None, None  # (completion_ids, logprobs, sampling_mask): TRL 1.17
 
     trainer._generate_and_score_completions = hook
     trainer._generate_single_turn = scripted

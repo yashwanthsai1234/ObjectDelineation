@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
-# Phase 3 single-env image (D15; built at Phase 3 start only), promoted from lab/B5/Dockerfile.phase3: training + vLLM
+# vllm_native: the single-env image (D15; renamed from "phase3" and built for RL R2, owner 2026-11-06), promoted
+# from lab/B5/Dockerfile.phase3: training + vLLM
 # colocate in one re-pinned venv. /opt/venv = the Mac's pins with torch 2.13.0, torchvision 0.28.0, transformers 5.19.0
 # + vllm==0.32.0, and two uv overrides that keep the hash-relevant pins: numba==0.68.0 and numpy==2.5.4 (B5 Q1).
-# Re-run the fast suite and `xarch_hashes --strict` on every re-pin. Build context (build_images.sh): p3.txt,
-# p3.override. Code and data are never baked in.
+# Re-run the fast suite and `xarch_hashes --strict` on every re-pin. Build context (build_images.sh):
+# vllm_native.txt, vllm_native.override. Code and data are never baked in.
 FROM python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -13,9 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONDONTWRITEBYTECODE=1
 
-COPY p3.txt p3.override /opt/
+COPY vllm_native.txt vllm_native.override /opt/
 RUN uv venv --python /usr/local/bin/python3.12 /opt/venv \
-    && uv pip install --python /opt/venv/bin/python -r /opt/p3.txt --override /opt/p3.override
+    && uv pip install --python /opt/venv/bin/python -r /opt/vllm_native.txt --override /opt/vllm_native.override
 
 ENV PATH=/opt/venv/bin:$PATH \
     NVIDIA_VISIBLE_DEVICES=all \

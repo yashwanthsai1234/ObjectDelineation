@@ -1,6 +1,6 @@
 # C2 (PLAN §6.1 R3-R5): a0_seed1, to the depth of the checkpoint with the final G-probe verdict (branches_from).
 model: qwen3-vl-2b   # = the C1 rung (rung 2 now; PLAN §1)
-view: views/lidc-bundle-v2
+view: views/lidc-bundle-v3   # R1's bundle (the depth may be 3 epochs)
 output_dir: c2-a0_seed1
 seed: 1
 sampler: hf   # D13: the HF sampler for every model

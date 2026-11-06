@@ -301,20 +301,27 @@ def test_project_r1_go_and_stop(tmp_path, capsys):
     qwen = _manifest(tmp_path, "r0-qwen3vl-arm", 2.7, model="qwen3-vl-2b")  # LoRA and checkpointing by model (D6, D4)
     assert P.main(["--model", "qwen3-vl-2b", *_rate(tmp_path, "qwen3-vl-2b", s=0.08), qwen, off]) == 0
     doc = json.loads(capsys.readouterr().out.splitlines()[1])
-    assert doc["stop_h"] == 5.0 and doc["projected_h"] < 5.0
+    assert doc["stop_h"] == 6.0 and doc["projected_h"] < 6.0
 
 
-def test_project_r1_vllm_r1_keeps_the_plan_allowance(tmp_path, capsys, monkeypatch):
+def test_project_r1_vllm_uses_the_r0_rate_and_adds_the_hf_check(tmp_path, capsys, monkeypatch):
+    """D13 (2026-11-05): a vLLM R1 samples every branch on the full shifted view at the R0 vLLM rate, then select_ckpt's
+    HF check re-samples HF_CHECK_ITEMS x K with HF."""
     pytest.importorskip("trl")
     from experiments.phase2 import project_r1 as P
+    from experiments.phase2 import select_ckpt as SC
 
+    assert P.HF_CHECK_ITEMS == SC.HF_CHECK_ITEMS
     cfg = _yaml(CONFIGS / "r1_lfm.yaml")
     cfg.pop("sampler")
     (tmp_path / "r1.yaml").write_text(json.dumps(cfg))
     monkeypatch.setitem(P.R1, "lfm2.5-vl-450m", (str(tmp_path / "r1.yaml"), 3.4))
-    assert P.main(["--model", "lfm2.5-vl-450m", _manifest(tmp_path, "a", 2.0)]) == 0
+    assert P.main(["--model", "lfm2.5-vl-450m", *_rate(tmp_path), _manifest(tmp_path, "a", 2.0)]) == 0
     doc = json.loads(capsys.readouterr().out.splitlines()[1])
-    assert doc["sampler"] == "vllm" and doc["eval_h"] == P.EVAL_H_VLLM == 0.3
+    n = P.eval_samples(3, None)
+    want = (n * P.VLLM_S_PER_SAMPLE + P.sampler_calls(3, None) * P.VLLM_LOAD_S + 64 * 8 * 0.05 + 20.0) / 3600
+    assert doc["sampler"] == "vllm" and doc["eval_samples"] == n and doc["eval_h"] == pytest.approx(want)
+    assert doc["hf_check_s"] == pytest.approx(64 * 8 * 0.05 + 20.0)
 
 
 @pytest.mark.parametrize("why", ["w0", "b16", "none", "no_rate", "rate_model", "freeze", "grad_ckpt", "missing"])
@@ -410,10 +417,12 @@ def test_topology_report_carries_the_probe_item_ids(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- configs, g_probe.json
 
 
-def test_every_config_that_samples_on_v1_uses_hf():
-    """D13 fallback (b37917b): R1, C2 and R-x8 sample with HF generate."""
+def test_every_config_that_samples_on_v1_names_its_sampler():
+    """D13 fallback (b37917b): HF generate, except R1 Qwen3-VL-2B: vLLM with select_ckpt's HF check (owner
+    2026-11-05)."""
     paths = sorted(CONFIGS.glob("r1_*.yaml")) + sorted(CONFIGS.glob("c2_*.yaml")) + [CONFIGS / "rx8.yaml"]
-    assert {p.stem: _yaml(p).get("sampler") for p in paths} == {p.stem: "hf" for p in paths}
+    want = {p.stem: "hf" for p in paths} | {"r1_qwen3vl2b": "vllm"}
+    assert {p.stem: _yaml(p).get("sampler") for p in paths} == want
 
 
 def test_g_probe_json_writes_null_for_nan(tmp_path):

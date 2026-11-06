@@ -11,6 +11,17 @@ FIXTURES = Path(os.environ.get("OBJDEL_FIXTURES", ROOT / "data" / "fixtures"))
 STORE = Path(os.environ.get("OBJDEL_STORE", ROOT / "data" / "store"))
 
 
+@pytest.fixture(autouse=True)
+def _no_real_secrets(tmp_path_factory, monkeypatch):
+    """No test reads the owner's <repo>/.secrets (objdel.secrets): a path that does not exist, and a fresh cache."""
+    from objdel import secrets
+
+    monkeypatch.setenv("OBJDEL_SECRETS", str(tmp_path_factory.mktemp("secrets") / ".secrets"))
+    secrets.get.cache_clear()
+    yield
+    secrets.get.cache_clear()
+
+
 @pytest.fixture(scope="session")
 def fixtures_dir() -> Path:
     if not FIXTURES.is_dir():

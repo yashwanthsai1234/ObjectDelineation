@@ -312,6 +312,7 @@ torch==2.14.1
     #   accelerate
     #   peft
     #   torchvision
+    #   trl
 torchvision==0.29.1
     # via
     #   -c build/images/ctx/mac.txt
@@ -331,7 +332,7 @@ transformers==5.20.1
     #   trl
 triton==3.8.0
     # via torch
-trl==1.16.0
+trl==1.17.1
     # via
     #   -c build/images/ctx/mac.txt
     #   objdel (pyproject.toml)

@@ -30,7 +30,6 @@ objdel-hf-write (HF token: checked by hf_push.token_problems, then only ever the
 import argparse
 import base64
 import csv
-import functools
 import gzip
 import json
 import operator
@@ -200,13 +199,15 @@ def spend(committed: bool = False) -> float:
     return closed + sum(accrued(r, max(now, r["deadline"]) if committed else now) for r in active().values())
 
 
-@functools.cache
 def secret(service: str) -> str:
-    cmd = ["security", "find-generic-password", "-s", service, "-w"]
-    p = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    if p.returncode:
-        die(f"keychain item {service} missing (security find-generic-password)")
-    return p.stdout.strip()
+    """objdel.secrets: <repo>/.secrets, else the macOS keychain; dies when neither has it."""
+    from objdel import secrets
+
+    try:
+        value = secrets.get(service)
+    except PermissionError as e:
+        die(str(e))
+    return value or die(f"secret {service} missing: not in {secrets.path()}, not in the keychain")
 
 
 # --- commands ------------------------------------------------------------------------------------------------------
@@ -515,11 +516,11 @@ def cmd_push_hf(a) -> None:
     run, out = get_run(a.run_id), yaml.safe_load((ROOT / a.config).read_text())["output_dir"]
     token = secret("objdel-hf-write")
     if bad := hf_push.token_problems(hf_push.whoami(token), hf_push.REPO):
-        die(f"keychain objdel-hf-write is too broad for a rented box: {'; '.join(bad)}. Recreate it at "
+        die(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: {'; '.join(bad)}. Recreate it at "
             f"huggingface.co/settings/tokens as fine-grained with only {hf_push.REPO}: write (no other boxes ticked)")
     cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push --run /workspace/runs/"
            f"{a.run_id}/{out} --repo {hf_push.REPO} --revision {out}")  # fmt: skip
-    remote(run, cmd, token + "\n", "HF token from the keychain")
+    remote(run, cmd, token + "\n", "HF token from objdel.secrets")
 
 
 def billed(charges: dict, iid: int) -> float | None:

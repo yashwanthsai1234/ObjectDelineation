@@ -7,10 +7,12 @@ G = num_generations = 8 (REWARD_V4.group); any other num_generations or num_gene
 because TRLReward would score a TRL group of 16 as two v4 groups of 8 without noticing (break-it B2-5). Reward:
 TRLReward's weight-0 loggers plus the aggregator with multi_objective_aggregation="sum_then_normalize" and
 scale_rewards="none" (objdel.train.rewards).
-One step = 32 prompts x 8 completions (generation_batch_size 256, plan §3.2): per_device_train_batch_size 8 with 32
-accumulation steps on one GPU; per_device sizes are multiples of G so every process's reward call holds whole
-groups at any world size. num_generations_eval = None (= 8): held-out evaluation samples groups like training,
-which is what the Phase 2 GRPO-signal gate (duplicates, sigma above the floor at T = 1) measures.
+One step = 32 prompts x 8 completions (generation_batch_size 256, plan §3.2): per_device_train_batch_size 16 (two
+groups) with 16 accumulation steps on one GPU (perf F2, 2026-11-06: half the CPU launch work per answer of 8 x 32;
+the profiling run measures 8 / 16 / 32); per_device sizes are multiples of G so every process's reward call holds
+whole groups at any world size. vLLM colocate (perf F1): vllm_gpu_memory_utilization 0.35, sleep mode on (vLLM
+frees its memory during the update). num_generations_eval = None (= 8): held-out evaluation samples groups like
+training, which is what the Phase 2 GRPO-signal gate (duplicates, sigma above the floor at T = 1) measures.
 
 max_completion_length: 1,536 tokens for Qwen3-VL and SmolVLM, 1,024 for LFM2.5-VL (5.2 vs 8.2 tokens per vertex,
 D10). Issue I5: on the final prepared set 1 of 3,282 RIGA train targets is over budget for each of the three
@@ -21,6 +23,9 @@ before BinRushed1 lost its model image, B3-1). The budget stays; such answers ar
 Generation: HF generate for SmolVLM, because TRL + vLLM re-expands SmolVLM/Idefics3's pre-expanded image tokens
 (issue #6294 and fix PR #6718 still open on 2026-10-19); vLLM colocate for LFM2.5-VL and Qwen3-VL, whose image
 placeholder expands to one contiguous run (lab t_stack T5).
+
+Both configs (perf F3): logging_nan_inf_filter off (an isnan/isinf host sync on every micro-batch; a NaN loss still
+shows at the log steps) and non-blocking host-to-GPU copies (pinned memory is on).
 
 SFT: assistant-only loss (vision datasets need transformers >= 5.18; TRL swaps in its own training template for
 the processor's chat template, qwen3_vl_training for Qwen3-VL and lfm2_training for LFM2.5-VL), max_length=None
@@ -137,6 +142,9 @@ def _bf16(overrides: dict) -> bool:
     return is_torch_bf16_gpu_available() and not overrides.get("fp16", False)
 
 
+NO_SYNC = {"logging_nan_inf_filter": False, "accelerator_config": {"non_blocking": True}}  # perf F3
+
+
 def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at: int | None = None,
                **overrides) -> SFTConfig:
     """The bundle's SFT settings (§6.0). Schedule (D5, WSD): linear warmup over 3 % of the stable run's `steps`,
@@ -161,6 +169,7 @@ def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at:
         "train_sampling_strategy": "group_by_length", "length_column_name": "length",
         "dataloader_num_workers": workers, "dataloader_persistent_workers": workers > 0,
         "dataloader_prefetch_factor": 2 if workers else None,
+        **NO_SYNC,
         "gradient_checkpointing": model in _GRAD_CKPT,
         "remove_unused_columns": False, "report_to": "none", "seed": 0, "data_seed": 0} | overrides)
 
@@ -171,14 +180,15 @@ def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
         if overrides.get(k) not in (None, g):
             raise ValueError(f"{k}={overrides[k]}: reward v4 scores groups of exactly {g} (REWARD_V4.group)")
     return GRPOConfig(**{
-        "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g, "per_device_train_batch_size": g,
-        "gradient_accumulation_steps": 32, "per_device_eval_batch_size": 2 * g,
+        "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
+        "per_device_train_batch_size": 2 * g, "gradient_accumulation_steps": 16, "per_device_eval_batch_size": 2 * g,
         "max_completion_length": MAX_COMPLETION[model], "temperature": 1.0,
         "loss_type": "dr_grpo", "epsilon": 0.2, "epsilon_high": 0.28, "beta": 1e-3, "mask_truncated_completions": True,
         "learning_rate": 1e-5 if model in _LORA else 1e-6, "lr_scheduler_type": "constant", "warmup_steps": 0,
         "multi_objective_aggregation": "sum_then_normalize", "scale_rewards": "none",
         "reward_weights": [0.0] * len(LOGGED) + [1.0],  # TRLReward.funcs() order: loggers, then AGGREGATOR
-        "use_vllm": model != "smolvlm-256m", "vllm_mode": "colocate",
+        "use_vllm": model != "smolvlm-256m", "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,
+        "vllm_enable_sleep_mode": True, **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
 

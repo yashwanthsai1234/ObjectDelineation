@@ -468,7 +468,7 @@ def test_bundle_carries_no_wall_clock_file(bundled):
 
 
 # ------------------------------------------------------------------------------------------------ real data
-REAL = ROOT / "data" / "views" / "lidc-bundle-v2"  # the bundle trained on
+REAL = ROOT / "data" / "views" / "lidc-bundle-v3"  # the bundle trained on
 
 
 def _need(*paths):

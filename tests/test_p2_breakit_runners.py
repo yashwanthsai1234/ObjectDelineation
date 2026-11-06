@@ -278,8 +278,9 @@ def test_exited_treats_permission_error_as_alive(tmp_path, monkeypatch):
         SC.exited(tmp_path)
 
 
-def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True):
-    """select_ckpt.main with the sampler / scorer replaced: records every score_view call."""
+def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, hf_check=True):
+    """select_ckpt.main with the sampler / scorer replaced: records every score_view call; the HF check (D13, run
+    with the default --sampler vllm) returns `hf_check` as its pass."""
     SC = _sc()
     from experiments.phase2 import prereg
     from objdel.train import serve
@@ -300,6 +301,8 @@ def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True):
     monkeypatch.setattr(serve, "fork_pool", lambda n: SimpleNamespace(shutdown=lambda: None))
     monkeypatch.setattr(SC, "score_view", score_view)
     monkeypatch.setattr(SC, "vision_check", lambda b, cfg: {"pass": True} if cfg else {})
+    monkeypatch.setattr(SC, "hf_check", lambda a, name, out, pool: {"branch": name, "vllm_minus_hf": {},
+                                                                    "pass": hf_check})
     monkeypatch.setattr(
         prereg, "select_rb", lambda bs: (next((b["name"] for b in bs[::-1] if b["eligible"]), None), {"eligible": []})
     )
