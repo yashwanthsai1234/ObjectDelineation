@@ -10,6 +10,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
+from datasets import Dataset  # noqa: E402
 from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration  # noqa: E402
 from trl import GRPOTrainer  # noqa: E402
 from trl.trainer.utils import add_fused_lm_head  # noqa: E402
@@ -210,6 +211,20 @@ def test_fast_grpo_clears_the_vision_cache_per_generation_batch(monkeypatch):
     monkeypatch.setattr(GRPOTrainer, "_generate_and_score_completions", lambda self, inputs: {"done": inputs})
     assert t._generate_and_score_completions(["prompts"]) == {"done": ["prompts"]}
     assert t.vision.store == {}
+
+
+def test_fast_grpo_trains_on_open_once_rows_from_the_main_process(monkeypatch):
+    from objdel.train.dataset import OpenOnce
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "get_train_dataloader", lambda self: seen.append(self.train_dataset) or "dl")
+    rows = Dataset.from_list([{"prompt": "q", "image": None, "key": "k"}])
+    t = trainer(fast.FastGRPO, train_dataset=rows, args=type("A", (), {"dataloader_num_workers": 0})())
+    assert fast.FastGRPO.get_train_dataloader(t) == "dl"
+    assert isinstance(seen[0], OpenOnce) and t.train_dataset is rows  # wrapped only for the loader
+    t.args.dataloader_num_workers = 2  # a worker would keep its own last stack: the 16 fetches spread over workers
+    with pytest.raises(ValueError, match="dataloader_num_workers"):
+        fast.FastGRPO.get_train_dataloader(t)
 
 
 def test_fast_grpo_skips_flop_counting():

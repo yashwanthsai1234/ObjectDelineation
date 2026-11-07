@@ -24,6 +24,8 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
+from objdel.train.dataset import OpenOnce
+
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths
 ROW_KEYS = ("mm_token_type_ids", "token_type_ids")  # per-token, prompt + completion wide: cut like input_ids
 OTHER_VISION = ("pixel_attention_mask", "spatial_shapes", "num_tiles", "image_sizes", "image_position_ids")
@@ -247,6 +249,57 @@ def one_pad_per_image(prompts: list[dict], pad: int) -> list[dict]:
     return out
 
 
+class ImageMemo:
+    """The processor's image step once per distinct image per generation batch (perf: images prepared 2-3 times).
+
+    TRL runs the image processor over every row twice a step: for the prompt ids sent to vLLM (`_tokenize_prompts`,
+    whose pixel values it then drops) and for the update's pixel values. A step has 256 rows but 32 distinct images,
+    and dataset.OpenOnce hands both passes the same object for the 8 rows of an image, so this memo (keyed by the object
+    and the call's kwargs, holding the object so its id stays unique) prepares each image once and assembles each
+    pass's output from the per-image slices, in row order. FastGRPO clears it before each generation. Every other
+    attribute is the wrapped processor's."""
+
+    KEYS = {"pixel_values", "image_grid_thw"}  # Qwen-VL image processors: patch rows and one (t, h, w) row per image
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.memo: dict[tuple, tuple] = {}  # (id(image), kwargs) -> (image, its patch rows, its grid row)
+
+    @classmethod
+    def install(cls, processing_class):
+        """Wrap processing_class.image_processor once; None for a processing class without one."""
+        ip = getattr(processing_class, "image_processor", None)
+        if ip is None or isinstance(ip, cls):
+            return ip
+        processing_class.image_processor = memo = cls(ip)
+        return memo
+
+    def __getattr__(self, name):
+        return getattr(self.__dict__["inner"], name)
+
+    def clear(self) -> None:
+        self.memo.clear()
+
+    def __call__(self, images, **kwargs):
+        from transformers.feature_extraction_utils import BatchFeature
+        from transformers.image_utils import make_flat_list_of_images
+
+        flat, kw = make_flat_list_of_images(images), repr(sorted(kwargs.items()))
+        miss = list({id(x): x for x in flat if (id(x), kw) not in self.memo}.values())
+        if miss:
+            out = self.inner(miss, **kwargs)
+            if set(out.keys()) != self.KEYS:  # another processor family: no memo
+                return self.inner(images, **kwargs)
+            grid = out["image_grid_thw"]
+            rows = torch.split(out["pixel_values"], grid.prod(-1).tolist())
+            for x, r, g in zip(miss, rows, grid, strict=True):
+                self.memo[(id(x), kw)] = (x, r, g)
+        parts = [self.memo[(id(x), kw)] for x in flat]
+        data = {"pixel_values": torch.cat([r for _, r, _ in parts]),
+                "image_grid_thw": torch.stack([g for *_, g in parts])}
+        return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
+
+
 class FastGRPO(FastForward, GRPOTrainer):
     """GRPOTrainer with the per-chunk windows, the vision cache (cleared per generation batch), rewards scored while
     the old and reference logprobs run (C9), phase timers and no FLOP count."""
@@ -255,10 +308,12 @@ class FastGRPO(FastForward, GRPOTrainer):
     loss_inputs = None  # the micro-batch inside _compute_loss (C10: its forward sets the IS ratio)
     is_stats = None  # C10: the generation batch's IS-metric sums, counts, min and max, on the device until `log`
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
+    images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
+        self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
 
     def drop_lora_input_cast(self) -> bool:
@@ -267,6 +322,17 @@ class FastGRPO(FastForward, GRPOTrainer):
             return False
         no_lora_input_cast(self.model)
         return True
+
+    def get_train_dataloader(self):
+        """TRL's loader over dataset.OpenOnce rows: one stack of 256 rows and 32 image opens a step, not 16 x 256."""
+        if self.args.dataloader_num_workers:
+            raise ValueError("OpenOnce keeps the step's stack in the main process: dataloader_num_workers must be 0, "
+                             f"not {self.args.dataloader_num_workers}")
+        rows, self.train_dataset = self.train_dataset, OpenOnce(self.train_dataset)
+        try:
+            return super().get_train_dataloader()
+        finally:
+            self.train_dataset = rows
 
     def _generate_and_score_completions(self, inputs):
         for cache in (self.vision, self.rope):
@@ -359,6 +425,8 @@ class FastGRPO(FastForward, GRPOTrainer):
         return super().log(logs, start_time)
 
     def _generate(self, prompts):
+        if self.images is not None:  # the previous batch's images
+            self.images.clear()
         if self.use_vllm:
             self.patch_vllm_prompts()
         with self.timed("generate"):
