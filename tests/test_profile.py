@@ -142,3 +142,16 @@ def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregister
     assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/r2/ckpt", "--train": f"{data}/prepared",
                     "--probe": f"{data}/eval_views/lidc-val-shifted", "--out": "/workspace/runs/r2/g_probe"}
     assert not any(f in gp for f in ("--plain", "--grpo", "--items", "--select"))  # the pre-registered G-probe as is
+
+
+def test_checker_gpu_chain_builds_then_sanitizes_before_the_long_checks():
+    """A checker-only rental (no model, no vLLM, no data bundle): build for the card, memcheck + initcheck first (the
+    step P1 never ran), then P1's equivalence and timing step if the cap leaves time."""
+    from experiments.phase2.vast import policy
+
+    cfg = policy.ROOT / "experiments/phase2/configs"
+    p1, k = (policy.chain(cfg / f, "k1") for f in ("p1_rl.yaml", "checker_gpu.yaml"))
+    assert k[0] == p1[0]  # box facts
+    assert k[1] == ["bash", "-c", "mkdir -p /workspace/runs/k1/cuda_checker && "
+                    "bash experiments/cuda_checker/run_box.sh --build-only"]  # fmt: skip
+    assert k[2] == p1[3] and k[3] == ["~", *p1[2]] and len(k) == 4
