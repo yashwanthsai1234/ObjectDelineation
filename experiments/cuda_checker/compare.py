@@ -129,9 +129,18 @@ def goldens() -> dict:
 
 def polygon_reference(rings, roles, W, H, G=1000) -> dict:
     """polycore's result for one case: its 13 defect counts and its even-odd mask's SHA-256 (mask_sha), recorded
-    before the CPU checker was archived. roles: one per ring (-1 = outer). KeyError for a case never recorded."""
-    defects, evenodd = goldens()[case_key(rings, roles, W, H, G)]
-    return dict(defects=defects, evenodd=evenodd)
+    before the CPU checker was archived. roles: one per ring (-1 = outer). A case never recorded (the K1 "holes"
+    generator rounds math.cos/sin, whose last bit differs between platforms: R3 met 4 such cases of ~7,600 on Linux)
+    takes its reference from the exact integer oracles instead (tests/oracles: crossing parity, ref_totals), which
+    the recorded results equal (tests/test_checker_oracle.py)."""
+    if (got := goldens().get(case_key(rings, roles, W, H, G))) is not None:
+        defects, evenodd = got
+        return dict(defects=defects, evenodd=evenodd)
+    from oracles import raster_oracle as RO
+    from oracles import validity_oracle as VO
+
+    return dict(defects=np.array(VO.ref_totals(rings, list(roles), G), np.int64),
+                evenodd=mask_sha(RO.winding_and_parity(rings, W, H, G)[1] % 2 == 1))
 
 
 def geometry_diff(g, ref: dict):
