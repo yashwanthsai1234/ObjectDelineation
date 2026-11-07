@@ -577,6 +577,7 @@ def test_vision_tv_equals_a_numpy_reference(vlm):
 def test_next_token_probs_keeps_every_input_on_the_model_device(monkeypatch):
     """R1 2026-11-05: on CUDA, mm_token_type_ids was extended with CPU zeros (the target ids stayed on the CPU) and
     G-vision crashed at the first rolling checkpoint. "meta" stands in for the GPU on the Mac."""
+    pytest.importorskip("torch")
     from types import SimpleNamespace
 
     import torch
