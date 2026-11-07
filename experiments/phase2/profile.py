@@ -30,13 +30,13 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 STEPS, ITEMS = 4, 8
-ARMS = {
-    "trl": {"flags": ["--plain"]},
+ARMS = {  # most important first: profile.json is written after each arm, so a run cut by its cap keeps these
     "fast": {},
-    "mb32": {"grpo": {"per_device_train_batch_size": 32, "gradient_accumulation_steps": 8}},
-    "no_ckpt": {"grpo": {"gradient_checkpointing": False}},
-    "compile": {"flags": ["--compile", "default"]},
+    "trl": {"flags": ["--plain"]},
     "graphs": {"flags": ["--compile", "reduce-overhead"]},
+    "mb32": {"grpo": {"per_device_train_batch_size": 32, "gradient_accumulation_steps": 8}},
+    "compile": {"flags": ["--compile", "default"]},
+    "no_ckpt": {"grpo": {"gradient_checkpointing": False}},
     "trace": {"flags": ["--trace"]},
 }
 TIMED = [a for a in ARMS if a != "trace"]
