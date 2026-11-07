@@ -15,7 +15,7 @@
 #   sync_up.sh r2 && fetch_hf.sh r2 r1-qwen3vl2b      # e2 -> {rd}/ckpt (needs the repo-scoped HF token)
 #   run.sh r2 --cap-hours 1.3 experiments/phase2/configs/r2_qwen3vl2b.yaml && teardown.sh r2
 steps:
-  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
+  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu*/cpu.cfs_*_us; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
   # 5090 + CUDA 13 stack: capability, bf16 peak, Triton, torch.compile, a vLLM engine on e2 with CUDA graphs
   - [bash, experiments/phase2/docker/env_check.sh, "{rd}/ckpt", "{rd}/env_check.json"]
   # The CUDA checker: build for this card; run_box.sh runs the GPU tests (arena reuse, two-stream chunks), the
@@ -24,12 +24,14 @@ steps:
      mkdir -p {rd}/cuda_checker; cp -r experiments/cuda_checker/results experiments/cuda_checker/RESULTS.md
      {rd}/cuda_checker/ 2>/dev/null; [ $s = 0 ] || exit $s; /opt/venv/bin/python -m pytest -q -p no:cacheprovider
      tests/test_gpu_scoring.py 2>&1 | tee {rd}/cuda_checker/pytest.txt"]
-  # Memory errors in the checker: compute-sanitizer memcheck from the toolkit's own sanitizer pin (run_box.sh);
-  # recorded, does not stop the chain, but a missing binary or any error fails the step
+  # Memory errors in the checker: compute-sanitizer from the toolkit's own sanitizer pin (run_box.sh), memcheck then
+  # initcheck (arena reuse), torch's caching allocator off so its pool does not hide out-of-bounds accesses; recorded,
+  # does not stop the chain, but a missing binary or any error fails the step
   - ["~", bash, -c, "S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/compute-sanitizer 2>/dev/null);
-     [ -n \"$S\" ] || {{ echo no compute-sanitizer > {rd}/cuda_checker/memcheck.txt; exit 1; }};
-     $S --tool memcheck --error-exitcode 1 /opt/venv/bin/python -m pytest -q -p no:cacheprovider
-     tests/test_cuda_checker_gpu.py > {rd}/cuda_checker/memcheck.txt 2>&1"]
+     O={rd}/cuda_checker/memcheck.txt; [ -n \"$S\" ] || {{ echo no compute-sanitizer > $O; exit 1; }};
+     export PYTORCH_NO_CUDA_MEMORY_CACHING=1; for t in memcheck initcheck; do echo == $t >> $O;
+     timeout 1200 $S --tool $t --error-exitcode 1 /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+     tests/test_cuda_checker_gpu.py >> $O 2>&1 || exit 1; done"]
   # RL: the pre-registered G-probe on e2 (fast.FastGRPO, vLLM colocate, GPU checker rewards): verdict, gain, timing
   - [-m, experiments.phase2.g_probe, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/prepared",
      --probe, "{data}/eval_views/lidc-val-shifted", --out, "{rd}/g_probe"]

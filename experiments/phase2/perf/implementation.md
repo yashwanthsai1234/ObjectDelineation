@@ -486,12 +486,42 @@ Otherwise the code is deleted, not left behind a flag.
 
 ---
 
+### Second fresh-context review (2026-11-06, after C5, C10, EV-5): fixed
+
+C10's loss was found identical to TRL's aligned path, including KL, OPSM, entropy masks and checkpoint recompute.
+Fixed:
+- **Rope cache key.** It hashed ids and mask only. The prompt text is fixed, so ids carry only the pad count
+  t·h·w/4, and grids (1, h, w) and (1, w, h) shared positions. Rows are now keyed by their exact ids, mask and grids.
+  Test: `test_rope_cache_keys_rows_by_their_exact_tokens_and_image_grids`.
+- **IS metrics.** They were appended per micro-batch, so TRL's log reported a mean of 16 maxima as "max", at about
+  7 host reads per micro-batch. Sums, counts, min and max now stay on the device over the generation batch and are
+  read once in `FastGRPO.log`.
+- **CPU quota.** `serve.cpus` read only cgroup v2's `cpu.max`; the P1 box is cgroup v1 (no cpu.max, nproc 128). It
+  now also reads `cpu.cfs_quota_us`. The box-facts step records both.
+- **vLLM timeout.** vLLM writes its completions once at the end, so a retry starts over. Its timeout now covers
+  answers at the 1,536-token cap: 0.75 s per answer.
+- **Memcheck.** It ran under torch's caching allocator, which hides out-of-bounds accesses. It now runs with
+  `PYTORCH_NO_CUDA_MEMORY_CACHING=1`, plus an initcheck pass (arena reuse), each with a 20 min timeout.
+
+Built from its performance list (CPU tests; speed measured on the next rental):
+- **Length-sorted update micro-batches (`fast.by_length`).** They replace TRL's shuffle when dr_grpo's constant
+  normaliser and whole-step accumulation leave the update unchanged. Each chunk is then trimmed to rows of like
+  length (the mb32 arm lost 15 s/step to that padding).
+- **No fp32 copy of each LoRA input under bf16 autocast (`fast.no_lora_input_cast`).** It is bit-identical (test),
+  and on only with `bf16`, where Accelerate wraps every forward in autocast.
+
+Open from that list:
+- Vectorized rope positions (about 9 syncs per row in `get_rope_index` on a cache miss).
+- TRL's per-chunk and per-loss `.item()` reads; `torch.cuda.set_sync_debug_mode("warn")` on the box lists them.
+
 ## Stage G: R2 G-probe
 
-- `g_probe` on R1's e2, with the Stage E/F settings, through the existing chain (`train_sft` is not run).
-- Projection: the measured s/step × 20 steps + 3 probe draws.
+- `experiments/phase2/configs/r2_qwen3vl2b.yaml` runs P1's card and checker steps, then `g_probe --ckpt` on R1's e2
+  (owner override of §5.1: e2 failed G-geometry and G-precision).
+- Estimate in its header: about 1 h, about $0.70 on a 5090. That is more than the test allocation's remaining $0.24.
 - Before launch: preflight, then the quote shown to the owner.
-- Tests: the existing G-probe tests; `test_g_probe_settings_are_the_chosen_ones` (Stage E).
+- Tests: `test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregistered_g_probe` and the existing
+  G-probe tests.
 
 ---
 
@@ -504,7 +534,7 @@ Status 2026-11-06: RL-6 done by C1; EV-5 done. Open, each needing a GPU to measu
 | One vLLM engine start per checkpoint in `select_ckpt` (all views in one child) | EV-1 | prompt-id prefix per view; outputs equal to the per-view path |
 | HF check: larger batch and a static KV cache, tested on 5.19 | EV-2 | metric equality on 32 items; timing |
 | A/B of per-request seeds in vLLM | EV-3 | same prompts with and without seeds: throughput |
-| Pool size from the usable CPUs (`serve.pool_size`: affinity, cgroup quota, minus one, cap 16); sampler timeout 3x the measured time (`select_ckpt.TIMEOUT_S`: vLLM 0.3 s, HF 3 s per answer): **done 2026-11-06** | EV-5 | `test_scoring_pool_is_sized_from_the_cpus_this_process_may_use`, `test_sampler_timeout_is_three_times_the_measured_time` |
+| Pool size from the usable CPUs (`serve.pool_size`: affinity, cgroup v2 or v1 quota, minus one, cap 16); sampler timeout 3x the measured time (`select_ckpt.TIMEOUT_S`: HF 3 s per answer, resumable; vLLM 0.75 s, scaled to the 1,536-token cap because a vLLM retry starts over): **done 2026-11-06** | EV-5 | `test_scoring_pool_is_sized_from_the_cpus_this_process_may_use`, `test_sampler_timeout_is_three_times_the_measured_time` |
 | Scoring overlaps the next branch's sampling: open (the sampler child's signal handling lives in the main thread; the gain is measured on the next rental) | EV-4 | timing log per phase |
 | Checker kernels: row-tile coalesced stores, edges in shared memory, 32-bit math (bit-exact) | CK-4 | `run_box.sh` 0 mismatches; Nsight Compute sectors per request |
 | Flash-attention-2 for the vision tower (image change); after C6, the gain is small | RL-4 | loss parity |

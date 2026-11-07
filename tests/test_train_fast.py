@@ -155,6 +155,26 @@ def test_rope_cache_gives_trls_logps_and_computes_each_row_once():
     assert sum(rows) == 10 and t.rope.pending is None
 
 
+def test_rope_cache_keys_rows_by_their_exact_tokens_and_image_grids():
+    """The prompt text is fixed per dataset, so a row's ids carry only its pad count t*h/2*w/2: grids (1, 4, 8) and
+    (1, 8, 4) give the same ids but other image positions. Rows are keyed exactly, ids, mask and grids."""
+
+    class Base(torch.nn.Module):
+        calls = []
+
+        def get_rope_index(self, input_ids, image_grid_thw, **k):
+            self.calls.append(image_grid_thw.tolist())
+            pos = image_grid_thw[:, 1:2].float().expand(len(input_ids), input_ids.size(1))  # h as the position
+            return pos.unsqueeze(0).expand(3, -1, -1), None
+
+    cache = fast.RopeCache(Base())
+    ids, mask, mm = torch.ones(3, 4, dtype=torch.long), torch.ones(3, 4, dtype=torch.long), torch.zeros(3, 4)
+    grid = torch.tensor([[1, 4, 8], [1, 8, 4], [1, 4, 8]])
+    pos = cache.positions(ids, mask, mm, grid, [1, 1, 1])
+    assert Base.calls == [[[1, 4, 8], [1, 8, 4]]]  # row 2 repeats row 0 exactly: computed once
+    assert pos[0, :, 0].tolist() == [4.0, 8.0, 4.0]
+
+
 def test_lora_leaves_the_vision_tower_frozen():
     """The cache is valid only because no trainable weight sits in the tower or the projector (configs.lora, D6)."""
     from peft import get_peft_model
@@ -325,19 +345,85 @@ def test_fast_grpo_skips_the_old_logprob_pass_when_generation_and_update_align(m
 
 
 def test_update_forward_gives_trl_its_importance_ratio(monkeypatch):
-    """The update micro-batch's own logprobs (detached) stand in for the old ones: the ratio and TRL's sampling
-    metrics are set from them before TRL's loss multiplies by inputs["importance_sampling_ratio"]."""
+    """The update micro-batch's own logprobs (detached) stand in for the old ones: the ratio is set before TRL's loss
+    multiplies by inputs["importance_sampling_ratio"]. TRL's sampling metrics cover the whole generation batch (min,
+    max and token-weighted means over every micro-batch), kept on the device and read once, at log time."""
     lp = torch.tensor([[0.0, -1.0, -2.0], [-0.5, -0.5, -0.5]], requires_grad=True)
     monkeypatch.setattr(fast.FastForward, "_get_per_token_logps_and_entropies", lambda self, *a, **k: (lp, None, None))
+    logged = []
+    monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: logged.append({**self._metrics["train"]}))
     t = c10_trainer()
-    inputs = {"sampling_per_token_logps": torch.tensor([[0.0, -1.5, -1.0], [-0.5, -0.5, -0.5]]),
-              "completion_mask": torch.tensor([[1, 1, 0], [1, 1, 1]])}  # fmt: skip
-    t.loss_inputs = inputs
-    assert t._get_per_token_logps_and_entropies(None, None, None, 3)[0] is lp
-    torch.testing.assert_close(inputs["importance_sampling_ratio"], torch.tensor([[1.6487212707], [1.0]]))
-    m = t._metrics["train"]
-    assert m["sampling/sampling_logp_difference/max"] == [pytest.approx(0.5)]
-    assert m["sampling/importance_sampling_ratio/min"] == [1.0]
+    a = {"sampling_per_token_logps": torch.tensor([[0.0, -1.5, -1.0], [-0.5, -0.5, -0.5]]),
+         "completion_mask": torch.tensor([[1, 1, 0], [1, 1, 1]])}  # token gaps 0, 0.5 | 0, 0, 0: ratios e^0.5, 1
+    b = {"sampling_per_token_logps": torch.tensor([[0.0, -1.0, -2.0], [-0.5, -0.5, float("nan")]]),
+         "completion_mask": torch.tensor([[1, 0, 0], [1, 1, 1]])}  # gaps 0 | 0, 0, NaN (not counted): ratios 1, 1
+    for inputs in (a, b):  # two micro-batches of one generation batch
+        t.loss_inputs = inputs
+        assert t._get_per_token_logps_and_entropies(None, None, None, 3)[0] is lp
+    torch.testing.assert_close(a["importance_sampling_ratio"], torch.tensor([[1.6487212707], [1.0]]))
     t.loss_inputs = None  # outside the loss (old and reference passes): nothing set
     t._get_per_token_logps_and_entropies(None, None, None, 3)
-    assert len(m["sampling/importance_sampling_ratio/min"]) == 1
+    assert not t._metrics["train"]  # nothing read from the device before the log
+    t.log({})
+    m = logged[0]
+    assert m["sampling/sampling_logp_difference/max"] == [pytest.approx(0.5)]
+    assert m["sampling/sampling_logp_difference/mean"] == [pytest.approx(0.5 / 8)]  # 8 counted tokens
+    assert m["sampling/importance_sampling_ratio/min"] == [1.0]
+    assert m["sampling/importance_sampling_ratio/max"] == [pytest.approx(1.6487212707)]
+    assert m["sampling/importance_sampling_ratio/mean"] == [pytest.approx((1.6487212707 + 3) / 4)]  # 4 sequences
+    t.log({})  # the stats were reset: nothing more is appended (TRL clears _metrics after its own log)
+    assert logged[1]["sampling/importance_sampling_ratio/min"] == [1.0]
+
+
+def test_by_length_orders_rows_longest_first_and_moves_every_field_with_them():
+    """TRL shuffles the generation batch before splitting it into update micro-batches, so each chunk is as wide as
+    its longest row; sorted, rows of like length share a chunk and FastForward trims each to its own width."""
+    d = {"prompt_mask": torch.tensor([[0, 1], [1, 1], [1, 1], [0, 1]]),
+         "completion_mask": torch.tensor([[1, 0, 0], [1, 1, 1], [1, 0, 0], [1, 1, 0]]),
+         "pixel_values": ["p0", "p1", "p2", "p3"], "num_items_in_batch": torch.tensor(9), "tool_mask": None}
+    out = fast.by_length(d)  # real lengths 2, 5, 3, 3: ties keep their order
+    assert out["pixel_values"] == ["p1", "p2", "p3", "p0"]
+    assert out["completion_mask"].tolist() == [[1, 1, 1], [1, 0, 0], [1, 1, 0], [1, 0, 0]]
+    assert out["num_items_in_batch"] == 9 and out["tool_mask"] is None
+
+
+def test_update_micro_batches_are_length_sorted_only_when_that_leaves_the_gradient_unchanged(monkeypatch):
+    """dr_grpo divides each micro-batch's sum by a constant (micro-batch rows x max_completion_length, then the
+    accumulation steps: grpo_trainer.py 3285-3289), so when every micro-batch of a generation batch lands in one
+    optimizer step (gradient_accumulation_steps a multiple of steps_per_generation), the partition does not change
+    the update. Otherwise TRL's shuffle stays."""
+    import trl.trainer.grpo_trainer as G
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append(G.shuffle_sequence_dict))
+    shuffle = G.shuffle_sequence_dict
+    t = c10_trainer()
+    t.model = type("M", (), {"training": True})()
+    t._prepare_inputs({})
+    assert seen == [fast.by_length] and G.shuffle_sequence_dict is shuffle  # restored after the call
+    t.args.steps_per_generation = 32  # micro-batches of one generation batch span two optimizer steps
+    t._prepare_inputs({})
+    t.args.steps_per_generation, t.loss_type = 16, "bnpo"  # a per-micro-batch token-count normaliser
+    t._prepare_inputs({})
+    assert seen[1:] == [shuffle, shuffle]
+
+
+def test_lora_input_cast_is_dropped_only_under_bf16_autocast_where_it_is_bit_identical():
+    """PEFT keeps the adapters in fp32 on a bf16 base and casts every LoRA input bf16 -> fp32; under bf16 autocast
+    (TRL's bf16 training: Accelerate wraps the forward) the matmul casts it straight back, so the copy changes nothing
+    and FastGRPO turns it off. Without autocast the cast is what makes the dtypes match, so it stays."""
+    from peft import get_peft_model
+
+    from objdel.train import configs
+
+    m = get_peft_model(tiny_model().to(torch.bfloat16), configs.lora("qwen3-vl-2b"), autocast_adapter_dtype=True)
+    assert next(p for n, p in m.named_parameters() if "lora_A" in n).dtype == torch.float32
+    ids = torch.randint(0, 100, (2, 9))
+    with torch.autocast("cpu", torch.bfloat16):
+        ref = m(input_ids=ids).logits
+        n = fast.no_lora_input_cast(m)
+        assert n > 0 and all(not mod.cast_input_dtype_enabled for _, mod in m.named_modules()
+                             if hasattr(mod, "cast_input_dtype_enabled"))  # fmt: skip
+        assert torch.equal(m(input_ids=ids).logits, ref)
+    t = trainer(fast.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False})(), model=m)
+    assert fast.FastGRPO.drop_lora_input_cast(t) is False  # no autocast: nothing changed (and the model left as is)

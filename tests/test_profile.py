@@ -122,6 +122,9 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     assert '"cuda-toolkit[nvcc,cccl,sanitizer]==13.0.3"' in box
     mem = " ".join(policy.chain(policy.ROOT / "experiments/phase2/configs/p1_rl.yaml", "p1")[3])
     assert "--error-exitcode 1" in mem and "no compute-sanitizer" in mem
+    # torch's caching allocator hides out-of-bounds accesses from memcheck; arena reuse is initcheck's case
+    assert "PYTORCH_NO_CUDA_MEMORY_CACHING=1" in mem and "for t in memcheck initcheck" in mem
+    assert "timeout 1200 $S --tool $t" in mem  # memcheck instruments torch's kernels too: each pass is bounded
 
 
 def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregistered_g_probe():
