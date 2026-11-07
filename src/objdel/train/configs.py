@@ -181,14 +181,16 @@ def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
             raise ValueError(f"{k}={overrides[k]}: reward v4 scores groups of exactly {g} (REWARD_V4.group)")
     return GRPOConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
+        # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM
         "per_device_train_batch_size": 2 * g, "gradient_accumulation_steps": 16, "per_device_eval_batch_size": 2 * g,
+        "gradient_checkpointing": True,
         "max_completion_length": MAX_COMPLETION[model], "temperature": 1.0,
         "loss_type": "dr_grpo", "epsilon": 0.2, "epsilon_high": 0.28, "beta": 1e-3, "mask_truncated_completions": True,
         "learning_rate": 1e-5 if model in _LORA else 1e-6, "lr_scheduler_type": "constant", "warmup_steps": 0,
         "multi_objective_aggregation": "sum_then_normalize", "scale_rewards": "none",
         "reward_weights": [0.0] * len(LOGGED) + [1.0],  # TRLReward.funcs() order: loggers, then AGGREGATOR
         "use_vllm": model != "smolvlm-256m", "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,
-        "vllm_enable_sleep_mode": True, **NO_SYNC,
+        "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
 

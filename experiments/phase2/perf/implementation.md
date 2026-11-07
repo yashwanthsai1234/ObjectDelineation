@@ -335,56 +335,87 @@ Tests:
 
 ## Stage D: the box chain and the profile script
 
-### D1. `experiments/phase2/profile.py` (replaces `profile_sft.py`; that file is deleted)
+### D1. `experiments/phase2/profile.py` (built 2026-11-06; replaces `profile_sft.py`, deleted)
 
-`profile.py` keeps the trace analysis that exists now: `busy`, `smi_mean`, and the sync counts. It adds **GRPO arms**:
-the G-probe trainer on R1's e2, 3 optimizer steps each, with timers around **generate / score / update** in the
-subclass.
+One g_probe process per arm on R1's e2: 4 optimizer steps of 32 prompts × 8 answers, 8 probe items; step 1 (vLLM,
+allocator and compile warm-up) is left out of s/step. nvidia-smi is sampled every 500 ms beside each arm.
 
-| Arm | Micro-batch × accumulation | Checkpointing | C1 trim | Extra |
-|---|---|---|---|---|
-| g_base | 16 × 16 | on | off | Stage A settings |
-| g_trim | 16 × 16 | on | on | |
-| g_trim_mb32 | 32 × 8 | on | on | |
-| g_trim_nockpt | 16 × 16 | off | on | may run out of memory (recorded) |
-| g_trim_mb8 | 8 × 32 | on | on | the old size, for comparison |
+| Arm | g_probe flags | Micro-batch × accumulation | What it measures |
+|---|---|---|---|
+| trl | `--plain` | 16 × 16 | TRL 1.17 as shipped: the reference |
+| fast | `--trace DIR` | 16 × 16 | `FastGRPO` (C1 trim, C6 vision cache, C9 overlap); torch.profiler on step 3 |
+| mb32 | | 32 × 8 | fewer, larger launches |
+| no_ckpt | | 16 × 16, no checkpointing | may run out of memory (recorded) |
+| compile | `--compile default` | 16 × 16 | regional torch.compile of the text layers (F) |
+| graphs | `--compile reduce-overhead` | 16 × 16 | the same with CUDA Graphs (F) |
 
-Per arm:
-- s/step, and the generate / score / update split;
-- peak GiB (trainer and vLLM);
-- GPU busy share in the traced update micro-batch;
-- kernels and syncs per micro-batch;
-- vLLM importance-sampling metrics: the share of masked answers;
-- answer lengths.
+Per arm, in `profile.json`: exit code, s/step, the split **generate / rewards / old+ref logprobs / update** (from
+`FastGRPO`'s `time/*_s` metrics and TRL's `step_time`), mean answer length, minimum importance-sampling ratio,
+nvidia-smi peak MiB, mean utilization and power; for the traced arm the step's GPU busy share, kernels, CUDA API
+time and host syncs. The torch.profiler callback is shared with train_sft (`callbacks.TraceStep`).
 
-Tests (`tests/test_p2_profile.py`, extended):
-- every GRPO arm keeps 256 answers per step;
-- the split parser on a synthetic log;
-- the existing trace-parse tests.
+Tests (`tests/test_profile.py`): every arm keeps 256 answers per step; the flags per arm; the split from a
+synthetic g_probe log; the trace parse; nvidia-smi parse; the p1 chain.
 
-### D2. The chain config `experiments/phase2/configs/p1_profile.yaml` (`steps:` form, as `r0.yaml`)
+### C9. Rewards overlap the old and reference logprobs (built 2026-11-06)
 
-1. `env_check.sh` (C4). A failure stops the chain.
-2. `run_box.sh` with the checker build, the 0-mismatch eval, the timing sweep, and the arena test (C2).
-3. **vLLM vs HF smoke** on e2: 16 shifted-val prompts × 8 answers, through the G-probe trainer's vLLM generation and
-   through `hf_sample`. Both answer sets are scored and reported side by side, as in `select_ckpt.hf_check`. This is
-   the check of TRL issue #6294 (image tokens expanded twice) for Qwen3-VL. A failure stops the chain.
-4. The GRPO arms (D1).
+TRL 1.17 computes, per generation batch: generate → old logprobs (GPU) → reference logprobs (GPU) → rewards (CPU and
+the checker). `FastGRPO._generate` hands the decoded answers to `TRLReward.prefetch` as soon as vLLM returns; a
+background thread parses them, runs the one checker call (own CUDA streams, GIL released) and the pool scoring. The
+reward call takes that result only when the answers, truncation flags, keys and sizes are identical; otherwise it
+scores as before. The checker and the training both stay on the GPU. Tests: `tests/test_reward_prefetch.py`
+(equal to the recorded values, one checker call, off the main thread; a mismatched prefetch is ignored) and
+`test_fast_grpo_starts_scoring_when_vllm_returns`.
 
-Cap 1.25 h.
+### Fresh-context review (2026-11-06): fixed before the box run
 
-Tests:
-- `test_p1_chain_builds` (the `policy.chain` expansion);
-- `test_p1_chain_stops_on_env_or_parity_failure` (no `~` on steps 1 and 3).
+Two read-only reviewers (one on the CUDA checker, one on the trainer) read the code without our conclusions.
+- **Fixed:** `FastGRPO._generate` crashed at g_probe's step-0 sampling (no generation batch yet): `rows` is None
+  outside a batch, and the prefetch is skipped. Test: `test_fast_grpo_prefetch_waits_for_a_generation_batch`.
+- **Fixed:** `profile.py` died on the `trl` arm (TRL as shipped has no `time/*` metrics) and on any malformed arm
+  output; the split is now optional, parse errors are recorded, and the next arm runs.
+- **Fixed:** the traced arm's profiler slowed 2 of its 3 timed steps: tracing is its own last arm (`trace`), untimed.
+- **Fixed (wrong premise):** TRL 1.17 trains on its own processor-expanded ids, not vLLM's (`grpo_trainer.py:1844`),
+  so the "TRL dropped the images" check could never fire; it is gone. The real risk is vLLM expanding the one pad to
+  another count (sampling from other image features, silently off-policy): the vLLM wrapper now compares each
+  returned prompt to TRL's ids and raises.
+- **Fixed:** the compile arms would pass Dynamo's recompile limit (8 widths × grad on/off × adapter on/off > 8) and
+  run eager with a warning: limits raised in `compile_text_layers`; `TORCH_LOGS=recompiles` in every arm's log.
+- **Fixed (checker):** a failed CUDA call (an OOM, say) left the runtime's last error set and failed the next good
+  call; every call clears it first. Arena rounding is capped at 64 MiB (one large `check_masks` call kept twice its
+  need, never freed). Checker streams are created at the lowest priority, so the trainer's kernels go first.
+- **Open, decided on the box:** `__int128` division in device code (nvcc must accept it: the build step shows it);
+  occupancy of the 16 KiB shared window; one-thread witness tests on illegal shapes with many vertices (tail
+  latency); GIL contention of the prefetch parse with the main thread's launches (the `fast` vs `trl` arms show it).
+- **C10 candidate (not built):** with `steps_per_generation = gradient_accumulation_steps` and one iteration, the old
+  logprobs equal the update's own (the weights do not change in between); TRL computes them only for the vLLM
+  importance-sampling ratio. Moving that ratio into the loss drops one of three forwards over 256 rows. Built only if
+  the box's `logprobs` share justifies changing TRL's loss.
 
----
+### D2. The chain config `experiments/phase2/configs/p1_rl.yaml` (`steps:` form, as `r0.yaml`)
+
+Before the chain: `sync_up.sh p1` (code and the LIDC bundle) and `fetch_hf.sh p1 r1-qwen3vl2b` (e2 from the private
+HF repo to `{rd}/ckpt`; the token goes over ssh stdin only, as push_hf). No HF generation anywhere: vLLM generates
+in RL and the G-probe (owner, 2026-11-06). The vLLM/TRL image check (TRL #6294) is the `fast` arm itself:
+`FastGRPO` sends vLLM one image pad per image and raises if TRL drops the images.
+
+1. `~` box facts (lscpu, cgroup CPU limit, nvidia-smi -q, /dev/shm).
+2. `env_check.sh {rd}/ckpt` (C4). A failure stops the chain.
+3. The checker: `run_box.sh` (build for the card, GPU tests incl. arena reuse and two-stream chunks, 0-mismatch
+   eval, timing sweep), then `tests/test_gpu_scoring.py`. A failure stops the chain.
+4. `~` compute-sanitizer memcheck on the checker GPU tests, when the toolkit ships it.
+5. The arms (D1).
+
+Cap 1.7 h (RTX 5090 at ≤ $0.79/h: ≤ $1.35, inside the owner's $1.50 for this test).
 
 ## Stage E: profiling run (box)
 
+**Done 2026-11-06 (P1, $1.253):** results, decisions and the next steps in `p1_results.md`.
+
 1. `make preflight` (C4 ceiling).
 2. `offers.sh RTX_5090` (read-only quote, US/CA).
-3. Show the owner the hours (≤ 1.25 h cap) and the dollars (quote × cap). Rent only after the owner says yes.
-4. `launch.sh … --config experiments/phase2/configs/p1_profile.yaml`.
+3. The hours (≤ 1.7 h cap) and dollars (quote × cap) stay inside the owner's $1.50 test allocation (2026-11-06).
+4. `make preflight CONFIG=experiments/phase2/configs/r1_qwen3vl2b.yaml` (the gate checks R1's data, checker and code), then `launch.sh OFFER p1 --config experiments/phase2/configs/r1_qwen3vl2b.yaml --cap-hours 1.7` and `run.sh p1 experiments/phase2/configs/p1_rl.yaml`.
 
 **Pass:** every smoke step passes.
 **Choose:** the arm with the lowest s/step that fits in memory, with no more than 5 % of answers masked by importance
@@ -474,14 +505,15 @@ Otherwise the code is deleted, not left behind a flag.
 | RL-6 padding to the longest answer | C1 (update); H (ref / old forwards) |
 | RL-7 vision tower on every copy of an image | C6 |
 | Transfers | C7 |
+| Rewards wait for the logprob passes | C9 |
 | CK-1, CK-2, CK-3 checker memory | C2 |
 | CK-4 checker store pattern | H |
 | CK-5 batch size | C3 |
 | Launch-bound update step (CUDA Graphs) | C1 buckets + C5 + F (compile, reduce-overhead, manual graphs) |
 | RTX 5090 | C4 + D (env checks) |
-| vLLM + TRL version range, Qwen3-VL support | B1 + D2 smoke |
+| vLLM + TRL version range, Qwen3-VL support | B1 + D2 (`fast` arm: one pad per image, loud image-drop check) |
 | EV-1 to EV-6 evaluation | H (EV-6 is solved by F1) |
-| SFT-1 to SFT-4 | not planned (no SFT run); `profile.py` keeps the SFT arms |
+| SFT-1 to SFT-4 | not planned (no SFT run); train_sft keeps `profile:` (`callbacks.TraceStep`) |
 
 ## What is not in this plan
 

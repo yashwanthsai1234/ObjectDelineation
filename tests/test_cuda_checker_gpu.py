@@ -55,3 +55,60 @@ def test_repeated_calls_are_identical():
     p = C.pack_polygons([(r, rl, W, H) for _, r, rl, W, H, G in C.fuzz_polygons(20, seed=13) if G == 1000])
     a, b = C.run_polygons(p), C.run_polygons(p)
     assert all(np.array_equal(a[k], b[k]) for k in a)
+
+
+def _shape_pool(n: int, seed: int):
+    """n fuzz shapes (grid 1000) on random crops, mostly small, some wider than one 1024-column raster window, with
+    their polycore references: (cases [(rings, roles, W, H)], references)."""
+    rng = np.random.default_rng(seed)
+    cases = []
+    for _, rings, roles, _, _, G in C.fuzz_polygons(n // 15 + 1, seed=seed):
+        if G != 1000:
+            continue
+        W, H = (int(rng.integers(1, 1500)), int(rng.integers(1, 40))) if rng.random() < .1 else \
+            (int(rng.integers(1, 300)), int(rng.integers(1, 300)))
+        cases.append((rings, [-1] * len(rings) if roles is None else list(roles), W, H))
+    cases = cases[:n]
+    return cases, [C.polygon_reference(r, rl, W, H) for r, rl, W, H in cases]
+
+
+def _mismatches(cases, refs, idx):
+    p = C.pack_polygons([cases[i] for i in idx])
+    out = C.run_polygons(p)
+    return [i for s, i in enumerate(idx) if C.polygon_diff(C.gpu_polygon(out, p, s), refs[i]) is not None]
+
+
+def arena_reuse(calls: int, seed: int = 21):
+    """Calls of random batch sizes 1-1024 over a pool of shapes of random sizes, so the arena and the staging buffers
+    grow, and later calls run on memory that earlier, larger ones left behind (nothing is zeroed but the counters):
+    every shape must equal polycore in every call."""
+    cases, refs = _shape_pool(1200, seed)
+    rng = np.random.default_rng(seed)
+    bad = []
+    for k in range(calls):
+        size = [1, 1024, 3][k] if k < 3 else int(rng.integers(1, 1025))
+        bad += _mismatches(cases, refs, rng.integers(0, len(cases), size).tolist())
+    return bad
+
+
+def two_stream_chunks(n: int = 1000, seed: int = 22):
+    """A batch of n >= 64 shapes runs as two halves on two streams; the same shapes in calls of 32 run on one. Words
+    (padding bits included), offsets and defects must be identical, and equal to polycore."""
+    cases, refs = _shape_pool(n, seed)
+    assert len(cases) == n
+    big = C.run_polygons(C.pack_polygons(cases))
+    small = [C.run_polygons(C.pack_polygons(cases[a:a + 32])) for a in range(0, n, 32)]
+    words = np.concatenate([s["evenodd"] for s in small])
+    starts = np.concatenate([[0]] + [s["word_start"][1:] + off for s, off in
+                                     zip(small, np.cumsum([0] + [s["evenodd"].size for s in small[:-1]]), strict=True)])
+    return (np.array_equal(big["evenodd"], words) and np.array_equal(big["word_start"], starts)
+            and np.array_equal(big["defects"], np.concatenate([s["defects"] for s in small]))
+            and _mismatches(cases, refs, list(range(n))) == [])
+
+
+def test_arena_reuse_is_exact():
+    assert arena_reuse(200) == []
+
+
+def test_two_stream_chunks_equal_one_call():
+    assert two_stream_chunks()

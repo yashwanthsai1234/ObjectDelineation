@@ -1,1 +1,1 @@
-{"image": "ghcr.io/yashwanthsai1234/objdel-gpu:p2-e392c8ccfdf9@sha256:e1b373e1ce2860a4941d9cb262073464c235417b0893749f38d0c112fdee3564", "ghcr_user": "yashwanthsai1234", "riga_permission": {"granted": false, "evidence": ""}}
+{"image": "ghcr.io/yashwanthsai1234/objdel-gpu:vllm_native-6008baf45bb0@sha256:cee26650ffd9f6b7e131743f689ecf8eaf96ff34794f94f1e572eef3cf0ad376", "ghcr_user": "yashwanthsai1234", "riga_permission": {"granted": false, "evidence": ""}}

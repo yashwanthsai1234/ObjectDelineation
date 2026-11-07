@@ -1,7 +1,8 @@
 // nanobind binding of cuda/gpucheck.h as objdel._gpucheck (CPU build by default; `make cuda` builds it with nvcc).
 // Inputs are the packed arrays of data/checker_eval (experiments/cuda_checker/prepare_data.py); they are checked here
-// with polycore's caps before the GIL is released, so bad input raises ValueError and never reaches the kernels.
-// Pattern and references: src/objdel/_polycore.cpp.
+// with polycore's caps before the GIL is released, so bad input raises ValueError and never reaches the kernels. The
+// GIL is released during the checker call (other Python threads run; gpucheck's mutex orders concurrent calls) and
+// taken back before the result arrays are made. Pattern and references: src/objdel/_polycore.cpp.
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/optional.h>
@@ -30,12 +31,6 @@ nb::ndarray<nb::numpy, T> to_numpy(std::vector<T>&& v, std::initializer_list<siz
   return nb::ndarray<nb::numpy, T>(p->data(), shape, owner);
 }
 
-nb::ndarray<nb::numpy, bool> to_numpy_bool(std::vector<u8>&& v) {
-  auto* p = new std::vector<u8>(std::move(v));
-  nb::capsule owner(p, [](void* q) noexcept { delete static_cast<std::vector<u8>*>(q); });
-  return nb::ndarray<nb::numpy, bool>(reinterpret_cast<bool*>(p->data()), {p->size()}, owner);
-}
-
 // start[0] == 0, non-decreasing, start[k] == total, every segment at most `cap` long.
 void check_offsets(const In<i64, 1>& start, i64 total, i64 cap, const char* what) {
   const i64 k = i64(start.shape(0)) - 1;
@@ -49,7 +44,8 @@ void check_offsets(const In<i64, 1>& start, i64 total, i64 cap, const char* what
 }  // namespace
 
 NB_MODULE(_gpucheck, m) {
-  m.doc() = "Batched exact checker (cuda/gpucheck.h): polycore's masks and validate totals, polygonize's rings.";
+  m.doc() = "Batched exact checker (cuda/gpucheck.h): polycore's even-odd masks (bit-packed rows) and validate "
+            "totals, polygonize's rings.";
   m.def("build", [] { return gpucheck::cuda_build() ? "cuda" : "cpu"; });
   m.def("device_count", &gpucheck::device_count);
 
@@ -81,9 +77,9 @@ NB_MODULE(_gpucheck, m) {
           r = gpucheck::check_polygons(in);
         }
         nb::dict d;
-        d["mask_start"] = to_numpy(std::move(r.mask_start), {size_t(n + 1)});
-        d["evenodd"] = to_numpy_bool(std::move(r.evenodd));
-        d["nonzero"] = to_numpy_bool(std::move(r.nonzero));
+        const size_t words = r.evenodd.size();
+        d["word_start"] = to_numpy(std::move(r.word_start), {size_t(n + 1)});
+        d["evenodd"] = to_numpy(std::move(r.evenodd), {words});  // uint32 rows: objdel.geometry.shape.unpack_rows
         d["defects"] = to_numpy(std::move(r.defects), {size_t(n), size_t(polycore::kNumDefects)});
         return d;
       },

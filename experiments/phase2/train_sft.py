@@ -39,7 +39,7 @@ sets CUDA_LAUNCH_BLOCKING=1). `branches_from: <run_dir-relative g_probe.json>` (
 checkpoint ("ckpt", e<depth>) with the final G-probe verdict]; none exits before anything is written. `stages` and
 `sampler` belong to the Vast runner (policy.chain) and are only recorded here.
 
-`profile: <dir>` (timing runs only, profile_sft): torch.profiler traces optimizer step WARM + 2 (CPU ops, and CUDA
+`profile: <dir>` (timing runs only): torch.profiler traces optimizer step WARM + 2 (CPU ops, and CUDA
 kernels on a GPU) to <dir>/trace.json.gz (Perfetto / chrome://tracing) and <dir>/ops.txt (top ops by GPU and CPU time).
 
 References:
@@ -67,7 +67,6 @@ from pathlib import Path
 
 ABORTED = 3  # exit code of a G-vision abort
 WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator and loader warm-up)
-PROFILED = 1  # profile: optimizer steps traced after WARM steps and one profiler warm-up step
 ROOT = Path(__file__).resolve().parents[2]
 BOX_DATA, BOX_RUNS = Path("/workspace/data/lidc"), Path("/workspace/runs")  # sync_up / pull.sh on a Vast box (M7)
 SAME_RUN = ("model", "branches", "a0", "freeze_vision", "seed", "steps_per_epoch", "sft")  # resume check
@@ -97,7 +96,7 @@ class RunArgs:
     sft: dict = field(default_factory=dict, metadata={"help": "overrides of configs.sft_config"})
     deterministic: bool = field(default=False, metadata={"help": "D24: use_deterministic_algorithms (timing arms)"})
     branches_from: str | None = field(default=None, metadata={"help": "C2: g_probe.json under run_dir -> branches"})
-    profile: str | None = field(default=None, metadata={"help": "torch.profiler output dir (profile_sft, timing)"})
+    profile: str | None = field(default=None, metadata={"help": "torch.profiler output dir (timing runs)"})
     stages: list[str] = field(default_factory=list, metadata={"help": "Vast runner only (policy.chain)"})
     sampler: str | None = field(default=None, metadata={"help": "Vast runner only (policy.chain)"})
 
@@ -268,7 +267,7 @@ def train(args: RunArgs) -> int:
     from transformers.trainer_pt_utils import get_length_grouped_indices
     from trl import SFTTrainer
 
-    from objdel.train import configs, dataset
+    from objdel.train import callbacks, configs, dataset
 
     resolve(args)
     if args.vision_reference_only:
@@ -279,7 +278,7 @@ def train(args: RunArgs) -> int:
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         torch.use_deterministic_algorithms(True, warn_only=True)
     if args.profile and args.branches:
-        raise ValueError("profile is for timing runs (profile_sft): branches: []")
+        raise ValueError("profile is for timing runs: branches: []")
     if args.vision == {}:
         raise ValueError("vision: {} skips G-vision (D7, D12): give {prepared, reference}; `vision: off` for timing")
     out = Path(args.output_dir)
@@ -373,29 +372,6 @@ def train(args: RunArgs) -> int:
                 control.should_training_stop |= record_vision(man, step, res)
                 write_json(out / "manifest.json", man)
 
-    class Profile(TrainerCallback):  # profile_sft: one optimizer step after WARM + 1, CPU ops and CUDA kernels
-        def on_train_begin(self, a, state, control, **kw):
-            from torch.profiler import ProfilerActivity, profile, schedule
-
-            acts = [ProfilerActivity.CPU] + [ProfilerActivity.CUDA] * torch.cuda.is_available()
-            self.prof = profile(activities=acts, schedule=schedule(wait=WARM, warmup=1, active=PROFILED),
-                                on_trace_ready=self.write)
-            self.prof.start()
-
-        def on_step_end(self, a, state, control, **kw):
-            self.prof.step()
-
-        def on_train_end(self, a, state, control, **kw):
-            self.prof.stop()
-
-        def write(self, prof):
-            d = Path(args.profile)
-            d.mkdir(parents=True, exist_ok=True)
-            prof.export_chrome_trace(str(d / "trace.json.gz"))
-            ops = prof.key_averages()
-            (d / "ops.txt").write_text("\n\n".join(ops.table(sort_by=k, row_limit=40) for k in
-                                                    ("self_device_time_total", "self_cpu_time_total")))
-
     def trainer(out_dir, branch_at=None, keep_at=(), stop_at=None):
         if torch.cuda.is_available():  # this phase's peak (LFM full FT: R0 arm 16.4 GiB, R1 stable 20.9; Qwen3-VL LoRA R1: 6.1)
             torch.cuda.reset_peak_memory_stats()
@@ -411,7 +387,7 @@ def train(args: RunArgs) -> int:
             groups = [lm] if args.freeze_vision else [lm, vision]
             opt = torch.optim.AdamW(groups, lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
         kw = {"train_dataset": rows, "processing_class": proc, "peft_config": peft, "optimizers": (opt, None)}
-        calls = [Rolling(keep_at, stop_at)] + [Profile()] * bool(args.profile)
+        calls = [Rolling(keep_at, stop_at)] + ([callbacks.TraceStep(args.profile, WARM)] if args.profile else [])
         return Trainer(model=model, args=cfg, callbacks=calls, **kw)
 
     def finish(d):  # a kept stable checkpoint: model-only (LoRA merged) with the processor, for the depth curve

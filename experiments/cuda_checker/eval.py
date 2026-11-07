@@ -3,8 +3,8 @@
 Run (Mac: CPU build; CUDA box: after `make cuda`, the GPU build):
     .venv/bin/python -I -m experiments.cuda_checker.eval [--data data/checker_eval] [--quick] [--no-speed]
 
-Correctness, every output the reward and certify use: legality verdict and the 13 defect counts, even-odd and nonzero
-masks, bit-quad counts, rings (Betti numbers b0/b1 and the ring hash), on
+Correctness, every output the reward and certify use: legality verdict and the 13 defect counts, the even-odd mask,
+bit-quad counts, rings (Betti numbers b0/b1 and the ring hash), on
   (a) seeded fuzz cases from the repo's generators (compare.fuzz_polygons / fuzz_masks: K1 raster families, K2
       rings, multi-ring shapes with roles, rollouts, int32-extreme coordinates, shapes at the caps; ten mask families
       and edge cases), checked against polycore / polygonize run here;
@@ -44,7 +44,7 @@ from . import compare as C
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
-PIXELS_PER_CALL = 1 << 26  # polygon batches are split so that one call's masks stay below 2 x 64 MB
+PIXELS_PER_CALL = 1 << 26  # polygon batches are split at 2^26 pixels per call (8 MB of packed mask words)
 SRC = ("train_target", "eval_target", "probe_target", "model_output")  # polygons.npz src codes
 
 
@@ -191,8 +191,7 @@ def repro_polygon(rings, roles, W, H, G):
     ref = C.polygon_reference(rings, roles, W, H, G)
     return {"rings": rings, "roles": roles, "W": W, "H": H, "G": G, "size": sum(map(len, rings)),
             "gpu_defects": gpu["defects"], "ref_defects": ref["defects"],
-            "evenodd_px_differ": int((gpu["evenodd"] != ref["evenodd"]).sum()),
-            "nonzero_px_differ": int((gpu["nonzero"] != ref["nonzero"]).sum())}
+            "evenodd_px_differ": int((gpu["evenodd"] != ref["evenodd"]).sum())}
 
 
 def eval_polygon_set(tally, p, per_class):
@@ -203,7 +202,7 @@ def eval_polygon_set(tally, p, per_class):
         out = C.run_polygons(q)
         for s in range(b - a):
             i = a + s
-            ref = {"defects": p["defects"][i], "evenodd": p["evenodd_sha"][i], "nonzero": p["nonzero_sha"][i]}
+            ref = {"defects": p["defects"][i], "evenodd": p["evenodd_sha"][i]}
             d = C.polygon_diff(C.gpu_polygon(out, q, s), ref)
             classes = [c for c, v in zip(polycore.DEFECTS, ref["defects"], strict=True) if v] or ["legal"]
             for c in classes:

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 320" width="900" height="320" role="img" aria-label="An image goes into a vision-language model, which writes a polygon outline; a geometric checker scores it and the reward trains the model.">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9aa7b8"/></marker>
+    <radialGradient id="ct" cx="50%" cy="50%" r="60%"><stop offset="0" stop-color="#5b6675"/><stop offset="1" stop-color="#262d38"/></radialGradient>
+  </defs>
+  <style>
+    text{font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#e6edf3}
+    .t{font-size:13px;fill:#9aa7b8}.h{font-size:17px;font-weight:600}.m{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;fill:#9aa7b8}
+  </style>
+  <rect width="900" height="320" rx="14" fill="#12161c" stroke="#2d3541"/>
+  <text x="450" y="38" text-anchor="middle" font-size="20" font-weight="700">Draw the outline. Get scored on its shape.</text>
+  <!-- image -->
+  <rect x="40" y="70" width="180" height="180" rx="8" fill="url(#ct)" stroke="#3a4453"/>
+  <path d="M95 160 C92 130 120 112 148 120 C176 128 186 156 170 180 C156 204 118 206 104 190 C98 182 96 172 95 160Z" fill="#aab4c2" opacity=".85"/>
+  <circle cx="132" cy="158" r="9" fill="#3a4453"/>
+  <text x="130" y="272" text-anchor="middle" class="h">Image</text>
+  <text x="130" y="291" text-anchor="middle" class="t">CT slice or fundus crop</text>
+  <!-- VLM -->
+  <path d="M225 160H296" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="300" y="100" width="150" height="120" rx="12" fill="#1b2430" stroke="#4aa3ff" stroke-width="2"/>
+  <text x="375" y="140" text-anchor="middle" class="h">VLM</text>
+  <text x="375" y="162" text-anchor="middle" class="t">Qwen3-VL-2B</text>
+  <text x="375" y="182" text-anchor="middle" class="t">+ LoRA</text>
+  <text x="375" y="204" text-anchor="middle" class="m">SFT, then GRPO</text>
+  <text x="375" y="291" text-anchor="middle" class="t">writes polygon JSON</text>
+  <!-- outline -->
+  <path d="M455 160H526" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="530" y="70" width="180" height="180" rx="8" fill="url(#ct)" stroke="#3a4453"/>
+  <path d="M95 160 C92 130 120 112 148 120 C176 128 186 156 170 180 C156 204 118 206 104 190 C98 182 96 172 95 160Z" transform="translate(490 0)" fill="#aab4c2" opacity=".85"/>
+  <polygon points="585,160 592,134 612,124 640,122 664,134 676,158 668,182 650,198 622,206 600,196 588,180" fill="none" stroke="#3ddc97" stroke-width="2.5" stroke-linejoin="round"/>
+  <g fill="#3ddc97"><circle cx="585" cy="160" r="3"/><circle cx="612" cy="124" r="3"/><circle cx="664" cy="134" r="3"/><circle cx="668" cy="182" r="3"/><circle cx="622" cy="206" r="3"/></g>
+  <text x="620" y="272" text-anchor="middle" class="h">Polygon outline</text>
+  <text x="620" y="291" text-anchor="middle" class="t">rings, holes, exact integers</text>
+  <!-- checker -->
+  <path d="M715 160H756" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="760" y="100" width="110" height="120" rx="12" fill="#1b2430" stroke="#3ddc97" stroke-width="2"/>
+  <text x="815" y="135" text-anchor="middle" class="h">Checker</text>
+  <text x="815" y="158" text-anchor="middle" class="t">IoU</text>
+  <text x="815" y="177" text-anchor="middle" class="t">b0 parts, b1 holes</text>
+  <text x="815" y="196" text-anchor="middle" class="t">legal rings</text>
+  <text x="815" y="291" text-anchor="middle" class="t">runs on the GPU</text>
+  <!-- loop -->
+  <path d="M815 96V58H375V96" fill="none" stroke="#f5a524" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#a)"/>
+  <text x="595" y="74" text-anchor="middle" font-size="13" fill="#f5a524" style="fill:#f5a524">reward: advantage per sample, update the policy</text>
+</svg>

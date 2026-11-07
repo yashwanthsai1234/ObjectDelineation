@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 430" width="900" height="430" role="img" aria-label="Timeline of one RL step on one GPU: vLLM generation, old and reference log-prob passes, the checker on two CUDA streams with copy and compute overlap, then update micro-batches.">
+  <style>
+    text{font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#e6edf3}
+    .t{font-size:12px;fill:#9aa7b8}.h{font-size:15px;font-weight:600}.s{font-size:11.5px;fill:#0e1217;font-weight:600}
+    .m{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;fill:#9aa7b8}
+  </style>
+  <rect width="900" height="430" rx="14" fill="#12161c" stroke="#2d3541"/>
+  <text x="30" y="36" class="h">One RL step on one RTX 5090 (schematic, not to scale)</text>
+  <!-- time axis -->
+  <path d="M150 62H870" stroke="#3a4453" stroke-width="1.5"/><text x="866" y="56" text-anchor="end" class="m">time</text>
+  <!-- lane labels -->
+  <text x="30" y="100" class="t">vLLM</text><text x="30" y="118" class="m">awake / asleep</text>
+  <text x="30" y="170" class="t">Trainer</text><text x="30" y="188" class="m">compute</text>
+  <text x="30" y="252" class="t">Checker</text><text x="30" y="270" class="m">stream 0</text>
+  <text x="30" y="306" class="m">stream 1</text>
+  <text x="30" y="350" class="t">GPU memory</text>
+  <g stroke="#2d3541"><path d="M30 138H870"/><path d="M30 214H870"/><path d="M30 328H870"/></g>
+  <!-- vLLM lane -->
+  <rect x="150" y="80" width="170" height="40" rx="6" fill="#4aa3ff"/><text x="235" y="104" text-anchor="middle" class="s">generate 256 answers</text>
+  <rect x="320" y="80" width="550" height="40" rx="6" fill="#1b2430" stroke="#3a4453" stroke-dasharray="4 4"/><text x="595" y="104" text-anchor="middle" class="t">sleep: weights and KV cache released</text>
+  <!-- trainer lane -->
+  <rect x="150" y="150" width="170" height="40" rx="6" fill="#1b2430" stroke="#3a4453" stroke-dasharray="4 4"/><text x="235" y="174" text-anchor="middle" class="t">waits for the answers</text>
+  <rect x="330" y="150" width="90" height="40" rx="6" fill="#f5a524"/><text x="375" y="174" text-anchor="middle" class="s">old logp</text>
+  <rect x="424" y="150" width="90" height="40" rx="6" fill="#f5a524"/><text x="469" y="174" text-anchor="middle" class="s">ref logp</text>
+  <rect x="640" y="150" width="46" height="40" rx="6" fill="#c084fc"/><rect x="692" y="150" width="46" height="40" rx="6" fill="#c084fc"/><rect x="744" y="150" width="46" height="40" rx="6" fill="#c084fc"/><rect x="796" y="150" width="46" height="40" rx="6" fill="#c084fc"/>
+  <text x="741" y="142" text-anchor="middle" class="t">update micro-batches</text>
+  <text x="469" y="142" text-anchor="middle" class="t">trimmed forwards + vision cache</text>
+  <!-- checker streams: 2 lanes with copy/compute -->
+  <rect x="520" y="226" width="30" height="22" rx="4" fill="#9aa7b8"/><rect x="552" y="226" width="56" height="22" rx="4" fill="#3ddc97"/><rect x="610" y="226" width="22" height="22" rx="4" fill="#9aa7b8"/>
+  <rect x="540" y="262" width="30" height="22" rx="4" fill="#9aa7b8"/><rect x="572" y="262" width="56" height="22" rx="4" fill="#3ddc97"/><rect x="630" y="262" width="22" height="22" rx="4" fill="#9aa7b8"/>
+  <text x="540" y="304" class="t">half A and half B overlap: the copy of B runs under the kernels of A</text>
+  <rect x="520" y="226" width="1" height="1" fill="none"/>
+  <!-- legend -->
+  <rect x="520" y="338" width="14" height="10" rx="2" fill="#9aa7b8"/><text x="540" y="347" class="t">copy (pinned)</text>
+  <rect x="640" y="338" width="14" height="10" rx="2" fill="#3ddc97"/><text x="660" y="347" class="t">raster and check kernels</text>
+  <!-- memory bar -->
+  <rect x="150" y="360" width="720" height="18" rx="5" fill="#1b2430" stroke="#3a4453"/>
+  <rect x="150" y="360" width="252" height="18" rx="5" fill="#4aa3ff" opacity=".8"/>
+  <rect x="402" y="360" width="468" height="18" rx="5" fill="#c084fc" opacity=".8"/>
+  <text x="276" y="394" text-anchor="middle" class="t">vLLM, 35 % of the card</text>
+  <text x="636" y="394" text-anchor="middle" class="t">trainer, activations, checker arena</text>
+  <text x="30" y="418" class="m">vLLM sleeps between generations, so the trainer can use its share. The checker arena is grow-only: no per-call allocation.</text>
+</svg>

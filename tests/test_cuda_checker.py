@@ -1,6 +1,7 @@
-"""objdel._gpucheck (cuda/gpucheck.cpp) equals the reference checker bit for bit: polycore's even-odd and nonzero
-masks and validate totals, and polygonize's rings and bitquad counts. Runs on whichever build is installed: the CPU
-build by default, the CUDA build after `make cuda` (tests/test_cuda_checker_gpu.py then also checks it is one)."""
+"""objdel._gpucheck (cuda/gpucheck.cpp) equals the reference checker bit for bit: polycore's even-odd mask
+(bit-packed rows) and validate totals, and polygonize's rings and bitquad counts. Runs on whichever build is installed:
+the CPU build by default, the CUDA build after `make cuda` (tests/test_cuda_checker_gpu.py then also checks it is
+one)."""
 import random
 import re
 from pathlib import Path
@@ -43,8 +44,7 @@ def test_comparison_reports_the_first_differing_field():
     ref = C.polygon_reference([SQ, HOLE], [-1, 0], 16, 16)
     assert C.polygon_diff(C.gpu_polygon(out, p, 0), ref) is None
     for field, edit, want in [("defects", lambda g: g["defects"].__setitem__(0, 1), "legal"),
-                              ("evenodd", lambda g: g["evenodd"].__setitem__((0, 0), True), "evenodd"),
-                              ("nonzero", lambda g: g["nonzero"].__setitem__((0, 0), True), "nonzero")]:
+                              ("evenodd", lambda g: g["evenodd"].__setitem__((0, 0), True), "evenodd")]:
         g = {k: v.copy() for k, v in C.gpu_polygon(out, p, 0).items()}
         edit(g)
         assert C.polygon_diff(g, ref) == want, field
@@ -85,7 +85,9 @@ def test_every_defect_class_is_exercised():
     ([[(5, 5)]], None, 1, 1),               # one vertex
     ([[(0, 0), (1000, 1000)]], None, 2, 2),  # two vertices
     ([SQ, HOLE], [-1, 0], 1, 1),            # 1 x 1 crop
-    ([SQ, HOLE], [-1, 0], 300, 7),          # wider than one 256-column window
+    ([SQ, HOLE], [-1, 0], 300, 7),          # wider than 256 columns
+    ([SQ, HOLE], [-1, 0], 1500, 5),         # wider than one 1024-column window
+    ([SQ, HOLE], [-1, 0], 2049, 3),         # three windows, the last one word of one pixel
     ([SQ, HOLE[::-1]], [-1, 0], 20, 20),    # hole with the wrong winding
     ([SQ, SQ], None, 16, 16),               # identical outers: overlap, nested, winding 2
     ([[(0, 0), (1000, 0), (1000, 1000), (0, 1000)]], None, 4096, 3),  # whole crop, the widest row
@@ -100,9 +102,9 @@ def test_batch_results_do_not_depend_on_batching():
     p = C.pack_polygons([(r, rl, W, H) for _, r, rl, W, H, _ in cases])
     whole = C.run_polygons(p)
     for s in range(0, len(cases), 37):
-        one = C.run_polygons(C.pack_polygons([C.shape_of(p, s)]))
-        g = C.gpu_polygon(whole, p, s)
-        assert np.array_equal(one["defects"][0], g["defects"]) and np.array_equal(one["evenodd"], g["evenodd"].ravel())
+        q = C.pack_polygons([C.shape_of(p, s)])
+        one, g = C.gpu_polygon(C.run_polygons(q), q, 0), C.gpu_polygon(whole, p, s)
+        assert np.array_equal(one["defects"], g["defects"]) and np.array_equal(one["evenodd"], g["evenodd"])
 
 
 def test_bad_polygon_input_raises():

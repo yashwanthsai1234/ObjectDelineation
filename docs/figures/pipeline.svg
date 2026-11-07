@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" width="900" height="400" role="img" aria-label="Pipeline: data, polygon targets, supervised fine-tuning, then a GRPO loop of vLLM generation, GPU checker reward and policy update.">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9aa7b8"/></marker></defs>
+  <style>
+    text{font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#e6edf3}
+    .t{font-size:12.5px;fill:#9aa7b8}.h{font-size:15px;font-weight:600}.m{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;fill:#9aa7b8}
+    .box{fill:#1b2430;stroke:#3a4453;stroke-width:1.5}
+  </style>
+  <rect width="900" height="400" rx="14" fill="#12161c" stroke="#2d3541"/>
+  <!-- stage labels -->
+  <text x="40" y="40" class="m">1 DATA</text><text x="300" y="40" class="m">2 SFT</text><text x="470" y="40" class="m">3 GRPO, one step at a time</text>
+  <!-- data -->
+  <rect x="30" y="56" width="110" height="64" rx="10" class="box"/>
+  <text x="85" y="84" text-anchor="middle" class="h">Raw data</text><text x="85" y="104" text-anchor="middle" class="t">LIDC-IDRI, RIGA</text>
+  <path d="M85 122V148" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="30" y="152" width="110" height="64" rx="10" class="box"/>
+  <text x="85" y="180" text-anchor="middle" class="h">Store</text><text x="85" y="200" text-anchor="middle" class="t">group-aware splits</text>
+  <path d="M85 218V244" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="30" y="248" width="110" height="64" rx="10" class="box"/>
+  <text x="85" y="276" text-anchor="middle" class="h">Targets</text><text x="85" y="296" text-anchor="middle" class="t">certified polygons</text>
+  <!-- to SFT -->
+  <path d="M142 280H196" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M142 184H170V150H196" fill="none" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="200" y="120" width="190" height="190" rx="12" class="box" stroke="#4aa3ff"/>
+  <text x="295" y="152" text-anchor="middle" class="h">SFT</text>
+  <text x="295" y="176" text-anchor="middle" class="t">teach the format</text>
+  <text x="295" y="196" text-anchor="middle" class="t">image in, polygon JSON out</text>
+  <text x="295" y="226" text-anchor="middle" class="t">Qwen3-VL-2B + LoRA</text>
+  <text x="295" y="250" text-anchor="middle" class="m">checkpoint</text>
+  <text x="295" y="290" text-anchor="middle" class="t">rater-set caches feed reward</text>
+  <path d="M392 215H452" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <!-- GRPO loop -->
+  <rect x="456" y="56" width="420" height="300" rx="14" fill="none" stroke="#f5a524" stroke-dasharray="6 5"/>
+  <rect x="480" y="84" width="170" height="66" rx="10" class="box" stroke="#4aa3ff"/>
+  <text x="565" y="110" text-anchor="middle" class="h">vLLM generate</text><text x="565" y="130" text-anchor="middle" class="t">8 answers per image</text>
+  <rect x="690" y="150" width="170" height="66" rx="10" class="box" stroke="#3ddc97"/>
+  <text x="775" y="176" text-anchor="middle" class="h">GPU checker</text><text x="775" y="196" text-anchor="middle" class="t">legal, IoU, b0, b1</text>
+  <rect x="480" y="236" width="170" height="66" rx="10" class="box" stroke="#c084fc"/>
+  <text x="565" y="262" text-anchor="middle" class="h">Update</text><text x="565" y="282" text-anchor="middle" class="t">group advantages, LoRA</text>
+  <path d="M652 117H775V146" fill="none" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M775 218V269H654" fill="none" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M565 234V154" stroke="#f5a524" stroke-width="2" marker-end="url(#a)"/>
+  <text x="575" y="200" class="t" style="fill:#f5a524">new policy</text>
+  <text x="666" y="108" class="m" text-anchor="start"></text>
+  <text x="666" y="334" class="t">reward terms: format, legality, IoU, topology</text>
+  <text x="666" y="78" class="m" text-anchor="middle"></text>
+  <text x="40" y="376" class="t">One RTX 5090 runs generation, training and the checker; CPU workers score the checked masks.</text>
+</svg>
