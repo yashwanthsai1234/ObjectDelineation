@@ -51,8 +51,11 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
   width, rounded up to one of 8 bucket sizes so compiled code sees few shapes.
 - A per-step vision-feature cache. The 8 answers of a prompt share one image, so the frozen vision tower runs once
   per distinct image per step, not once per answer per pass.
-- Regional `torch.compile` and CUDA Graph arms for the update step, chosen by profiling before the run
-  (`experiments/phase2/profile.py`).
+- One image pad per image to vLLM, checked against the trainer's ids on every call: vLLM samples from exactly the
+  image features the trainer scores (TRL as shipped does not, for Qwen3-VL).
+- Rewards scored on a background thread while the GPU computes the old and reference log-probabilities.
+- Every setting is measured on the card first (`experiments/phase2/profile.py`): micro-batch, checkpointing, regional
+  `torch.compile`, CUDA Graphs. The profiler trace drives the next step (precomputed rope positions, then graphs).
 - vLLM sleep mode frees its share of the card between generations.
 
 **Checker (`cuda/gpucheck.cpp`).** One source file builds for the CPU and for nvcc. Every algorithm is a
@@ -94,17 +97,25 @@ This section describes the method. The measured 3-D numbers are in the Phase 0 c
 | LIDC topology disagreement | 114 of 1,877 nodules (6.1 %) after filtering | `experiments/phase0/RESULTS.md` |
 | Rung 1 SFT (LFM2.5-VL-450M) | Failed the entry gates: median IoU 0.495 shifted, 0.092 rescaled; hole recall 0.5 % | `experiments/phase2/RESULTS.md` |
 
-The first CUDA build (R0 v3) was exact but slower than the CPU checker, for example 54,710 polygons/s against
-290,142/s at 16 vertices and batch 1024. The cause was per-call allocation and managed memory. The arena, pinned
-staging and two-stream design above are the fix; it has not been re-measured on a GPU yet.
+| CUDA checker on an RTX 5090 | 0 mismatches on 8,559 fuzz polygons and all 13 defect classes | `experiments/phase2/perf/p1_results.md` |
 
-**RL speed on the RTX 5090**
+The first CUDA build (R0 v3) was exact but slower than the CPU checker: 54,710 polygons/s at 16 vertices and batch
+1,024, held back by per-call allocation and managed memory. With the arena, pinned staging and two streams, the same
+shapes run at **7.74 M polygons/s on an RTX 5090 (141x)**, 87x the polycore loop on the box's CPU.
 
-<!-- RL results: filled after the RTX 5090 run -->
+**RL speed on the RTX 5090** (Qwen3-VL-2B + LoRA, 32 prompts x 8 answers per step; `experiments/phase2/perf/p1_results.md`)
 
-| Setting | s / step | GPU utilization | Notes |
-|---|---|---|---|
-| pending | | | |
+| Setting | s / step | Notes |
+|---|---|---|
+| TRL 1.17 GRPO as shipped | 80.3 | vLLM samples off-policy: token logprob gap up to 25 nats, IS ratio mean 0.65-0.81 |
+| **FastGRPO** (micro-batch 16 x 16) | **44.3** | **1.81x**; on-policy (gap mean 0.009 nats); rewards wait 3 ms |
+| FastGRPO, micro-batch 32 x 8 | 59.1 | wider padded windows |
+| FastGRPO + regional `torch.compile` | 47.9 | recompiles across widths and grad modes; off |
+| FastGRPO + CUDA Graphs (`reduce-overhead`) | crash | per-layer graph replay overwrites outputs; conflicts with vLLM's sleep allocator |
+| FastGRPO, no gradient checkpointing | OOM | over 31.45 GiB beside vLLM |
+
+One step splits into 7.6 s vLLM generation, 12.3 s old and reference log-probabilities, and 24.4 s update; the reward
+(one checker call for all 256 answers plus CPU scoring) runs in the background during the log-probability passes.
 
 ## 🗂️ Repository layout
 
