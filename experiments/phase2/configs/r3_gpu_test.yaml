@@ -1,0 +1,36 @@
+# R3: GPU test of the 2026-11-07 changes on an RTX 5090, under $1 (owner): the scorer on the GPU (built for the card,
+# its tests, memcheck + initcheck), then a short GRPO run on R1's e2 with OpenOnce (32 image opens per step) and
+# ImageMemo (one image preparation per distinct image). Not a G-probe verdict: 8 steps, 32 probe items; the per-step
+# times compare with R2's (56.6 s per step, 20 steps). {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
+#
+# Estimate: R2's whole chain billed $0.550 at $0.563/h; this one is shorter (8 steps, 32 x 8 probe samples x 3).
+# Launch with --cap-hours 1.4 (worst case ~$0.91 at $0.65/h). Commands (Mac), preflight LAST:
+#   make preflight CONFIG=experiments/phase2/configs/r1_qwen3vl2b.yaml
+#   offers.sh RTX_5090 --pick top
+#   launch.sh OFFER r3 --config experiments/phase2/configs/r1_qwen3vl2b.yaml --cap-hours 1.4
+#   sync_up.sh r3 && (e2 -> {rd}/ckpt with hf_pull, as for R2)
+#   run.sh r3 experiments/phase2/configs/r3_gpu_test.yaml && teardown.sh r3
+steps:
+  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu*/cpu.cfs_*_us; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
+  # 5090 + CUDA 13 stack: capability, bf16 peak, Triton, torch.compile, a vLLM engine on e2 with CUDA graphs
+  - [bash, experiments/phase2/docker/env_check.sh, "{rd}/ckpt", "{rd}/env_check.json"]
+  # The CUDA checker: build for this card; run_box.sh runs the GPU tests (arena reuse, two-stream chunks), the
+  # equivalence suite (0 mismatches against polycore's recorded results) and the timing sweep; then the scorers on the GPU.
+  - [bash, -c, "set -o pipefail; DATA={data}/checker_eval bash experiments/cuda_checker/run_box.sh; s=$?;
+     mkdir -p {rd}/cuda_checker; cp -r experiments/cuda_checker/results experiments/cuda_checker/RESULTS.md
+     {rd}/cuda_checker/ 2>/dev/null; [ $s = 0 ] || exit $s; /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+     tests/test_gpu_scoring.py tests/test_open_once.py tests/test_image_memo.py tests/test_train_fast.py
+     2>&1 | tee {rd}/cuda_checker/pytest.txt"]
+  # Memory errors in the checker: compute-sanitizer 13.4.92 (installed by run_box.sh), memcheck then
+  # initcheck (arena reuse), torch's caching allocator off so its pool does not hide out-of-bounds accesses; recorded,
+  # does not stop the chain, but a missing binary or any error fails the step
+  - ["~", bash, -c, "S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/compute-sanitizer 2>/dev/null);
+     O={rd}/cuda_checker/memcheck.txt; [ -n \"$S\" ] || {{ echo no compute-sanitizer > $O; exit 1; }};
+     export PYTORCH_NO_CUDA_MEMORY_CACHING=1; for t in memcheck initcheck; do echo == $t >> $O;
+     timeout 1200 $S --tool $t --error-exitcode 1 /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+     tests/test_cuda_checker_gpu.py tests/test_cuda_checker.py tests/test_checker_host.py
+     tests/test_reward_one_checker_call.py tests/test_gpu_scoring.py >> $O 2>&1 || exit 1; done"]
+  # RL: 8 GRPO steps on e2 through g_probe (FastGRPO + OpenOnce + ImageMemo, vLLM colocate, scoring on the GPU),
+  # 32 probe items: per-step times and the reward path end to end, not a verdict
+  - [-m, experiments.phase2.g_probe, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/prepared",
+     --probe, "{data}/eval_views/lidc-val-shifted", --out, "{rd}/g_probe", --items, "32", --grpo, '{{"max_steps": 8}}']
