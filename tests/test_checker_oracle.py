@@ -157,6 +157,9 @@ def test_unrecorded_cases_fall_back_to_the_exact_oracles():
     ref = C.polygon_reference(rings, roles, 37, 29)
     assert ref["defects"].tolist() == VO.ref_totals(rings, roles)
     assert ref["evenodd"] == C.mask_sha(RO.winding_and_parity(rings, 37, 29)[1] % 2 == 1)
+    as_numpy = [np.array(r, np.int64) for r in rings]  # object cases arrive as int64 arrays (test_gpu_scoring)
+    got = C.polygon_reference(as_numpy, np.array(roles), 37, 29)
+    assert got["defects"].tolist() == ref["defects"].tolist() and got["evenodd"] == ref["evenodd"]
     recorded = [c for c in C.fuzz_polygons(20, 0) if c[0] == "holes"][:5]
     for _, rings, _, W, H, G in recorded:
         roles = [-1] * len(rings)

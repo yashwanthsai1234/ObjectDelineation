@@ -139,7 +139,9 @@ def polygon_reference(rings, roles, W, H, G=1000) -> dict:
     from oracles import raster_oracle as RO
     from oracles import validity_oracle as VO
 
-    return dict(defects=np.array(VO.ref_totals(rings, list(roles), G), np.int64),
+    rings = [[(int(x), int(y)) for x, y in r] for r in rings]  # Python ints: the oracles' exact integer arithmetic
+    roles = [int(r) for r in roles]
+    return dict(defects=np.array(VO.ref_totals(rings, roles, G), np.int64),
                 evenodd=mask_sha(RO.winding_and_parity(rings, W, H, G)[1] % 2 == 1))
 
 
