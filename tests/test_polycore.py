@@ -429,4 +429,6 @@ def test_kernels_release_the_gil():
     finally:
         done.set()
         th.join()
-    assert dt > 0.05 and during > 0.3 * rate * dt, (dt, during, rate)
+    # A kernel holding the GIL leaves the spinner ~0 ticks. Released, the spinner keeps most of its rate, less what the
+    # kernel's own thread takes on a shared CI runner (macOS run 42341189104: 0.28 of the solo rate)
+    assert dt > 0.05 and during > 0.1 * rate * dt, (dt, during, rate)
