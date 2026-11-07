@@ -1,18 +1,19 @@
 // nanobind binding of cuda/gpucheck.h as objdel._gpucheck (CPU build by default; `make cuda` builds it with nvcc).
 // Inputs are the packed arrays of data/checker_eval (experiments/cuda_checker/prepare_data.py); they are checked here
-// with polycore's caps before the GIL is released, so bad input raises ValueError and never reaches the kernels. The
-// GIL is released during the checker call (other Python threads run; gpucheck's mutex orders concurrent calls) and
-// taken back before the result arrays are made. Pattern and references: src/objdel/_polycore.cpp.
+// with gpucheck.h's caps before the GIL is released, so bad input raises ValueError and never reaches the kernels.
+// The GIL is released during the checker call (other Python threads run; gpucheck's mutex orders concurrent calls)
+// and taken back before the result arrays are made. References: https://nanobind.readthedocs.io/en/latest/ndarray.html
+// , https://nanobind.readthedocs.io/en/latest/functions.html#gil-management .
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/optional.h>
 
+#include <cmath>
 #include <optional>
 #include <stdexcept>
 #include <vector>
 
 #include "gpucheck.h"
-#include "polycore/polycore.hpp"
 
 namespace nb = nanobind;
 using gpucheck::i32;
@@ -21,6 +22,7 @@ using gpucheck::u8;
 
 template <class T, int D>
 using In = nb::ndarray<const T, nb::ndim<D>, nb::c_contig, nb::device::cpu>;
+using XY = nb::ndarray<const i32, nb::shape<-1, 2>, nb::c_contig, nb::device::cpu>;
 
 namespace {
 
@@ -41,46 +43,95 @@ void check_offsets(const In<i64, 1>& start, i64 total, i64 cap, const char* what
       throw std::invalid_argument(std::string(what) + " must be non-decreasing, within the caps");
 }
 
+// Checked polygon input (roles defaulted to all outers, kept alive here).
+struct PolygonsIn {
+  std::vector<i32> roles;
+  gpucheck::Polygons in;
+  PolygonsIn(const XY& xy, const In<i64, 1>& ring_start, const In<i64, 1>& shape_start,
+             const std::optional<In<i32, 1>>& rl, const In<i32, 1>& W, const In<i32, 1>& H, i64 G) {
+    const i64 n = i64(W.shape(0)), R = i64(ring_start.shape(0)) - 1;
+    if (i64(H.shape(0)) != n || i64(shape_start.shape(0)) != n + 1)
+      throw std::invalid_argument("W, H and shape_start must describe the same shapes");
+    check_offsets(ring_start, i64(xy.shape(0)), gpucheck::kMaxRingVertices, "ring_start");
+    check_offsets(shape_start, R, gpucheck::kMaxRings, "shape_start");
+    gpucheck::check_grid(G);
+    roles.assign(size_t(R > 0 ? R : 0), -1);
+    if (rl) {
+      if (i64(rl->shape(0)) != R) throw std::invalid_argument("roles must have one entry per ring");
+      std::copy(rl->data(), rl->data() + R, roles.begin());
+    }
+    for (i64 s = 0; s < n; ++s) {
+      gpucheck::check_dims(W(s), H(s));
+      gpucheck::check_roles(roles.data() + shape_start(s), i32(shape_start(s + 1) - shape_start(s)));
+    }
+    in = {n, xy.data(), ring_start.data(), shape_start.data(), roles.data(), W.data(), H.data(), G};
+  }
+};
+
+// Checked masks: (H, W) per mask, H * W bytes each.
+struct MasksIn {
+  std::vector<i32> H, W;
+  gpucheck::Masks in;
+  MasksIn(const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start) {
+    const i64 n = i64(hw.shape(0));
+    if (i64(start.shape(0)) != n + 1) throw std::invalid_argument("start must have one entry per mask, plus one");
+    check_offsets(start, i64(bits.shape(0)), i64(gpucheck::kMaxDim) * gpucheck::kMaxDim, "start");
+    H.resize(size_t(n)), W.resize(size_t(n));
+    for (i64 k = 0; k < n; ++k) {
+      H[size_t(k)] = hw(k, 0), W[size_t(k)] = hw(k, 1);
+      if (H[size_t(k)] < 0 || W[size_t(k)] < 0 || H[size_t(k)] > gpucheck::kMaxDim ||
+          W[size_t(k)] > gpucheck::kMaxDim || start(k + 1) - start(k) != i64(H[size_t(k)]) * W[size_t(k)])
+        throw std::invalid_argument("every mask must be (H, W) with 0 <= H, W <= 4096 and H * W pixels");
+    }
+    in = {n, bits.data(), start.data(), H.data(), W.data()};
+  }
+};
+
+nb::dict scores_dict(gpucheck::Scores&& r, i64 n) {
+  nb::dict d;
+  const size_t S = r.sig.size();
+  d["defects"] = to_numpy(std::move(r.defects), {size_t(n), size_t(gpucheck::kNumDefects)});
+  d["area"] = to_numpy(std::move(r.area), {size_t(n)});
+  d["iou_tc"] = to_numpy(std::move(r.iou_tc), {size_t(n)});
+  d["f5"] = to_numpy(std::move(r.f5), {size_t(n)});
+  d["g_area"] = to_numpy(std::move(r.g_area), {size_t(n)});
+  d["topo_freq"] = to_numpy(std::move(r.topo_freq), {size_t(n)});
+  d["sig_start"] = to_numpy(std::move(r.sig_start), {size_t(n + 1)});
+  d["sig"] = to_numpy(std::move(r.sig), {S});
+  return d;
+}
+
+void check_tables(const In<i64, 1>& tables, i64 n) {
+  if (i64(tables.shape(0)) != n) throw std::invalid_argument("tables must have one handle per object");
+}
+
 }  // namespace
 
 NB_MODULE(_gpucheck, m) {
-  m.doc() = "Batched exact checker (cuda/gpucheck.h): polycore's even-odd masks (bit-packed rows) and validate "
-            "totals, polygonize's rings.";
+  m.doc() = "Batched exact checker (cuda/gpucheck.h): polygon legality (DEFECTS) and even-odd masks "
+            "(bit-packed rows), polygonize's rings, and the reward's scorer against expert tables resident on the device.";
   m.def("build", [] { return gpucheck::cuda_build() ? "cuda" : "cpu"; });
   m.def("device_count", &gpucheck::device_count);
+  nb::list names;
+  for (const char* name : gpucheck::kDefectNames) names.append(name);
+  m.attr("DEFECTS") = nb::tuple(names);
 
   m.def(
       "check_polygons",
-      [](const nb::ndarray<const i32, nb::shape<-1, 2>, nb::c_contig, nb::device::cpu>& xy,
-         const In<i64, 1>& ring_start, const In<i64, 1>& shape_start, std::optional<In<i32, 1>> roles,
+      [](const XY& xy, const In<i64, 1>& ring_start, const In<i64, 1>& shape_start, std::optional<In<i32, 1>> roles,
          const In<i32, 1>& W, const In<i32, 1>& H, i64 G) {
-        const i64 n = i64(W.shape(0)), R = i64(ring_start.shape(0)) - 1;
-        if (i64(H.shape(0)) != n || i64(shape_start.shape(0)) != n + 1)
-          throw std::invalid_argument("W, H and shape_start must describe the same shapes");
-        check_offsets(ring_start, i64(xy.shape(0)), polycore::kMaxRingVertices, "ring_start");
-        check_offsets(shape_start, R, polycore::kMaxRings, "shape_start");
-        polycore::check_grid(G);
-        std::vector<i32> rl(size_t(R > 0 ? R : 0), -1);
-        if (roles) {
-          if (i64(roles->shape(0)) != R) throw std::invalid_argument("roles must have one entry per ring");
-          std::copy(roles->data(), roles->data() + R, rl.begin());
-        }
-        for (i64 s = 0; s < n; ++s) {
-          polycore::check_dims(W(s), H(s));
-          polycore::check_roles(rl.data() + shape_start(s), i32(shape_start(s + 1) - shape_start(s)));
-        }
-        const gpucheck::Polygons in{n, xy.data(), ring_start.data(), shape_start.data(), rl.data(), W.data(),
-                                    H.data(), G};
+        const PolygonsIn p(xy, ring_start, shape_start, roles, W, H, G);
+        const i64 n = p.in.n;
         gpucheck::PolygonResult r;
         {
           nb::gil_scoped_release release;
-          r = gpucheck::check_polygons(in);
+          r = gpucheck::check_polygons(p.in);
         }
         nb::dict d;
         const size_t words = r.evenodd.size();
         d["word_start"] = to_numpy(std::move(r.word_start), {size_t(n + 1)});
         d["evenodd"] = to_numpy(std::move(r.evenodd), {words});  // uint32 rows: objdel.geometry.shape.unpack_rows
-        d["defects"] = to_numpy(std::move(r.defects), {size_t(n), size_t(polycore::kNumDefects)});
+        d["defects"] = to_numpy(std::move(r.defects), {size_t(n), size_t(gpucheck::kNumDefects)});
         return d;
       },
       nb::arg("xy").noconvert(), nb::arg("ring_start").noconvert(), nb::arg("shape_start").noconvert(),
@@ -88,23 +139,13 @@ NB_MODULE(_gpucheck, m) {
 
   m.def(
       "check_masks",
-      [](const In<u8, 1>& bits, const nb::ndarray<const i32, nb::shape<-1, 2>, nb::c_contig, nb::device::cpu>& hw,
-         const In<i64, 1>& start) {
-        const i64 n = i64(hw.shape(0));
-        if (i64(start.shape(0)) != n + 1) throw std::invalid_argument("start must have one entry per mask, plus one");
-        check_offsets(start, i64(bits.shape(0)), i64(polycore::kMaxDim) * polycore::kMaxDim, "start");
-        std::vector<i32> H(n), W(n);
-        for (i64 k = 0; k < n; ++k) {
-          H[k] = hw(k, 0), W[k] = hw(k, 1);
-          if (H[k] < 0 || W[k] < 0 || H[k] > polycore::kMaxDim || W[k] > polycore::kMaxDim ||
-              start(k + 1) - start(k) != i64(H[k]) * W[k])
-            throw std::invalid_argument("every mask must be (H, W) with 0 <= H, W <= 4096 and H * W pixels");
-        }
-        const gpucheck::Masks in{n, bits.data(), start.data(), H.data(), W.data()};
+      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start) {
+        const MasksIn k(bits, hw, start);
+        const i64 n = k.in.n;
         gpucheck::MaskResult r;
         {
           nb::gil_scoped_release release;
-          r = gpucheck::check_masks(in);
+          r = gpucheck::check_masks(k.in);
         }
         const size_t R = r.ring_area.size(), P = r.pts.size() / 2;
         nb::dict d;
@@ -116,4 +157,71 @@ NB_MODULE(_gpucheck, m) {
         return d;
       },
       nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert());
+
+  // One ExpertCache's tables to the device -> handle (objdel.reward.ExpertCache.device).
+  m.def(
+      "add_tables",
+      [](const In<u8, 3>& raters, const In<u8, 2>& uni, const In<u8, 2>& core, const In<u8, 2>& vote,
+         const In<float, 2>& dist, const In<i64, 1>& rater_area, const In<u8, 1>& voter, const In<i64, 1>& sig_start,
+         const In<i32, 1>& sig, i64 n_vote, i64 perimeter, double t5, i32 min_area) {
+        const i64 k = i64(raters.shape(0)), H = i64(raters.shape(1)), W = i64(raters.shape(2));
+        gpucheck::check_dims(W, H);
+        if (k < 2 || k > 32) throw std::invalid_argument("tables need 2 to 32 raters");
+        for (const auto* a : {&uni, &core, &vote})
+          if (i64(a->shape(0)) != H || i64(a->shape(1)) != W) throw std::invalid_argument("planes must be (H, W)");
+        if (i64(dist.shape(0)) != H || i64(dist.shape(1)) != W) throw std::invalid_argument("dist must be (H, W)");
+        if (i64(rater_area.shape(0)) != k || i64(voter.shape(0)) != k || i64(sig_start.shape(0)) != k + 1)
+          throw std::invalid_argument("rater_area, voter and sig_start must have one entry per rater (+1)");
+        check_offsets(sig_start, i64(sig.shape(0)), i64(H) * W, "sig_start");
+        for (i64 i = 0; i < H * W; ++i) {  // the exactness of the band-depth sums (gpucheck.cpp, scoring)
+          const float d = dist.data()[i];
+          if (!(d == 0.0f || (d >= 1.0f && d <= 16777216.0f)))
+            throw std::invalid_argument("dist values must be 0 or in [1, 2^24]");
+        }
+        if (perimeter < 1 || !(t5 > 0) || !std::isfinite(t5) || min_area < 0)
+          throw std::invalid_argument("perimeter >= 1, t5 > 0 and min_area >= 0 are required");
+        const gpucheck::Tables t{i32(H), i32(W), i32(k), raters.data(), uni.data(), core.data(), vote.data(),
+                                 dist.data(), rater_area.data(), voter.data(), sig_start.data(), sig.data(),
+                                 n_vote, perimeter, t5, min_area};
+        nb::gil_scoped_release release;
+        return gpucheck::add_tables(t);
+      },
+      nb::arg("raters").noconvert(), nb::arg("uni").noconvert(), nb::arg("core").noconvert(),
+      nb::arg("vote").noconvert(), nb::arg("dist").noconvert(), nb::arg("rater_area").noconvert(),
+      nb::arg("voter").noconvert(), nb::arg("sig_start").noconvert(), nb::arg("sig").noconvert(), nb::arg("n_vote"),
+      nb::arg("perimeter"), nb::arg("t5"), nb::arg("min_area"));
+  m.def("drop_tables", &gpucheck::drop_tables, nb::arg("handle"));
+  m.def("resident", &gpucheck::resident);
+
+  m.def(
+      "score_polygons",
+      [](const XY& xy, const In<i64, 1>& ring_start, const In<i64, 1>& shape_start, std::optional<In<i32, 1>> roles,
+         const In<i32, 1>& W, const In<i32, 1>& H, i64 G, const In<i64, 1>& tables) {
+        const PolygonsIn p(xy, ring_start, shape_start, roles, W, H, G);
+        check_tables(tables, p.in.n);
+        gpucheck::Scores r;
+        {
+          nb::gil_scoped_release release;
+          r = gpucheck::score_polygons(p.in, tables.data());
+        }
+        return scores_dict(std::move(r), p.in.n);
+      },
+      nb::arg("xy").noconvert(), nb::arg("ring_start").noconvert(), nb::arg("shape_start").noconvert(),
+      nb::arg("roles").noconvert().none(), nb::arg("W").noconvert(), nb::arg("H").noconvert(), nb::arg("G"),
+      nb::arg("tables").noconvert());
+
+  m.def(
+      "score_masks",
+      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start, const In<i64, 1>& tables) {
+        const MasksIn k(bits, hw, start);
+        check_tables(tables, k.in.n);
+        gpucheck::Scores r;
+        {
+          nb::gil_scoped_release release;
+          r = gpucheck::score_masks(k.in, tables.data());
+        }
+        return scores_dict(std::move(r), k.in.n);
+      },
+      nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert(),
+      nb::arg("tables").noconvert());
 }

@@ -1,6 +1,6 @@
-"""objdel.train.serve (M3, plan D14): preloaded caches, CacheRef, the warmed fork pool, TRLReward on the pool, and
-the K3/K4 harness. CI-safe: a mini prepared layout is written from the conftest synthetic items (no datasets, no
-torch); the real-data K3 run is evidence in experiments/phase2/impl/M3.md."""
+"""objdel.train.serve (M3, plan D14): preloaded caches, CacheRef, the warmed fork pool (exam metrics), TRLReward on
+preloaded caches, and the K3/K4 harness. CI-safe: a mini prepared layout is written from the conftest synthetic items
+(no datasets, no torch); the real-data K3 run is evidence in experiments/phase2/impl/M3.md."""
 
 import gc
 import hashlib
@@ -20,7 +20,7 @@ import pytest
 
 from experiments.phase1.reward_gates import digest, make_jobs
 from objdel.geometry import SCHEMAS
-from objdel.reward import ExpertCache, rl_eligible, score_batch
+from objdel.reward import ExpertCache, advantages_v4, rl_eligible, score_batch
 from objdel.train import serve
 from objdel.train.rewards import TRLReward
 
@@ -137,41 +137,28 @@ def test_cache_ref_pickles_as_its_key_and_roots_stay_apart(prepared, tmp_path):
     assert serve.loader(prepared)(key)["cup"] is not serve.loader(other)(key)["cup"]
 
 
-def test_pool_hashes_equal_serial_on_all_workloads(prepared):
+def test_forked_workers_score_like_the_parent(prepared):
+    """A worker forked after the preload resolves CacheRefs in its copy of STORE and uploads them to its own device
+    context (ExpertCache.device is per process): the same hashes as the parent."""
     serve.preload(prepared, ("riga", "lidc"))
     batches = _workloads(prepared)
-    ex = serve.fork_pool(2)  # forked after the preload: the workers resolve CacheRefs in their copy of STORE
-    try:
-        for name, jobs in batches.items():
-            assert digest(score_batch(jobs, ex)) == digest(score_batch(jobs)), name
-    finally:
-        ex.shutdown()
-
-
-def test_trl_reward_one_dispatch_per_generation_batch(prepared):
-    serve.preload(prepared, ("riga", "lidc"))
-    batches = list(_workloads(prepared).values())
-
-    class Counting:
-        def __init__(self, ex):
-            self.ex, self.n = ex, 0
-
-        def map(self, *a, **k):
-            self.n += 1
-            return self.ex.map(*a, **k)
-
+    serial = {name: digest(score_batch(jobs)) for name, jobs in batches.items()}  # the parent uploads first
     ex = serve.fork_pool(2)
     try:
-        cp = Counting(ex)
-        par, ser = TRLReward(serve.loader(prepared), {EOS}, pool=cp), TRLReward(serve.loader(prepared), {EOS})
-        pids = set(ex._processes)
-        for jobs in batches:
-            n0 = cp.n
-            assert _trl_call(par, jobs) == _trl_call(ser, jobs)
-            assert cp.n - n0 == 1
-        assert set(ex._processes) == pids  # no respawn
+        assert dict(zip(batches, ex.map(_digest_of, batches.values()), strict=True)) == serial
     finally:
         ex.shutdown()
+
+
+def _digest_of(jobs):
+    return digest(score_batch(jobs))
+
+
+def test_trl_reward_on_preloaded_caches(prepared):
+    serve.preload(prepared, ("riga", "lidc"))
+    for jobs in _workloads(prepared).values():
+        out = _trl_call(TRLReward(serve.loader(prepared), {EOS}), jobs)
+        assert out["advantage_v4"] == advantages_v4(score_batch(jobs)).tolist()
 
 
 def test_fork_pool_forks_every_worker_now(pool):
@@ -191,7 +178,7 @@ def test_killed_worker_raises_broken_process_pool_within_1s(prepared):
             fut.result(timeout=5)
         assert time.perf_counter() - t0 < 1.0
         with pytest.raises(BrokenProcessPool):
-            score_batch(jobs, pool)
+            list(pool.map(_digest_of, [jobs]))
     finally:
         pool.shutdown(cancel_futures=True)
 
@@ -245,7 +232,7 @@ def test_k3_harness_help():
         text=True,
         timeout=60,
     )
-    assert r.returncode == 0 and "--workers" in r.stdout
+    assert r.returncode == 0 and "--batches" in r.stdout
 
 
 def test_k3_harness_smoke(prepared, tmp_path):
@@ -264,17 +251,13 @@ def test_k3_harness_smoke(prepared, tmp_path):
             "2",
             "--batches",
             "1",
-            "--threads",
-            "2",
-            "--workers",
-            "2",
         ]
     )
     res = json.loads(out.read_text())
     assert res["gate"]["all_hashes_equal"] and res["lidc_items_preloaded"] == 4
     for w in ("riga", "mixed", "lidc"):
-        assert {"serial", "threads2", "fork2", "per_rollout", "hashes"} <= set(res[w])
-    assert {"K3_pass", "K4_pass", "K4_p99_ms", "d14_cpp_trigger"} <= set(res["gate"])
+        assert {"serial", "per_rollout", "hashes", "hash_equal"} <= set(res[w])
+    assert {"K3_pass", "K4_pass", "K4_p99_ms", "all_hashes_equal"} <= set(res["gate"])
 
 
 def test_scoring_pool_is_sized_from_the_cpus_this_process_may_use(tmp_path, monkeypatch):

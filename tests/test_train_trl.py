@@ -49,7 +49,7 @@ HAND = {  # hand-set reward-v4 terms per prompt (one group each)
 }
 
 
-def fake_score_batch(jobs, pool=None):
+def fake_score_batch(jobs):
     """Stands in for objdel.reward.score_batch: the hand terms of each job's prompt (caches = {"key": prompt})."""
     seen, rows = {}, []
     for job in jobs:
@@ -149,7 +149,7 @@ def call_reward_on(keys):
 
 @pytest.mark.parametrize("model", list(configs.MODELS))
 def test_every_process_receives_whole_groups(model, tmp_path, monkeypatch):
-    monkeypatch.setattr(R, "score_batch", lambda jobs, pool=None: fake_score_batch(
+    monkeypatch.setattr(R, "score_batch", lambda jobs: fake_score_batch(
         [(None, None, None, {"key": k % 5}) for k in (j[3]["key"] for j in jobs)]))
     cfg = configs.grpo_config(model, str(tmp_path))
     for world in (1, 2, 4):

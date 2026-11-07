@@ -85,7 +85,7 @@ def _ring(poly_px, S):
 
 
 def _compose(prims, S, dx, dy):
-    """Union (+1) / carve (-1) of pixel-unit polygons, each rasterized by polycore; None if one is illegal."""
+    """Union (+1) / carve (-1) of pixel-unit polygons, each rasterized by the checker; None if one is illegal."""
     m = np.zeros((S, S), bool)
     for sign, poly in prims:
         g = _ring(poly + [dx, dy], S)

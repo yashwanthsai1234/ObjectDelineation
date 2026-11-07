@@ -1,4 +1,5 @@
-"""Eval of the batched checker objdel._gpucheck against the CPU reference (polycore, polygonize, bitquad).
+"""Eval of the batched checker objdel._gpucheck against its references: the CPU checker it replaced (polycore, archived
+in archive/cpu_checker; its results recorded) for polygons, polygonize and bitquad (run here) for masks.
 
 Run (Mac: CPU build; CUDA box: after `make cuda`, the GPU build):
     .venv/bin/python -I -m experiments.cuda_checker.eval [--data data/checker_eval] [--quick] [--no-speed]
@@ -7,14 +8,15 @@ Correctness, every output the reward and certify use: legality verdict and the 1
 bit-quad counts, rings (Betti numbers b0/b1 and the ring hash), on
   (a) seeded fuzz cases from the repo's generators (compare.fuzz_polygons / fuzz_masks: K1 raster families, K2
       rings, multi-ring shapes with roles, rollouts, int32-extreme coordinates, shapes at the caps; ten mask families
-      and edge cases), checked against polycore / polygonize run here;
+      and edge cases), checked against polycore's results recorded in tests/goldens/polycore.npz and against
+      polygonize run here;
   (b) every LIDC polygon of data/checker_eval/polygons.npz (training, eval and probe targets, R1 model outputs);
   (c) every LIDC Phase 0 mask of data/checker_eval/masks.npz;
   (b) and (c) are checked against the references stored by prepare_data.py, after verifying the files' SHA-256 against
-  manifest.json. Every mismatch is listed with its category and first differing field, and the smallest case that
-  still differs (greedy shrinking) is saved to data/checker_eval/repro/<build>/ (git-ignored: may hold LIDC geometry).
-Speed: shapes/s and masks/s of this build against polycore (per-shape Python loop = the reward's to_mask path, and
-its C++ score_batch) and against the Python certify path and OpenCV, by batch size and shape size.
+  manifest.json. Every mismatch is listed with its category and first differing field, and saved to
+  data/checker_eval/repro/<build>/ (git-ignored: may hold LIDC geometry); a mask is first shrunk greedily to the
+  smallest one that still differs (a polygon cannot be: its sub-cases have no reference since polycore is archived).
+Speed: shapes/s of this build, and masks/s against the Python certify path and OpenCV, by batch size and shape size.
 
 Writes experiments/cuda_checker/results/<build>.json and the build's section of experiments/cuda_checker/RESULTS.md.
 Licence rule: RIGA must never reach a rented host, so any path naming RIGA, or a manifest that is not LIDC-only, is
@@ -37,7 +39,7 @@ import cv2
 import numpy as np
 
 from objdel import _gpucheck
-from objdel.checker import bitquads, polycore, polygonize
+from objdel.checker import bitquads, polygonize
 from objdel.checker.topology import betti
 
 from . import compare as C
@@ -67,35 +69,7 @@ def check_data(data: Path) -> dict:
     return man
 
 
-# ------------------------------------------------------------------ shrinking a mismatch
-def poly_diff_one(rings, roles, W, H, G):
-    p = C.pack_polygons([(rings, roles, W, H)])
-    return C.polygon_diff(C.gpu_polygon(C.run_polygons(p, G), p, 0), C.polygon_reference(rings, roles, W, H, G))
-
-
-def shrink_polygon(rings, roles, W, H, G):
-    """Greedy: drop rings (an outer with its holes), then vertices, while the GPU still differs from polycore."""
-    rings, roles = [np.asarray(r).tolist() for r in rings], list(roles)
-    changed = True
-    while changed:
-        changed = False
-        for k in range(len(rings)):
-            drop = {k} | {h for h, p in enumerate(roles) if p == k}
-            keep = [i for i in range(len(rings)) if i not in drop]
-            new = {o: n for n, o in enumerate(keep)}
-            r2, l2 = [rings[i] for i in keep], [new[roles[i]] if roles[i] >= 0 else -1 for i in keep]
-            if poly_diff_one(r2, l2, W, H, G):
-                rings, roles, changed = r2, l2, True
-                break
-        for k in range(len(rings)):
-            for v in range(len(rings[k]) - 1, -1, -1):
-                if len(rings[k]) > 1:
-                    r2 = rings[:k] + [rings[k][:v] + rings[k][v + 1:]] + rings[k + 1:]
-                    if poly_diff_one(r2, roles, W, H, G):
-                        rings, changed = r2, True
-    return rings, roles
-
-
+# ------------------------------------------------------------------ shrinking a mask mismatch
 def mask_diff_one(m):
     return C.mask_diff(C.run_masks(C.pack_masks([m])), 0, C.mask_reference(m))
 
@@ -179,19 +153,18 @@ def eval_fuzz_polygons(tally, n_per_family, seeds):
                 for s in range(b - a):
                     fam, rings, roles, W, H, _ = sub[a + s]
                     roles = [-1] * len(rings) if roles is None else list(roles)
-                    d = C.polygon_diff(C.gpu_polygon(out, q, s), C.polygon_reference(rings, roles, W, H, G))
-                    tally.add(fam, d, f"s{seed}-{a + s}", lambda rings=rings, roles=roles, W=W, H=H, G=G:
-                              repro_polygon(rings, roles, W, H, G))
+                    ref = C.polygon_reference(rings, roles, W, H, G)
+                    d = C.polygon_diff(C.gpu_polygon(out, q, s), ref)
+                    tally.add(fam, d, f"s{seed}-{a + s}", lambda rings=rings, roles=roles, W=W, H=H, G=G, ref=ref:
+                              repro_polygon(rings, roles, W, H, G, ref))
 
 
-def repro_polygon(rings, roles, W, H, G):
-    rings, roles = shrink_polygon(rings, roles, W, H, G)
+def repro_polygon(rings, roles, W, H, G, ref):
     p = C.pack_polygons([(rings, roles, W, H)])
     gpu = C.gpu_polygon(C.run_polygons(p, G), p, 0)
-    ref = C.polygon_reference(rings, roles, W, H, G)
-    return {"rings": rings, "roles": roles, "W": W, "H": H, "G": G, "size": sum(map(len, rings)),
-            "gpu_defects": gpu["defects"], "ref_defects": ref["defects"],
-            "evenodd_px_differ": int((gpu["evenodd"] != ref["evenodd"]).sum())}
+    return {"rings": [np.asarray(r).tolist() for r in rings], "roles": list(roles), "W": W, "H": H, "G": G,
+            "size": sum(map(len, rings)), "gpu_defects": gpu["defects"], "ref_defects": ref["defects"],
+            "evenodd_equal": C.mask_sha(gpu["evenodd"]) == ref["evenodd"]}
 
 
 def eval_polygon_set(tally, p, per_class):
@@ -204,13 +177,13 @@ def eval_polygon_set(tally, p, per_class):
             i = a + s
             ref = {"defects": p["defects"][i], "evenodd": p["evenodd_sha"][i]}
             d = C.polygon_diff(C.gpu_polygon(out, q, s), ref)
-            classes = [c for c, v in zip(polycore.DEFECTS, ref["defects"], strict=True) if v] or ["legal"]
+            classes = [c for c, v in zip(_gpucheck.DEFECTS, ref["defects"], strict=True) if v] or ["legal"]
             for c in classes:
                 per_class[c][0] += 1
                 per_class[c][1] += d is not None
             rings, roles, W, H = C.shape_of(p, i)
-            tally.add(SRC[p["src"][i]], d, i, lambda rings=rings, roles=roles, W=W, H=H:
-                      repro_polygon(rings, roles, W, H, 1000))
+            tally.add(SRC[p["src"][i]], d, i, lambda rings=rings, roles=roles, W=W, H=H, ref=ref:
+                      repro_polygon(rings, roles, W, H, 1000, ref))
 
 
 def repro_mask(m):
@@ -250,26 +223,13 @@ def timed(f, min_time=0.3, max_reps=50):
 
 
 def speed_polygons(quick):
-    from test_polycore import _blob
     rng = np.random.default_rng(0)
     rows = []
     sizes = [(16, 64), (128, 256), (1000, 512)]
     for nv, S in sizes:
         for B in ([1, 64] if quick else [1, 64, 1024]):
-            shapes = [[_blob(rng, nv, 500, 500, 300)] for _ in range(B)]
-            p = C.pack_polygons([(r, None, S, S) for r in shapes])
-            packed = [polycore.pack(r) for r in shapes]
-            def reward_loop():
-                for sh in packed:
-                    polycore.validate(sh, G=1000), polycore.rasterize(sh, S, S, G=1000)
-            row = {"vertices": nv, "crop": S, "batch": B,
-                   "gpucheck": B / timed(lambda: C.run_polygons(p)),
-                   "polycore_loop": B / timed(reward_loop),
-                   "polycore_score_batch_1t": B / timed(lambda: polycore.score_batch(packed, [S] * B, [S] * B,
-                                                                                    threads=1)),
-                   "polycore_score_batch_8t": B / timed(lambda: polycore.score_batch(packed, [S] * B, [S] * B,
-                                                                                    threads=8))}
-            rows.append(row)
+            p = C.pack_polygons([([C.blob(rng, nv, 500, 500, 300)], None, S, S) for _ in range(B)])
+            rows.append({"vertices": nv, "crop": S, "batch": B, "gpucheck": B / timed(lambda: C.run_polygons(p))})
     return rows
 
 
@@ -329,11 +289,9 @@ def markdown(res) -> str:
                   "| Class | Cases | Mismatches |", "|---|---|---|"]
         lines += [f"| {c} | {n:,} | {b} |" for c, (n, b) in res["per_class"].items()]
     if res.get("speed_polygons"):
-        lines += ["", "Polygons per second (validate + both masks; polycore_loop = the reward's per-shape path):", "",
-                  "| Vertices | Crop | Batch | gpucheck | polycore loop | score_batch 1 thread | score_batch 8 threads |",
-                  "|---|---|---|---|---|---|---|"]
-        lines += [f"| {r['vertices']} | {r['crop']} | {r['batch']} | {r['gpucheck']:,.0f} | {r['polycore_loop']:,.0f} "
-                  f"| {r['polycore_score_batch_1t']:,.0f} | {r['polycore_score_batch_8t']:,.0f} |"
+        lines += ["", "Polygons per second (defects + even-odd mask):", "",
+                  "| Vertices | Crop | Batch | gpucheck |", "|---|---|---|---|"]
+        lines += [f"| {r['vertices']} | {r['crop']} | {r['batch']} | {r['gpucheck']:,.0f} |"
                   for r in res["speed_polygons"]]
     if res.get("speed_masks"):
         lines += ["", "Masks per second (bit-quads + rings; python_certify = bitquad + betti + polygonize; OpenCV = "
@@ -369,11 +327,10 @@ def main():
     if build == "cuda" and _gpucheck.device_count() == 0:
         raise SystemExit("CUDA build but no CUDA device")
     repro = data / "repro" / build
-    seeds = [0] if a.quick else [0, 1, 2]
     res = {"host": host_info(), "correctness": {}}
     tp, tm = Tally("fuzz_polygons", repro), Tally("fuzz_masks", repro)
-    eval_fuzz_polygons(tp, 20 if a.quick else 150, seeds)
-    eval_fuzz_masks(tm, 300 if a.quick else 2000, seeds)
+    eval_fuzz_polygons(tp, 20 if a.quick else 150, [0])  # the sets whose references were recorded
+    eval_fuzz_masks(tm, 300 if a.quick else 2000, [0] if a.quick else [0, 1, 2])
     res["correctness"]["(a) fuzz polygons"] = tp.summary()
     res["correctness"]["(a) fuzz masks"] = tm.summary()
     lidc_masks = []
@@ -384,7 +341,7 @@ def main():
         t, per_class = Tally("lidc_polygons", repro), collections.defaultdict(lambda: [0, 0])
         eval_polygon_set(t, p, per_class)
         res["correctness"]["(b) LIDC polygons"] = t.summary()
-        res["per_class"] = {c: per_class[c] for c in ("legal", *polycore.DEFECTS) if c in per_class}
+        res["per_class"] = {c: per_class[c] for c in ("legal", *_gpucheck.DEFECTS) if c in per_class}
         z = dict(np.load(data / "masks.npz", allow_pickle=False))
         t = Tally("lidc_masks", repro)
         eval_mask_set(t, z)

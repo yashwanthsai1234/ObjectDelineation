@@ -360,12 +360,10 @@ def test_k3_harness_exits_1_on_a_failed_gate(tmp_path, monkeypatch, rollout_ms, 
 
     root = str(tmp_path.resolve())
     monkeypatch.setattr(K3.serve, "preload", lambda r, ds: K3.serve.STORE.setdefault(root, {"lidc/a": None}) and 1)
-    monkeypatch.setattr(K3.serve, "fork_pool", lambda n: SimpleNamespace(shutdown=lambda: None))
     monkeypatch.setattr(K3, "batch", lambda riga, lidc, share, seed: ["job"])
-    monkeypatch.setattr(K3, "warm_wall", lambda jobs, pool=None: (1.0, "h"))
+    monkeypatch.setattr(K3, "warm_wall", lambda jobs: (1.0, "h"))
     monkeypatch.setattr(K3, "per_rollout_ms", lambda jobs: [rollout_ms])  # K4: p99 <= 5 ms
-    argv = ["--out", str(tmp_path / "k3.json"), "--root", root, "--synth", "0", "--batches", "1", "--threads", "1",
-            "--workers", "1"]
+    argv = ["--out", str(tmp_path / "k3.json"), "--root", root, "--synth", "0", "--batches", "1"]
     try:
         assert K3.main(argv) == code
     finally:

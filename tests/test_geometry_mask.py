@@ -1,9 +1,10 @@
-"""objdel.geometry.to_mask: parts -> even-odd mask + legality, through objdel.checker.polycore only."""
+"""objdel.geometry.to_mask: parts -> even-odd mask + legality, on the CUDA checker (to_masks of one object)."""
 import numpy as np
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from oracles import raster_oracle as RO
+from oracles import validity_oracle as VO
 
-from objdel.checker import polycore
 from objdel.geometry import GRID, canonicalize, to_mask
 
 SQUARE = np.array([[0, 0], [1000, 0], [1000, 1000], [0, 1000]])  # clockwise on screen
@@ -61,16 +62,14 @@ parts = st.lists(st.tuples(ring, st.lists(ring, max_size=2)), min_size=1, max_si
 
 @settings(max_examples=200, deadline=None)
 @given(parts, st.integers(1, 40), st.integers(1, 40))
-def test_to_mask_equals_polycore(ps, W, H):
+def test_to_mask_equals_the_oracles(ps, W, H):
     rings, roles = [], []
     for o, hs in ps:
         roles += [-1] + [len(rings)] * len(hs)
-        rings += [o, *hs]
-    shape = polycore.pack(rings)
-    v = polycore.validate(shape, roles=np.array(roles, np.int32), G=GRID)
-    expected = {d: int(c) for d, c in zip(polycore.DEFECTS, v["total"], strict=True) if c}
+        rings += [o.tolist(), *(h.tolist() for h in hs)]
+    expected = {d: c for d, c in zip(VO.DEFECTS, VO.ref_totals(rings, roles, GRID), strict=True) if c}
     g = to_mask(ps, W, H)
-    assert np.array_equal(g.mask, polycore.rasterize(shape, W, H, G=GRID)["evenodd"])
+    assert np.array_equal(g.mask, RO.winding_np(rings, W, H, GRID)[1] % 2 == 1)
     assert g.defects == expected and g.legal == (not expected)
     # canonicalization changes neither the mask nor the defect counts of a legal shape
     if g.legal:

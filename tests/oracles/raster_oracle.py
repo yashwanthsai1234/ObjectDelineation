@@ -1,4 +1,4 @@
-"""Slow, exact raster oracle for objdel.checker.polycore.rasterize, and the K1 shape families (tests only).
+"""Slow, exact raster oracle for the checker's masks (objdel._gpucheck), and the K1 shape families (tests only).
 
 Derived from the Phase 1 lab (experiments/phase1/lab/common/oracle.py, lab/t_polycore/tests/helpers.py).
 The spec, literally: pixel (c, r) is inside iff its centre is inside; a ray from the centre towards +x counts

@@ -1,8 +1,9 @@
 """Evaluation metrics of K sampled completions per item against its raters (plan §4.7, judge R10).
 
-Everything goes through the training path: objdel.reward.score_many (score_completion's parse, CUDA checker raster,
-size-filtered signatures and per-object score_mask, with the masks and per-object terms kept) and advantages_v4 on
-the item's ExpertCaches. Per item (`metrics`):
+Everything goes through the training path: objdel.reward.score_many (score_completion's parse, then the CUDA checker
+scores every object: mask, defects, IoU_tc, F5, g_area, size-filtered signature) and advantages_v4 on the item's
+ExpertCaches. The item-level comparisons between samples and raters (pairwise IoU, NSD, soft Dice, GED, HM-IoU,
+duplicates) still read the samples' masks, from one objdel.geometry.to_masks call per item. Per item (`metrics`):
 
 - per sample: format_ok, legal, IoU_tc, F5, g_area (legality-gated), topology-any (the joint size-filtered signature
   is some rater's), the v4 advantage in its group, `passed` = legal and topology-any and IoU_tc >= 0.5 for every object;
@@ -93,6 +94,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
+from objdel.geometry import parse, to_masks
 from objdel.reward import (
     NUMERIC,
     REWARD_V4,
@@ -244,13 +246,21 @@ def ged(samples: np.ndarray, raters: np.ndarray) -> float:
 
 
 def _samples(keys: Sequence[tuple[str, bool]], names, caches, W: int, H: int) -> list[dict]:
-    """Training-path terms of distinct completions (text, truncated), from one score_many call: per completion its
-    terms, per-object masks and terms (empty masks for a failed sample), and its duplicate hash."""
+    """Training-path terms of distinct completions (text, truncated), scored by the CUDA checker in one score_many
+    call: per completion its terms, per-object terms and masks (empty for a failed sample), and its duplicate hash.
+    The masks (one to_masks call) feed only the item-level comparisons below (pairwise IoU, NSD, soft Dice,
+    duplicates), not the terms."""
+    parsed = [parse(t, names, tr) for t, tr in keys]
+    geoms = iter(to_masks([(p.objs[n], W, H) for p in parsed if p.ok for n in names]))
+    empty = {}
     out = []
-    for terms, masks, objects in score_many([(t, tr, names, caches, W, H) for t, tr in keys]):
-        if masks is None:
+    for p, (terms, objects) in zip(parsed, score_many([(t, tr, names, caches, W, H) for t, tr in keys]), strict=True):
+        if p.ok:
+            masks = {n: next(geoms).mask for n in names}
+        else:
             masks = {n: np.zeros((H, W), bool) for n in names}
-            objects = {n: score_mask(masks[n], caches[n]) for n in names}
+            empty = empty or {n: score_mask(masks[n], caches[n]) for n in names}
+            objects = empty
         h = hashlib.sha256(bytes([int(terms["format_ok"]), int(terms["legal"])]))
         for n in names:
             h.update(np.packbits(masks[n]).tobytes())

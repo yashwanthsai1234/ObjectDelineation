@@ -1,17 +1,16 @@
 PY := .venv/bin/python
-FUZZ_N ?= 20000
-# Sources of the objdel._polycore extension: editing them makes `make test` rebuild it first.
-EXT_SRC := CMakeLists.txt cpp/polycore/polycore.hpp src/objdel/_polycore.cpp cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
-EXT_STAMP := build/.polycore-stamp
+# Sources of the objdel._gpucheck extension: editing them makes `make test` rebuild it first.
+EXT_SRC := CMakeLists.txt cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
+EXT_STAMP := build/.gpucheck-stamp
 
-.PHONY: setup build test test-all cov lint fmt fuzz wheels cuda preflight
+.PHONY: setup build test test-all cov lint fmt wheels cuda preflight
 
 setup:            ## create .venv and install the package (editable, all extras); builds the C++ extension
 	uv venv --python 3.12
 	uv pip install --python $(PY) -e ".[train,data,dev]"
 	@mkdir -p build && touch $(EXT_STAMP)
 
-build: $(EXT_STAMP) ## rebuild the C++ extension if cpp/ or its binding changed (incremental, build/<wheel tag>)
+build: $(EXT_STAMP) ## rebuild the C++ extension if cuda/ changed (incremental, build/<wheel tag>)
 
 $(EXT_STAMP): $(EXT_SRC)
 	uv pip install --python $(PY) --no-deps --reinstall-package objdel -e .
@@ -35,12 +34,6 @@ lint:             ## lint library, tests and experiments
 
 fmt:              ## auto-fix lint issues
 	$(PY) -m ruff check src tests experiments --fix
-
-fuzz:             ## native polycore fuzz under ASan/UBSan (FUZZ_N random shapes)
-	@mkdir -p build
-	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror \
-		-I cpp cpp/polycore/tests/fuzz_main.cpp -o build/polycore_fuzz
-	build/polycore_fuzz $(FUZZ_N)
 
 wheels:           ## build manylinux x86-64 + aarch64 wheels in Docker with cibuildwheel (build/wheelhouse)
 	uvx cibuildwheel==4.3.1 --platform linux --output-dir build/wheelhouse

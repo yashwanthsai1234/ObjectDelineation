@@ -61,9 +61,10 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
         if not names:
             die(f"no {ds} {kind} under {data / kind}")
         picked += [f for n in sorted(names) for f in walk(data, data / kind / n, f"{kind}/{n}")]
-    if ds == "lidc":  # the CUDA checker eval set (LIDC only; experiments/cuda_checker/prepare_data.py)
+    if ds == "lidc":  # the CUDA checker eval set (LIDC only; archive/cpu_checker/experiments/prepare_data.py)
         if not (data / "checker_eval" / "manifest.json").is_file():
-            die("data/checker_eval missing: run experiments.cuda_checker.prepare_data")
+            die("data/checker_eval missing: it holds the archived CPU checker's references and cannot be rebuilt; "
+                "copy it from a checkout that has it")
         picked += walk(data, data / "checker_eval", "checker_eval")
     if bad := [p for _, p in picked if is_raw(p) or not p.is_file()]:
         die(f"refusing (data/raw or not a file): {bad[:3]}")

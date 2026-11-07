@@ -25,7 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -262,7 +262,7 @@ def throughput(items, rng, n_batches):  # items: all fixture items (RIGA disc + 
             riga.setdefault(k.rsplit("__", 1)[0], {})[k.rsplit("__", 1)[1]] = st
     prompts_r = [(("disc", "cup"), {n: ExpertCache.build(v[n]) for n in ("disc", "cup")}) for v in list(riga.values())[:64]]
     prompts_l = [(("nodule",), {"nodule": ExpertCache.build(st)}) for ds, _, st in items if ds == "lidc"][:200]
-    emit("\n| K3 / K4 workload (256 completions = 32 prompts × 8) | executor | batch wall median / max (ms) | "
+    emit("\n| K3 / K4 workload (256 completions = 32 prompts × 8) | scorer | batch wall median / max (ms) | "
          "per-completion p50 / p99 (ms) |")
     emit("|---|---|---|---|")
     for label, share_riga in (("mixed (40 % RIGA disc + cup, 60 % LIDC)", 0.4), ("RIGA only", 1.0)):
@@ -278,18 +278,15 @@ def throughput(items, rng, n_batches):  # items: all fixture items (RIGA disc + 
                 t0 = time.perf_counter_ns()
                 score_completion(*j)
                 lat.append((time.perf_counter_ns() - t0) / 1e6)
-        for ex_name, ex in (("serial", None), ("8 threads", ThreadPoolExecutor(8))):
-            walls = []
-            for jobs in batches:
-                for rep in range(2):
-                    t0 = time.perf_counter()
-                    advantages_v4(score_batch(jobs, ex))
-                    if rep:
-                        walls.append(1e3 * (time.perf_counter() - t0))
-            if ex is not None:
-                ex.shutdown()
-            emit(f"| {label} | {ex_name} | {np.median(walls):.1f} / {np.max(walls):.1f} | "
-                 f"{np.median(lat):.2f} / {np.percentile(lat, 99):.2f} |")
+        walls = []
+        for jobs in batches:
+            for rep in range(2):
+                t0 = time.perf_counter()
+                advantages_v4(score_batch(jobs))
+                if rep:
+                    walls.append(1e3 * (time.perf_counter() - t0))
+        emit(f"| {label} | CUDA checker | {np.median(walls):.1f} / {np.max(walls):.1f} | "
+             f"{np.median(lat):.2f} / {np.percentile(lat, 99):.2f} |")
     emit(f"\nLoad average during the run: {os.getloadavg()[0]:.1f} (8-core Apple M3, shared with other agents).")
     return batches[0]
 
@@ -312,13 +309,9 @@ print(digest(score_batch(pickle.load(open(sys.argv[1], "rb")))))
 
 def k10(jobs, tmp: Path):
     out = {"serial run 1": digest(score_batch(jobs)), "serial run 2": digest(score_batch(jobs))}
-    with ThreadPoolExecutor(8) as ex:
-        out["8 threads"] = digest(score_batch(jobs, ex))
-    with ProcessPoolExecutor(3) as ex:
-        out["3 processes"] = digest(score_batch(jobs, ex))
-    cv2.setNumThreads(8)
-    out["OpenCV 8 threads"] = digest(score_batch(jobs))
-    cv2.setNumThreads(0)
+    with ThreadPoolExecutor(8) as ex:  # concurrent calls share the checker (its mutex orders them)
+        runs = {digest(t) for t in ex.map(score_batch, [jobs] * 8)}
+    out["8 concurrent calls"] = runs.pop() if len(runs) == 1 else "differ"
     tmp.write_bytes(pickle.dumps(jobs))
     env = dict(os.environ, PYTHONHASHSEED="123")
     out["fresh interpreter"] = subprocess.run([sys.executable, "-I", "-c", K10_CODE, str(tmp)], capture_output=True,

@@ -1,12 +1,17 @@
-"""Reward-v4 terms of one rollout: completion text -> parse -> polycore mask -> terms against the expert caches.
+"""Reward-v4 terms of one rollout: completion text -> parse -> the CUDA checker scores it against the expert caches.
 
-Per object, against its ExpertCache (all work on the bounding box of prediction | rater union):
+All checking and scoring runs in the CUDA checker (objdel._gpucheck.score_polygons, cuda/gpucheck.cpp): polygon ->
+even-odd mask -> ring defects -> the terms below, against each cache's tables resident on the device
+(ExpertCache.device). Masks never leave the device; only per-object numbers come back. One checker call per
+score_many / score_batch. Per object, against its ExpertCache:
 - IoU_tc: max IoU over the raters whose size-filtered signature equals the prediction's; IoU vs the vote
   when no rater drew that signature (lab ITERATION3, R3);
 - F5 = 1 / (1 + (2 D / P) / T5^2): D = depth beyond the egg-yolk band, P = contour length of the union;
 - g_area = min(1, A_max / A) * min(1, A / A_min), A_min / A_max over all raters, zero tolerance (ITERATION4);
   an empty prediction gets 0;
 - the signature and its rater frequency.
+The terms are bit-identical to the host scorer this replaced (tests/oracles/score_numpy.py; the exactness argument is
+in docs/research/notes/gpu_scoring.md).
 
 A completion with several objects (RIGA: disc, cup) gets the mean of the per-object IoU_tc, F5 and g_area; it
 is legal when every object is legal; its topology answer is joint: topo_freq is the share of the voting raters
@@ -15,34 +20,29 @@ object (rater r of one object's cache is rater r of the others; caches with diff
 and sig_id identifies the tuple of per-object signatures. This is the lab's rule (t_stack/prod.py score_text);
 for one object it reduces to the per-object terms. iou_min, the smallest per-object IoU_tc, feeds the topology
 validity gate (advantages_v4), so a good disc cannot carry a missed cup past it (B2-7; the eval pass criterion).
+These combinations of the returned per-object numbers are the only host arithmetic.
 
 An unparseable or truncated completion has format_ok = legal = 0, every term 0 and sig_id -1. A parsed but
 illegal one keeps its terms for logging; advantages_v4 zeroes them through the legality gate. An empty object
-list is a legal empty mask (objdel.geometry.to_mask), scored like any other mask.
+list is a legal empty mask, scored like any other mask.
 
 References:
 - Reward v4 definition: experiments/phase1/lab/t_reward/results/ITERATION4.md; plan §3.2, §4.3.
-- Python threads + GIL-releasing kernels (polycore, OpenCV): https://docs.python.org/3/library/concurrent.futures.html
-- OpenCV releases the GIL in every wrapped call (ERRWRAP2 / PyAllowThreads):
-  https://github.com/opencv/opencv/blob/4.x/modules/python/src2/cv2_util.hpp ; setNumThreads semantics (GCD backend
-  accepts only values <= 0): https://github.com/opencv/opencv/blob/4.x/modules/core/include/opencv2/core/utility.hpp
 - VLM-R1's count guard s_ovd = min(1, L_gt / L_pred) multiplying the detection reward against over-prediction
   (§4.3, Eq. 7-8; the hack it removes: §5.3.1), the analogue of g_area: https://arxiv.org/abs/2504.07615 (full text
   https://arxiv.org/html/2504.07615)
 """
 import zlib
 from collections.abc import Mapping, Sequence
-from concurrent.futures import Executor
 from dataclasses import dataclass
 
-import cv2
 import numpy as np
 
-from objdel.checker.topology import signature
-from objdel.geometry import parse, to_masks
+from objdel import _gpucheck
+from objdel.geometry import GRID, parse
+from objdel.geometry.shape import pack_objects
 
-from .cache import ExpertCache, band_depth
-from .spec import REWARD_V4
+from .cache import ExpertCache
 
 NUMERIC = ("format_ok", "legal", "iou_tc", "iou_min", "f5", "g_area", "topo_any", "topo_freq", "sig_id")
 _FAILED = dict.fromkeys(NUMERIC, 0.0) | {"sig_id": -1.0}
@@ -58,40 +58,23 @@ class ObjectTerms:
     area: int
 
 
-def _iou(a: np.ndarray, area_a: int, b: np.ndarray, area_b: int) -> float:
-    inter = int(np.count_nonzero(a & b))
-    union = area_a + area_b - inter
-    return inter / union if union else 1.0
-
-
-def area_guard(area: int, cache: ExpertCache) -> float:
-    """min(1, A_max / A) * min(1, A / A_min) over all raters; 0 for an empty prediction."""
-    if area <= 0:
-        return 0.0
-    a_min, a_max = min(cache.rater_areas), max(cache.rater_areas)
-    return min(1.0, a_max / area) * (min(1.0, area / a_min) if a_min > 0 else 1.0)
+def _object(r: dict, i: int) -> ObjectTerms:
+    """Object i of a device result."""
+    sig = tuple(r["sig"][r["sig_start"][i]:r["sig_start"][i + 1]].tolist())
+    return ObjectTerms(float(r["iou_tc"][i]), float(r["f5"][i]), float(r["g_area"][i]), sig,
+                       float(r["topo_freq"][i]), int(r["area"][i]))
 
 
 def score_mask(mask: np.ndarray, cache: ExpertCache) -> ObjectTerms:
-    """Terms of one object's mask (H, W) against its cache."""
+    """Terms of one object's mask (H, W) against its cache, on the device (for masks that do not come from a
+    completion: baselines, reward gates)."""
     m = np.ascontiguousarray(mask, dtype=bool)
     if m.shape != cache.union.shape:
         raise ValueError(f"mask shape {m.shape} != cache shape {cache.union.shape}")
-    x, y, w, h = cv2.boundingRect(m.view(np.uint8))
-    boxes = [b for b in (cache.box, (y, y + h, x, x + w)) if b[1] > b[0]]  # every term lives in pred | union
-    roi = (slice(min(b[0] for b in boxes), max(b[1] for b in boxes)),
-           slice(min(b[2] for b in boxes), max(b[3] for b in boxes))) if boxes else (slice(0, 0), slice(0, 0))
-    m = m[roi]
-    area = int(np.count_nonzero(m))
-    sig = signature(m, cache.min_area)
-    same = cache.same_sig.get(sig, ())
-    if same:
-        iou_tc = max(_iou(m, area, cache.raters[i][roi], cache.rater_areas[i]) for i in same)
-    else:
-        iou_tc = _iou(m, area, cache.vote[roi], cache.n_vote)
-    d = band_depth(m, cache.union[roi], cache.core[roi], cache.dist_out_union[roi], cache.dist_in_core[roi])
-    f5 = 1.0 / (1.0 + (2.0 * d / cache.perimeter) / (cache.t5 * cache.t5))
-    return ObjectTerms(iou_tc, f5, area_guard(area, cache), sig, len(same) / len(cache.voters), area)
+    H, W = m.shape
+    r = _gpucheck.score_masks(m.view(np.uint8).reshape(-1), np.array([[H, W]], np.int32),
+                              np.array([0, H * W], np.int64), np.array([cache.device()], np.int64))
+    return _object(r, 0)
 
 
 def sig_id(sigs: tuple) -> float:
@@ -120,71 +103,47 @@ def score_completion(text: str, truncated: bool, names: Sequence[str], caches: M
     return score_many([(text, truncated, names, caches, W, H)])[0][0]
 
 
-def score_objects(text: str, truncated: bool, names: Sequence[str], caches: Mapping[str, ExpertCache],
-                  W: int, H: int) -> tuple[dict, dict[str, np.ndarray] | None, dict[str, ObjectTerms]]:
-    """score_completion's terms plus, when the completion parses, its mask and ObjectTerms per object (else None, {}):
-    one pass for callers that need both (objdel.eval)."""
-    return score_many([(text, truncated, names, caches, W, H)])[0]
-
-
-def score_many(jobs: Sequence[tuple]) -> list[tuple[dict, dict[str, np.ndarray] | None, dict[str, ObjectTerms]]]:
-    """score_objects of every job (tuples of its arguments), in order. The masks of all parsed objects come from one
-    objdel.geometry.to_masks call: one CUDA checker call per score_many."""
-    return [_score_one(*w) for w in _checked(jobs)]
-
-
-def _checked(jobs: Sequence[tuple]) -> list[tuple]:
-    """Parse every job and make the masks of all parsed objects in one to_masks call (one CUDA checker call), in the
-    calling process. -> per job (names, caches, parser error, [Geometry per name] or None): what _score_checked
-    needs, and all a pool job carries."""
+def score_many(jobs: Sequence[tuple]) -> list[tuple[dict, dict[str, ObjectTerms]]]:
+    """(score_completion's terms, {object: ObjectTerms}, empty when the completion does not parse) of every job
+    (tuples of score_completion's arguments), in order: one CUDA checker call for all parsed objects."""
     parsed = [parse(text, names, truncated) for text, truncated, names, _, _, _ in jobs]
-    objs = [(p.objs[n], W, H) for p, (_, _, names, _, W, H) in zip(parsed, jobs, strict=True) if p.ok for n in names]
-    geoms = iter(to_masks(objs))
-    return [(names, caches, p.error, [next(geoms) for _ in names] if p.ok else None)
-            for p, (_, _, names, caches, _, _) in zip(parsed, jobs, strict=True)]
+    objs, tables = [], []
+    for p, (_, _, names, caches, W, H) in zip(parsed, jobs, strict=True):
+        if p.ok:
+            objs += [(p.objs[n], W, H) for n in names]
+            tables += [caches[n].device() for n in names]
+    r = _gpucheck.score_polygons(*pack_objects(objs), GRID, np.array(tables, np.int64))
+    out, i = [], 0
+    for p, (_, _, names, caches, _, _) in zip(parsed, jobs, strict=True):
+        a = rater_answers(caches, names)  # checks the caches of every job, parsed or not
+        if not p.ok:
+            out.append((_FAILED | {"error": p.error, "defects": {}}, {}))
+            continue
+        out.append(_combine(names, a, r, range(i, i + len(names))))
+        i += len(names)
+    return out
 
 
-def _score_one(names, caches, error, geoms) -> tuple[dict, dict[str, np.ndarray] | None, dict[str, ObjectTerms]]:
-    """Terms of one checked job (CPU only: score_mask against the caches, never the checker)."""
-    a = rater_answers(caches, names)
-    if geoms is None:
-        return _FAILED | {"error": error, "defects": {}}, None, {}
-    legal, defects, masks, terms = True, {}, {}, {}
-    for n, g in zip(names, geoms, strict=True):
-        legal &= g.legal
-        for d, c in g.defects.items():
-            defects[d] = defects.get(d, 0) + c
-        masks[n], terms[n] = g.mask, score_mask(g.mask, caches[n])
+def _combine(names, answers, r: dict, idx) -> tuple[dict, dict[str, ObjectTerms]]:
+    """A parsed completion's terms from its objects' rows idx of the device result r."""
+    legal, defects, terms = True, {}, {}
+    for n, i in zip(names, idx, strict=True):
+        for d, c in zip(_gpucheck.DEFECTS, r["defects"][i].tolist(), strict=True):
+            if c:
+                legal, defects[d] = False, defects.get(d, 0) + c
+        terms[n] = _object(r, i)
     ts = list(terms.values())
     sigs = tuple(t.sig for t in ts)
-    joint = len(a.get(sigs, ())) / sum(map(len, a.values()))
+    joint = len(answers.get(sigs, ())) / sum(map(len, answers.values()))
     return ({"format_ok": 1.0, "legal": float(legal), "iou_tc": float(np.mean([t.iou_tc for t in ts])),
              "iou_min": float(min(t.iou_tc for t in ts)), "f5": float(np.mean([t.f5 for t in ts])),
              "g_area": float(np.mean([t.g_area for t in ts])), "topo_any": float(joint > 0), "topo_freq": joint,
-             "sig_id": sig_id(sigs), "error": "", "defects": defects}, masks, terms)
+             "sig_id": sig_id(sigs), "error": "", "defects": defects}, terms)
 
 
-def score_batch(jobs: Sequence[tuple], pool: Executor | None = None, chunk: int = REWARD_V4.group) -> dict:
-    """score_completion over jobs (tuples of its arguments) in input order, serially or on an executor. The calling
-    process parses every job and makes all masks in one CUDA checker call (_checked); the executor only scores the
-    masks on the CPU (_score_checked), so its workers never touch CUDA (a process forked after CUDA started cannot
-    use it, and one context per worker would share the GPU with the trainer: RL-5, CK-5).
-
-    Masks go to the executor in chunks of `chunk` consecutive jobs (one prompt's group), so a process pool pickles
-    each prompt's caches once per chunk (ExpertCache pickles as its rater masks, tau and T5; serve.CacheRef as its
-    key). With a thread pool, call cv2.setNumThreads(0) first: OpenCV then runs each call sequentially (1 is a no-op
-    on the macOS GCD backend); results do not depend on it. Returns float64 arrays for the numeric keys and lists for
-    "error" and "defects"."""
-    work = _checked(list(jobs))
-    if pool is None:
-        rows = _score_checked(work)
-    else:
-        chunks = [work[i:i + chunk] for i in range(0, len(work), chunk)]
-        rows = [r for rs in pool.map(_score_checked, chunks) for r in rs]
+def score_batch(jobs: Sequence[tuple]) -> dict:
+    """score_completion over jobs (tuples of its arguments) in input order, in one CUDA checker call. Returns float64
+    arrays for the numeric keys and lists for "error" and "defects"."""
+    rows = [t for t, _ in score_many(list(jobs))]
     out = {k: np.array([r[k] for r in rows], np.float64) for k in NUMERIC}
     return out | {"error": [r["error"] for r in rows], "defects": [r["defects"] for r in rows]}
-
-
-def _score_checked(work: Sequence[tuple]) -> list[dict]:
-    """The pool job: terms of checked jobs (_checked), on the CPU; never imports or calls objdel._gpucheck."""
-    return [_score_one(*w)[0] for w in work]

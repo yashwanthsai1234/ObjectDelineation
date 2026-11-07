@@ -85,7 +85,7 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
     over = {"learning_rate": lr, "max_steps": G_PROBE["steps"], "save_strategy": "no"}
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
-    funcs, _ = rewards.TRLReward(serve.loader(a.train), rewards.stop_ids(model, proc), pool=pool).funcs()
+    funcs, _ = rewards.TRLReward(serve.loader(a.train), rewards.stop_ids(model, proc)).funcs()
     cls = GRPOTrainer if a.plain else fast.FastGRPO
     calls = [callbacks.TraceStep(a.trace, wait=1)] if a.trace else []
     trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, processing_class=proc,

@@ -126,6 +126,11 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     # torch's caching allocator hides out-of-bounds accesses from memcheck; arena reuse is initcheck's case
     assert "PYTORCH_NO_CUDA_MEMORY_CACHING=1" in mem and "for t in memcheck initcheck" in mem
     assert "timeout 1200 $S --tool $t" in mem  # memcheck instruments torch's kernels too: each pass is bounded
+    # R2 (2026-11-07): the step sanitized only test_cuda_checker_gpu.py (6 tests); K1's 40 are run_box.sh's group,
+    # and the device scorer's kernels run only in test_gpu_scoring.py
+    group = box.split("pytest -q -p no:cacheprovider", 1)[1].split("|| tests=1", 1)[0]
+    files = [*group.replace("\\", " ").split(), "tests/test_gpu_scoring.py"]
+    assert len(files) == 5 and all(f in mem.split() for f in files), (files, mem)
 
 
 def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregistered_g_probe():

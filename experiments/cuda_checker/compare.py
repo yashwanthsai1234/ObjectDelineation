@@ -1,10 +1,15 @@
-"""Pack cases for objdel._gpucheck, run it, and compare it with the reference checker (polycore, polygonize, bitquad).
+"""Pack cases for objdel._gpucheck, run it, and compare it with the references: for polygons, the results of the CPU
+checker it replaced (polycore, archived in archive/cpu_checker), recorded per case in tests/goldens/polycore.npz
+before the archive; for masks, objdel.checker.polygonize and bitquad, run here.
 
-Shared by tests/test_cuda_checker*.py and experiments/cuda_checker/eval.py. The packed formats are those of
-data/checker_eval (prepare_data.py): polygons as (xy, ring_start, shape_start, roles, W, H), masks as (bits, hw,
-start). The case generators are the repo's existing ones (tests/oracles, tests/test_polycore.py,
-tests/test_topology.py), imported, not copied; only the int32-extreme and at-the-caps families are new here.
+Shared by tests/test_cuda_checker*.py, tests/test_checker_host.py, tests/test_gpu_scoring.py and
+experiments/cuda_checker/eval.py. The packed formats are those of data/checker_eval
+(archive/cpu_checker/experiments/prepare_data.py): polygons as (xy, ring_start, shape_start, roles, W, H), masks as
+(bits, hw, start). The case generators are the repo's existing ones (tests/oracles, tests/test_topology.py), imported,
+not copied; the rollout, int32-extreme and at-the-caps families are defined here.
 """
+import binascii
+import functools
 import hashlib
 import random
 import sys
@@ -13,13 +18,14 @@ from pathlib import Path
 import numpy as np
 
 from objdel import _gpucheck
-from objdel.checker import bitquads, polycore, polygonize
-from objdel.geometry.shape import unpack_rows
+from objdel.checker import bitquads, polygonize
+from objdel.geometry.shape import pack_rings, unpack_rows
 
 TESTS = Path(__file__).resolve().parents[2] / "tests"
 if str(TESTS) not in sys.path:
     sys.path.append(str(TESTS))  # tests/oracles and the generator functions of the test modules
 
+GOLDEN = TESTS / "goldens" / "polycore.npz"  # archive/cpu_checker/record_goldens.py
 POLY_FIELDS = ("legal", "defects", "evenodd")  # compared in this order; the first difference is reported
 MASK_FIELDS = ("quads", "rings", "b0", "b1", "ring_sha")
 
@@ -29,7 +35,7 @@ def pack_polygons(cases) -> dict:
     """[(rings, roles or None, W, H)] -> the packed arrays of polygons.npz (roles default to all outer)."""
     xy, ring_start, shape_start, roles, W, H = [], [0], [0], [], [], []
     for rings, rl, w, h in cases:
-        pxy, off = polycore.pack(rings)
+        pxy, off = pack_rings(rings)
         xy.append(pxy)
         ring_start += (ring_start[-1] + off[1:]).tolist()
         shape_start.append(shape_start[-1] + len(rings))
@@ -96,10 +102,41 @@ def mask_sha(mask) -> bytes:
     return hashlib.sha256(np.packbits(np.asarray(mask, bool)).tobytes()).hexdigest().encode()
 
 
+def object_case(parts) -> tuple[list, list]:
+    """An object's parts [(outer, holes)] -> (rings, roles), as objdel.geometry.shape.pack_objects packs them."""
+    rings, roles = [], []
+    for outer, holes in parts:
+        roles += [-1] + [len(rings)] * len(holes)
+        rings += [outer, *holes]
+    return rings, roles
+
+
+def case_key(rings, roles, W, H, G=1000) -> bytes:
+    """Key of one polygon case in GOLDEN: the first 16 bytes of the SHA-256 of its grid and packed arrays."""
+    p = pack_polygons([(rings, roles, W, H)])
+    h = hashlib.sha256(int(G).to_bytes(8, "little"))
+    for k in ("xy", "ring_start", "roles", "W", "H"):
+        h.update(np.ascontiguousarray(p[k]).tobytes())
+    return h.digest()[:16]
+
+
+@functools.cache
+def goldens() -> dict:
+    z = np.load(GOLDEN, allow_pickle=False)
+    return {k.tobytes(): (d, binascii.hexlify(e.tobytes())) for k, d, e in zip(z["key"], z["defects"], z["evenodd"],
+                                                                              strict=True)}
+
+
 def polygon_reference(rings, roles, W, H, G=1000) -> dict:
-    shape = polycore.pack(rings)
-    r = polycore.rasterize(shape, W, H, G)
-    return dict(defects=polycore.validate(shape, roles=np.array(roles, np.int32), G=G)["total"], evenodd=r["evenodd"])
+    """polycore's result for one case: its 13 defect counts and its even-odd mask's SHA-256 (mask_sha), recorded
+    before the CPU checker was archived. roles: one per ring (-1 = outer). KeyError for a case never recorded."""
+    defects, evenodd = goldens()[case_key(rings, roles, W, H, G)]
+    return dict(defects=defects, evenodd=evenodd)
+
+
+def geometry_diff(g, ref: dict):
+    """polygon_diff of an objdel.geometry.Geometry (to_mask / to_masks)."""
+    return polygon_diff({"defects": np.array([g.defects.get(d, 0) for d in _gpucheck.DEFECTS]), "evenodd": g.mask}, ref)
 
 
 def polygon_diff(gpu: dict, ref: dict):
@@ -164,13 +201,46 @@ def caps_shape(rng: random.Random, size: int):
     return [circle(100 + 80 * k, 500, 30, False) for k in range(10)], None, size, size
 
 
+def blob(rng, n, cx, cy, r, ccw=False):
+    """A smooth random ring of n vertices around (cx, cy), radius about r, on the 1000 grid (repeats dropped)."""
+    k = np.arange(1, 5)
+    a, ph = rng.normal(0, 0.25 / k), rng.uniform(0, 2 * np.pi, k.size)
+    t = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    rad = np.clip(r * (1 + (a[:, None] * np.cos(k[:, None] * t + ph[:, None])).sum(0)), 0.3 * r, None)
+    pts = np.clip(np.rint(np.c_[cx + rad * np.cos(t), cy + rad * np.sin(t)]), 0, 1000).astype(np.int64)
+    pts = pts[np.r_[True, np.any(np.diff(pts, axis=0) != 0, axis=1)]]
+    return pts[::-1] if ccw else pts
+
+
+def rollouts(n: int, seed: int):
+    """GRPO-like rollouts -> [(rings, roles, S)]: 1-3 smooth rings (holes or second parts), 16-200 vertices, crops
+    64-512 px (the generator of the archived tests/test_polycore.py; its ground-truth blob is still drawn, so the
+    cases are the same)."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        S = int(rng.integers(64, 513))
+        cx, cy = rng.integers(350, 651, 2)
+        R = float(rng.uniform(150, 330))
+        rings, rl = [blob(rng, int(rng.integers(16, 201)), cx, cy, R)], [-1]
+        for _ in range(int(rng.integers(0, 3))):
+            if rng.random() < 0.5:
+                rings.append(blob(rng, int(rng.integers(16, 201)), cx, cy, R * rng.uniform(.15, .3), ccw=True))
+                rl.append(0)
+            else:
+                rings.append(blob(rng, int(rng.integers(16, 201)), *rng.integers(100, 901, 2), R * .2))
+                rl.append(-1)
+        blob(rng, 64, cx + 9, cy - 7, R)  # the archived generator's ground truth
+        out.append((rings, rl, S))
+    return out
+
+
 def fuzz_polygons(n_per_family: int, seed: int = 0):
     """Seeded fuzz cases -> [(family, rings, roles, W, H, G)], from the repo's generators: the K1 raster families
     (star, soup, grid, halfpixel, holes, multipart, tiny, degenerate, rect), the K2 validity rings, multi_ring
     (outers with holes and roles, mutated), GRPO-like rollouts, int32-extreme coordinates, and shapes at the caps."""
     from oracles import raster_oracle as RO
     from oracles import validity_oracle as VO
-    from test_polycore import rollouts
     rng = random.Random(seed)
     out = []
     for i in range(n_per_family * len(RO.K1_FAMILIES)):
@@ -182,9 +252,7 @@ def fuzz_polygons(n_per_family: int, seed: int = 0):
     for _ in range(n_per_family):
         rings, roles = VO.multi_ring(rng)
         out.append(("roles", rings, roles, rng.choice([16, 64, 125]), rng.choice([16, 64, 125]), 1000))
-    shapes, sizes, roles, _ = rollouts(n_per_family, seed=7 + seed)
-    for (xy, off), S, rl in zip(shapes, sizes, roles, strict=True):
-        out.append(("rollout", [xy[off[k]:off[k + 1]] for k in range(len(off) - 1)], rl.tolist(), S, S, 1000))
+    out += [("rollout", rings, roles, S, S, 1000) for rings, roles, S in rollouts(n_per_family, seed=7 + seed)]
     for _ in range(n_per_family):
         rings, W, H, G = huge_shape(rng)
         out.append(("huge", rings, None, W, H, G))
