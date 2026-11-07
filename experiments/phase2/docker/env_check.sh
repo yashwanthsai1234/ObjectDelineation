@@ -11,7 +11,8 @@ OUT=${2:-/workspace/runs/env_check.json}
 mkdir -p "$(dirname "$OUT")"
 LOG="${OUT%.json}_vllm.log"
 rm -f "$OUT.vllm"
-/opt/venv/bin/python -I - "$OUT" <<'PY'
+CHECKS=$(mktemp -d)/checks.py  # a file, not stdin: Triton's @jit reads the kernel's source
+cat > "$CHECKS" <<'PY'
 import json, shutil, subprocess, sys, time
 r, bad = {}, []
 
@@ -87,6 +88,7 @@ def _():
 json.dump({"bad": bad, **r}, open(sys.argv[1], "w"), indent=1)
 print(json.dumps(r, indent=1))
 PY
+/opt/venv/bin/python -I "$CHECKS" "$OUT"
 if [ -x /opt/vllm/bin/python ]; then VLLM_PY=/opt/vllm/bin/python; else VLLM_PY=/opt/venv/bin/python; fi
 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_LOGGING_LEVEL=INFO "$VLLM_PY" -I - "$MODEL" "$OUT.vllm" <<'PY' >"$LOG" 2>&1 || true
 import json, sys

@@ -1268,3 +1268,5 @@ def test_env_check_lists_every_check():
         assert word in text, word
     for b in re.findall(r"<<'PY'\n(.*?)\nPY\n", text, re.S):
         compile(b, "env_check", "exec")
+    # Triton's @jit reads its kernel's source: the checks run from a file, not stdin (box p1, 2026-11-06)
+    assert 'cat > "$CHECKS" <<\'PY\'' in text and '/opt/venv/bin/python -I "$CHECKS" "$OUT"' in text
