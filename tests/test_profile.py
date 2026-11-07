@@ -122,3 +122,20 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     assert '"cuda-toolkit[nvcc,cccl,sanitizer]==13.0.3"' in box
     mem = " ".join(policy.chain(policy.ROOT / "experiments/phase2/configs/p1_rl.yaml", "p1")[3])
     assert "--error-exitcode 1" in mem and "no compute-sanitizer" in mem
+
+
+def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregistered_g_probe():
+    """R2 (PLAN §5.1 G-probe, 20 GRPO steps at the pre-registered LR on R1's e2): P1's card and checker steps
+    verbatim (so the two chains cannot drift), then g_probe on the fast trainer; vLLM only."""
+    from experiments.phase2.vast import policy
+
+    cfg = policy.ROOT / "experiments/phase2/configs"
+    p1, r2 = (policy.chain(cfg / f, "r2") for f in ("p1_rl.yaml", "r2_qwen3vl2b.yaml"))
+    assert r2[:4] == p1[:4]
+    gp = r2[4]
+    assert gp[:2] == ["-m", "experiments.phase2.g_probe"] and len(r2) == 5
+    args = dict(zip(gp[2::2], gp[3::2]))
+    assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/r2/ckpt",
+                    "--train": "/workspace/data/lidc/prepared", "--probe": "/workspace/data/lidc/eval_views/lidc-val-shifted",
+                    "--out": "/workspace/runs/r2/g_probe"}  # fmt: skip
+    assert not any(f in gp for f in ("--plain", "--grpo", "--items", "--select"))  # the pre-registered G-probe as is
