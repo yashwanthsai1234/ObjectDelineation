@@ -519,7 +519,10 @@ Open from that list:
 
 - `experiments/phase2/configs/r2_qwen3vl2b.yaml` runs P1's card and checker steps, then `g_probe --ckpt` on R1's e2
   (owner override of §5.1: e2 failed G-geometry and G-precision).
-- Estimate in its header: about 1 h, about $0.70 on a 5090. That is more than the test allocation's remaining $0.24.
+- Estimate in its header: a chain of about 30-35 min. Expect about $0.85-0.95 on a 5090, worst case about $1.18 at
+  `--cap-hours 1.7` (P1 took 45 min from launch to its first `run.sh`). That is more than the test allocation's
+  remaining ~$0.14. A pre-run fresh-context review (2026-11-06) found no failing step; the post-P1 trainer changes
+  first run on a GPU there.
 - Before launch: preflight, then the quote shown to the owner.
 - Tests: `test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregistered_g_probe` and the existing
   G-probe tests.
