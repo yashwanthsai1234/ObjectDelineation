@@ -1,0 +1,25 @@
+# K1: the CUDA checker alone on a GPU (no model, no vLLM, no data bundle: sync_up.sh --code-only). P1 never ran its
+# memcheck (no compute-sanitizer then), so the sanitizers come first, then P1's equivalence and timing step if the
+# cap leaves time (with --code-only its GPU test files run, and its eval stops on the missing checker_eval set; that
+# set ships in the LIDC bundle). {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc. Commands (Mac):
+#   make preflight CONFIG=experiments/phase2/configs/r1_qwen3vl2b.yaml
+#   launch.sh OFFER k1 --config experiments/phase2/configs/r1_qwen3vl2b.yaml --cap-hours 0.7
+#   sync_up.sh k1 --code-only && run.sh k1 --cap-hours 0.5 experiments/phase2/configs/checker_gpu.yaml
+#   teardown.sh k1
+steps:
+  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu*/cpu.cfs_*_us; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
+  # Build objdel._gpucheck for this card (nvcc and compute-sanitizer, run_box.sh)
+  - [bash, -c, "mkdir -p {rd}/cuda_checker && bash experiments/cuda_checker/run_box.sh --build-only"]
+  # Memory errors in the checker: compute-sanitizer 13.4.92 (installed by run_box.sh), memcheck then
+  # initcheck (arena reuse), torch's caching allocator off so its pool does not hide out-of-bounds accesses; recorded,
+  # does not stop the chain, but a missing binary or any error fails the step
+  - ["~", bash, -c, "S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/compute-sanitizer 2>/dev/null);
+     O={rd}/cuda_checker/memcheck.txt; [ -n \"$S\" ] || {{ echo no compute-sanitizer > $O; exit 1; }};
+     export PYTORCH_NO_CUDA_MEMORY_CACHING=1; for t in memcheck initcheck; do echo == $t >> $O;
+     timeout 1200 $S --tool $t --error-exitcode 1 /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+     tests/test_cuda_checker_gpu.py >> $O 2>&1 || exit 1; done"]
+  # P1's checker step: GPU tests, equivalence against polycore, timing sweep, the scorers on the GPU
+  - ["~", bash, -c, "set -o pipefail; DATA={data}/checker_eval bash experiments/cuda_checker/run_box.sh; s=$?;
+     mkdir -p {rd}/cuda_checker; cp -r experiments/cuda_checker/results experiments/cuda_checker/RESULTS.md
+     {rd}/cuda_checker/ 2>/dev/null; [ $s = 0 ] || exit $s; /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+     tests/test_gpu_scoring.py 2>&1 | tee {rd}/cuda_checker/pytest.txt"]
