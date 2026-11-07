@@ -111,3 +111,14 @@ def test_p1_chain_checks_the_card_and_the_checker_before_rl():
     assert names[4].startswith("-m experiments.phase2.profile --ckpt /workspace/runs/p1/ckpt")
     assert [s[0] for s in steps[1:]] == ["bash", "bash", "~", "-m"]  # env and checker failures stop the chain
     assert not any("hf_sample" in n or "hf_rate" in n for n in names)  # vLLM only (owner 2026-11-06)
+
+
+def test_memcheck_has_its_sanitizer_and_fails_loudly():
+    """P1's memcheck step found no compute-sanitizer (the toolkit install lacked the extra) and passed silently;
+    run_box.sh now installs the toolkit's own sanitizer pin and the step reports a missing binary or any error."""
+    from experiments.phase2.vast import policy
+
+    box = (policy.ROOT / "experiments/cuda_checker/run_box.sh").read_text()
+    assert '"cuda-toolkit[nvcc,cccl,sanitizer]==13.0.3"' in box
+    mem = " ".join(policy.chain(policy.ROOT / "experiments/phase2/configs/p1_rl.yaml", "p1")[3])
+    assert "--error-exitcode 1" in mem and "no compute-sanitizer" in mem
