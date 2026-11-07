@@ -1,7 +1,8 @@
 """GPU group of the CUDA checker, for the preflight on a rented box (skipped where `nvidia-smi -L` lists no GPU).
 
 On a GPU box objdel._gpucheck must be the nvcc build (`make cuda`): these tests fail, not skip, when it is not.
-They then run large batches in one call each (many shapes per kernel launch) and compare with the CPU reference;
+They then run large batches in one call each (many shapes per kernel launch) and compare with the CPU checker's
+recorded results (tests/goldens/polycore.npz);
 tests/test_cuda_checker.py runs the rest of the equivalence suite on the same build."""
 import shutil
 import subprocess

@@ -11,7 +11,7 @@ checks that. RIGA-like items (6 raters, disc and cup, RGB) and LIDC-like items (
 specks, pinches and abstaining raters, int16 Hounsfield units) go through the production path:
 
     frame (crop; LIDC: lung window + bicubic upscale)  -> frame.masks, frame.image, png
-    polycore rasterize / validate / score_batch (random rings, threads 1 and 3) -> polycore.*
+    the checker (objdel._gpucheck through geometry.to_masks) on random rings -> checker
     checker.topology on every frame mask and polygonize   -> topology, polygonize
     targets.build_target (reward size rule, and all rules) -> targets, target_set_hash
     reward.ExpertCache.build (tau, T5, digest)             -> caches, fingerprint
@@ -42,11 +42,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from objdel.checker import betti, instance_topology, min_area, polycore, polygonize, signature, size_filter
+from objdel.checker import betti, instance_topology, min_area, polygonize, signature, size_filter
 from objdel.data import Item, splits
 from objdel.data import riga as riga_mod
 from objdel.eval import metrics
-from objdel.geometry import SCHEMAS, parse, serialize
+from objdel.geometry import SCHEMAS, parse, serialize, to_masks
 from objdel.reward import ExpertCache, advantages_v4, fingerprint, score_batch, topology_reward
 from objdel.targets import BuildConfig, build_target, frame, target_set_hash
 
@@ -218,8 +218,7 @@ def run() -> dict:
     rng = np.random.default_rng(SEED + 1)
     items = corpus()
     sec: dict[str, list[str]] = {k: [] for k in (
-        "corpus", "frame.masks", "frame.image", "png", "polycore.rasterize", "polycore.validate",
-        "polycore.score_batch", "polycore.threads_equal", "topology", "polygonize", "targets", "targets.all_rules",
+        "corpus", "frame.masks", "frame.image", "png", "checker", "topology", "polygonize", "targets", "targets.all_rules",
         "target_set_hash", "caches", "fingerprint", "reward.terms", "reward.advantages", "eval",
         "splits.lidc", "splits.riga", "splits.descriptor", "splits.ncc_values", "splits.ncc_pairs",
         "splits.keypoints", "splits.keypoint_pairs", "splits.keypoint_dups")}
@@ -227,28 +226,14 @@ def run() -> dict:
     for it in items:
         sec["corpus"].append(_h(it.item_id, it.image, *(it.masks[n] for n in sorted(it.masks))))
 
-    # polycore on random integer rings (incl. off-grid vertices and self-crossings)
-    shapes, Ws, Hs, gts = [], [], [], []
+    # the checker on random integer rings (incl. off-grid vertices and self-crossings), every ring an outer
+    objs = []
     for _ in range(300):
         W, H = (int(v) for v in rng.choice([50, 100, 125, 200, 250, 500], 2))
         rings = [rng.integers(-50, 1051, (int(rng.integers(3, 40)), 2)) for _ in range(int(rng.integers(1, 4)))]
-        r = polycore.rasterize(rings, W, H)
-        sec["polycore.rasterize"].append(_h(r["evenodd"], r["nonzero"], r["ring_wmin"], r["ring_wmax"],
-                                            *(int(r[k]) for k in ("area_evenodd", "area_nonzero", "px_multi",
-                                                                   "rings_mixed_sign"))))
-        v = polycore.validate(rings)
-        sec["polycore.validate"].append(_h(v["total"], v["per_ring"], v["area2"], v["n_clean"],
-                                           v["pair_cross"], v["pair_touch"],
-                                           [polycore.signed_area2(rr) for rr in rings]))
-        shapes.append(rings)
-        Ws.append(W)
-        Hs.append(H)
-        gts.append(rng.integers(0, 2, (H, W)).astype(bool))
-    b1 = polycore.score_batch(shapes, np.array(Ws), np.array(Hs), gts=gts, threads=1)
-    b3 = polycore.score_batch(shapes, np.array(Ws), np.array(Hs), gts=gts, threads=3)
-    for k in sorted(b1):
-        sec["polycore.score_batch"].append(_h(k, np.asarray(b1[k])))
-        sec["polycore.threads_equal"].append(_h(k, bool(np.array_equal(b1[k], b3[k]))))
+        objs.append(([(r, []) for r in rings], W, H))
+        rng.integers(0, 2, (H, W))  # a draw of the earlier section, kept so the later sections' draws are unchanged
+    sec["checker"] = [_h(g.mask, sorted(g.defects.items())) for g in to_masks(objs)]
 
     names_of = {}
     rows = []

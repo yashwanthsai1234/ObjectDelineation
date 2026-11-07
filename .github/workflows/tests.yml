@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
       - run: uv venv --python 3.12
-      - run: uv pip install -e ".[dev]"  # builds objdel._polycore with scikit-build-core + nanobind
+      - run: uv pip install -e ".[dev]"  # builds objdel._gpucheck (CPU build) with scikit-build-core + nanobind
       - run: .venv/bin/python -m ruff check src tests experiments
       - run: .venv/bin/python -m pytest -q -m "not slow"
 
@@ -51,18 +51,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
       - run: uv venv --python 3.12
       - run: uv pip install -e ".[dev]"
-      - run: .venv/bin/python -m pytest -q -s -m slow tests/test_polycore_oracle.py
-
-  sanitizers:
-    name: polycore fuzz under ASan/UBSan (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
-      - run: make fuzz FUZZ_N=50000
+      - run: .venv/bin/python -m pytest -q -s -m slow tests/test_checker_oracle.py
 
   wheels:
     name: wheels (${{ matrix.os }})

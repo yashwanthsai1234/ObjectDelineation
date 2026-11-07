@@ -21,7 +21,7 @@
 # python:3.12-slim-trixie, multi-arch index digest (resolved 2026-10-19), x86.sh builds and runs it with --platform linux/amd64
 FROM python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
-# g++ and cmake build objdel._polycore from source (CMakeLists.txt: Release, -O3 -DNDEBUG, nanobind NOMINSIZE);
+# g++ and cmake build objdel._gpucheck from source (CMakeLists.txt: Release, -O3 -DNDEBUG, nanobind NOMINSIZE);
 # patchelf for auditwheel; git is not needed (the source arrives as a tarball).
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake ninja-build patchelf \
     && rm -rf /var/lib/apt/lists/*

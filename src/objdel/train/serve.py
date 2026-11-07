@@ -1,5 +1,6 @@
 """Reward serving for the processes that score (plan D14, §3.2): select_ckpt, g_probe, k3_harness, Phase 3 GRPO;
-never train_sft, which scores nothing.
+never train_sft, which scores nothing. Scoring itself runs on the CUDA checker (objdel.reward.score_batch); the pool
+below only spreads the exam's item-level metrics (objdel.eval.metrics) over CPU workers.
 
 1. `preload(root, datasets)` loads every RL cache of those datasets' splits under a prepared root (data/prepared
    or an eval view, same layout) into STORE, before the model loads. Checks: each records file's SHA-256 against
@@ -11,17 +12,18 @@ never train_sft, which scores nothing.
    its shutdown). Every module a worker runs must be imported before the fork: on macOS a worker that imports a
    module after the fork can crash the pool (S1-11). fork_pool imports SCORERS and `modules` (e.g. the script that
    defines the worker function, when it is not already imported) itself first.
-3. `TRLReward(caches=serve.loader(root), stop_ids, pool=pool)`: jobs carry `CacheRef(key, root)`, which pickles as its
-   key and root (bytes, not the 96 MB of masks a RIGA batch's ExpertCaches pickle to, re-running both EDTs in the
-   worker). score_batch makes one pool.map per reward call, in chunks of one group.
+3. `TRLReward(caches=serve.loader(root), stop_ids)` scores on preloaded caches; pool jobs (select_ckpt._score) carry
+   `CacheRef(key, root)`, which pickles as its key and root (bytes, not the 96 MB of masks a RIGA batch's
+   ExpertCaches pickle to, re-running both EDTs in the worker). A worker uploads the caches it scores to its own
+   device context (ExpertCache.device).
 
 A dead worker (OOM kill) makes every pending and later call raise BrokenProcessPool within a second: the run fails
 loudly and resumes from a checkpoint. multiprocessing.Pool would hang instead; forkserver or spawn re-import the
 training script's torch in every worker (lab B4 §2).
 
     serve.preload("data/prepared", ("lidc",))
-    pool = serve.fork_pool(4)                 # before the model / CUDA
-    reward = TRLReward(serve.loader("data/prepared"), stop_ids, pool=pool)
+    pool = serve.fork_pool(4)                 # before the model / CUDA; exam metrics only
+    reward = TRLReward(serve.loader("data/prepared"), stop_ids)
 
 Several roots (prepared val plus eval views) share item ids, so a CacheRef always names its root.
 

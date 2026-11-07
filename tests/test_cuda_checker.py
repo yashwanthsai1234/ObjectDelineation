@@ -1,5 +1,6 @@
-"""objdel._gpucheck (cuda/gpucheck.cpp) equals the reference checker bit for bit: polycore's even-odd mask
-(bit-packed rows) and validate totals, and polygonize's rings and bitquad counts. Runs on whichever build is installed:
+"""objdel._gpucheck (cuda/gpucheck.cpp) equals the reference checker bit for bit: the even-odd masks (bit-packed
+rows) and defect totals of the archived CPU checker, polycore (recorded per case in tests/goldens/polycore.npz), and
+polygonize's rings and bitquad counts. Runs on whichever build is installed:
 the CPU build by default, the CUDA build after `make cuda` (tests/test_cuda_checker_gpu.py then also checks it is
 one)."""
 import random
@@ -76,7 +77,7 @@ def test_every_defect_class_is_exercised():
     cases = [c for c in C.fuzz_polygons(60, seed=1) if c[5] == 1000]
     p = C.pack_polygons([(r, rl, W, H) for _, r, rl, W, H, _ in cases])
     seen = (C.run_polygons(p)["defects"] > 0).sum(0)
-    assert (seen > 0).all(), dict(zip(C.polycore.DEFECTS, seen.tolist(), strict=True))
+    assert (seen > 0).all(), dict(zip(gc.DEFECTS, seen.tolist(), strict=True))
 
 
 @pytest.mark.parametrize("rings, roles, W, H", [

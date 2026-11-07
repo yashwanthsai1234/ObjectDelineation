@@ -1,6 +1,6 @@
-"""Exact geometry of binary masks (bit-quad invariants, per-instance topology, polygons, certificates), of voxel
-volumes (`volume`: 3-D Betti numbers of stacked slices) and of integer polygons (`polycore`, the C++ extension:
-rasterize, validate, signed area)."""
+"""Exact geometry of binary masks (bit-quad invariants, per-instance topology, polygons, certificates) and of voxel
+volumes (`volume`: 3-D Betti numbers of stacked slices). Integer polygons (rasterize, validate) and the reward's
+scoring are the CUDA checker's, objdel._gpucheck (cuda/; objdel.geometry.to_masks, objdel.reward.score)."""
 from .bitquad import bitquads
 from .certify import certify
 from .polygonize import polygonize

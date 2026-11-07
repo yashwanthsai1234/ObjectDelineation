@@ -66,7 +66,7 @@ FIELDS = tuple(
 SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
-IMPORT_CHECK = "import objdel._polycore, experiments.phase1.reward_gates, tests.oracles.reward_harness"
+IMPORT_CHECK = "import objdel._gpucheck, experiments.phase1.reward_gates, tests.oracles.reward_harness"
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
 # never closes a run younger than this as vanished (it may not be listed yet). PULL_S: added to --cap-hours, as the
 # watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min.
@@ -425,7 +425,7 @@ def chain(cfg: Path, run_id: str) -> list[list[str]]:
     the chain. Otherwise `stages:` (default train, select, probe; C2: train, topology) picks from train_sft, then on
     the saved branches select_ckpt (G-vision block, rotated view, `sampler:`) or its topology-only form, and g_probe;
     a config without branches (timing arms) only trains. A chain that scores (select, topology or probe) first builds
-    the CUDA checker (run_box.sh --build-only) and checks the scorers on it against polycore (tests/test_gpu_scoring.py),
+    the CUDA checker (run_box.sh --build-only) and checks the scorers on it against the host scorer (tests/test_gpu_scoring.py),
     so a failed build or a difference stops the chain before training: scoring runs on the GPU only. Box
     paths: data /workspace/data/lidc, runs /workspace/runs/<id>."""
     import yaml
