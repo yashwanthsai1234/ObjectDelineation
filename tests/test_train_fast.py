@@ -131,6 +131,30 @@ def test_vision_cache_gives_trls_logps_and_encodes_each_image_once():
     assert sum(seen) == 4
 
 
+def test_rope_cache_gives_trls_logps_and_computes_each_row_once():
+    """C5: Qwen3-VL's 3-D rope positions (get_rope_index: per-row host reads) are computed once per row per generation
+    batch at the full width and sliced per chunk, not once per chunk in each of the old, reference and update passes.
+    The update's micro-batches are other row subsets (TRL shuffles): rows are found by content."""
+    m = tiny_model()
+    ids, mask, T, kw = batch(pads=[2, 0, 5, 1, 0], lengths=[3, 7, 1, 2, 5])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
+    rows, orig = [], m.model.get_rope_index
+    m.model.get_rope_index = lambda input_ids, **k: rows.append(len(input_ids)) or orig(input_ids, **k)
+    t = trainer(Fast, buckets=(4, 8, 12, 16), rope=fast.RopeCache.install(m))
+    for _ in range(2):  # old-logprob and reference passes over the whole batch
+        lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
+        torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    perm = [3, 0, 4]  # an update micro-batch: a shuffled subset
+    sub = {"pixel_values": kw["pixel_values"].reshape(5, 16, PATCH)[perm].reshape(-1, PATCH), "num_images": [1] * 3,
+           "image_grid_thw": kw["image_grid_thw"][perm], "mm_token_type_ids": kw["mm_token_type_ids"][perm]}
+    lp, _, _ = t._get_per_token_logps_and_entropies(m, ids[perm], mask[perm], T, **sub)
+    torch.testing.assert_close(lp, ref[perm], atol=1e-5, rtol=1e-5)
+    assert sum(rows) == 5  # 5 rows x 3 passes, each row's positions computed once
+    t.rope.clear()  # a new generation batch
+    t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
+    assert sum(rows) == 10 and t.rope.pending is None
+
+
 def test_lora_leaves_the_vision_tower_frozen():
     """The cache is valid only because no trainable weight sits in the tower or the projector (configs.lora, D6)."""
     from peft import get_peft_model

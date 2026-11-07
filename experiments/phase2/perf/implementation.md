@@ -392,6 +392,15 @@ Two read-only reviewers (one on the CUDA checker, one on the trainer) read the c
   importance-sampling ratio. Moving that ratio into the loss drops one of three forwards over 256 rows. Built only if
   the box's `logprobs` share justifies changing TRL's loss.
 
+### C5 built (2026-11-06, after P1)
+
+P1's trace counted 7,233 `.item()` reads per step, matching Qwen3-VL's `get_rope_index` over 768 row computations
+(256 rows x 3 passes). `fast.RopeCache` keeps each row's (3, width) positions for the generation batch, keyed by an
+exact hash of the row's ids and mask (the update's micro-batches are shuffled subsets), and hands each chunk its
+column slice through a forward pre-hook on the Qwen-VL base model. Test: `test_rope_cache_gives_trls_logps_and_
+computes_each_row_once` (equal to TRL's untrimmed logprobs; 5 rows x 3 passes compute 5 rows). Speed on the GPU is
+measured on the next rental, beside C10.
+
 ### D2. The chain config `experiments/phase2/configs/p1_rl.yaml` (`steps:` form, as `r0.yaml`)
 
 Before the chain: `sync_up.sh p1` (code and the LIDC bundle) and `fetch_hf.sh p1 r1-qwen3vl2b` (e2 from the private

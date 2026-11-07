@@ -57,6 +57,9 @@ class FastForward:
         pv, grid, nimg = kw.pop("pixel_values", None), kw.pop("image_grid_thw", None), kw.pop("num_images", None)
         rows = grid.prod(-1).tolist() if grid is not None else None  # pixel rows per image (one host read)
         P = input_ids.size(1) - logits_to_keep
+        rope = getattr(self, "rope", None)
+        pos = (rope.positions(input_ids, attention_mask, kw["mm_token_type_ids"], grid, nimg)
+               if rope is not None and grid is not None and kw.get("mm_token_type_ids") is not None else None)
         lps, ents, auxs = [], [], []
         img = row = 0
         for s in range(0, n, size):
@@ -71,9 +74,15 @@ class FastForward:
                 r = sum(rows[img:img + k])
                 sub |= {"pixel_values": pv[row:row + r], "image_grid_thw": grid[img:img + k], "num_images": nimg[s:e]}
                 img, row = img + k, row + r
-            lp, ent, aux = super()._get_per_token_logps_and_entropies(
-                model, input_ids[s:e, cols], attention_mask[s:e, cols], keep, None, compute_entropy, compute_aux_loss,
-                **sub)  # fmt: skip
+            if pos is not None:
+                rope.pending = pos[:, s:e, cols]  # the chunk's slice, taken by the model's forward (RopeCache.inject)
+            try:
+                lp, ent, aux = super()._get_per_token_logps_and_entropies(
+                    model, input_ids[s:e, cols], attention_mask[s:e, cols], keep, None, compute_entropy,
+                    compute_aux_loss, **sub)  # fmt: skip
+            finally:
+                if pos is not None:
+                    rope.pending = None
             lps.append(F.pad(lp, (0, logits_to_keep - keep)))
             if compute_entropy:
                 ents.append(F.pad(ent, (0, logits_to_keep - keep)))
@@ -135,6 +144,53 @@ class VisionCache:
                          deepstack_features=[torch.cat([d[j] for _, d in hits]) for j in range(len(hits[0][1]))])
 
 
+class RopeCache:
+    """Qwen3-VL's 3-D rope positions per row (C5). `get_rope_index` reads the host several times per row; TRL runs
+    it in every forward chunk of the old, reference and update passes. Here each row's positions are computed once per
+    generation batch at the full width (rows found by an exact hash of their ids and mask: the update's micro-batches
+    are shuffled subsets) and each chunk's slice goes to the model through a forward pre-hook. Positions depend only
+    on a row's real tokens, so a column slice equals the trimmed chunk's own positions on every real token."""
+
+    def __init__(self, base):
+        self.base, self.store, self.pending = base, {}, None
+        base.register_forward_pre_hook(self.inject, with_kwargs=True)
+
+    @classmethod
+    def install(cls, model):
+        """The cache on the model's Qwen-VL base (a PEFT wrapper is searched through), or None without one."""
+        base = next((m for _, m in model.named_modules()
+                     if hasattr(m, "get_rope_index") and hasattr(m, "compute_3d_position_ids")), None)  # fmt: skip
+        return cls(base) if base is not None else None
+
+    def clear(self):
+        self.store.clear()
+
+    def inject(self, module, args, kwargs):
+        if self.pending is not None and kwargs.get("position_ids") is None:
+            kwargs["position_ids"] = self.pending
+        return args, kwargs
+
+    @staticmethod
+    def keys(input_ids, attention_mask) -> list[tuple]:
+        g = torch.Generator().manual_seed(1)
+        w = torch.randint(1, 2**31, (2, input_ids.size(1)), generator=g).to(input_ids.device)
+        h = (input_ids.long() * w[0]).sum(1) + (attention_mask.long() * w[1]).sum(1)
+        return [(k, input_ids.size(1)) for k in h.tolist()]  # one host read per call
+
+    def positions(self, input_ids, attention_mask, mm_token_type_ids, grid, nimg) -> torch.Tensor:
+        """(3, rows, width) positions of these rows, computing only rows not seen in this generation batch."""
+        keys = self.keys(input_ids, attention_mask)
+        first = [sum(nimg[:i]) for i in range(len(nimg))]
+        miss = list({k: i for i, k in enumerate(keys) if k not in self.store}.values())
+        if miss:
+            g = torch.cat([grid[first[i]:first[i] + nimg[i]] for i in miss])
+            pos, _ = self.base.get_rope_index(input_ids[miss], mm_token_type_ids=mm_token_type_ids[miss],
+                                              image_grid_thw=g, attention_mask=attention_mask[miss])  # fmt: skip
+            for j, i in enumerate(miss):
+                self.store[keys[i]] = pos[:, j]
+        return torch.stack([self.store[k] for k in keys], dim=1)
+
+
 def one_pad_per_image(prompts: list[dict], pad: int) -> list[dict]:
     """vLLM prompts with each run of image pads cut to one pad (rows without multi_modal_data unchanged)."""
     out = []
@@ -151,14 +207,16 @@ class FastGRPO(FastForward, GRPOTrainer):
     the old and reference logprobs run (C9), phase timers and no FLOP count."""
 
     rows = None  # the generation batch's dataset rows; None outside one (g_probe's step-0 sampling calls _generate)
+    vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.vision = VisionCache.install(self.model)
+        self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
 
     def _generate_and_score_completions(self, inputs):
-        if self.vision is not None:
-            self.vision.clear()
+        for cache in (self.vision, self.rope):
+            if cache is not None:
+                cache.clear()
         self.rows = inputs
         try:
             with self.timed("batch"):
