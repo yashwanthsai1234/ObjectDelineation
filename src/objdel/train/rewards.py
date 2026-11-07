@@ -54,7 +54,7 @@ References:
 - Lab: experiments/phase1/lab/t_stack/prod.py (TRLReward), r2_trl_equiv.py, results/INTEGRATION.md.
 """
 from collections.abc import Callable, Iterable, Mapping
-from concurrent.futures import Executor
+from concurrent.futures import Executor, ThreadPoolExecutor
 
 from objdel.checker.polycore import DEFECTS
 from objdel.reward import REWARD_V4, ExpertCache, advantages_v4, legal_gate, score_batch, topology_reward
@@ -89,7 +89,8 @@ class TRLReward:
     ids TRL treats as the end of a completion (`stop_ids(model, processor)`); pool: optional executor for
     score_batch, one map per reward call. Scoring processes use caches=serve.loader(root) with
     pool=serve.fork_pool(4) (objdel.train.serve, plan D14): jobs then pickle as cache keys, not masks. Masks come
-    from the CUDA checker: one call per reward call without a pool, one per group on a pool."""
+    from the CUDA checker in one call per reward call (256 answers), in this process; the pool workers only score
+    them on the CPU and never touch CUDA (score_batch; C3, RL-5)."""
 
     def __init__(self, caches: Callable[[str], Mapping[str, ExpertCache]], stop_ids: Iterable[int],
                  pool: Executor | None = None):
@@ -97,6 +98,7 @@ class TRLReward:
         self.codes: set[str] = set()
         self.recorded: list[tuple] | None = None
         self._last = (None, None)
+        self._ahead, self._thread = None, None
 
     def funcs(self) -> tuple[list[Callable], list[float]]:
         """(reward_funcs, reward_weights) for GRPOTrainer / GRPOConfig."""
@@ -108,6 +110,24 @@ class TRLReward:
             return f
         return [make(n) for n in (*LOGGED, AGGREGATOR)], [0.0] * len(LOGGED) + [1.0]
 
+    def prefetch(self, completions, completion_ids, key, W, H, names) -> None:
+        """Start scoring these answers on a background thread (the checker releases the GIL; the pool workers are
+        processes), so scoring overlaps TRL's old-logprob and reference forwards. The next reward call uses the
+        result only for exactly these answers; otherwise it scores as usual."""
+        keys = list(key)
+        jobs = self._jobs(completions, completion_ids, keys, W, H, names)
+        if self._thread is None:
+            self._thread = ThreadPoolExecutor(1, thread_name_prefix="reward-prefetch")
+        self._ahead = (self._signature(keys, jobs), self._thread.submit(score_batch, jobs, self.pool))
+
+    def _jobs(self, completions, completion_ids, keys, W, H, names) -> list[tuple]:
+        return [(_text(c), truncated(ids, self.stop), tuple(n), self.caches(k), w, h)
+                for c, ids, k, w, h, n in zip(completions, completion_ids, keys, W, H, names, strict=True)]
+
+    @staticmethod
+    def _signature(keys, jobs) -> list[tuple]:
+        return [(k, t, tr, n, w, h) for k, (t, tr, n, _, w, h) in zip(keys, jobs, strict=True)]
+
     def _terms(self, completions, completion_ids, key, W, H, names, log_metric, log_extra) -> dict:
         if self._last[0] is completions:
             return self._last[1]
@@ -117,11 +137,12 @@ class TRLReward:
             raise ValueError(f"reward call must receive whole groups of {g} completions per prompt, in order; got "
                              f"{len(keys)} completions (per_device_train_batch_size * steps_per_generation and "
                              f"per_device_eval_batch_size must be multiples of {g})")
-        jobs = [(_text(c), truncated(ids, self.stop), tuple(n), self.caches(k), w, h)
-                for c, ids, k, w, h, n in zip(completions, completion_ids, keys, W, H, names, strict=True)]
+        jobs = self._jobs(completions, completion_ids, keys, W, H, names)
         if self.recorded is not None:
             self.recorded += [(k, t, tr, w, h, n) for k, (t, tr, n, _, w, h) in zip(keys, jobs, strict=True)]
-        T = score_batch(jobs, self.pool)
+        ahead, self._ahead = self._ahead, None
+        same = ahead is not None and ahead[0] == self._signature(keys, jobs)
+        T = ahead[1].result() if same else score_batch(jobs, self.pool)
         legal = legal_gate(T)
         out = {n: (T[n] * legal if n in GATED else T[n]).tolist() for n in LOGGED[:-1]}
         out["r_topo"] = topology_reward(T).tolist()

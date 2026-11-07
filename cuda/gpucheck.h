@@ -1,11 +1,12 @@
-// gpucheck.h -- batched exact checker: the parts of cpp/polycore the reward uses (even-odd and nonzero masks,
-// validate totals) and the mask polygonizer of objdel.checker (bit-quads, rings by successor linking, pointer
-// jumping and list ranking). One source, gpucheck.cpp: the C++ compiler builds it for the CPU, nvcc
-// (OBJDEL_CUDA=ON, `make cuda`) for the GPU. Results are bit-identical to polycore / checker.polygonize.
+// gpucheck.h -- batched exact checker: the parts of cpp/polycore the reward uses (even-odd mask, validate totals) and
+// the mask polygonizer of objdel.checker (bit-quads, rings by successor linking, pointer jumping and list ranking). One
+// source, gpucheck.cpp: the C++ compiler builds it for the CPU, nvcc (OBJDEL_CUDA=ON, `make cuda`) for the GPU. Results
+// are bit-identical to polycore / checker.polygonize.
 //
 // Inputs are packed like data/checker_eval (experiments/cuda_checker): many shapes or masks per call, one
 // kernel launch per stage. Inputs must already be checked (caps, offsets): the binding does that with polycore's
-// check_* functions.
+// check_* functions. Calls are serialized by one mutex (the device memory, staging buffers and streams are shared and
+// grow-only), so any thread may call them.
 #pragma once
 
 #include <cstdint>
@@ -16,6 +17,7 @@ namespace gpucheck {
 using i32 = std::int32_t;
 using i64 = std::int64_t;
 using u8 = std::uint8_t;
+using u32 = std::uint32_t;
 
 struct Polygons {
   i64 n = 0;                          // shapes
@@ -29,8 +31,9 @@ struct Polygons {
 };
 
 struct PolygonResult {
-  std::vector<i64> mask_start;   // shape s = pixels [mask_start[s], mask_start[s + 1]), row-major (H, W)
-  std::vector<u8> evenodd, nonzero;
+  std::vector<i64> word_start;   // shape s = words [word_start[s], word_start[s + 1]) = H rows of ceil(W / 32) words
+  std::vector<u32> evenodd;      // even-odd mask, bit-packed per row: pixel x is bit x % 32 (LSB first) of word x / 32;
+                                 // the bits past W in a row's last word are 0
   std::vector<i64> defects;      // (n, 13) = polycore validate(...)["total"], DEFECTS order
 };
 

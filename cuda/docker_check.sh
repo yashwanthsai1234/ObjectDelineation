@@ -4,7 +4,7 @@
 # (experiments/phase2/docker/Dockerfile.phase2): same python:3.12-slim-trixie base (pinned digest), build-essential,
 # cmake, ninja, uv and a venv at /opt/venv. run_box.sh adds the CUDA 13.0 compiler from PyPI and runs `make cuda` for
 # sm_80 (A100), sm_86 (RTX 30xx, A10), sm_89 (RTX 40xx, L4), sm_90 (H100) and sm_120 (RTX 50xx). Then: the module
-# imports as the cuda build, sees no device, and a call fails with a clean CUDA error instead of crashing.
+# imports as the cuda build, sees no device, and both calls fail with a clean CUDA error instead of crashing.
 # Only the sources are copied in (no data/). Several minutes under amd64 emulation; ~1.5 GB of downloads, nothing kept.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -20,11 +20,17 @@ CUDA_ARCHS="80;86;89;90;120" bash experiments/cuda_checker/run_box.sh --build-on
 /opt/venv/bin/python -I -c "
 import numpy as np
 from objdel import _gpucheck as g
-try:
-    g.check_masks(np.ones(4, np.uint8), np.array([[2, 2]], np.int32), np.array([0, 4], np.int64))
-    raise SystemExit(\"a kernel ran without a GPU?\")
-except RuntimeError as e:
-    print(\"no GPU, call fails cleanly:\", e)
+sq = np.array([[0, 0], [9, 0], [9, 9], [0, 9]], np.int32)
+calls = {\"check_masks\": lambda: g.check_masks(np.ones(4, np.uint8), np.array([[2, 2]], np.int32),
+                                               np.array([0, 4], np.int64)),
+         \"check_polygons\": lambda: g.check_polygons(sq, np.array([0, 4], np.int64), np.array([0, 1], np.int64),
+                                                     None, np.array([5], np.int32), np.array([5], np.int32), 10)}
+for name, call in calls.items():
+    try:
+        call()
+        raise SystemExit(f\"{name}: a kernel ran without a GPU?\")
+    except RuntimeError as e:
+        print(f\"no GPU, {name} fails cleanly:\", e)
 "
 echo "docker_check: OK"
 '

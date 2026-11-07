@@ -112,7 +112,16 @@ def test_select_refuses_sampler_after_cuda_init(monkeypatch):
     with pytest.raises(RuntimeError, match="CUDA is initialized"):
         SC.cuda_untouched()
     cmd = SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))
-    assert cmd[:2] == ["/opt/vllm/bin/python", "-I"] and cmd[2].endswith("sample_vllm.py")
+    assert cmd[:2] == [sys.executable, "-I"] and cmd[2].endswith("sample_vllm.py")  # vllm_native: one venv
+
+
+def test_sampler_uses_the_second_venv_when_the_image_has_one(monkeypatch, tmp_path):
+    from experiments.phase2 import select_ckpt as SC
+
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "python").touch()
+    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path)
+    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))[0] == str(tmp_path / "bin" / "python")
 
 
 def _summary(fmt=1.0, legal=0.95, dup=0.0, sigma=0.9):
@@ -379,7 +388,8 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
     assert res["lr"] == (5e-5 if name == "qwen3-vl-2b" else 5e-6)
 
 
+# use_vllm off: vLLM needs a GPU (TRL 1.17 refuses use_vllm without it installed); the box's profile arms run vLLM
 GRPO_SMOKE = {"per_device_train_batch_size": 8, "gradient_accumulation_steps": 1, "per_device_eval_batch_size": 8,
-              "max_completion_length": 8, "use_cpu": True, "bf16": False, "beta": 0.0}
+              "max_completion_length": 8, "use_cpu": True, "bf16": False, "beta": 0.0, "use_vllm": False}
 
 

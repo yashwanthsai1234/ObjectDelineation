@@ -9,6 +9,7 @@
     pull.sh [RUN_ID]                                           rsync runs/<id>/ to the Mac (not PULL_EXCLUDE), then
                                                                PULLED_OK = the pull's start time (no id: all)
     push_hf.sh RUN_ID CONFIG.yaml                              the run's selected branch to the private HF repo
+    fetch_hf.sh RUN_ID REVISION                                a revision of that repo onto the box (runs/RUN_ID/ckpt)
                                                                (hf_push; after pull.sh, before teardown.sh)
     teardown.sh RUN_ID                                         final pull, destroy, verify absent, invoices, ledger
     sweep_orphans.sh                                           destroy unknown / overdue instances, close vanished runs;
@@ -523,6 +524,18 @@ def cmd_push_hf(a) -> None:
     remote(run, cmd, token + "\n", "HF token from objdel.secrets")
 
 
+def cmd_fetch_hf(a) -> None:
+    """hf_pull on the box: REVISION of the private HF repo to /workspace/runs/RUN_ID/ckpt (RL's start checkpoint)."""
+    from experiments.phase2 import hf_push
+
+    run, token = get_run(a.run_id), secret("objdel-hf-write")
+    if bad := hf_push.token_problems(hf_push.whoami(token), hf_push.REPO):
+        die(f"secret objdel-hf-write is too broad for a rented box: {'; '.join(bad)}")
+    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_pull --repo {hf_push.REPO} "
+           f"--revision {a.revision} --out /workspace/runs/{a.run_id}/ckpt")  # fmt: skip
+    remote(run, cmd, token + "\n", "HF token from objdel.secrets")
+
+
 def billed(charges: dict, iid: int) -> float | None:
     """USD Vast charged instance `iid` (V0: `invoices-v1 --charges` rows carry it only as `source` "instance-<id>")."""
     rows = [r["amount"] for r in charges.get("results", []) if r.get("source") == f"instance-{iid}"]
@@ -594,6 +607,7 @@ CLI = {  # subcommand -> its arguments, in order
             "args": {"nargs": argparse.REMAINDER}},
     "pull": {"run_id": {"nargs": "?"}},
     "push_hf": {"run_id": {}, "config": {}},
+    "fetch_hf": {"run_id": {}, "revision": {}},
     "teardown": {"run_id": {}},
     "sweep_orphans": {},
 }  # fmt: skip
