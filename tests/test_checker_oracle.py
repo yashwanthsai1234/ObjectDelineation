@@ -146,3 +146,21 @@ def test_fine_classes_3000_rings():
 @pytest.mark.slow
 def test_multi_ring_1500_shapes():
     run_multi_ring(1500)
+
+
+def test_unrecorded_cases_fall_back_to_the_exact_oracles():
+    """R3 (RTX 5090, 2026-11-07): the K1 "holes" family places points with math.cos/sin and round, which differ in
+    the last bit between macOS ARM and Linux x86, so 1 of 4,755 and 3 of 2,853 box-generated cases were never recorded
+    on the Mac. Such cases take their reference from the exact integer oracles; recorded cases equal those oracles."""
+    rings, roles = [[(100, 100), (900, 130), (870, 910), (120, 880)], [(400, 400), (420, 610), (610, 590)]], [-1, 0]
+    assert C.case_key(rings, roles, 37, 29) not in C.goldens()
+    ref = C.polygon_reference(rings, roles, 37, 29)
+    assert ref["defects"].tolist() == VO.ref_totals(rings, roles)
+    assert ref["evenodd"] == C.mask_sha(RO.winding_and_parity(rings, 37, 29)[1] % 2 == 1)
+    recorded = [c for c in C.fuzz_polygons(20, 0) if c[0] == "holes"][:5]
+    for _, rings, _, W, H, G in recorded:
+        roles = [-1] * len(rings)
+        assert C.case_key(rings, roles, W, H, G) in C.goldens()
+        ref = C.polygon_reference(rings, roles, W, H, G)
+        assert ref["defects"].tolist() == VO.ref_totals(rings, G=G)
+        assert ref["evenodd"] == C.mask_sha(RO.winding_and_parity(rings, W, H, G)[1] % 2 == 1)
