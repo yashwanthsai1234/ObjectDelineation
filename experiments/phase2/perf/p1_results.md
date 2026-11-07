@@ -27,7 +27,8 @@ calls, two-stream chunks equal to one call, rewards equal to the recorded values
 defect classes (138,257 legal shapes, every illegal class flagged exactly). Memcheck did not run: `cuda-toolkit[nvcc,cccl]`
 has no compute-sanitizer, and the `~` step passed without a word. Fixed after P1: `run_box.sh` installs the
 toolkit's `sanitizer` extra (`nvidia-cuda-sanitizer-api` 13.0.85, which ships `nvidia/cu13/bin/compute-sanitizer`),
-and the step runs `--error-exitcode 1` and records a missing binary. Memcheck runs on the next rental.
+and the step runs `--error-exitcode 1` and records a missing binary. K1 (`k1_results.md`) then found that the
+13.0.85 wheel lacks its launcher executables; with 13.4.92, memcheck and initcheck report 0 errors on 40 GPU tests.
 
 Polygons per second (polycore loop and score_batch with 8 threads on the box's 128-core CPU for comparison):
 

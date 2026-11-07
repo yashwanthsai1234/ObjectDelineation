@@ -8,9 +8,9 @@
 #   teardown.sh k1
 steps:
   - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu*/cpu.cfs_*_us; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
-  # Build objdel._gpucheck for this card (nvcc and compute-sanitizer from the toolkit pins, run_box.sh)
+  # Build objdel._gpucheck for this card (nvcc and compute-sanitizer, run_box.sh)
   - [bash, -c, "mkdir -p {rd}/cuda_checker && bash experiments/cuda_checker/run_box.sh --build-only"]
-  # Memory errors in the checker: compute-sanitizer from the toolkit's own sanitizer pin (run_box.sh), memcheck then
+  # Memory errors in the checker: compute-sanitizer 13.4.92 (installed by run_box.sh), memcheck then
   # initcheck (arena reuse), torch's caching allocator off so its pool does not hide out-of-bounds accesses; recorded,
   # does not stop the chain, but a missing binary or any error fails the step
   - ["~", bash, -c, "S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/compute-sanitizer 2>/dev/null);

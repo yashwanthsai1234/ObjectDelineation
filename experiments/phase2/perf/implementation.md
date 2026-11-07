@@ -500,7 +500,7 @@ Fixed:
   now also reads `cpu.cfs_quota_us`. The box-facts step records both.
 - **vLLM timeout.** vLLM writes its completions once at the end, so a retry starts over. Its timeout now covers
   answers at the 1,536-token cap: 0.75 s per answer.
-- **Memcheck.** It ran under torch's caching allocator, which hides out-of-bounds accesses. It now runs with
+- **Memcheck (run on K1, RTX 3090: 0 errors; `k1_results.md`; sanitizer pinned to 13.4.92).** It ran under torch's caching allocator, which hides out-of-bounds accesses. It now runs with
   `PYTORCH_NO_CUDA_MEMORY_CACHING=1`, plus an initcheck pass (arena reuse), each with a 20 min timeout.
 
 Built from its performance list (CPU tests; speed measured on the next rental):

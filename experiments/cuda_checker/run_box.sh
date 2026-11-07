@@ -2,8 +2,8 @@
 # The CUDA checker's GPU run, one command on a CUDA box with the Phase 2 image (repo rsynced, data/checker_eval only):
 #   bash experiments/cuda_checker/run_box.sh [--build-only]
 # 1. refuse to run if any RIGA data is on the host (its licence forbids rented hosts);
-# 2. add the CUDA 13.0 compiler torch 2.14.1 pins (the image has none), its compute-sanitizer and pytest/hypothesis
-#    to $PY's venv;
+# 2. add the CUDA 13.0 compiler torch 2.14.1 pins (the image has none), compute-sanitizer 13.4.92 (the toolkit
+#    extra's 13.0.85 wheel lacks its TreeLauncher executables: K1, 2026-11-06) and pytest/hypothesis to $PY's venv;
 # 3. make cuda: objdel._gpucheck rebuilt with nvcc (CUDA_ARCHS, default the box's GPU);
 # 4. the GPU test group (with the arena-reuse and two-stream tests), the equivalence suite, the packed-mask and
 #    one-checker-call-per-reward tests, then experiments/cuda_checker/eval.py even when a test failed (it shows where
@@ -21,7 +21,7 @@ if find data -maxdepth 3 -iname '*riga*' 2>/dev/null | grep -q .; then
 fi
 CONSTRAINTS=()
 [ -f /opt/requirements.txt ] && CONSTRAINTS=(-c /opt/requirements.txt)  # the image's lock: nothing else may move
-uv pip install --python "$PY" "${CONSTRAINTS[@]}" "cuda-toolkit[nvcc,cccl,sanitizer]==13.0.3" pytest hypothesis
+uv pip install --python "$PY" "${CONSTRAINTS[@]}" "cuda-toolkit[nvcc,cccl]==13.0.3" "nvidia-cuda-sanitizer-api==13.4.92" pytest hypothesis
 CUDA_HOME=$("$PY" -c "import nvidia, os; print(os.path.join(nvidia.__path__[0], 'cu13'))")
 # PyPI layout vs what nvcc and CMake's FindCUDAToolkit expect: libraries in lib64, an unversioned libcudart.so
 [ -e "$CUDA_HOME/lib64" ] || ln -s lib "$CUDA_HOME/lib64"
