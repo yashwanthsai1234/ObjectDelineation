@@ -114,23 +114,35 @@ class _Pool(ProcessPoolExecutor):
         super().shutdown(wait, cancel_futures=cancel_futures)
 
 
-CGROUP_CPU = Path("/sys/fs/cgroup/cpu.max")
+CGROUP = Path("/sys/fs/cgroup")
 POOL_CAP = 16  # each worker holds a forked copy of the preloaded expert caches
 
 
-def cpus(cgroup: Path = CGROUP_CPU) -> int:
-    """CPUs this process may use: the affinity mask, bounded by a cgroup v2 quota (a rented box's container)."""
-    n = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+def quota(cgroup: Path) -> float | None:
+    """The container's CPU quota in CPUs: cgroup v2 cpu.max, else v1 cpu.cfs_quota_us / cpu.cfs_period_us (the P1
+    Vast box); None when unlimited or unreadable."""
     try:
-        quota, period = cgroup.read_text().split()[:2]
-        if quota != "max":
-            n = min(n, max(1, int(quota) // int(period)))
+        q, period = (cgroup / "cpu.max").read_text().split()[:2]
+        return None if q == "max" else int(q) / int(period)
     except (OSError, ValueError):
         pass
-    return n
+    for d in ("cpu,cpuacct", "cpu"):
+        try:
+            q = int((cgroup / d / "cpu.cfs_quota_us").read_text())
+            return None if q < 0 else q / int((cgroup / d / "cpu.cfs_period_us").read_text())
+        except (OSError, ValueError):
+            continue
+    return None
 
 
-def pool_size(cgroup: Path = CGROUP_CPU) -> int:
+def cpus(cgroup: Path = CGROUP) -> int:
+    """CPUs this process may use: the affinity mask, bounded by the container's quota (at least 1)."""
+    n = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+    q = quota(cgroup)
+    return n if q is None else min(n, max(1, int(q)))
+
+
+def pool_size(cgroup: Path = CGROUP) -> int:
     """Scoring workers (EV-5): the usable CPUs minus one for the main process, capped at POOL_CAP."""
     return max(1, min(POOL_CAP, cpus(cgroup) - 1))
 

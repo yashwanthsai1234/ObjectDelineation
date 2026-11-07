@@ -21,6 +21,7 @@ import time
 
 import torch
 import torch.nn.functional as F
+import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths
@@ -148,7 +149,7 @@ class VisionCache:
 class RopeCache:
     """Qwen3-VL's 3-D rope positions per row (C5). `get_rope_index` reads the host several times per row; TRL runs
     it in every forward chunk of the old, reference and update passes. Here each row's positions are computed once per
-    generation batch at the full width (rows found by an exact hash of their ids and mask: the update's micro-batches
+    generation batch at the full width (rows found by their exact ids, mask and image grids: the update's micro-batches
     are shuffled subsets) and each chunk's slice goes to the model through a forward pre-hook. Positions depend only
     on a row's real tokens, so a column slice equals the trimmed chunk's own positions on every real token."""
 
@@ -172,15 +173,17 @@ class RopeCache:
         return args, kwargs
 
     @staticmethod
-    def keys(input_ids, attention_mask) -> list[tuple]:
-        g = torch.Generator().manual_seed(1)
-        w = torch.randint(1, 2**31, (2, input_ids.size(1)), generator=g).to(input_ids.device)
-        h = (input_ids.long() * w[0]).sum(1) + (attention_mask.long() * w[1]).sum(1)
-        return [(k, input_ids.size(1)) for k in h.tolist()]  # one host read per call
+    def keys(input_ids, attention_mask, grid, nimg) -> list[tuple]:
+        """Exact row keys: the row's ids and mask bytes and its images' (t, h, w). The prompt text is fixed per
+        dataset, so ids alone carry only the pad count t*h*w/4, not h and w (one host read per tensor)."""
+        ids, mask, g = input_ids.cpu().numpy(), attention_mask.cpu().numpy(), grid.tolist()
+        first = [sum(nimg[:i]) for i in range(len(nimg))]
+        return [(ids[i].tobytes(), mask[i].tobytes(), tuple(map(tuple, g[first[i]:first[i] + nimg[i]])))
+                for i in range(len(nimg))]  # fmt: skip
 
     def positions(self, input_ids, attention_mask, mm_token_type_ids, grid, nimg) -> torch.Tensor:
         """(3, rows, width) positions of these rows, computing only rows not seen in this generation batch."""
-        keys = self.keys(input_ids, attention_mask)
+        keys = self.keys(input_ids, attention_mask, grid, nimg)
         first = [sum(nimg[:i]) for i in range(len(nimg))]
         miss = list({k: i for i, k in enumerate(keys) if k not in self.store}.values())
         if miss:
@@ -206,6 +209,32 @@ def is_ratio(logps, sampling, mask, mode: str, lo: float | None, hi: float | Non
     return r.masked_fill((r < lo) | (r > hi), 0.0)
 
 
+def no_lora_input_cast(model) -> int:
+    """Turns off PEFT's cast of each LoRA layer's input to its fp32 adapter dtype; returns the layers changed. Only
+    under bf16 autocast: there the adapter matmul casts the input straight back to bf16, so the fp32 copy (one per
+    LoRA layer per forward and recompute) changes nothing; without autocast the cast is what matches the dtypes."""
+    layers = [m for _, m in model.named_modules() if hasattr(m, "cast_input_dtype_enabled")]
+    for m in layers:
+        m.cast_input_dtype_enabled = False
+    return len(layers)
+
+
+def by_length(batch: dict) -> dict:
+    """The generation batch's rows longest first (prompt + answer real tokens; stable), every per-row field moved
+    with them, in place of TRL's shuffle_sequence_dict (same field rules: None and 0-d tensors stay, tensors are
+    indexed, lists reordered). One host read for the order."""
+    n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
+    order = torch.sort(n, descending=True, stable=True).indices
+    idx = order.tolist()
+
+    def move(v):
+        if v is None or isinstance(v, torch.Tensor) and v.ndim == 0:
+            return v
+        return v[order.to(v.device)] if isinstance(v, torch.Tensor) else [v[i] for i in idx]
+
+    return {k: move(v) for k, v in batch.items()}
+
+
 def one_pad_per_image(prompts: list[dict], pad: int) -> list[dict]:
     """vLLM prompts with each run of image pads cut to one pad (rows without multi_modal_data unchanged)."""
     out = []
@@ -223,11 +252,20 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     rows = None  # the generation batch's dataset rows; None outside one (g_probe's step-0 sampling calls _generate)
     loss_inputs = None  # the micro-batch inside _compute_loss (C10: its forward sets the IS ratio)
+    is_stats = None  # C10: the generation batch's IS-metric sums, counts, min and max, on the device until `log`
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
+        self.drop_lora_input_cast()
+
+    def drop_lora_input_cast(self) -> bool:
+        """no_lora_input_cast when TRL trains in bf16 (Accelerate then runs every forward under bf16 autocast)."""
+        if not getattr(self.args, "bf16", False):
+            return False
+        no_lora_input_cast(self.model)
+        return True
 
     def _generate_and_score_completions(self, inputs):
         for cache in (self.vision, self.rope):
@@ -254,6 +292,20 @@ class FastGRPO(FastForward, GRPOTrainer):
                     and self.loss_type != "vespo"
                     and a.gradient_accumulation_steps % (a.steps_per_generation * self.num_iterations) == 0)
 
+    def _prepare_inputs(self, generation_batch):
+        """Update micro-batches cut from the length-sorted generation batch (by_length) when the partition leaves the
+        update unchanged: dr_grpo's constant normaliser and every micro-batch in one optimizer step. Each chunk is
+        then trimmed to rows of like length instead of the batch's longest answer."""
+        a = self.args
+        if not (self.model.training and self.loss_type == "dr_grpo"
+                and a.gradient_accumulation_steps % a.steps_per_generation == 0):  # fmt: skip
+            return super()._prepare_inputs(generation_batch)
+        shuffle, trl_grpo.shuffle_sequence_dict = trl_grpo.shuffle_sequence_dict, by_length
+        try:
+            return super()._prepare_inputs(generation_batch)
+        finally:
+            trl_grpo.shuffle_sequence_dict = shuffle
+
     def _compute_loss(self, model, inputs):
         if "importance_sampling_ratio" not in inputs and self.use_vllm and self.vllm_importance_sampling_correction:
             self.loss_inputs = inputs
@@ -269,25 +321,41 @@ class FastGRPO(FastForward, GRPOTrainer):
         return out
 
     def set_is_ratio(self, logps, inputs):
-        """inputs["importance_sampling_ratio"] from the update's own logprobs, and TRL's sampling metrics (per micro-
-        batch; TRL logs them per generation batch)."""
+        """inputs["importance_sampling_ratio"] from the update's own logprobs. TRL's sampling metrics are kept on the
+        device over the generation batch's micro-batches (no host read here) and logged once by `log`."""
         sampling = inputs.get("sampling_per_token_logps")
         if sampling is None:
             raise RuntimeError("C10 needs vLLM's sampling logprobs (vllm_generation logprobs=0) for the IS ratio")
-        mask = inputs["completion_mask"] * inputs.get("tool_mask", 1)
+        mask = (inputs["completion_mask"] * inputs.get("tool_mask", 1)).bool()
         mode = self.vllm_importance_sampling_mode
         r = is_ratio(logps, sampling, mask, mode, self.vllm_importance_sampling_clip_min,
                      self.vllm_importance_sampling_clip_max)  # fmt: skip
         inputs["importance_sampling_ratio"] = r
-        delta = (logps - sampling).abs()[mask.bool() & ~torch.isnan(sampling)]
-        flat = r.flatten() if mode.startswith("sequence") else r[mask.bool()]
-        m = self._metrics["train" if self.model.training else "eval"]
-        for k, v in (("sampling_logp_difference/mean", delta.mean() if delta.numel() else 0.0),
-                     ("sampling_logp_difference/max", delta.max() if delta.numel() else 0.0),
-                     ("importance_sampling_ratio/min", flat.min() if flat.numel() else 0.0),
-                     ("importance_sampling_ratio/mean", flat.mean() if flat.numel() else 0.0),
-                     ("importance_sampling_ratio/max", flat.max() if flat.numel() else 0.0)):  # fmt: skip
-            m[f"sampling/{k}"].append(float(v))
+        ok = mask & ~torch.isnan(sampling)
+        d = (logps - sampling).abs()
+        rk = torch.ones_like(r, dtype=torch.bool) if mode.startswith("sequence") else mask
+        new = torch.stack([d.masked_fill(~ok, 0).sum(), ok.sum(), d.masked_fill(~ok, -math.inf).amax(),
+                           r.masked_fill(~rk, 0).sum(), rk.sum(), r.masked_fill(~rk, math.inf).amin(),
+                           r.masked_fill(~rk, -math.inf).amax()]).float()  # fmt: skip
+        old = self.is_stats
+        if old is not None:  # sums and counts add; min and max combine
+            new = torch.stack([new[0] + old[0], new[1] + old[1], torch.maximum(new[2], old[2]), new[3] + old[3],
+                               new[4] + old[4], torch.minimum(new[5], old[5]), torch.maximum(new[6], old[6])])
+        self.is_stats = new
+
+    def log(self, logs, start_time=None):
+        """TRL's sampling metrics of the generation batch, from the device in one read (C10), then TRL's log."""
+        if self.is_stats is not None:
+            d_sum, d_n, d_max, r_sum, r_n, r_min, r_max = self.is_stats.tolist()
+            self.is_stats = None
+            m = self._metrics["train" if self.model.training else "eval"]
+            for k, v in (("sampling_logp_difference/mean", d_sum / d_n if d_n else 0.0),
+                         ("sampling_logp_difference/max", d_max if d_n else 0.0),
+                         ("importance_sampling_ratio/min", r_min if r_n else 0.0),
+                         ("importance_sampling_ratio/mean", r_sum / r_n if r_n else 0.0),
+                         ("importance_sampling_ratio/max", r_max if r_n else 0.0)):  # fmt: skip
+                m[f"sampling/{k}"].append(v)
+        return super().log(logs, start_time)
 
     def _generate(self, prompts):
         if self.use_vllm:
