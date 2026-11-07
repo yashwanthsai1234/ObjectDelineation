@@ -388,7 +388,8 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
     assert res["lr"] == (5e-5 if name == "qwen3-vl-2b" else 5e-6)
 
 
+# use_vllm off: vLLM needs a GPU (TRL 1.17 refuses use_vllm without it installed); the box's profile arms run vLLM
 GRPO_SMOKE = {"per_device_train_batch_size": 8, "gradient_accumulation_steps": 1, "per_device_eval_batch_size": 8,
-              "max_completion_length": 8, "use_cpu": True, "bf16": False, "beta": 0.0}
+              "max_completion_length": 8, "use_cpu": True, "bf16": False, "beta": 0.0, "use_vllm": False}
 
 
