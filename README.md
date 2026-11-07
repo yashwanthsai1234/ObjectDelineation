@@ -53,9 +53,14 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
   per distinct image per step, not once per answer per pass.
 - One image pad per image to vLLM, checked against the trainer's ids on every call: vLLM samples from exactly the
   image features the trainer scores (TRL as shipped does not, for Qwen3-VL).
-- Rewards scored on a background thread while the GPU computes the old and reference log-probabilities.
+- Rope positions computed once per prompt row per step (`RopeCache`) and sliced per chunk: Qwen3-VL's 3-D
+  positions walk every token on the CPU, and TRL recomputes them in every forward.
+- No redundant old-logprob pass. With one generation per optimizer step the weights do not move before the update,
+  so the update's own (detached) log-probabilities are the old ones, and its forward sets vLLM's importance ratio.
+- Rewards scored on a background thread while the GPU computes the reference log-probabilities.
 - Every setting is measured on the card first (`experiments/phase2/profile.py`): micro-batch, checkpointing, regional
-  `torch.compile`, CUDA Graphs. The profiler trace drives the next step (precomputed rope positions, then graphs).
+  `torch.compile`, CUDA Graphs. The profiler trace (GPU busy 70 %, 7,233 `.item()` reads per step) drives the next
+  step.
 - vLLM sleep mode frees its share of the card between generations.
 
 **Checker (`cuda/gpucheck.cpp`).** One source file builds for the CPU and for nvcc. Every algorithm is a
@@ -63,6 +68,7 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
 - A grow-only device arena and two pinned staging buffers per stream lane. Nothing is allocated per call.
 - Two CUDA streams. A large batch splits in two halves, so the copy of one half overlaps the kernels of the other.
 - The raster runs one warp per pixel row, and builds each 32-pixel word with `__ballot_sync`.
+- Bit-exact against the CPU reference (0 mismatches on the box); the box chain runs it under `compute-sanitizer` memcheck.
 
 <img src="docs/figures/warp_ballot.svg" alt="A warp votes with __ballot_sync into one 32-bit word" width="900">
 
