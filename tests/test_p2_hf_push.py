@@ -180,7 +180,7 @@ def test_push_from_the_mac_takes_a_local_copy_of_the_view_with_the_same_hash(tmp
 @pytest.mark.parametrize("license", ["apache-2.0", "other"])
 def test_base_card_without_a_license_file_uses_apache_only_when_the_card_declares_it(monkeypatch, license):
     """Qwen/Qwen3-VL-2B-Instruct (2026-11-05) has no LICENSE file; its card says apache-2.0."""
-    import huggingface_hub
+    huggingface_hub = pytest.importorskip("huggingface_hub")
     from huggingface_hub.errors import EntryNotFoundError
 
     def missing(*a, **k):

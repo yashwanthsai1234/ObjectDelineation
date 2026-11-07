@@ -7,8 +7,8 @@ run on a tiny random Qwen3-VL (CPU, fp32) with TRL's fused LM head.
 import contextlib
 
 import pytest
-import torch
 
+torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration  # noqa: E402
 from trl import GRPOTrainer  # noqa: E402

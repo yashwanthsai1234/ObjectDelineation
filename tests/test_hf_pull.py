@@ -7,10 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from experiments.phase2 import hf_pull as L
-from experiments.phase2 import hf_push as H
-from experiments.phase2.vast import policy as P
-from tests.test_p2_hf_push import REPO, token
+pytest.importorskip("huggingface_hub")
+from experiments.phase2 import hf_pull as L  # noqa: E402
+from experiments.phase2 import hf_push as H  # noqa: E402
+from experiments.phase2.vast import policy as P  # noqa: E402
+from tests.test_p2_hf_push import REPO, token  # noqa: E402
 
 
 def test_hf_pull_downloads_the_revision_with_the_stdin_token(tmp_path, monkeypatch):
