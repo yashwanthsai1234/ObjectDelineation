@@ -8,7 +8,7 @@
 #   run.sh p1 --cap-hours 1.5 experiments/phase2/configs/p1_rl.yaml
 # Then pull.sh p1. No HF generation anywhere (owner 2026-11-06): vLLM generates; the checker scores on the GPU.
 steps:
-  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
+  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu*/cpu.cfs_*_us; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
   # 5090 + CUDA 13 stack: capability, bf16 peak, Triton, torch.compile, a vLLM engine on e2 with CUDA graphs
   - [bash, experiments/phase2/docker/env_check.sh, "{rd}/ckpt", "{rd}/env_check.json"]
   # The CUDA checker: build for this card; run_box.sh runs the GPU tests (arena reuse, two-stream chunks), the
@@ -17,12 +17,14 @@ steps:
      mkdir -p {rd}/cuda_checker; cp -r experiments/cuda_checker/results experiments/cuda_checker/RESULTS.md
      {rd}/cuda_checker/ 2>/dev/null; [ $s = 0 ] || exit $s; /opt/venv/bin/python -m pytest -q -p no:cacheprovider
      tests/test_gpu_scoring.py 2>&1 | tee {rd}/cuda_checker/pytest.txt"]
-  # Memory errors in the checker: compute-sanitizer memcheck from the toolkit's own sanitizer pin (run_box.sh);
-  # recorded, does not stop the chain, but a missing binary or any error fails the step
+  # Memory errors in the checker: compute-sanitizer from the toolkit's own sanitizer pin (run_box.sh), memcheck then
+  # initcheck (arena reuse), torch's caching allocator off so its pool does not hide out-of-bounds accesses; recorded,
+  # does not stop the chain, but a missing binary or any error fails the step
   - ["~", bash, -c, "S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/compute-sanitizer 2>/dev/null);
-     [ -n \"$S\" ] || {{ echo no compute-sanitizer > {rd}/cuda_checker/memcheck.txt; exit 1; }};
-     $S --tool memcheck --error-exitcode 1 /opt/venv/bin/python -m pytest -q -p no:cacheprovider
-     tests/test_cuda_checker_gpu.py > {rd}/cuda_checker/memcheck.txt 2>&1"]
+     O={rd}/cuda_checker/memcheck.txt; [ -n \"$S\" ] || {{ echo no compute-sanitizer > $O; exit 1; }};
+     export PYTORCH_NO_CUDA_MEMORY_CACHING=1; for t in memcheck initcheck; do echo == $t >> $O;
+     timeout 1200 $S --tool $t --error-exitcode 1 /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+     tests/test_cuda_checker_gpu.py >> $O 2>&1 || exit 1; done"]
   # RL: the profile arms (short g_probe runs on e2: TRL as shipped, FastGRPO, micro-batch 32, no checkpointing,
   # compiled layers, CUDA Graphs). The fast arm fails loudly if TRL drops the images (vLLM prompt ids, TRL #6294).
   - [-m, experiments.phase2.profile, --ckpt, "{rd}/ckpt", --prepared, "{data}/prepared",
