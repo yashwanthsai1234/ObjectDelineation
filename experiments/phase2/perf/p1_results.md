@@ -24,8 +24,10 @@ file, not stdin (commit "env_check: checks run from a file").
 Built by nvcc for sm_120 (warp-ballot raster, `__int128` paths included). GPU tests: 40 passed (arena reuse over 200
 calls, two-stream chunks equal to one call, rewards equal to the recorded values, one checker call per reward call),
 2 skipped (they read local data fixtures, which are not shipped to the box). Exactness: **0 mismatches** against polycore on 8,559 fuzz polygons and all 13
-defect classes (138,257 legal shapes, every illegal class flagged exactly). compute-sanitizer is not in the pip
-toolkit (the step is marked `~`).
+defect classes (138,257 legal shapes, every illegal class flagged exactly). Memcheck did not run: `cuda-toolkit[nvcc,cccl]`
+has no compute-sanitizer, and the `~` step passed without a word. Fixed after P1: `run_box.sh` installs the
+toolkit's `sanitizer` extra (`nvidia-cuda-sanitizer-api` 13.0.85, which ships `nvidia/cu13/bin/compute-sanitizer`),
+and the step runs `--error-exitcode 1` and records a missing binary. Memcheck runs on the next rental.
 
 Polygons per second (polycore loop and score_batch with 8 threads on the box's 128-core CPU for comparison):
 
@@ -88,10 +90,12 @@ Masks (LIDC 22x21, batch 8,192): 424,732 masks/s against 80,160 for OpenCV conto
 cutlass bf16 GEMMs (4.0 s, 3.4 s, 2.8 s), memory-efficient attention (2.8 s), a float cast copy (2.6 s).
 
 The update is launch- and sync-bound. Next, in order of measured payoff:
-1. **C5 precomputed position ids:** Qwen3-VL's `get_rope_index` runs per forward with `.item()` and boolean
-   indexing (most of the scalar reads and nonzero calls): compute once per generation batch, slice per chunk.
-2. **C10 drop the old-logprob pass:** with one generation per optimizer step the old logprobs equal the update's
-   own; about half of the 12.3 s logprob share.
+1. **C5 precomputed position ids (built after P1, 2026-11-06; exact on CPU, not yet measured on a GPU):**
+   Qwen3-VL's `get_rope_index` runs per forward with `.item()` and boolean indexing: 768 row computations per step
+   (256 rows x old, reference and update passes), which matches the 7,233 scalar reads. `fast.RopeCache` computes
+   each row once per generation batch and slices it per chunk: 256 per step.
+2. **C10 drop the old-logprob pass (built after P1, 2026-11-06; CPU tests, speed on the next rental):** with one
+   generation per optimizer step the old logprobs equal the update's own; about half of the 12.3 s logprob share.
 3. **F4 manual graph capture** of the per-bucket decoder forward, after C5 removes the syncs that block capture.
 
 ## Decision

@@ -112,6 +112,8 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
 
 
 def main(argv=None) -> int:
+    from objdel.train import serve
+
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--model", required=True, help="configs.MODELS key")
     ck = ap.add_mutually_exclusive_group(required=True)
@@ -121,7 +123,7 @@ def main(argv=None) -> int:
     ap.add_argument("--probe", type=Path, required=True, help="shifted-val eval view")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--items", type=int, help="probe items (default prereg.G_PROBE['items'])")
-    ap.add_argument("--procs", type=int, default=4)
+    ap.add_argument("--procs", type=int, default=serve.pool_size(), help="scoring workers (default: usable CPUs - 1)")
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config (smoke tests)")
     ap.add_argument("--compile", choices=["default", "reduce-overhead"],
                     help="Stage F arm: torch.compile the text decoder layers (measured; off by default)")
@@ -136,8 +138,6 @@ def main(argv=None) -> int:
             return save(a.out, {"verdict": None, "skipped": f"§5.1 gates failed: {why}", "probed": [],
                                 "gates_branch": sel["gates_branch"]})
         ckpts = [Path(sel["run"]) / "branches" / n for n in candidates(sel)]
-    from objdel.train import serve
-
     for root in (a.train, a.probe):
         serve.preload(root, ["lidc"])
     pool = serve.fork_pool(a.procs)  # before the model and CUDA (D14)

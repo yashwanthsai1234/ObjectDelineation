@@ -208,9 +208,9 @@ def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda path: None)
     monkeypatch.setattr(sample, "export_prompts", lambda *a, **k: None)
     monkeypatch.setattr(sample, "import_completions", lambda *a, **k: [])
-    a = SimpleNamespace(model="lfm2.5-vl-450m", seed=0, sampler="hf", timeout_s=SC.TIMEOUT_S)
+    a = SimpleNamespace(model="lfm2.5-vl-450m", seed=0, sampler="hf", timeout_s=None)
     SC.sample_view(a, tmp_path, [{"key": str(i)} for i in range(100)], tmp_path / "o", 8)
-    assert got == [600 + SC.TIMEOUT_S * 800] and SC.TIMEOUT_S == 1.0
+    assert got == [600 + 3.0 * 800] and SC.TIMEOUT_S["hf"] == 3.0  # EV-5: 3x HF's ~1 s per answer
 
 
 # ---------------------------------------------------------------- R0 HF rate step, project_r1

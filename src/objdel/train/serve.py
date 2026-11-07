@@ -114,6 +114,27 @@ class _Pool(ProcessPoolExecutor):
         super().shutdown(wait, cancel_futures=cancel_futures)
 
 
+CGROUP_CPU = Path("/sys/fs/cgroup/cpu.max")
+POOL_CAP = 16  # each worker holds a forked copy of the preloaded expert caches
+
+
+def cpus(cgroup: Path = CGROUP_CPU) -> int:
+    """CPUs this process may use: the affinity mask, bounded by a cgroup v2 quota (a rented box's container)."""
+    n = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+    try:
+        quota, period = cgroup.read_text().split()[:2]
+        if quota != "max":
+            n = min(n, max(1, int(quota) // int(period)))
+    except (OSError, ValueError):
+        pass
+    return n
+
+
+def pool_size(cgroup: Path = CGROUP_CPU) -> int:
+    """Scoring workers (EV-5): the usable CPUs minus one for the main process, capped at POOL_CAP."""
+    return max(1, min(POOL_CAP, cpus(cgroup) - 1))
+
+
 def fork_pool(n: int, modules: Iterable[str] = ()) -> ProcessPoolExecutor:
     """n workers forked now, after the preload and before CUDA (RuntimeError once torch has initialized CUDA), with
     SCORERS and `modules` imported first (S1-11)."""
