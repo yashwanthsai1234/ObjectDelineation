@@ -134,8 +134,8 @@ def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregister
     assert r2[:4] == p1[:4]
     gp = r2[4]
     assert gp[:2] == ["-m", "experiments.phase2.g_probe"] and len(r2) == 5
-    args = dict(zip(gp[2::2], gp[3::2]))
-    assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/r2/ckpt",
-                    "--train": "/workspace/data/lidc/prepared", "--probe": "/workspace/data/lidc/eval_views/lidc-val-shifted",
-                    "--out": "/workspace/runs/r2/g_probe"}  # fmt: skip
+    args = dict(zip(gp[2::2], gp[3::2], strict=True))
+    data = "/workspace/data/lidc"
+    assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/r2/ckpt", "--train": f"{data}/prepared",
+                    "--probe": f"{data}/eval_views/lidc-val-shifted", "--out": "/workspace/runs/r2/g_probe"}
     assert not any(f in gp for f in ("--plain", "--grpo", "--items", "--select"))  # the pre-registered G-probe as is
