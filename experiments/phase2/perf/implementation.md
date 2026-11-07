@@ -387,10 +387,14 @@ Two read-only reviewers (one on the CUDA checker, one on the trainer) read the c
 - **Open, decided on the box:** `__int128` division in device code (nvcc must accept it: the build step shows it);
   occupancy of the 16 KiB shared window; one-thread witness tests on illegal shapes with many vertices (tail
   latency); GIL contention of the prefetch parse with the main thread's launches (the `fast` vs `trl` arms show it).
-- **C10 candidate (not built):** with `steps_per_generation = gradient_accumulation_steps` and one iteration, the old
+- **C10 (built 2026-11-06 after P1; tests on CPU, speed measured on the next rental):** with `steps_per_generation = gradient_accumulation_steps` and one iteration, the old
   logprobs equal the update's own (the weights do not change in between); TRL computes them only for the vLLM
   importance-sampling ratio. Moving that ratio into the loss drops one of three forwards over 256 rows. Built only if
-  the box's `logprobs` share justifies changing TRL's loss.
+  the box's `logprobs` share justifies changing TRL's loss. P1 measured 12.3 s of 44.3 for old + reference
+  logprobs, so it was built: `FastGRPO.skip_old_logps` turns TRL's IS flag off for the generation batch (TRL then
+  skips the old pass), and the update's forward sets `inputs["importance_sampling_ratio"]` with `fast.is_ratio`
+  (TRL's four modes, worked-example test) from its own detached logprobs, plus TRL's sampling metrics per
+  micro-batch. With two iterations or misaligned steps, TRL's old pass runs as before.
 
 ### C5 built (2026-11-06, after P1)
 
@@ -501,7 +505,7 @@ Otherwise the code is deleted, not left behind a flag.
 | Scoring overlaps the next branch's sampling; pool size from `nproc`; sampler timeout ~3× the measured time | EV-4, EV-5 | timing log per phase |
 | Checker kernels: row-tile coalesced stores, edges in shared memory, 32-bit math (bit-exact) | CK-4 | `run_box.sh` 0 mismatches; Nsight Compute sectors per request |
 | Flash-attention-2 for the vision tower (image change); after C6, the gain is small | RL-4 | loss parity |
-| Trim the reference and old-logprob forwards per chunk (they run over the whole batch before C1) | RL-6 | logprob equality |
+| Trim the reference and old-logprob forwards per chunk: **done by C1** (`FastForward` covers every pass) | RL-6 | logprob equality |
 
 ## Coverage: every issue and its stage
 

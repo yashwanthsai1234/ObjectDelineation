@@ -16,6 +16,7 @@ image once per generation batch. Valid because LoRA leaves the tower and project
 """
 
 import contextlib
+import math
 import time
 
 import torch
@@ -191,6 +192,20 @@ class RopeCache:
         return torch.stack([self.store[k] for k in keys], dim=1)
 
 
+def is_ratio(logps, sampling, mask, mode: str, lo: float | None, hi: float | None) -> torch.Tensor:
+    """TRL 1.17's vLLM importance-sampling ratio (grpo_trainer.py 2776-2824): exp of the trainer - vLLM logprob gap per
+    token (`token_*`) or summed per sequence (`sequence_*`, shape (B, 1)); `*_truncate` clamps to [lo, hi], `*_mask`
+    zeroes ratios outside it. Tokens vLLM could not score (NaN) get no correction."""
+    diff = torch.nan_to_num((logps - sampling) * mask, nan=0.0)
+    if mode.startswith("sequence"):
+        diff = diff.sum(-1, keepdim=True)
+    r = torch.exp(diff)
+    if mode.endswith("truncate"):
+        return torch.clamp(r, min=lo, max=hi)
+    lo, hi = -math.inf if lo is None else lo, math.inf if hi is None else hi
+    return r.masked_fill((r < lo) | (r > hi), 0.0)
+
+
 def one_pad_per_image(prompts: list[dict], pad: int) -> list[dict]:
     """vLLM prompts with each run of image pads cut to one pad (rows without multi_modal_data unchanged)."""
     out = []
@@ -207,6 +222,7 @@ class FastGRPO(FastForward, GRPOTrainer):
     the old and reference logprobs run (C9), phase timers and no FLOP count."""
 
     rows = None  # the generation batch's dataset rows; None outside one (g_probe's step-0 sampling calls _generate)
+    loss_inputs = None  # the micro-batch inside _compute_loss (C10: its forward sets the IS ratio)
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
 
     def __init__(self, *args, **kwargs):
@@ -218,11 +234,60 @@ class FastGRPO(FastForward, GRPOTrainer):
             if cache is not None:
                 cache.clear()
         self.rows = inputs
+        skip = self.skip_old_logps()
+        if skip:  # TRL then skips the old-logprob pass and its IS ratio; the update's forward sets it (C10)
+            self.vllm_importance_sampling_correction = False
         try:
             with self.timed("batch"):
                 return super()._generate_and_score_completions(inputs)
         finally:
             self.rows = None
+            if skip:
+                self.vllm_importance_sampling_correction = True
+
+    def skip_old_logps(self) -> bool:
+        """C10: with one generation per optimizer step and one iteration (TRL's own aligned case), the weights do not
+        change between the old-logprob pass and the update, so the update's logprobs (detached) are the old ones.
+        TRL still runs the old pass under vLLM, only for the IS ratio: the update's forward computes it instead."""
+        a = getattr(self, "args", None)
+        return bool(a is not None and self.use_vllm and self.vllm_importance_sampling_correction
+                    and self.loss_type != "vespo"
+                    and a.gradient_accumulation_steps % (a.steps_per_generation * self.num_iterations) == 0)
+
+    def _compute_loss(self, model, inputs):
+        if "importance_sampling_ratio" not in inputs and self.use_vllm and self.vllm_importance_sampling_correction:
+            self.loss_inputs = inputs
+        try:
+            return super()._compute_loss(model, inputs)
+        finally:
+            self.loss_inputs = None
+
+    def _get_per_token_logps_and_entropies(self, *args, **kwargs):
+        out = super()._get_per_token_logps_and_entropies(*args, **kwargs)
+        if self.loss_inputs is not None:
+            self.set_is_ratio(out[0].detach(), self.loss_inputs)
+        return out
+
+    def set_is_ratio(self, logps, inputs):
+        """inputs["importance_sampling_ratio"] from the update's own logprobs, and TRL's sampling metrics (per micro-
+        batch; TRL logs them per generation batch)."""
+        sampling = inputs.get("sampling_per_token_logps")
+        if sampling is None:
+            raise RuntimeError("C10 needs vLLM's sampling logprobs (vllm_generation logprobs=0) for the IS ratio")
+        mask = inputs["completion_mask"] * inputs.get("tool_mask", 1)
+        mode = self.vllm_importance_sampling_mode
+        r = is_ratio(logps, sampling, mask, mode, self.vllm_importance_sampling_clip_min,
+                     self.vllm_importance_sampling_clip_max)  # fmt: skip
+        inputs["importance_sampling_ratio"] = r
+        delta = (logps - sampling).abs()[mask.bool() & ~torch.isnan(sampling)]
+        flat = r.flatten() if mode.startswith("sequence") else r[mask.bool()]
+        m = self._metrics["train" if self.model.training else "eval"]
+        for k, v in (("sampling_logp_difference/mean", delta.mean() if delta.numel() else 0.0),
+                     ("sampling_logp_difference/max", delta.max() if delta.numel() else 0.0),
+                     ("importance_sampling_ratio/min", flat.min() if flat.numel() else 0.0),
+                     ("importance_sampling_ratio/mean", flat.mean() if flat.numel() else 0.0),
+                     ("importance_sampling_ratio/max", flat.max() if flat.numel() else 0.0)):  # fmt: skip
+            m[f"sampling/{k}"].append(float(v))
 
     def _generate(self, prompts):
         if self.use_vllm:

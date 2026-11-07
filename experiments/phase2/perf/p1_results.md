@@ -92,8 +92,8 @@ The update is launch- and sync-bound. Next, in order of measured payoff:
    Qwen3-VL's `get_rope_index` runs per forward with `.item()` and boolean indexing: 768 row computations per step
    (256 rows x old, reference and update passes), which matches the 7,233 scalar reads. `fast.RopeCache` computes
    each row once per generation batch and slices it per chunk: 256 per step.
-2. **C10 drop the old-logprob pass:** with one generation per optimizer step the old logprobs equal the update's
-   own; about half of the 12.3 s logprob share.
+2. **C10 drop the old-logprob pass (built after P1, 2026-11-06; CPU tests, speed on the next rental):** with one
+   generation per optimizer step the old logprobs equal the update's own; about half of the 12.3 s logprob share.
 3. **F4 manual graph capture** of the per-bucket decoder forward, after C5 removes the syncs that block capture.
 
 ## Decision
