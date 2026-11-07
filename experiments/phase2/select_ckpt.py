@@ -55,9 +55,10 @@ ROOT = Path(__file__).resolve().parents[2]
 VLLM_VENV = Path("/opt/vllm")  # the phase2 image's second venv; the vllm_native image has vLLM in the running venv
 SUBSET_SEED = 0  # --items: one fixed subset for every branch and rung
 TRIES = 2  # sampler child attempts that finish no new item
-# sampler child timeout per item-sample, plus 600 s (a retry resumes): 3x the measured time (EV-5; vLLM 0.09 s per
-# answer in R0 v3, HF ~1 s), so a hung engine is killed in minutes, not hours
-TIMEOUT_S = {"vllm": 0.3, "hf": 3.0}
+# sampler child timeout per item-sample, plus 600 s: 3x the measured time (EV-5), so a hung engine is killed in
+# minutes, not hours. HF (~1 s per answer) resumes from its whole batches. vLLM writes once at the end, so a retry
+# starts over: its time is scaled to answers at the 1,536-token cap (0.09 s at ~580 tokens in R0 v3 -> 0.25 s)
+TIMEOUT_S = {"vllm": 0.75, "hf": 3.0}
 HF_CHECK_ITEMS = 64  # D13 (owner 2026-11-05): HF re-samples the vLLM-judged branch on this seeded shifted-val subset
 HF_CHECK_KEYS = ("format_ok", "legal", "iou_tc", "f5", "g_area")
 

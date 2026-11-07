@@ -57,6 +57,9 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
   positions walk every token on the CPU, and TRL recomputes them in every forward.
 - No redundant old-logprob pass. With one generation per optimizer step the weights do not move before the update,
   so the update's own (detached) log-probabilities are the old ones, and its forward sets vLLM's importance ratio.
+- Update micro-batches cut from the length-sorted batch. With dr_grpo's constant normaliser the split leaves the
+  update unchanged, and rows of like length share a chunk, so each chunk is trimmed to its own width.
+- No fp32 copy of each LoRA input under bf16 autocast: the matmul casts it back anyway (bit-identical).
 - Rewards scored on a background thread while the GPU computes the reference log-probabilities.
 - Every setting is measured on the card first (`experiments/phase2/profile.py`): micro-batch, checkpointing, regional
   `torch.compile`, CUDA Graphs. The profiler trace (GPU busy 70 %, 7,233 `.item()` reads per step) drives the next
