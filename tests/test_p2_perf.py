@@ -68,3 +68,13 @@ def test_g_probe_takes_the_profile_arm_flags(capsys):
         g_probe.main(["--help"])
     out = capsys.readouterr().out
     assert e.value.code == 0 and all(f in out for f in ("--plain", "--trace", "--compile"))
+
+
+def test_grpo_config_keeps_the_p1_measured_choice():
+    """P1 on an RTX 5090 (2026-11-06, experiments/phase2/perf/p1_results.md): micro-batch 16 x 16 at 44.3 s/step beat
+    32 x 8 (59.1); no checkpointing ran out of 31.45 GiB; compiled layers (47.9) and CUDA Graphs (crash) stay off."""
+    from objdel.train import configs
+
+    c = configs.grpo_config("qwen3-vl-2b", "/tmp/o")
+    assert (c.per_device_train_batch_size, c.gradient_accumulation_steps) == (16, 16)
+    assert c.gradient_checkpointing is True and c.torch_compile is False

@@ -410,6 +410,8 @@ Cap 1.7 h (RTX 5090 at ≤ $0.79/h: ≤ $1.35, inside the owner's $1.50 for this
 
 ## Stage E: profiling run (box)
 
+**Done 2026-11-06 (P1, $1.253):** results, decisions and the next steps in `p1_results.md`.
+
 1. `make preflight` (C4 ceiling).
 2. `offers.sh RTX_5090` (read-only quote, US/CA).
 3. The hours (≤ 1.7 h cap) and dollars (quote × cap) stay inside the owner's $1.50 test allocation (2026-11-06).
