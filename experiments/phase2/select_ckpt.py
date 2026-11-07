@@ -55,7 +55,9 @@ ROOT = Path(__file__).resolve().parents[2]
 VLLM_VENV = Path("/opt/vllm")  # the phase2 image's second venv; the vllm_native image has vLLM in the running venv
 SUBSET_SEED = 0  # --items: one fixed subset for every branch and rung
 TRIES = 2  # sampler child attempts that finish no new item
-TIMEOUT_S = 1.0  # sampler child timeout per item-sample, plus 600 s (a retry resumes)
+# sampler child timeout per item-sample, plus 600 s (a retry resumes): 3x the measured time (EV-5; vLLM 0.09 s per
+# answer in R0 v3, HF ~1 s), so a hung engine is killed in minutes, not hours
+TIMEOUT_S = {"vllm": 0.3, "hf": 3.0}
 HF_CHECK_ITEMS = 64  # D13 (owner 2026-11-05): HF re-samples the vLLM-judged branch on this seeded shifted-val subset
 HF_CHECK_KEYS = ("format_ok", "legal", "iou_tc", "f5", "g_area")
 
@@ -197,6 +199,11 @@ def stop_ids(path: Path, proc) -> set[int]:
     return rewards.stop_ids(SimpleNamespace(generation_config=gen), proc)
 
 
+def sampler_timeout(a, samples: int) -> float:
+    """600 s (engine start) + the per-sample time (--timeout_s, else TIMEOUT_S of the sampler) for `samples`."""
+    return 600 + (a.timeout_s or TIMEOUT_S[a.sampler]) * samples
+
+
 def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) -> dict:
     """The sampler child on `rows` (`out`/prompts.jsonl -> `out`/completions.jsonl) -> {key: completions row}."""
     from transformers import AutoProcessor
@@ -208,7 +215,7 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     stop = stop_ids(branch, proc)
     prompts, comps = out / "prompts.jsonl", out / "completions.jsonl"
     sample.export_prompts(rows, prompts, a.model, "lidc", k, processor=proc, stop_ids=stop, seed=a.seed)
-    run_sampler(a.sampler, prompts, branch, comps, 600 + a.timeout_s * len(rows) * k, extra)
+    run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), extra)
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
 
 
@@ -363,8 +370,8 @@ def main(argv=None) -> int:
     ap.add_argument("--items", type=int, help="seeded subset size for branch selection only (HF path: 256)")
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0, help="sampler seed")
-    ap.add_argument("--procs", type=int, default=4)
-    ap.add_argument("--timeout_s", type=float, default=TIMEOUT_S, help="sampler timeout per sample, plus 600 s")
+    ap.add_argument("--procs", type=int, default=serve.pool_size(), help="scoring workers (default: usable CPUs - 1)")
+    ap.add_argument("--timeout_s", type=float, help="sampler timeout per sample, plus 600 s (default: TIMEOUT_S)")
     vis = ap.add_mutually_exclusive_group()
     vis.add_argument("--vision", help='G-vision JSON {"prepared": root, "reference": R0 value or JSON} (required)')
     vis.add_argument("--no-vision", action="store_true", help="G-vision not measured: every branch ineligible")

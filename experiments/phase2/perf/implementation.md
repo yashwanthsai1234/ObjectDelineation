@@ -497,12 +497,15 @@ Otherwise the code is deleted, not left behind a flag.
 
 ## Stage H: after R2 (evaluation and kernel work)
 
+Status 2026-11-06: RL-6 done by C1; EV-5 done. Open, each needing a GPU to measure: EV-1, EV-3, EV-4, CK-4 (Nsight Compute), RL-4 (an image change). EV-2 speeds up the HF check, which the owner has said RL does not need; it stays until the owner decides on gate G-hf-check (D13).
+
 | Fix | Issue (`issues.md`) | Test / check |
 |---|---|---|
 | One vLLM engine start per checkpoint in `select_ckpt` (all views in one child) | EV-1 | prompt-id prefix per view; outputs equal to the per-view path |
 | HF check: larger batch and a static KV cache, tested on 5.19 | EV-2 | metric equality on 32 items; timing |
 | A/B of per-request seeds in vLLM | EV-3 | same prompts with and without seeds: throughput |
-| Scoring overlaps the next branch's sampling; pool size from `nproc`; sampler timeout ~3× the measured time | EV-4, EV-5 | timing log per phase |
+| Pool size from the usable CPUs (`serve.pool_size`: affinity, cgroup quota, minus one, cap 16); sampler timeout 3x the measured time (`select_ckpt.TIMEOUT_S`: vLLM 0.3 s, HF 3 s per answer): **done 2026-11-06** | EV-5 | `test_scoring_pool_is_sized_from_the_cpus_this_process_may_use`, `test_sampler_timeout_is_three_times_the_measured_time` |
+| Scoring overlaps the next branch's sampling: open (the sampler child's signal handling lives in the main thread; the gain is measured on the next rental) | EV-4 | timing log per phase |
 | Checker kernels: row-tile coalesced stores, edges in shared memory, 32-bit math (bit-exact) | CK-4 | `run_box.sh` 0 mismatches; Nsight Compute sectors per request |
 | Flash-attention-2 for the vision tower (image change); after C6, the gain is small | RL-4 | loss parity |
 | Trim the reference and old-logprob forwards per chunk: **done by C1** (`FastForward` covers every pass) | RL-6 | logprob equality |
