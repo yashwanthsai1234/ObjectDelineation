@@ -206,7 +206,7 @@ def analyse(path):
                 fs = {k: (size_filter(m, ms) if ms else m) for k, m in sl.items()}
                 fs = {k: m for k, m in fs.items() if m.any()}
                 topo = {k: betti(m) for k, m in fs.items()}
-                row[f"b0_3d_{ms}"], row[f"b2_3d_{ms}"] = betti3d(to_volume(fs, box)) if fs else (0, 0)
+                row[f"b0_3d_{ms}"], _, row[f"b2_3d_{ms}"] = betti3d(to_volume(fs, box)) if fs else (0, 0, 0)
                 row[f"slices_multi_{ms}"] = sum(1 for b0, _ in topo.values() if b0 > 1)
                 row[f"slices_hole_{ms}"] = sum(1 for _, b1 in topo.values() if b1 > 0)
                 row[f"slice_topo_{ms}"] = topo

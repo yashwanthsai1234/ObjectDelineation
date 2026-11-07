@@ -76,16 +76,18 @@ LIDC-IDRI is a 3-D CT collection, and a nodule is a stack of slices. The system 
 <img src="docs/figures/voxels.svg" alt="Slice polygons stacked into a voxel mask with b0, b1 and b2" width="900">
 
 - **Slice to volume.** The model outlines one slice at a time. The polygons of consecutive slices are rasterized
-  and stacked into one voxel mask.
-- **Voxel clusters.** Annotations from different readers are grouped into nodules by shared voxels. Phase 0 already
-  analyses nodules this way (`experiments/phase0/lidc_census.py`; the `b0_3d_*` columns in
+  and stacked into one voxel mask (`objdel.checker.volume.stack`).
+- **Voxel clusters.** Annotations from different readers are grouped into nodules by shared voxels
+  (`experiments/phase0/lidc_census.py`; the `b0_3d_*` and `cavity_any_*` columns in
   `experiments/phase0/results/lidc/clusters.csv`).
-- **Three Betti numbers.** In 3-D the volume has b0 (parts), b1 (tunnels) and b2 (cavities). Slice-level b0 and b1
-  are the 2-D shadows of the same idea.
-- **The checker's role.** It certifies each slice exactly. The volume check adds the 3-D counts on the stacked mask,
-  and the reward scores them against the set of reader volumes, as it does per slice.
+- **Three Betti numbers.** Each voxel is a closed unit cube, so parts are 26-connected and the background is
+  6-connected. `betti3d` counts b0 (parts) and b2 (cavities) by labeling, and b1 (tunnels) from the Euler
+  characteristic of the cube complex (χ = b0 − b1 + b2). Slice-level b0 and b1 are the 2-D shadows of the same idea.
+- **Set-valued scoring.** `topology_any` scores a predicted volume against the set of reader volumes, exactly as
+  the slice-level topology terms do: a match with any reader counts.
 
-This section describes the method. The measured 3-D numbers are in the Phase 0 census, listed below.
+`tests/test_volume.py` checks the counts on worked shapes (a hollow cube has one cavity, a ring one tunnel, a corner
+contact joins two parts) and on stacked slices of a hollow nodule.
 
 ## 📊 Results
 
