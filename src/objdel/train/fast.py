@@ -186,10 +186,11 @@ class RopeCache:
         keys = self.keys(input_ids, attention_mask, grid, nimg)
         first = [sum(nimg[:i]) for i in range(len(nimg))]
         miss = list({k: i for i, k in enumerate(keys) if k not in self.store}.values())
-        if miss:
-            g = torch.cat([grid[first[i]:first[i] + nimg[i]] for i in miss])
-            pos, _ = self.base.get_rope_index(input_ids[miss], mm_token_type_ids=mm_token_type_ids[miss],
-                                              image_grid_thw=g, attention_mask=attention_mask[miss])  # fmt: skip
+        if miss:  # on host copies: get_rope_index's per-row host reads are then no GPU syncs; one copy back
+            g = torch.cat([grid[first[i]:first[i] + nimg[i]] for i in miss]).cpu()
+            pos, _ = self.base.get_rope_index(input_ids[miss].cpu(), mm_token_type_ids=mm_token_type_ids[miss].cpu(),
+                                              image_grid_thw=g, attention_mask=attention_mask[miss].cpu())  # fmt: skip
+            pos = pos.to(input_ids.device)
             for j, i in enumerate(miss):
                 self.store[keys[i]] = pos[:, j]
         return torch.stack([self.store[k] for k in keys], dim=1)

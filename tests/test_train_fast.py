@@ -175,6 +175,23 @@ def test_rope_cache_keys_rows_by_their_exact_tokens_and_image_grids():
     assert pos[0, :, 0].tolist() == [4.0, 8.0, 4.0]
 
 
+
+def test_rope_positions_are_computed_on_host_copies_and_returned_on_the_rows_device():
+    """get_rope_index reads the host several times per row (~9 syncs on CUDA tensors); on the host copies keys()
+    already makes, the same function makes none, and one copy returns the positions to the rows' device."""
+    seen = []
+
+    class Base(torch.nn.Module):
+        def get_rope_index(self, input_ids, image_grid_thw, attention_mask, mm_token_type_ids):
+            seen.append({t.device.type for t in (input_ids, image_grid_thw, attention_mask, mm_token_type_ids)})
+            return torch.zeros(3, *input_ids.shape), None
+
+    ids = torch.ones(2, 4, dtype=torch.long)
+    pos = fast.RopeCache(Base()).positions(ids, torch.ones_like(ids), torch.zeros_like(ids),
+                                           torch.tensor([[1, 4, 8], [1, 8, 4]]), [1, 1])  # fmt: skip
+    assert seen == [{"cpu"}] and pos.device == ids.device and pos.shape == (3, 2, 4)
+
+
 def test_lora_leaves_the_vision_tower_frozen():
     """The cache is valid only because no trainable weight sits in the tower or the projector (configs.lora, D6)."""
     from peft import get_peft_model
