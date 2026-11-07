@@ -246,7 +246,7 @@ polycore loop. Against the loop, the GPU is already 1.06× at 16 vertices and ba
 | EV-3 | Per-request seeds may make vLLM sample row by row (not verified) | `sample_vllm.py:44,52` | up to 1.5–3× decode |
 | EV-4 | The GPU waits while scoring and the CPU fp32 vision check run | `select_ckpt.py:335-344, 379-383` | 2–8 min |
 | EV-5 | Pool fixed at 4; sampler timeout ~2.5 h when an engine hangs | `select_ckpt.py:361, 58, 206` | cost only on failure |
-| EV-6 | G-probe probe sets use the trainer's HF generation (3 × 1,024 answers) | `g_probe.py:39-45`; `sample.py:50-65` | inside RL-2's estimate |
+| EV-6 | Resolved by F1 (2026-11-06): G-probe's probe sets go through the trainer's own `_generate`, which is vLLM colocate (`configs.grpo_config` `use_vllm` for every model but SmolVLM); P1's fast arm logged vLLM's IS metrics, and its step-0 sampling (2 × 8 items × 8) took 14.7 s | `g_probe.py:41-48`; `sample.py:49-71` | none |
 
 ```
 select run today (one checkpoint):
