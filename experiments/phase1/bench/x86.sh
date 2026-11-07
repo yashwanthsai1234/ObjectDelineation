@@ -2,7 +2,7 @@
 # One-command x86-64 (linux/amd64) check of objdel on an Apple-silicon Mac (Phase 1, M9; plan R9).
 #
 #   experiments/phase1/bench/x86.sh [--quick] [--no-wheels]
-#     --quick      skip the slow K1/K2 10k-case oracle gates and use a 2,000-shape fuzz run
+#     --quick      skip the slow K1/K2 10k-case oracle gates
 #     --no-wheels  skip the sdist + cibuildwheel (manylinux_2_28 x86_64) release-wheel check (needs network)
 #
 # What it does (outputs in build/x86/, git-ignored; summary in build/x86/summary.txt):
@@ -12,8 +12,8 @@
 #      data/ (RIGA licence: never leaves the Mac), .venv/ and build/ are never copied; the run asserts it;
 #   3. Mac (native arm64): experiments.phase1.bench.xarch_hashes -> build/x86/hashes-mac.json;
 #   4. container (--platform linux/amd64 --cpus 3 --memory 4g --network none): bench/x86_inside.sh builds the
-#      extension from source and runs lint, the fast suite, the hash script, K1/K2, the ASan/UBSan fuzz and a local
-#      wheel + auditwheel + abi3audit;
+#      extension from source and runs lint, the fast suite, the hash script, K1/K2 and a local wheel + auditwheel +
+#      abi3audit;
 #   5. release wheel: sdist on the host, then cibuildwheel 4.3.1 in the manylinux_2_28 x86_64 image (same caps), its
 #      own test command (pyproject [tool.cibuildwheel]) and abi3audit; auditwheel show and the hash script against
 #      the installed wheel in the x86 container;
@@ -81,8 +81,8 @@ manifest() { tr '\0' '\n' < "$OUT/files.lst" | grep -E '^(src|cpp|tests|experime
     | while IFS= read -r f; do [ -f "$f" ] && shasum -a 256 "$f"; done | shasum -a 256 | cut -c1-16; }
 SNAP=$(manifest)
 note "snapshot: $(tr -cd '\0' < "$OUT/files.lst" | wc -c | tr -d ' ') files, $(du -h "$IO/src.tar.gz" | cut -f1), source manifest $SNAP"
-if [ cpp/polycore/polycore.hpp -nt build/.polycore-stamp ] || [ src/objdel/_polycore.cpp -nt build/.polycore-stamp ]; then
-    note "WARNING: the Mac's objdel._polycore is older than its sources (run make build); Mac hashes may be stale"
+if [ cuda/gpucheck.cpp -nt build/.gpucheck-stamp ] || [ cuda/gpucheck_py.cpp -nt build/.gpucheck-stamp ]; then
+    note "WARNING: the Mac's objdel._gpucheck is older than its sources (run make build); Mac hashes may be stale"
 fi
 
 # 3. Mac hashes -----------------------------------------------------------------------------------------------------
@@ -97,7 +97,7 @@ fi
 # 4. container run --------------------------------------------------------------------------------------------------
 t=$SECONDS
 docker run --rm --platform linux/amd64 --cpus 3 --memory 4g --memory-swap 4g --network none \
-    -e SLOW=$((1 - QUICK)) -e FUZZ_N=$([ $QUICK = 1 ] && echo 2000 || echo 10000) -v "$IO:/io" "$IMAGE" \
+    -e SLOW=$((1 - QUICK)) -v "$IO:/io" "$IMAGE" \
     bash -c 'tar -xzf /io/src.tar.gz -C /work && exec bash /work/experiments/phase1/bench/x86_inside.sh' \
     2>&1 | tee "$OUT/container.log"
 note "container run: $((SECONDS - t)) s"
@@ -113,9 +113,7 @@ grep -E '^[^ ].*\.py:[0-9]+:[0-9]+|^ *--> ' "$IO/lint.log" | sed 's/^/    lint: 
 if [ $WHEELS = 1 ]; then
     t=$SECONDS
     mkdir -p "$OUT/src" && tar -xzf "$IO/src.tar.gz" -C "$OUT/src"
-    # pyproject's test-command, minus the out-of-memory test that Rosetta's translator breaks (x86_inside.sh)
-    TEST_COMMAND="$(sed -n 's/^test-command = "\(.*\)"$/\1/p' "$OUT/src/pyproject.toml") \
---deselect tests/test_polycore.py::test_score_batch_out_of_memory_raises_in_python"
+    TEST_COMMAND="$(sed -n 's/^test-command = "\(.*\)"$/\1/p' "$OUT/src/pyproject.toml")"  # pyproject's
     if uv build --sdist --out-dir "$OUT/dist" "$OUT/src" > "$OUT/sdist.log" 2>&1 \
         && CIBW_ARCHS=x86_64 CIBW_CONTAINER_ENGINE="docker; create_args: --cpus 3 --memory 4g" \
            CIBW_TEST_COMMAND="$TEST_COMMAND" \
@@ -129,7 +127,7 @@ if [ $WHEELS = 1 ]; then
             /opt/tools/bin/auditwheel show /io/wheelhouse/*.whl
             /opt/tools/bin/abi3audit --strict /io/wheelhouse/*.whl
             uv pip install --python /opt/venv/bin/python --offline --no-deps /io/wheelhouse/*.whl
-            cd /work && python -c "import objdel._polycore as m, sys; print(m.__file__)"
+            cd /work && python -c "import objdel._gpucheck as m, sys; print(m.__file__)"
             python -m experiments.phase1.bench.xarch_hashes --out /io/hashes-x86-wheel.json > /dev/null' \
             > "$OUT/wheel-check.log" 2>&1 && note "  release wheel: auditwheel show + abi3audit + hashes OK" \
             || { note "  release wheel check FAILED (build/x86/wheel-check.log)"; FAIL=1; }

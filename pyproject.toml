@@ -55,7 +55,7 @@ skip = "*-musllinux_*"
 build-verbosity = 1
 test-requires = ["pytest", "hypothesis"]
 test-sources = ["tests", "pyproject.toml"]
-test-command = "pytest -q -m 'not slow' -p no:cacheprovider tests/test_polycore.py tests/test_polycore_oracle.py tests/test_polycore_props.py"
+test-command = "pytest -q -m 'not slow' -p no:cacheprovider tests/test_checker_oracle.py tests/test_cuda_checker.py tests/test_checker_host.py"
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64", "aarch64"]
@@ -71,7 +71,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-# Measure code run in multiprocessing.Pool workers (objdel.train.dataset.prepare) and threads (polycore batches).
+# Measure code run in multiprocessing.Pool workers (objdel.train.dataset.prepare) and threads.
 # https://coverage.readthedocs.io/en/latest/config.html#run-concurrency
 concurrency = ["multiprocessing", "thread"]
 parallel = true

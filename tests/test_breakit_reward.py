@@ -2,7 +2,6 @@
 experiments/phase1/impl/breakit/B2_reward.md) and the robustness checks that held (plain tests). No data needed."""
 import hashlib
 import json
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import numpy as np
@@ -283,18 +282,6 @@ def test_other_group_sizes_are_finite(group):
     t = _g(group, iou_tc=np.linspace(.5, .9, group), topo_freq=np.full(group, .5),
            sig_id=np.r_[np.full(group - 1, sig_id(((0,),))), sig_id(((1,),))])
     assert np.isfinite(advantages_v4(t, group)).all()
-
-
-def test_thread_pool_with_misaligned_chunks_equals_serial(nod):
-    _, caches = nod
-    rng = np.random.default_rng(0)
-    jobs = [(doc(nodule=[(ring_pts(*(int(v) for v in rng.integers(150, 250, 2)),
-                                   *(int(v) for v in rng.integers(550, 650, 2))), [])]), i % 7 == 0, NOD, caches, W, W)
-            for i in range(24)]
-    serial = score_batch(jobs)
-    with ThreadPoolExecutor(4) as pool:
-        threaded = score_batch(jobs, pool, chunk=5)
-    assert all(np.array_equal(serial[k], threaded[k]) for k in serial if k not in ("error", "defects"))
 
 
 def test_eval_on_all_truncated_and_mixed_k_items(nod):

@@ -66,13 +66,20 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
   step.
 - vLLM sleep mode frees its share of the card between generations.
 
-**Checker (`cuda/gpucheck.cpp`).** One source file builds for the CPU and for nvcc. Every algorithm is a
-`__host__ __device__` functor.
+**Checker and scorer (`cuda/gpucheck.cpp`).** One source file builds for the CPU and for nvcc. Every algorithm is a
+`__host__ __device__` functor. All checking and scoring runs here: polygon, mask, defects, IoU_tc, F5, g_area and the
+size-filtered topology signature. The experts' tables stay resident on the device, and only per-object numbers come
+back. No mask is copied to the host for scoring (`docs/research/notes/gpu_scoring.md`).
 - A grow-only device arena and two pinned staging buffers per stream lane. Nothing is allocated per call.
 - Two CUDA streams. A large batch splits in two halves, so the copy of one half overlaps the kernels of the other.
 - The raster runs one warp per pixel row, and builds each 32-pixel word with `__ballot_sync`.
-- Bit-exact against the CPU reference on two architectures (sm_120 and sm_86: 0 mismatches), and clean under
-  `compute-sanitizer` memcheck and initcheck (0 errors on 40 GPU tests, `experiments/phase2/perf/k1_results.md`).
+- Bit-exact against the CPU checker it replaced, polycore, on two architectures (sm_120 and sm_86: 0 mismatches).
+  polycore is now archived (`archive/cpu_checker`), and its results are recorded per case in
+  `tests/goldens/polycore.npz`. The checker is also clean under `compute-sanitizer` memcheck and initcheck (0 errors
+  on 40 GPU tests, `experiments/phase2/perf/k1_results.md`).
+- The device scorer is bit-identical to the numpy scorer it replaced (`tests/oracles/score_numpy.py`). Counts are
+  integers, distance sums are exact multiples of 2^-23, and nothing is contracted into FMA.
+- Union-find connected components run on each object's bounding box (Playne and Hawick 2018) and give the signature.
 
 <img src="docs/figures/warp_ballot.svg" alt="A warp votes with __ballot_sync into one 32-bit word" width="900">
 
@@ -127,18 +134,19 @@ shapes run at **7.74 M polygons/s on an RTX 5090 (141x)**, 87x the polycore loop
 | FastGRPO, no gradient checkpointing | OOM | over 31.45 GiB beside vLLM |
 
 One step splits into 7.6 s vLLM generation, 12.3 s old and reference log-probabilities, and 24.4 s update; the reward
-(one checker call for all 256 answers plus CPU scoring) runs in the background during the log-probability passes.
+(at the time: one checker call for all 256 answers plus scoring on a CPU pool) runs in the background during the
+log-probability passes. Scoring now also runs in that one checker call, on the device.
 
 ## 🗂️ Repository layout
 
 ```
-cpp/polycore/      header-only C++17 core: exact polygon rasterizer, legality checks, signed area
-cuda/              the CUDA checker engine (gpucheck.cpp, one source for CPU and GPU), CMake, GoogleTest
+cuda/              the CUDA checker and scorer (gpucheck.cpp, one source for CPU and GPU)
+archive/           retired code, not built: the CPU checker polycore (archive/cpu_checker)
 src/objdel/
   checker/         bit-quads, Betti numbers, instance topology, polygonize, certificates
-  geometry/        output spec: strict parser, serializer, canonical rings, polygon to mask
+  geometry/        output spec: strict parser, serializer, canonical rings, polygon to mask (on the checker)
   targets/         model frame (crop and scale) and certified SFT polygon targets
-  reward/          per-item expert caches, per-rollout terms, group advantages
+  reward/          per-item expert caches (resident on the device), per-rollout terms, group advantages
   data/            RIGA extractor, LIDC parser, group-aware splits, Parquet store
   train/           TRL integration, reward functions, callbacks, configs, fast forwards
   eval/            metrics, hack audit, entry gates
@@ -156,7 +164,7 @@ Speed work: [issues](experiments/phase2/perf/issues.md), [implementation](experi
 ## ⚡ Quick start
 
 ```bash
-make setup        # .venv with Python 3.12 (uv), editable install, builds the C++ extension
+make setup        # .venv with Python 3.12 (uv), editable install, builds the checker (its CPU build)
 make test         # fast test suite; make test-all adds the slow gates
 make lint
 make cuda         # build the CUDA checker (needs nvcc)

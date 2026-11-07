@@ -1,4 +1,4 @@
-"""TRLReward.prefetch: rewards start scoring (parse, one checker call, pool) as soon as vLLM returns the answers, and
+"""TRLReward.prefetch: rewards start scoring (parse, one checker call) as soon as vLLM returns the answers, and
 overlap TRL's old-logprob and reference forwards on the GPU; the reward call takes the result only for the same
 answers (objdel.train.fast.FastGRPO._generate)."""
 
@@ -16,8 +16,8 @@ def reward():
 
 def test_prefetched_rewards_equal_the_direct_path(monkeypatch):
     calls = []
-    real = _gpucheck.check_polygons
-    monkeypatch.setattr(_gpucheck, "check_polygons", lambda *a: calls.append(threading.current_thread()) or real(*a))
+    real = _gpucheck.score_polygons
+    monkeypatch.setattr(_gpucheck, "score_polygons", lambda *a: calls.append(threading.current_thread()) or real(*a))
     rw, funcs = reward()
     kw = batch()
     rw.prefetch(kw["completions"], kw["completion_ids"], kw["key"], kw["W"], kw["H"], kw["names"])

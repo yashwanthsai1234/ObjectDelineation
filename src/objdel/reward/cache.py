@@ -74,6 +74,8 @@ References:
 - Lab derivation and evidence: experiments/phase1/lab/t_reward/rewardcore/band.py, results/ITERATION3.md (R5).
 """
 import hashlib
+import os
+import weakref
 from collections import defaultdict
 from functools import cache
 from itertools import combinations
@@ -83,6 +85,7 @@ import cv2
 import numpy as np
 from scipy import integrate, ndimage, stats
 
+from objdel import _gpucheck
 from objdel.checker.topology import min_area, signature
 
 from .spec import REWARD_V4, fingerprint
@@ -106,6 +109,11 @@ def voters(sigs) -> tuple[int, ...]:
     """Raters with a topology vote: a non-empty size-filtered signature; every rater when all abstain (module
     docstring)."""
     return tuple(i for i, s in enumerate(sigs) if s) or tuple(range(len(sigs)))
+
+
+def _drop_tables(pid: int, handle: int) -> None:
+    if os.getpid() == pid:  # a forked child never frees its parent's tables
+        _gpucheck.drop_tables(handle)
 
 
 class StaleCacheError(ValueError):
@@ -228,6 +236,26 @@ class ExpertCache:
         x, y, w, h = cv2.boundingRect(self.union.view(np.uint8))
         self.box = (y, y + h, x, x + w)  # union bounding box (empty if the union is empty)
         self.digest = _digest(raters, self.tau, self.t5, fingerprint())
+        self._device = None  # (pid, handle) of the tables on the checker's device
+
+    def device(self) -> int:
+        """Handle of this cache's tables on the checker's device (objdel._gpucheck.add_tables), which the reward
+        scores against: uploaded at the first call in this process (a forked child uploads its own), resident until
+        the cache is garbage-collected. The device gets the rater masks, union, core, vote, one distance map (the
+        distance to the complement of the core inside the union, to the union outside it), the rater areas, voters
+        and signatures, and the scalars."""
+        pid = os.getpid()
+        if self._device is None or self._device[0] != pid:
+            sigs = self.rater_sigs
+            h = _gpucheck.add_tables(
+                self.raters.view(np.uint8), self.union.view(np.uint8), self.core.view(np.uint8),
+                self.vote.view(np.uint8), np.where(self.union, self.dist_in_core, self.dist_out_union),
+                np.array(self.rater_areas, np.int64), np.isin(np.arange(self.k), self.voters).astype(np.uint8),
+                np.cumsum([0, *map(len, sigs)], dtype=np.int64), np.array([v for s in sigs for v in s], np.int32),
+                self.n_vote, self.perimeter, self.t5, self.min_area)
+            weakref.finalize(self, _drop_tables, pid, h).atexit = False  # the process's exit frees the device
+            self._device = (pid, h)
+        return self._device[1]
 
     def __reduce__(self):  # pickle only what build computed; the rest is rederived (exactly) on unpickling
         return ExpertCache, (self.raters, self.tau, self.t5)

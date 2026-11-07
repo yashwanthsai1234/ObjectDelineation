@@ -7,7 +7,8 @@ Checks, in order; the stage (DATA / CHECKER / CODE) with a failure is finished, 
            any exam (or probe) view, coverage of every exam view by the training view (objdel.eval.coverage), prompt
            text identical, CT window consistent, every training target parses and is legal for the reference checker
   CHECKER  tests/test_cuda_checker*.py when they exist, the scorers on the CUDA checker (tests/test_gpu_scoring.py:
-           equal to polycore), then the CPU checker exactness tests (polycore: targets and the reference)
+           equal to the host scorer it replaced), then the checker's exactness tests (the slow exact oracles, the
+           archived CPU checker's recorded results, topology, geometry)
   CODE     a quick test subset, the CPU dry run of train -> select on a tiny model, the projected GPU hours and dollars
 Writes runs/preflight/<config>.json: pass per check and the code, data and config hashes. vast launch (policy.py)
 refuses unless that stamp passes and all three hashes still match: refusal(). Exit 0 = every check passed.
@@ -25,9 +26,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 # the exam views policy.chain passes to select_ckpt (gates: shifted, rescaled; report: rotated; probes)
 EXAMS = ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-precision", "probe-topology")
-CHECKER_TESTS = ["tests/test_checker.py", "tests/test_polycore.py", "tests/test_polycore_oracle.py",
-                 "tests/test_polycore_props.py", "tests/test_topology.py", "tests/test_geometry.py",
-                 "tests/test_geometry_mask.py", "tests/test_geometry_oracle.py"]  # fmt: skip
+CHECKER_TESTS = ["tests/test_checker.py", "tests/test_checker_oracle.py", "tests/test_checker_host.py",
+                 "tests/test_topology.py", "tests/test_geometry.py", "tests/test_geometry_mask.py",
+                 "tests/test_geometry_oracle.py"]  # fmt: skip
 QUICK_TESTS = ["tests/test_eval_coverage.py", "tests/test_preflight.py", "tests/test_p2_scripts.py",
                "tests/test_train_configs.py", "tests/test_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
 DRY_RUN = "tests/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select on a tiny model, CPU

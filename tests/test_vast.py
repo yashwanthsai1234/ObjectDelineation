@@ -771,7 +771,7 @@ def test_image_check_python_compiles():
     assert blocks
     for b in blocks:
         compile(b, "image_check", "exec")
-    words = ("0.6", "objdel._polycore", "/opt/vllm/bin/python")
+    words = ("0.6", "objdel._gpucheck", "/opt/vllm/bin/python")
     assert [w for w in words if w not in text] == []
 
 
