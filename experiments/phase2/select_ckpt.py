@@ -52,7 +52,7 @@ from objdel.eval import gates, metrics  # imported before the pool forks: a fork
 from objdel.train import serve
 
 ROOT = Path(__file__).resolve().parents[2]
-VLLM_PYTHON = "/opt/vllm/bin/python"
+VLLM_VENV = Path("/opt/vllm")  # the phase2 image's second venv; the vllm_native image has vLLM in the running venv
 SUBSET_SEED = 0  # --items: one fixed subset for every branch and rung
 TRIES = 2  # sampler child attempts that finish no new item
 TIMEOUT_S = 1.0  # sampler child timeout per item-sample, plus 600 s (a retry resumes)
@@ -82,8 +82,13 @@ def cuda_untouched() -> None:
         raise RuntimeError("CUDA is initialized in select_ckpt: the sampler child would share the GPU (D13)")
 
 
+def vllm_python() -> str:
+    py = VLLM_VENV / "bin" / "python"
+    return str(py) if py.exists() else sys.executable
+
+
 def sampler_cmd(kind: str, prompts: Path, model: Path, out: Path, extra=()) -> list[str]:
-    head = [VLLM_PYTHON, "-I", str(ROOT / "experiments/phase2/sample_vllm.py")]
+    head = [vllm_python(), "-I", str(ROOT / "experiments/phase2/sample_vllm.py")]
     head = head if kind == "vllm" else [sys.executable, "-I", "-m", "experiments.phase2.hf_sample"]
     return head + ["--prompts", str(prompts), "--model", str(model), "--out", str(out), *extra]
 

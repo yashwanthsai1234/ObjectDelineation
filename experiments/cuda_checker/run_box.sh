@@ -4,8 +4,9 @@
 # 1. refuse to run if any RIGA data is on the host (its licence forbids rented hosts);
 # 2. add the CUDA 13.0 compiler torch 2.14.1 pins (the image has none) and pytest/hypothesis to $PY's venv;
 # 3. make cuda: objdel._gpucheck rebuilt with nvcc (CUDA_ARCHS, default the box's GPU);
-# 4. the GPU test group and the equivalence suite, then experiments/cuda_checker/eval.py even when a test failed (it
-#    shows where the GPU build goes wrong); writes results/cuda.json and the GPU section of RESULTS.md: copy both back.
+# 4. the GPU test group (with the arena-reuse and two-stream tests), the equivalence suite, the packed-mask and
+#    one-checker-call-per-reward tests, then experiments/cuda_checker/eval.py even when a test failed (it shows where
+#    the GPU build goes wrong); writes results/cuda.json and the GPU section of RESULTS.md: copy both back.
 #    Exit status: the tests' (1 if any failed), else the eval's.
 # --build-only stops after 3 (cuda/docker_check.sh runs it on the Mac, without a GPU).
 # Env: PY (default /opt/venv/bin/python, the image's training venv), CUDA_ARCHS (e.g. "80;86;89;90;120"),
@@ -29,6 +30,7 @@ make cuda PY="$PY" ${CUDA_ARCHS:+CUDA_ARCHS="$CUDA_ARCHS"}
 [ "${1:-}" = "--build-only" ] && exit 0
 nvidia-smi -L
 tests=0
-"$PY" -m pytest -q -p no:cacheprovider tests/test_cuda_checker_gpu.py tests/test_cuda_checker.py || tests=1
+"$PY" -m pytest -q -p no:cacheprovider tests/test_cuda_checker_gpu.py tests/test_cuda_checker.py \
+    tests/test_checker_host.py tests/test_reward_one_checker_call.py || tests=1
 "$PY" -I -m experiments.cuda_checker.eval ${DATA:+--data "$DATA"}
 exit $tests

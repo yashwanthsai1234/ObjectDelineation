@@ -83,11 +83,19 @@ def to_mask(parts: list[Part], W: int, H: int) -> Geometry:
     return Geometry(mask, not defects, defects)
 
 
+def unpack_rows(words: np.ndarray, H: int, W: int) -> np.ndarray:
+    """The checker's packed mask of one object -> bool (H, W). Each row is ceil(W / 32) uint32 words; pixel x is bit
+    x % 32 (LSB first) of word x // 32, and the bits past W in a row's last word are ignored."""
+    rows = np.ascontiguousarray(words, "<u4").view(np.uint8).reshape(H, -1)
+    return np.ascontiguousarray(np.unpackbits(rows, axis=1, bitorder="little")[:, :W]).view(bool)
+
+
 def to_masks(objs: Sequence[tuple[list[Part], int, int]]) -> list[Geometry]:
     """to_mask of many objects, each (parts, W, H), on the CUDA checker: one objdel._gpucheck.check_polygons call for
-    all of them. On a CUDA box it runs on the GPU (`make cuda`; policy.chain builds it before any scoring stage);
-    elsewhere the same source is compiled for the CPU. Masks and defects equal to_mask's (tests/test_gpu_scoring.py).
-    This is the reward's and the exam's checker; to_mask (polycore) stays for building targets and as the reference."""
+    all of them, which returns the even-odd masks bit-packed (unpack_rows). On a CUDA box it runs on the GPU (`make
+    cuda`; policy.chain builds it before any scoring stage); elsewhere the same source is compiled for the CPU. Masks
+    and defects equal to_mask's (tests/test_gpu_scoring.py, tests/test_checker_host.py). This is the reward's and the
+    exam's checker; to_mask (polycore) stays for building targets and as the reference."""
     from objdel import _gpucheck
 
     rings, roles, shape_start = [], [], [0]
@@ -104,6 +112,6 @@ def to_masks(objs: Sequence[tuple[list[Part], int, int]]) -> list[Geometry]:
     out = []
     for i, (_, W, H) in enumerate(objs):
         defects = {d: int(c) for d, c in zip(polycore.DEFECTS, r["defects"][i], strict=True) if c}
-        mask = r["evenodd"][r["mask_start"][i]:r["mask_start"][i + 1]].reshape(H, W)
+        mask = unpack_rows(r["evenodd"][r["word_start"][i]:r["word_start"][i + 1]], H, W)
         out.append(Geometry(mask, not defects, defects))
     return out

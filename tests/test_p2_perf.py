@@ -48,7 +48,23 @@ def test_configs_turn_off_the_per_micro_batch_syncs(model, tmp_path):
 
 
 def test_trainers_skip_flop_counting():
-    for f in ("experiments/phase2/train_sft.py", "experiments/phase2/g_probe.py"):
-        src = (ROOT / f).read_text()
-        assert "floating_point_ops = lambda inputs: 0" in src or (
-            "def floating_point_ops(self, inputs):" in src and "            return 0" in src), f
+    """SFT: train_sft's Trainer subclass; GRPO: g_probe trains with fast.FastGRPO (tests/test_train_fast.py)."""
+    src = (ROOT / "experiments/phase2/train_sft.py").read_text()
+    assert "def floating_point_ops(self, inputs):" in src and "            return 0" in src
+    assert "cls = GRPOTrainer if a.plain else fast.FastGRPO" in (ROOT / "experiments/phase2/g_probe.py").read_text()
+
+
+def test_vllm_context_is_bounded():
+    """TRL's default vllm_max_model_length is the model's (262,144 for Qwen3-VL): vLLM sizes its first KV block and
+    graph capture for it and fails at start. Our longest sequence: ~400 prompt tokens (a 512 px image is 256) + 1536."""
+    c = configs.grpo_config("qwen3-vl-2b", "o")
+    assert configs.MAX_COMPLETION["qwen3-vl-2b"] + 512 <= c.vllm_max_model_length <= 4096
+
+
+def test_g_probe_takes_the_profile_arm_flags(capsys):
+    from experiments.phase2 import g_probe
+
+    with pytest.raises(SystemExit) as e:
+        g_probe.main(["--help"])
+    out = capsys.readouterr().out
+    assert e.value.code == 0 and all(f in out for f in ("--plain", "--trace", "--compile"))

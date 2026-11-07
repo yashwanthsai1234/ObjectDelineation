@@ -1,13 +1,16 @@
 // gpucheck.cpp -- the single-source checker of gpucheck.h. Every algorithm is written once, as __host__ __device__
 // functors run by for_each over independent items (rows, rings, edges, shapes); for_each is a plain loop when the
-// C++ compiler builds this file and a kernel launch when nvcc does. The only other CPU/GPU differences are memory
-// (Buf) and four atomic helpers, all in the "platform" section below.
+// C++ compiler builds this file and a kernel launch when nvcc does. The other CPU/GPU differences are in the
+// "platform" section (memory, copies, streams, four atomic helpers) and the last step of the raster (below).
 //
 // Polygons (port of cpp/polycore/polycore.hpp, same exact integer arithmetic, int64 or __int128 chosen per shape
 // by the same bounds):
-//  * raster: one item per pixel row. Each edge crossing the row's centre line adds its sign to the winding of the
-//    centres left of the crossing; a suffix sum over a 256-column window gives the winding, so no sort and no
-//    scratch memory. Even-odd and nonzero come from the same winding (one pass).
+//  * raster: one pixel row per item (one warp per row on the GPU). Each edge crossing the row's centre line adds its
+//    sign to the winding of the centres left of the crossing; a suffix sum over a 1024-column window gives the
+//    winding, so no sort. Only the even-odd mask is made, bit-packed: 32 pixels per uint32 word, LSB = leftmost. On
+//    the GPU the warp's lanes share the edges, add their crossings into the window in shared memory, and build each
+//    word with __ballot_sync (lane l = column 32 j + l of word j); lane j keeps word j, so a window's 32 words are
+//    stored by one coalesced warp store.
 //  * validate: one item per ring (clean the ring, count repeats/area/range), one per edge (classify it against
 //    every later edge of the shape; polycore's sweep only prunes pairs whose boxes do not meet, which classify
 //    rejects anyway), one per shape (ring-ring counts, winding, containment by exact witness points).
@@ -19,13 +22,22 @@
 //  * rings are ordered as polygonize returns them (by their first east edge in raster order) and their corners
 //    scattered to their output positions.
 //
-// References: the headers of cpp/polycore/polycore.hpp and src/objdel/checker/polygonize.py; CUDA __int128 in device
-// code (CUDA >= 11.5): https://docs.nvidia.com/cuda/cuda-c-programming-guide/#supported-types ; unified memory:
-// https://docs.nvidia.com/cuda/cuda-c-programming-guide/#unified-memory-programming
+// Host side (issues CK-1 to CK-3 of experiments/phase2/perf/issues.md): per lane one stream, one device arena and two
+// staging buffers (pinned host memory), all made at the first call and grown to the next power of two, never freed
+// per call. A polygon call is: pack the inputs into the pinned buffer, one copy in, the kernels on the lane's stream,
+// one copy out, one stream synchronize. A large polygon batch is cut into two halves on two lanes, so the second
+// half's copy and the host's packing overlap the first half's kernels (C7). One mutex serializes the calls.
+//
+// References: the headers of cpp/polycore/polycore.hpp and src/objdel/checker/polygonize.py; CUDA C++ Programming
+// Guide (https://docs.nvidia.com/cuda/cuda-c-programming-guide/): __int128 in device code (CUDA >= 11.5, "Supported
+// Types"), warp vote and shuffle functions (__ballot_sync, __shfl_sync: every lane named in the mask must execute
+// them), __syncwarp (memory ordering among the warp's lanes), page-locked host memory and asynchronous concurrent
+// execution (cudaMemcpyAsync overlaps kernels only from pinned memory, on a non-default stream).
 #include "gpucheck.h"
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -43,7 +55,6 @@ namespace gpucheck {
 namespace {
 
 using i128 = __int128;
-using u64 = std::uint64_t;
 using polycore::kMaxRings;
 using polycore::kNumDefects;
 constexpr i32 kPairs = kMaxRings * kMaxRings;
@@ -54,6 +65,42 @@ void cuda_check(cudaError_t e) {
   if (e != cudaSuccess) throw std::runtime_error(std::string("CUDA: ") + cudaGetErrorString(e));
 }
 
+using Stream = cudaStream_t;
+
+Stream new_stream() {  // non-blocking (no implicit sync with the legacy default stream), lowest priority: the
+  cudaStream_t s = nullptr;  // trainer's kernels, queued at the same time, go first
+  int lowest = 0, highest = 0;
+  cuda_check(cudaDeviceGetStreamPriorityRange(&lowest, &highest));
+  cuda_check(cudaStreamCreateWithPriority(&s, cudaStreamNonBlocking, lowest));
+  return s;
+}
+
+// A failed call (an OOM in Block::get, say) leaves the runtime's last error set, and the next call's
+// cudaGetLastError() after a good launch would return it: clear it at the start of every call.
+void clear_error() { (void)cudaGetLastError(); }
+
+void* alloc(bool device, size_t bytes) {
+  void* p = nullptr;
+  cuda_check(device ? cudaMalloc(&p, bytes) : cudaMallocHost(&p, bytes));
+  return p;
+}
+
+void release(bool device, void* p) { cuda_check(device ? cudaFree(p) : cudaFreeHost(p)); }
+
+void to_device(void* dst, const void* src, size_t bytes, Stream st) {
+  if (bytes) cuda_check(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyHostToDevice, st));
+}
+
+void to_host(void* dst, const void* src, size_t bytes, Stream st) {
+  if (bytes) cuda_check(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToHost, st));
+}
+
+void zero(void* p, size_t bytes, Stream st) {
+  if (bytes) cuda_check(cudaMemsetAsync(p, 0, bytes, st));
+}
+
+void wait(Stream st) { cuda_check(cudaStreamSynchronize(st)); }
+
 template <class F>
 __global__ void kernel(i64 n, F f) {
   const i64 i = i64(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -61,49 +108,99 @@ __global__ void kernel(i64 n, F f) {
 }
 
 template <class F>
-void for_each(i64 n, const F& f) {
+void for_each(Stream st, i64 n, const F& f) {
   constexpr int kThreads = 128;
   if (n <= 0) return;
-  kernel<<<unsigned((n + kThreads - 1) / kThreads), kThreads>>>(n, f);
+  kernel<<<unsigned((n + kThreads - 1) / kThreads), kThreads, 0, st>>>(n, f);
   cuda_check(cudaGetLastError());
 }
-
-void sync() { cuda_check(cudaDeviceSynchronize()); }
 #else
+struct Stream {};  // the CPU build runs every step at once, in order
+
+Stream new_stream() { return {}; }
+void* alloc(bool, size_t bytes) { return ::operator new(bytes); }
+void release(bool, void* p) { ::operator delete(p); }
+void to_device(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
+void to_host(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
+void zero(void* p, size_t bytes, Stream) { if (bytes) std::memset(p, 0, bytes); }
+void wait(Stream) {}
+void clear_error() {}
+
 template <class F>
-void for_each(i64 n, const F& f) {
+void for_each(Stream, i64 n, const F& f) {
   for (i64 i = 0; i < n; ++i) f(i);
 }
-
-void sync() {}
 #endif
 
-// Zero-filled array readable by the host and the kernels (unified memory on the GPU). Host access only after sync().
-template <class T>
-struct Buf {
-  T* p = nullptr;
-  explicit Buf(i64 n, const T* src = nullptr) {
-    const size_t bytes = sizeof(T) * size_t(n > 0 ? n : 1);
-#ifdef __CUDACC__
-    cuda_check(cudaMallocManaged(&p, bytes));
-    cuda_check(cudaMemset(p, 0, bytes));
-    sync();
-#else
-    p = static_cast<T*>(::operator new(bytes));
-    std::memset(p, 0, bytes);
-#endif
-    if (src && n > 0) std::memcpy(p, src, sizeof(T) * size_t(n));
+// Grow-only buffer: device memory, or host staging memory (pinned on the GPU build). get(bytes) keeps the buffer when
+// it is large enough, else replaces it by one of the next power of two up to 64 MiB, exact above (the polygon path
+// stays in a few MiB; one large check_masks call must not keep twice its need). Never freed per call.
+template <bool kDevice>
+struct Block {
+  u8* p = nullptr;
+  size_t cap = 0;
+  u8* get(size_t bytes) {
+    if (bytes <= cap) return p;
+    size_t c = 4096;
+    while (c < bytes && c < (size_t(64) << 20)) c <<= 1;
+    if (c < bytes) c = bytes;
+    void* old = p;
+    p = nullptr, cap = 0;
+    if (old) release(kDevice, old);
+    p = static_cast<u8*>(alloc(kDevice, c));
+    cap = c;
+    return p;
   }
-  ~Buf() {
-#ifdef __CUDACC__
-    cudaFree(p);
-#else
-    ::operator delete(p);
-#endif
-  }
-  Buf(const Buf&) = delete;
-  Buf& operator=(const Buf&) = delete;
 };
+
+struct Lane {  // one stream with its device arena and its staging buffers (in: host -> device, out: device -> host)
+  Stream stream{};
+  Block<true> dev;
+  Block<false> in, out;
+};
+
+struct Engine {
+  std::mutex mu;
+  bool ready = false;
+  Lane lanes[2];
+  void start() {  // called with mu held
+    if (ready) return;
+    for (Lane& l : lanes) l.stream = new_stream();
+    ready = true;
+  }
+};
+
+// Never destroyed: at process exit the CUDA runtime may be torn down before static objects, so the driver frees all.
+Engine& engine() {
+  static Engine* e = new Engine;
+  return *e;
+}
+
+// Waits for both lanes on every exit of a call, so a call that throws leaves no copy in flight from a staging buffer
+// the next call refills. Errors are ignored here: the throwing call reports the first one.
+struct Drain {
+  Engine& e;
+  ~Drain() {
+#ifdef __CUDACC__
+    if (e.ready)
+      for (Lane& l : e.lanes) cudaStreamSynchronize(l.stream);
+#endif
+  }
+};
+
+// Arrays of one call placed in one block, each at a 256-byte aligned offset (as cudaMalloc aligns).
+struct Layout {
+  size_t size = 0;
+  template <class T>
+  size_t put(i64 n) {
+    const size_t at = (size + 255) / 256 * 256;
+    size = at + sizeof(T) * size_t(n > 0 ? n : 0);
+    return at;
+  }
+};
+
+template <class T>
+T* ptr(u8* base, size_t off) { return reinterpret_cast<T*>(base + off); }
 
 HD inline void atomic_add(i32* p, i32 v) {
 #ifdef __CUDA_ARCH__
@@ -166,7 +263,7 @@ HD inline i64 iabs(i64 v) { return v < 0 ? -v : v; }
 // ===================================================================== polygons
 struct Shapes {  // device view of Polygons plus derived offsets
   const i32* xy;
-  const i64 *ring_start, *shape_start, *row_start, *mask_start;
+  const i64 *ring_start, *shape_start, *row_start, *word_start;
   const i32 *roles, *W, *H;
   i64 n, G;
 };
@@ -186,58 +283,144 @@ struct Precision {
 };
 
 // ---------------------------------------------------------------- raster
-constexpr i32 kChunk = 256;  // columns per suffix-sum window (local memory per thread: 1 KiB)
+constexpr i32 kWin = 1024;  // columns per suffix-sum window = 32 words of 32 pixels
 
+HD inline i32 words_per_row(i32 W) { return (W + 31) / 32; }
+
+// The centre line of one pixel row in polycore's doubled, grid-scaled coordinates.
 template <class T>
-HD void raster_row(const Shapes& s, i64 sh, i32 row, u8* eo, u8* nz) {
-  const i32 W = s.W[sh];
-  const T sx = T(2) * W, sy = T(2) * s.H[sh], g = T(s.G), yc = T(2 * row + 1) * g;
-  for (i32 c0 = 0; c0 < W; c0 += kChunk) {
-    const i32 c1 = mn(W, c0 + kChunk);
-    i32 buf[kChunk];
-    for (i32 k = 0; k < c1 - c0; ++k) buf[k] = 0;
-    i32 right = 0;  // signs of crossings right of the whole window
-    for (i64 ring = s.shape_start[sh]; ring < s.shape_start[sh + 1]; ++ring) {
-      const i64 b = s.ring_start[ring], n = s.ring_start[ring + 1] - b;
-      for (i64 k = 0; k < n; ++k) {
-        const i64 v0 = b + k, v1 = b + (k + 1 == n ? 0 : k + 1);
-        const T ay = T(s.xy[2 * v0 + 1]) * sy, by = T(s.xy[2 * v1 + 1]) * sy;
-        if (ay == by) continue;  // horizontal edges never count
-        const bool down = by > ay;  // edge goes down the screen: +1
-        const T y0 = down ? ay : by, dy = down ? by - ay : ay - by;
-        if (yc < y0 || yc >= y0 + dy) continue;  // half-open: y0 <= yc < y0 + dy
-        const T ax = T(s.xy[2 * v0]) * sx, bx = T(s.xy[2 * v1]) * sx;
-        const T x0 = down ? ax : bx, dx = (down ? bx : ax) - x0;
-        // col = number of centres strictly left of the crossing, clamped to [0, W] (polycore collect_keys)
-        const T q = floordiv<T>(x0 * dy + (yc - y0) * dx - 1, g * dy);
-        const T cnt = floordiv<T>(q - 1, T(2)) + 1;
-        const i32 col = cnt < 0 ? 0 : (cnt > T(W) ? W : i32(cnt));
-        const i32 sign = down ? 1 : -1;
-        if (col >= c1) right += sign;
-        else if (col > c0) buf[col - 1 - c0] += sign;  // adds to centres c0 .. col - 1
-      }
+struct RowLine {
+  T sx, sy, g, yc;
+  i32 W;
+  HD RowLine(const Shapes& s, i64 sh, i32 row)
+      : sx(T(2) * s.W[sh]), sy(T(2) * s.H[sh]), g(T(s.G)), yc(T(2 * row + 1) * T(s.G)), W(s.W[sh]) {}
+
+  // Edge a -> b against the line: false when it does not cross (half-open in y); else col = the number of centres
+  // strictly left of the crossing, clamped to [0, W] (polycore collect_keys), and sign = +1 for an edge going down.
+  HD bool cross(const i32* a, const i32* b, i32& col, i32& sign) const {
+    const T ay = T(a[1]) * sy, by = T(b[1]) * sy;
+    if (ay == by) return false;  // horizontal edges never count
+    const bool down = by > ay;
+    const T y0 = down ? ay : by, dy = down ? by - ay : ay - by;
+    if (yc < y0 || yc >= y0 + dy) return false;  // half-open: y0 <= yc < y0 + dy
+    const T ax = T(a[0]) * sx, bx = T(b[0]) * sx;
+    const T x0 = down ? ax : bx, dx = (down ? bx : ax) - x0;
+    const T q = floordiv<T>(x0 * dy + (yc - y0) * dx - 1, g * dy);
+    const T cnt = floordiv<T>(q - 1, T(2)) + 1;
+    col = cnt < 0 ? 0 : (cnt > T(W) ? W : i32(cnt));
+    sign = down ? 1 : -1;
+    return true;
+  }
+};
+
+// Crossings of edges first, first + stride, ... of every ring of the shape, for the window [c0, c1): a crossing adds
+// its sign to the centres c0 .. col - 1, kept as buf[col - 1 - c0] for the suffix sum. Returns the sum of the signs of
+// the crossings right of the whole window (col >= c1).
+template <class T>
+HD i32 window_crossings(const Shapes& s, i64 sh, const RowLine<T>& L, i32 c0, i32 c1, i32 first, i32 stride,
+                        i32* buf) {
+  i32 right = 0;
+  for (i64 ring = s.shape_start[sh]; ring < s.shape_start[sh + 1]; ++ring) {
+    const i64 b = s.ring_start[ring], n = s.ring_start[ring + 1] - b;
+    for (i64 k = first; k < n; k += stride) {
+      const i64 v0 = b + k, v1 = b + (k + 1 == n ? 0 : k + 1);
+      i32 col = 0, sign = 0;
+      if (!L.cross(s.xy + 2 * v0, s.xy + 2 * v1, col, sign)) continue;
+      if (col >= c1) right += sign;
+      else if (col > c0) atomic_add(buf + (col - 1 - c0), sign);
     }
-    i32 w = right;  // winding(c) = sum of the signs of crossings right of centre c
-    for (i32 c = c1 - 1; c >= c0; --c) {
+  }
+  return right;
+}
+
+// Shape, row and first output word of raster row i (rows of all shapes, in order).
+HD inline i64 row_of(const Shapes& s, i64 i, i64& sh, i32& row) {
+  sh = segment(s.row_start, s.n, i);
+  row = i32(i - s.row_start[sh]);
+  return s.word_start[sh] + i64(row) * words_per_row(s.W[sh]);
+}
+
+#ifdef __CUDACC__
+constexpr unsigned kFull = 0xFFFFFFFFu;
+constexpr int kRowWarps = 4;  // rows per block of 128 threads; shared memory 4 x 4 KiB
+
+// One warp per row. Every lane runs every warp function below: the row index, the window bounds and the word count
+// depend only on the row, so the whole warp takes the same branches around them and kFull names exactly the active
+// lanes (a warp whose row is past the end returns as a whole, before any of them).
+template <class T>
+__device__ void raster_row_warp(const Shapes& s, i64 sh, i32 row, i32* buf, u32* out) {
+  const i32 lane = i32(threadIdx.x % 32);
+  const RowLine<T> L(s, sh, row);
+  for (i32 c0 = 0; c0 < L.W; c0 += kWin) {
+    const i32 c1 = mn(L.W, c0 + kWin);
+    __syncwarp(kFull);  // the previous window's reads of buf are done
+    for (i32 k = lane; k < kWin; k += 32) buf[k] = 0;
+    __syncwarp(kFull);
+    i32 carry = window_crossings(s, sh, L, c0, c1, lane, 32, buf);
+    __syncwarp(kFull);  // every lane's additions to buf are visible to the warp
+    for (int off = 16; off > 0; off >>= 1) carry += __shfl_xor_sync(kFull, carry, off);
+    const i32 nw = (c1 - c0 + 31) / 32;
+    u32 mine = 0;
+    for (i32 j = nw - 1; j >= 0; --j) {  // carry = winding contributed by the columns right of word j
+      const i32 c = c0 + 32 * j + lane;
+      i32 suf = c < c1 ? buf[32 * j + lane] : 0;  // inclusive suffix sum over lanes lane .. 31
+      for (int off = 1; off < 32; off <<= 1) {
+        const i32 t = __shfl_down_sync(kFull, suf, off);
+        if (lane + off < 32) suf += t;
+      }
+      const u32 word = __ballot_sync(kFull, c < c1 && ((carry + suf) & 1));
+      if (lane == j) mine = word;
+      carry += __shfl_sync(kFull, suf, 0);
+    }
+    if (lane < nw) out[c0 / 32 + lane] = mine;  // 32 consecutive words: one coalesced store
+  }
+}
+
+__global__ void raster_kernel(Shapes s, const u8* wide, u32* words, i64 rows) {
+  __shared__ i32 bufs[kRowWarps][kWin];
+  const i32 w = i32(threadIdx.x / 32);
+  const i64 i = i64(blockIdx.x) * kRowWarps + w;
+  if (i >= rows) return;
+  i64 sh = 0;
+  i32 row = 0;
+  u32* out = words + row_of(s, i, sh, row);
+  if (wide[sh]) raster_row_warp<i128>(s, sh, row, bufs[w], out);
+  else raster_row_warp<i64>(s, sh, row, bufs[w], out);
+}
+
+void raster(Stream st, const Shapes& s, const u8* wide, u32* words, i64 rows) {
+  if (rows <= 0) return;
+  raster_kernel<<<unsigned((rows + kRowWarps - 1) / kRowWarps), 32 * kRowWarps, 0, st>>>(s, wide, words, rows);
+  cuda_check(cudaGetLastError());
+}
+#else
+template <class T>
+void raster_row(const Shapes& s, i64 sh, i32 row, u32* out) {
+  const RowLine<T> L(s, sh, row);
+  i32 buf[kWin];
+  for (i32 c0 = 0; c0 < L.W; c0 += kWin) {
+    const i32 c1 = mn(L.W, c0 + kWin);
+    std::fill(buf, buf + (c1 - c0), 0);
+    i32 w = window_crossings(s, sh, L, c0, c1, 0, 1, buf);  // winding(c) = sum of the signs right of centre c
+    u32 word = 0;
+    for (i32 c = c1 - 1; c >= c0; --c) {  // c0 is a multiple of 32: every word is stored at its column 0
       w += buf[c - c0];
-      eo[c] = u8(w & 1);
-      nz[c] = u8(w != 0);
+      word |= u32(w & 1) << (c & 31);
+      if ((c & 31) == 0) out[c / 32] = word, word = 0;
     }
   }
 }
 
-struct RasterRows {
-  Shapes s;
-  const u8* raster_wide;
-  u8 *eo, *nz;
-  HD void operator()(i64 i) const {
-    const i64 sh = segment(s.row_start, s.n, i);
-    const i32 row = i32(i - s.row_start[sh]);
-    const i64 at = s.mask_start[sh] + i64(row) * s.W[sh];
-    if (raster_wide[sh]) raster_row<i128>(s, sh, row, eo + at, nz + at);
-    else raster_row<i64>(s, sh, row, eo + at, nz + at);
+void raster(Stream, const Shapes& s, const u8* wide, u32* words, i64 rows) {
+  for (i64 i = 0; i < rows; ++i) {
+    i64 sh = 0;
+    i32 row = 0;
+    u32* out = words + row_of(s, i, sh, row);
+    if (wide[sh]) raster_row<i128>(s, sh, row, out);
+    else raster_row<i64>(s, sh, row, out);
   }
-};
+}
+#endif
 
 // ---------------------------------------------------------------- validate
 struct Rings {  // cleaned rings (consecutive and closing repeats dropped), stored at their input offsets
@@ -715,65 +898,192 @@ int jump_rounds(i64 n) {  // polygonize._jumps: ceil(log2(n)) + 1 rounds cover a
 
 constexpr i64 kChunkSlots = i64(1) << 23;  // slots per batch of masks (~0.5 GB of scratch)
 
-void check_mask_chunk(const Masks& in, i64 m0, i64 m1, MaskResult& out) {
+struct RingInfo {  // one ring of a mask chunk, gathered for the host's ordering
+  i32 m, e, key, count;  // mask (chunk index), start slot, first east edge, corners
+  i64 area2;             // twice the signed area
+};
+
+struct GatherRings {
+  MaskView v;
+  Slots sl;
+  const i32* rec;
+  RingInfo* info;
+  HD void operator()(i64 k) const {
+    const i32 m = rec[2 * k], e = rec[2 * k + 1];
+    const i64 slot = v.slot_start[m] + e;
+    info[k] = RingInfo{m, e, sl.rkey[slot], sl.rcount[slot], sl.rarea[slot]};
+  }
+};
+
+struct SetBase {  // each ring's output offset, at its start slot
+  MaskView v;
+  Slots sl;
+  const i32* rec;
+  const i64* base;
+  HD void operator()(i64 k) const { sl.rbase[v.slot_start[rec[2 * k]] + rec[2 * k + 1]] = base[k]; }
+};
+
+// Masks [m0, m1) on one lane: copy in, rings and corner ranks, then three short round trips to the host (the ring
+// count; the rings and bit-quads; the corners after the host ordered the rings).
+void check_mask_chunk(const Masks& in, i64 m0, i64 m1, MaskResult& out, Lane& L) {
   const i64 n = m1 - m0;
-  std::vector<i64> start(n + 1), slot_start(n + 1, 0), vrow_start(n + 1, 0);
+  std::vector<i64> slot_start(n + 1, 0), vrow_start(n + 1, 0);
   i64 max_slots = 1;
   for (i64 k = 0; k < n; ++k) {
     const i64 W = in.W[m0 + k], H = in.H[m0 + k];
-    start[k] = in.start[m0 + k] - in.start[m0];
     slot_start[k + 1] = slot_start[k] + 4 * (W + 1) * (H + 1);
     vrow_start[k + 1] = vrow_start[k] + H + 1;
     max_slots = std::max(max_slots, 4 * (W + 1) * (H + 1));
   }
-  start[n] = in.start[m1] - in.start[m0];
-  const i64 S = slot_start[n], rows = vrow_start[n];
-  Buf<u8> bits(start[n], in.bits + in.start[m0]);
-  Buf<i64> d_start(n + 1, start.data()), d_slot(n + 1, slot_start.data()), d_vrow(n + 1, vrow_start.data());
-  Buf<i32> W(n, in.W + m0), H(n, in.H + m0);
-  Buf<i32> succ(S), pred(S), lab0(S), lab1(S), jmp0(S), jmp1(S), w0(S), w1(S), rcount(S), rkey(S);
-  Buf<i64> rarea(S), rbase(S), quads(5 * n);
-  Buf<i32> nrings(1), rec(2 * (S / 8 + 1));  // <= 2 edges per vertex (4 slots), >= 4 edges per ring
-  const MaskView v{bits.p, d_start.p, d_slot.p, d_vrow.p, W.p, H.p, n};
-  const Slots sl{succ.p, pred.p, {lab0.p, lab1.p}, {jmp0.p, jmp1.p}, {w0.p, w1.p},
-                 rcount.p, rkey.p, rarea.p, rbase.p};
+  const i64 npx = in.start[m1] - in.start[m0], S = slot_start[n], rows = vrow_start[n];
+  const i64 rmax = S / 8 + 1;  // <= 2 edges per vertex (4 slots), >= 4 edges per ring
+  Layout lay;
+  const size_t o_bits = lay.put<u8>(npx), o_start = lay.put<i64>(n + 1), o_slot = lay.put<i64>(n + 1),
+               o_vrow = lay.put<i64>(n + 1), o_W = lay.put<i32>(n), o_H = lay.put<i32>(n);
+  const size_t in_bytes = lay.size;
+  size_t o_i32[9];  // succ, pred, lab 0/1, jmp 0/1, w 0/1, rkey
+  for (size_t& o : o_i32) o = lay.put<i32>(S);
+  const size_t o_rbase = lay.put<i64>(S), o_rec = lay.put<i32>(2 * rmax), o_info = lay.put<RingInfo>(rmax),
+               o_base = lay.put<i64>(rmax), o_pts = lay.put<i32>(S);  // <= S / 2 corners
+  const size_t o_rcount = lay.put<i32>(S), o_rarea = lay.put<i64>(S), o_quads = lay.put<i64>(5 * n),
+               o_nrings = lay.put<i32>(1);  // [o_rcount, end): zeroed
+  const size_t info_bytes = (sizeof(RingInfo) * size_t(rmax) + 255) / 256 * 256;
+  u8* d = L.dev.get(lay.size);
+  u8* h = L.in.get(std::max(in_bytes, sizeof(i64) * size_t(rmax)));
+  u8* o = L.out.get(std::max(info_bytes + sizeof(i64) * size_t(5 * n), sizeof(i32) * size_t(S)));
+  std::copy_n(in.bits + in.start[m0], npx, ptr<u8>(h, o_bits));
+  for (i64 k = 0; k <= n; ++k) ptr<i64>(h, o_start)[k] = in.start[m0 + k] - in.start[m0];
+  std::copy_n(slot_start.data(), n + 1, ptr<i64>(h, o_slot));
+  std::copy_n(vrow_start.data(), n + 1, ptr<i64>(h, o_vrow));
+  std::copy_n(in.W + m0, n, ptr<i32>(h, o_W));
+  std::copy_n(in.H + m0, n, ptr<i32>(h, o_H));
+
+  const Stream st = L.stream;
+  const MaskView v{ptr<u8>(d, o_bits), ptr<i64>(d, o_start), ptr<i64>(d, o_slot), ptr<i64>(d, o_vrow), ptr<i32>(d, o_W),
+                   ptr<i32>(d, o_H), n};
+  auto slots = [&](int k) { return ptr<i32>(d, o_i32[k]); };
+  const Slots sl{slots(0), slots(1), {slots(2), slots(3)}, {slots(4), slots(5)}, {slots(6), slots(7)},
+                 ptr<i32>(d, o_rcount), slots(8), ptr<i64>(d, o_rarea), ptr<i64>(d, o_rbase)};
+  i32* rec = ptr<i32>(d, o_rec);
+  to_device(d, h, in_bytes, st);
+  zero(d + o_rcount, lay.size - o_rcount, st);
   const int rounds = jump_rounds(max_slots);
-  for_each(rows, InitSlots{v, sl, quads.p});
+  for_each(st, rows, InitSlots{v, sl, ptr<i64>(d, o_quads)});
   int in_buf = 0;
-  for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(rows, LabelRound{v, sl, in_buf});
+  for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(st, rows, LabelRound{v, sl, in_buf});
   const i32* lab = sl.lab[in_buf];
-  for_each(rows, Pred{v, sl});
-  for_each(rows, RankInit{v, sl, lab});
+  for_each(st, rows, Pred{v, sl});
+  for_each(st, rows, RankInit{v, sl, lab});
   in_buf = 0;
-  for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(rows, RankRound{v, sl, in_buf});
+  for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(st, rows, RankRound{v, sl, in_buf});
   const i32* w = sl.w[in_buf];
-  for_each(rows, RingStats{v, sl, lab, nrings.p, rec.p});
-  sync();
+  for_each(st, rows, RingStats{v, sl, lab, ptr<i32>(d, o_nrings), rec});
+  to_host(o, d + o_nrings, sizeof(i32), st);
+  wait(st);
+  const i32 R = *ptr<i32>(o, 0);
+  if (R < 0 || R > rmax) throw std::logic_error("gpucheck: ring count out of its bound");
+
+  for_each(st, R, GatherRings{v, sl, rec, ptr<RingInfo>(d, o_info)});
+  to_host(o, d + o_info, sizeof(RingInfo) * size_t(R), st);
+  to_host(o + info_bytes, d + o_quads, sizeof(i64) * size_t(5 * n), st);
+  wait(st);
   // Order the rings as polygonize does and give each its output offset (host: rings are few).
-  const i32 R = nrings.p[0];
+  const RingInfo* info = ptr<RingInfo>(o, 0);
   std::vector<i32> order(R);
   std::iota(order.begin(), order.end(), 0);
-  auto key = [&](i32 k) { return rkey.p[slot_start[rec.p[2 * k]] + rec.p[2 * k + 1]]; };
   std::sort(order.begin(), order.end(), [&](i32 a, i32 b) {
-    return rec.p[2 * a] != rec.p[2 * b] ? rec.p[2 * a] < rec.p[2 * b] : key(a) < key(b);
+    return info[a].m != info[b].m ? info[a].m < info[b].m : info[a].key < info[b].key;
   });
   const i64 p0 = out.pts_start.back();
   i64 total = 0;
   std::vector<i64> per_mask(n, 0);
+  i64* base = ptr<i64>(h, 0);  // the copy in is done (wait above): its staging buffer is free
   for (i32 k : order) {
-    const i64 at = slot_start[rec.p[2 * k]] + rec.p[2 * k + 1];
-    rbase.p[at] = total;
-    total += rcount.p[at];
+    base[k] = total;
+    total += info[k].count;
     out.pts_start.push_back(p0 + total);
-    out.ring_area.push_back(rarea.p[at] / 2);
-    per_mask[rec.p[2 * k]] += 1;
+    out.ring_area.push_back(info[k].area2 / 2);
+    per_mask[info[k].m] += 1;
   }
   for (i64 k = 0; k < n; ++k) out.ring_start.push_back(out.ring_start.back() + per_mask[k]);
-  Buf<i32> pts(2 * total);
-  for_each(rows, ScatterCorners{v, sl, lab, w, pts.p});
-  sync();
-  out.pts.insert(out.pts.end(), pts.p, pts.p + 2 * total);
-  out.quads.insert(out.quads.end(), quads.p, quads.p + 5 * n);
+  const i64* quads = ptr<i64>(o + info_bytes, 0);
+  out.quads.insert(out.quads.end(), quads, quads + 5 * n);
+  if (2 * total > S) throw std::logic_error("gpucheck: corner count out of its bound");
+
+  to_device(d + o_base, base, sizeof(i64) * size_t(R), st);
+  for_each(st, R, SetBase{v, sl, rec, ptr<i64>(d, o_base)});
+  for_each(st, rows, ScatterCorners{v, sl, lab, w, ptr<i32>(d, o_pts)});
+  to_host(o, d + o_pts, sizeof(i32) * size_t(2 * total), st);
+  wait(st);
+  out.pts.insert(out.pts.end(), ptr<i32>(o, 0), ptr<i32>(o, 0) + 2 * total);
+}
+
+// ---------------------------------------------------------------- polygon calls
+constexpr i64 kSplitMin = 64;  // polygon batches of at least this many shapes run as two halves on the two lanes
+
+// One half (or all) of a polygon call: shapes [a, b), their arrays at offsets of one lane's arena. The staging buffers
+// mirror it: [0, in_bytes) is the copy in, [defects, size) the copy out.
+struct PolyChunk {
+  i64 a, b, n, r0, nr, v0, nv, rows, nwords;
+  size_t xy, roles, W, H, ring_start, shape_start, row_start, word_start, in_bytes;
+  size_t raster_wide, validate_wide, fewer, cxy, len, box, area2, counts, pairs, defects, words, size;
+};
+
+PolyChunk plan(const Polygons& in, const std::vector<i64>& word_start, i64 a, i64 b) {
+  PolyChunk c{};
+  c.a = a, c.b = b, c.n = b - a;
+  c.r0 = in.shape_start[a], c.nr = in.shape_start[b] - c.r0;
+  c.v0 = in.ring_start[c.r0], c.nv = in.ring_start[c.r0 + c.nr] - c.v0;
+  c.rows = 0;
+  for (i64 s = a; s < b; ++s) c.rows += in.H[s];
+  c.nwords = word_start[b] - word_start[a];
+  Layout l;
+  c.xy = l.put<i32>(2 * c.nv), c.roles = l.put<i32>(c.nr), c.W = l.put<i32>(c.n), c.H = l.put<i32>(c.n);
+  c.ring_start = l.put<i64>(c.nr + 1), c.shape_start = l.put<i64>(c.n + 1), c.row_start = l.put<i64>(c.n + 1);
+  c.word_start = l.put<i64>(c.n + 1);
+  c.in_bytes = l.size;
+  c.raster_wide = l.put<u8>(c.n), c.validate_wide = l.put<u8>(c.n), c.fewer = l.put<u8>(c.nr);
+  c.cxy = l.put<i32>(2 * c.nv), c.len = l.put<i32>(c.nr), c.box = l.put<i32>(4 * c.nr), c.area2 = l.put<i64>(c.nr);
+  c.counts = l.put<i32>(c.nr * kNumDefects), c.pairs = l.put<i32>(c.n * 2 * kPairs);  // zeroed, with defects
+  c.defects = l.put<i64>(c.n * kNumDefects), c.words = l.put<u32>(c.nwords);
+  c.size = l.size;
+  return c;
+}
+
+void pack(const Polygons& in, const std::vector<i64>& word_start, const PolyChunk& c, u8* h) {
+  std::copy_n(in.xy + 2 * c.v0, 2 * c.nv, ptr<i32>(h, c.xy));  // copy_n: a count of 0 never reads (null data)
+  std::copy_n(in.roles + c.r0, c.nr, ptr<i32>(h, c.roles));
+  std::copy_n(in.W + c.a, c.n, ptr<i32>(h, c.W));
+  std::copy_n(in.H + c.a, c.n, ptr<i32>(h, c.H));
+  for (i64 r = 0; r <= c.nr; ++r) ptr<i64>(h, c.ring_start)[r] = in.ring_start[c.r0 + r] - c.v0;
+  i64* row_start = ptr<i64>(h, c.row_start);
+  row_start[0] = 0;
+  for (i64 s = 0; s < c.n; ++s) {
+    ptr<i64>(h, c.shape_start)[s] = in.shape_start[c.a + s] - c.r0;
+    ptr<i64>(h, c.word_start)[s] = word_start[c.a + s] - word_start[c.a];
+    row_start[s + 1] = row_start[s] + in.H[c.a + s];
+  }
+  ptr<i64>(h, c.shape_start)[c.n] = c.nr;
+  ptr<i64>(h, c.word_start)[c.n] = c.nwords;
+}
+
+// Queues the chunk on its lane: copy in, zero the counters, the kernels, copy out. Nothing waits.
+void launch(const PolyChunk& c, i64 G, Lane& L) {
+  u8* d = L.dev.p;
+  const Stream st = L.stream;
+  const Shapes s{ptr<i32>(d, c.xy), ptr<i64>(d, c.ring_start), ptr<i64>(d, c.shape_start), ptr<i64>(d, c.row_start),
+                 ptr<i64>(d, c.word_start), ptr<i32>(d, c.roles), ptr<i32>(d, c.W), ptr<i32>(d, c.H), c.n, G};
+  const Rings r{ptr<i32>(d, c.cxy), ptr<i32>(d, c.len), ptr<u8>(d, c.fewer), ptr<i64>(d, c.area2), ptr<i32>(d, c.box),
+                ptr<i32>(d, c.counts), ptr<i32>(d, c.pairs)};
+  u8 *raster_wide = ptr<u8>(d, c.raster_wide), *validate_wide = ptr<u8>(d, c.validate_wide);
+  to_device(d, L.in.p, c.in_bytes, st);
+  zero(d + c.counts, c.words - c.counts, st);  // counts, pairs, defects: the masks are written whole
+  for_each(st, c.n, Precision{s, raster_wide, validate_wide});
+  raster(st, s, raster_wide, ptr<u32>(d, c.words), c.rows);
+  for_each(st, c.nr, CleanRings{s, r});
+  for_each(st, c.nv, EdgePairs{s, r, validate_wide});
+  for_each(st, c.n, ShapeTotals{s, r, validate_wide, ptr<i64>(d, c.defects)});
+  to_host(L.out.p, d + c.defects, c.size - c.defects, st);
 }
 
 }  // namespace
@@ -797,32 +1107,36 @@ int device_count() {
 }
 
 PolygonResult check_polygons(const Polygons& in) {
-  const i64 n = in.n, nr = n ? in.shape_start[n] : 0, nv = nr ? in.ring_start[nr] : 0;
+  const i64 n = in.n;
   PolygonResult out;
-  out.mask_start.assign(n + 1, 0);
-  std::vector<i64> row_start(n + 1, 0);
-  for (i64 k = 0; k < n; ++k) {
-    out.mask_start[k + 1] = out.mask_start[k] + i64(in.W[k]) * in.H[k];
-    row_start[k + 1] = row_start[k] + in.H[k];
+  out.word_start.assign(n + 1, 0);
+  for (i64 k = 0; k < n; ++k) out.word_start[k + 1] = out.word_start[k] + i64(in.H[k]) * words_per_row(in.W[k]);
+  if (n == 0) return out;
+  out.evenodd.resize(size_t(out.word_start[n]));
+  out.defects.resize(size_t(n * kNumDefects));
+  const i64 half = n >= kSplitMin ? n / 2 : n;
+  const PolyChunk chunks[2] = {plan(in, out.word_start, 0, half), plan(in, out.word_start, half, n)};
+  const int used = half < n ? 2 : 1;
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  clear_error();
+  Drain drain{e};
+  e.start();
+  for (int k = 0; k < used; ++k) {  // every buffer is grown before any work is queued
+    Lane& L = e.lanes[k];
+    L.dev.get(chunks[k].size), L.in.get(chunks[k].in_bytes), L.out.get(chunks[k].size - chunks[k].defects);
   }
-  const i64 npx = out.mask_start[n];
-  Buf<i32> xy(2 * nv, in.xy), roles(nr, in.roles), W(n, in.W), H(n, in.H);
-  Buf<i64> ring_start(nr + 1, in.ring_start), shape_start(n + 1, in.shape_start);
-  Buf<i64> d_row(n + 1, row_start.data()), d_mask(n + 1, out.mask_start.data());
-  const Shapes s{xy.p, ring_start.p, shape_start.p, d_row.p, d_mask.p, roles.p, W.p, H.p, n, in.G};
-  Buf<u8> raster_wide(n), validate_wide(n), eo(npx), nz(npx), fewer(nr);
-  Buf<i32> cxy(2 * nv), len(nr), box(4 * nr), counts(nr * kNumDefects), pairs(n * 2 * kPairs);
-  Buf<i64> area2(nr), defects(n * kNumDefects);
-  const Rings r{cxy.p, len.p, fewer.p, area2.p, box.p, counts.p, pairs.p};
-  for_each(n, Precision{s, raster_wide.p, validate_wide.p});
-  for_each(row_start[n], RasterRows{s, raster_wide.p, eo.p, nz.p});
-  for_each(nr, CleanRings{s, r});
-  for_each(nv, EdgePairs{s, r, validate_wide.p});
-  for_each(n, ShapeTotals{s, r, validate_wide.p, defects.p});
-  sync();
-  out.evenodd.assign(eo.p, eo.p + npx);
-  out.nonzero.assign(nz.p, nz.p + npx);
-  out.defects.assign(defects.p, defects.p + n * kNumDefects);
+  for (int k = 0; k < used; ++k) {  // lane 1 is packed while lane 0 runs
+    pack(in, out.word_start, chunks[k], e.lanes[k].in.p);
+    launch(chunks[k], in.G, e.lanes[k]);
+  }
+  for (int k = 0; k < used; ++k) {
+    const PolyChunk& c = chunks[k];
+    Lane& L = e.lanes[k];
+    wait(L.stream);
+    std::copy_n(ptr<i64>(L.out.p, 0), c.n * kNumDefects, out.defects.data() + c.a * kNumDefects);
+    std::copy_n(ptr<u32>(L.out.p, c.words - c.defects), c.nwords, out.evenodd.data() + out.word_start[c.a]);
+  }
   return out;
 }
 
@@ -830,6 +1144,12 @@ MaskResult check_masks(const Masks& in) {
   MaskResult out;
   out.ring_start = {0};
   out.pts_start = {0};
+  if (in.n == 0) return out;
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  clear_error();
+  Drain drain{e};
+  e.start();
   for (i64 m0 = 0; m0 < in.n;) {  // chunks of at most kChunkSlots slots (a larger mask goes alone)
     i64 m1 = m0, slots = 0;
     while (m1 < in.n) {
@@ -837,7 +1157,7 @@ MaskResult check_masks(const Masks& in) {
       if (m1 > m0 && slots + s > kChunkSlots) break;
       slots += s, ++m1;
     }
-    check_mask_chunk(in, m0, m1, out);
+    check_mask_chunk(in, m0, m1, out, e.lanes[0]);
     m0 = m1;
   }
   return out;

@@ -7,7 +7,8 @@ configs.grpo_config with prereg.G_PROBE: LR 5e-6 (full FT) or 5e-5 (LoRA), const
 prompts per step (disagreement items x4), vLLM colocate generation (owner 2026-11-06, perf F1: HF generate of 256
 sequences needs 20-51 GiB of KV cache; needs the Phase 3 single-venv image, D15), sampling from
 configs.sampling(model, "grpo") (D13);
-TRLReward on the preloaded caches and a fork pool made before the model loads. Probe set: a seeded subset of `items`
+fast.FastGRPO (per-chunk trimmed forwards, a per-step vision cache: perf C1, C6), TRLReward on the
+preloaded caches and a fork pool made before the model loads. Probe set: a seeded subset of `items`
 (128) shifted-val records (select_ckpt.view_rows), K = 8 through the trainer's own generation (sample.sample), twice
 at step 0 (the null, h0) and once at step 20; per item the raw composite R. Verdict: prereg.g_probe, step-0 legal =
 the mean of both draws. Also: Spearman of step-0 sd_geom / r_std / mixed with the gain (D12 veto, §6.2), the
@@ -75,7 +76,7 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
-    from objdel.train import configs, rewards, serve
+    from objdel.train import callbacks, configs, fast, rewards, serve
 
     model = AutoModelForImageTextToText.from_pretrained(ckpt)
     proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
@@ -85,9 +86,12 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
     funcs, _ = rewards.TRLReward(serve.loader(a.train), rewards.stop_ids(model, proc), pool=pool).funcs()
-    trainer = GRPOTrainer(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, processing_class=proc,
-                          peft_config=peft)  # fmt: skip
-    trainer.floating_point_ops = lambda inputs: 0  # perf F3: no per-micro-batch walk over ~2.5k PEFT modules
+    cls = GRPOTrainer if a.plain else fast.FastGRPO
+    calls = [callbacks.TraceStep(a.trace, wait=1)] if a.trace else []
+    trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, processing_class=proc,
+                  peft_config=peft, callbacks=calls)  # fmt: skip
+    if a.compile:
+        fast.compile_text_layers(trainer.model, a.compile)
     t0 = time.time()
     s0a, s0b = (score(trainer, rows, a.probe.resolve(), pool, s) for s in SEEDS[:2])
     t1 = time.time()
@@ -102,7 +106,7 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
         "legal": {"step0": [s0a["legal"], s0b["legal"]], "step20": s20["legal"]},
         "spearman_gain": {k: signal.spearman_ci(v, r20 - (r0a + r0b) / 2, s20["ids"]) for k, v in step0.items()},
         "per_item": {"ids": s20["ids"], "r0a": r0a.tolist(), "r0b": r0b.tolist(), "r20": r20.tolist()},
-        "timing_s": {"step0_sampling": t1 - t0, "train": t2 - t1, "per_step": (t2 - t1) / G_PROBE["steps"]},
+        "timing_s": {"step0_sampling": t1 - t0, "train": t2 - t1, "per_step": (t2 - t1) / cfg.max_steps},
         "train_log_R": train_log(log), "log": log,
     }  # fmt: skip
 
@@ -119,6 +123,10 @@ def main(argv=None) -> int:
     ap.add_argument("--items", type=int, help="probe items (default prereg.G_PROBE['items'])")
     ap.add_argument("--procs", type=int, default=4)
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config (smoke tests)")
+    ap.add_argument("--compile", choices=["default", "reduce-overhead"],
+                    help="Stage F arm: torch.compile the text decoder layers (measured; off by default)")
+    ap.add_argument("--plain", action="store_true", help="profile arm: TRL's GRPOTrainer as shipped (no fast.FastGRPO)")
+    ap.add_argument("--trace", help="profile arm: torch.profiler trace of optimizer step 3 to this dir")
     a = ap.parse_args(argv)
     ckpts = [a.ckpt]
     if a.select:

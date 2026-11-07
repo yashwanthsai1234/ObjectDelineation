@@ -32,7 +32,13 @@ QUICK_TESTS = ["tests/test_eval_coverage.py", "tests/test_preflight.py", "tests/
                "tests/test_train_configs.py", "tests/test_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
 DRY_RUN = "tests/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select on a tiny model, CPU
 HF_RATE = {"lfm2.5-vl-450m": "hf-rate-lfm", "qwen3-vl-2b": "hf-rate-qwen3vl"}  # runs/<run>/<dir>/hf_rate.json (R0)
-DPH_CEILING = 1.00  # $/h, the RTX 4090 ceiling of policy.CARDS: a bound, not a quote
+
+
+def ceiling(gpu: str) -> float:
+    """$/h price ceiling of the card (policy.CARDS): a bound, not a quote."""
+    from experiments.phase2.vast import policy
+
+    return policy.CARDS[gpu]["ceiling"]
 
 
 def sha(path) -> str:
@@ -206,7 +212,7 @@ def checker_tests(a, cfg) -> list[str]:
 
 
 def projection(a, cfg) -> list[str]:
-    """project_r1's verdict on this config (R1 configs only), with the dollars it implies at DPH_CEILING."""
+    """project_r1's verdict on this config (R1 configs only), with the dollars it implies at the card's ceiling."""
     from experiments.phase2 import project_r1 as P
 
     if a.model not in P.R1 or P.R1[a.model][0] != Path(cfg).name:
@@ -228,8 +234,9 @@ def projection(a, cfg) -> list[str]:
     doc = json.loads(out.getvalue().splitlines()[-1]) if code != 2 else {}
     if code == 2:
         return ["project_r1 could not project (see its message above)"]
-    print(f"    projected {doc['projected_h']:.2f} h (stop {doc['stop_h']:.2f} h) = ${doc['projected_h'] * DPH_CEILING:.2f}"
-          f" at ${DPH_CEILING:.2f}/h")  # fmt: skip
+    dph = ceiling(a.gpu)
+    print(f"    projected {doc['projected_h']:.2f} h (stop {doc['stop_h']:.2f} h) = ${doc['projected_h'] * dph:.2f}"
+          f" at ${dph:.2f}/h")  # fmt: skip
     return [] if doc["go"] else [out.getvalue().splitlines()[0]]
 
 
@@ -246,10 +253,12 @@ CHECKS = [
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--config", type=Path, required=True)
+    ap.add_argument("--gpu", default="RTX_5090", help="card of the rental (policy.CARDS): sets the $/h ceiling")
     ns = ap.parse_args(argv)
     cfg = ns.config
     os.chdir(ROOT)
     a, _ = load(cfg)
+    a.gpu = ns.gpu
     failed = ""
     stamp = {"config": cfg.as_posix(), "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "hashes": hashes(cfg),
              "checks": {}, "pass": True}  # fmt: skip

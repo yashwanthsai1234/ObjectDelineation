@@ -130,50 +130,61 @@ def score_objects(text: str, truncated: bool, names: Sequence[str], caches: Mapp
 def score_many(jobs: Sequence[tuple]) -> list[tuple[dict, dict[str, np.ndarray] | None, dict[str, ObjectTerms]]]:
     """score_objects of every job (tuples of its arguments), in order. The masks of all parsed objects come from one
     objdel.geometry.to_masks call: one CUDA checker call per score_many."""
-    answers = [rater_answers(caches, names) for _, _, names, caches, _, _ in jobs]
+    return [_score_one(*w) for w in _checked(jobs)]
+
+
+def _checked(jobs: Sequence[tuple]) -> list[tuple]:
+    """Parse every job and make the masks of all parsed objects in one to_masks call (one CUDA checker call), in the
+    calling process. -> per job (names, caches, parser error, [Geometry per name] or None): what _score_checked
+    needs, and all a pool job carries."""
     parsed = [parse(text, names, truncated) for text, truncated, names, _, _, _ in jobs]
     objs = [(p.objs[n], W, H) for p, (_, _, names, _, W, H) in zip(parsed, jobs, strict=True) if p.ok for n in names]
     geoms = iter(to_masks(objs))
-    out = []
-    for p, a, (_, _, names, caches, _, _) in zip(parsed, answers, jobs, strict=True):
-        if not p.ok:
-            out.append((_FAILED | {"error": p.error, "defects": {}}, None, {}))
-            continue
-        legal, defects, masks, terms = True, {}, {}, {}
-        for n in names:
-            g = next(geoms)
-            legal &= g.legal
-            for d, c in g.defects.items():
-                defects[d] = defects.get(d, 0) + c
-            masks[n], terms[n] = g.mask, score_mask(g.mask, caches[n])
-        ts = list(terms.values())
-        sigs = tuple(t.sig for t in ts)
-        joint = len(a.get(sigs, ())) / sum(map(len, a.values()))
-        out.append(({"format_ok": 1.0, "legal": float(legal), "iou_tc": float(np.mean([t.iou_tc for t in ts])),
-                     "iou_min": float(min(t.iou_tc for t in ts)), "f5": float(np.mean([t.f5 for t in ts])),
-                     "g_area": float(np.mean([t.g_area for t in ts])), "topo_any": float(joint > 0),
-                     "topo_freq": joint, "sig_id": sig_id(sigs), "error": "", "defects": defects}, masks, terms))
-    return out
+    return [(names, caches, p.error, [next(geoms) for _ in names] if p.ok else None)
+            for p, (_, _, names, caches, _, _) in zip(parsed, jobs, strict=True)]
+
+
+def _score_one(names, caches, error, geoms) -> tuple[dict, dict[str, np.ndarray] | None, dict[str, ObjectTerms]]:
+    """Terms of one checked job (CPU only: score_mask against the caches, never the checker)."""
+    a = rater_answers(caches, names)
+    if geoms is None:
+        return _FAILED | {"error": error, "defects": {}}, None, {}
+    legal, defects, masks, terms = True, {}, {}, {}
+    for n, g in zip(names, geoms, strict=True):
+        legal &= g.legal
+        for d, c in g.defects.items():
+            defects[d] = defects.get(d, 0) + c
+        masks[n], terms[n] = g.mask, score_mask(g.mask, caches[n])
+    ts = list(terms.values())
+    sigs = tuple(t.sig for t in ts)
+    joint = len(a.get(sigs, ())) / sum(map(len, a.values()))
+    return ({"format_ok": 1.0, "legal": float(legal), "iou_tc": float(np.mean([t.iou_tc for t in ts])),
+             "iou_min": float(min(t.iou_tc for t in ts)), "f5": float(np.mean([t.f5 for t in ts])),
+             "g_area": float(np.mean([t.g_area for t in ts])), "topo_any": float(joint > 0), "topo_freq": joint,
+             "sig_id": sig_id(sigs), "error": "", "defects": defects}, masks, terms)
 
 
 def score_batch(jobs: Sequence[tuple], pool: Executor | None = None, chunk: int = REWARD_V4.group) -> dict:
-    """score_completion over jobs (tuples of its arguments) in input order, serially or on an executor. The masks
-    come from the CUDA checker: one call for a serial batch, one per executor chunk.
+    """score_completion over jobs (tuples of its arguments) in input order, serially or on an executor. The calling
+    process parses every job and makes all masks in one CUDA checker call (_checked); the executor only scores the
+    masks on the CPU (_score_checked), so its workers never touch CUDA (a process forked after CUDA started cannot
+    use it, and one context per worker would share the GPU with the trainer: RL-5, CK-5).
 
-    Jobs go to the executor in chunks of `chunk` consecutive jobs (one prompt's group), so a process pool
-    pickles each prompt's caches once per chunk (ExpertCache pickles as its rater masks, tau and T5). With a
-    thread pool, call cv2.setNumThreads(0) first: OpenCV then runs each call sequentially (1 is a no-op on the
-    macOS GCD backend); results do not depend on it. Measured (impl/M6_reward.md): serial is fastest on mixed
-    batches, 8 threads gain ~20 % on RIGA-only batches, a process pool loses (cache transfer).
-    Returns float64 arrays for the numeric keys and lists for "error" and "defects"."""
-    jobs = list(jobs)
+    Masks go to the executor in chunks of `chunk` consecutive jobs (one prompt's group), so a process pool pickles
+    each prompt's caches once per chunk (ExpertCache pickles as its rater masks, tau and T5; serve.CacheRef as its
+    key). With a thread pool, call cv2.setNumThreads(0) first: OpenCV then runs each call sequentially (1 is a no-op
+    on the macOS GCD backend); results do not depend on it. Returns float64 arrays for the numeric keys and lists for
+    "error" and "defects"."""
+    work = _checked(list(jobs))
     if pool is None:
-        rows = _score_chunk(jobs)
+        rows = _score_checked(work)
     else:
-        rows = [r for rs in pool.map(_score_chunk, [jobs[i:i + chunk] for i in range(0, len(jobs), chunk)]) for r in rs]
+        chunks = [work[i:i + chunk] for i in range(0, len(work), chunk)]
+        rows = [r for rs in pool.map(_score_checked, chunks) for r in rs]
     out = {k: np.array([r[k] for r in rows], np.float64) for k in NUMERIC}
     return out | {"error": [r["error"] for r in rows], "defects": [r["defects"] for r in rows]}
 
 
-def _score_chunk(jobs: Sequence[tuple]) -> list[dict]:
-    return [terms for terms, _, _ in score_many(jobs)]
+def _score_checked(work: Sequence[tuple]) -> list[dict]:
+    """The pool job: terms of checked jobs (_checked), on the CPU; never imports or calls objdel._gpucheck."""
+    return [_score_one(*w)[0] for w in work]

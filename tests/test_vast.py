@@ -1215,3 +1215,56 @@ def test_launch_gate_refuses_without_a_passing_current_preflight(E):
     E.stamp()
     E.sh("launch.sh", "111", "r1")  # a passing, current stamp launches
     assert E.vast("create instance")
+
+
+# --- vllm_native image: one venv (perf/implementation.md B3, B4, C4) ------------------------------------------------
+
+
+def test_allowlist_image_is_the_vllm_native_pin():
+    image = json.loads((VAST / ".vast-allowlist").read_text())["image"]
+    assert re.fullmatch(r"ghcr\.io/yashwanthsai1234/objdel-gpu:vllm_native-[0-9a-f]{12}@sha256:[0-9a-f]{64}", image)
+
+
+def test_sampler_python_uses_the_vllm_venv_when_present(tmp_path, monkeypatch):
+    from experiments.phase2 import select_ckpt as SC
+
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "python").write_text("")
+    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path)
+    assert SC.vllm_python() == str(tmp_path / "bin" / "python")
+    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("o"))[0] == str(tmp_path / "bin" / "python")
+
+
+def test_sampler_python_else_the_running_python(tmp_path, monkeypatch):
+    from experiments.phase2 import select_ckpt as SC
+
+    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path / "absent")
+    assert SC.vllm_python() == sys.executable
+    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("o"))[0] == sys.executable
+
+
+def test_image_check_handles_one_and_two_venvs():
+    text = (DOCKER / "image_check.sh").read_text()
+    assert "/opt/vllm/bin/python" in text and "/opt/venv/bin/python" in text
+    assert re.search(r"if \[ -x /opt/vllm/bin/python \]", text)  # two venvs: vLLM in the second
+    assert "else" in text  # one venv: vLLM in /opt/venv
+
+
+def test_preflight_ceiling_follows_the_card():
+    assert PF.ceiling("RTX_5090") == 1.50 and PF.ceiling("RTX_4090") == 1.00
+    assert not hasattr(PF, "DPH_CEILING")
+
+
+ENV_CHECKS = ("nvidia_smi", "capability", "bf16_matmul", "triton_compile", "torch_compile", "vllm_engine", "nvcc")
+
+
+def test_env_check_lists_every_check():
+    text = (DOCKER / "env_check.sh").read_text()
+    assert "set -euo pipefail" in text and "env_check.json" in text
+    for key in ENV_CHECKS:
+        assert f'"{key}"' in text or f"'{key}'" in text, key
+    for word in ("(12, 0)", "sm_120", "VLLM_USE_FLASHINFER_SAMPLER=0", "--list-gpu-arch", "attention_backend",
+                 "pcie", "power.limit", "driver_version"):
+        assert word in text, word
+    for b in re.findall(r"<<'PY'\n(.*?)\nPY\n", text, re.S):
+        compile(b, "env_check", "exec")
