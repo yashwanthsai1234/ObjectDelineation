@@ -71,7 +71,8 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
 - A grow-only device arena and two pinned staging buffers per stream lane. Nothing is allocated per call.
 - Two CUDA streams. A large batch splits in two halves, so the copy of one half overlaps the kernels of the other.
 - The raster runs one warp per pixel row, and builds each 32-pixel word with `__ballot_sync`.
-- Bit-exact against the CPU reference (0 mismatches on the box); the box chain runs it under `compute-sanitizer` memcheck.
+- Bit-exact against the CPU reference on two architectures (sm_120 and sm_86: 0 mismatches), and clean under
+  `compute-sanitizer` memcheck and initcheck (0 errors on 40 GPU tests, `experiments/phase2/perf/k1_results.md`).
 
 <img src="docs/figures/warp_ballot.svg" alt="A warp votes with __ballot_sync into one 32-bit word" width="900">
 

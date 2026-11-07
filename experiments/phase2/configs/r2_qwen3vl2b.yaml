@@ -24,7 +24,7 @@ steps:
      mkdir -p {rd}/cuda_checker; cp -r experiments/cuda_checker/results experiments/cuda_checker/RESULTS.md
      {rd}/cuda_checker/ 2>/dev/null; [ $s = 0 ] || exit $s; /opt/venv/bin/python -m pytest -q -p no:cacheprovider
      tests/test_gpu_scoring.py 2>&1 | tee {rd}/cuda_checker/pytest.txt"]
-  # Memory errors in the checker: compute-sanitizer from the toolkit's own sanitizer pin (run_box.sh), memcheck then
+  # Memory errors in the checker: compute-sanitizer 13.4.92 (installed by run_box.sh), memcheck then
   # initcheck (arena reuse), torch's caching allocator off so its pool does not hide out-of-bounds accesses; recorded,
   # does not stop the chain, but a missing binary or any error fails the step
   - ["~", bash, -c, "S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/compute-sanitizer 2>/dev/null);
