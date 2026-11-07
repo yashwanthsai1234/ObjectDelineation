@@ -275,3 +275,29 @@ def test_k3_harness_smoke(prepared, tmp_path):
     for w in ("riga", "mixed", "lidc"):
         assert {"serial", "threads2", "fork2", "per_rollout", "hashes"} <= set(res[w])
     assert {"K3_pass", "K4_pass", "K4_p99_ms", "d14_cpp_trigger"} <= set(res["gate"])
+
+
+def test_scoring_pool_is_sized_from_the_cpus_this_process_may_use(tmp_path, monkeypatch):
+    """EV-5: the pool was fixed at 4 on a 128-core box; now the CPUs left by the affinity mask and the cgroup quota,
+    minus one for the main process, capped at 16 (each worker holds a forked copy of the expert caches)."""
+    monkeypatch.setattr(serve.os, "sched_getaffinity", lambda pid: set(range(32)), raising=False)
+    cg = tmp_path / "cpu.max"
+    cg.write_text("400000 100000\n")  # a 4-CPU quota
+    assert serve.cpus(cg) == 4 and serve.pool_size(cg) == 3
+    cg.write_text("max 100000\n")
+    assert serve.cpus(cg) == 32 and serve.pool_size(cg) == 16
+    assert serve.cpus(tmp_path / "absent") == 32
+    cg.write_text("50000 100000\n")  # half a CPU: one worker still
+    assert serve.cpus(cg) == 1 and serve.pool_size(cg) == 1
+
+
+def test_sampler_timeout_is_three_times_the_measured_time():
+    """EV-5: 1 s per answer let a hung vLLM engine hold the box ~2.5 h; vLLM measured 0.09 s per answer (R0 v3), HF
+    ~1 s: about three times that (0.3 s and 3 s), plus the 600 s engine start."""
+    from argparse import Namespace
+
+    from experiments.phase2 import select_ckpt as SC
+
+    assert SC.sampler_timeout(Namespace(sampler="vllm", timeout_s=None), 1000) == pytest.approx(600 + 300)
+    assert SC.sampler_timeout(Namespace(sampler="hf", timeout_s=None), 512) == pytest.approx(600 + 1536)
+    assert SC.sampler_timeout(Namespace(sampler="vllm", timeout_s=2.0), 10) == pytest.approx(620)

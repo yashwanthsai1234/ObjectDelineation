@@ -53,9 +53,14 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
   per distinct image per step, not once per answer per pass.
 - One image pad per image to vLLM, checked against the trainer's ids on every call: vLLM samples from exactly the
   image features the trainer scores (TRL as shipped does not, for Qwen3-VL).
-- Rewards scored on a background thread while the GPU computes the old and reference log-probabilities.
+- Rope positions computed once per prompt row per step (`RopeCache`) and sliced per chunk: Qwen3-VL's 3-D
+  positions walk every token on the CPU, and TRL recomputes them in every forward.
+- No redundant old-logprob pass. With one generation per optimizer step the weights do not move before the update,
+  so the update's own (detached) log-probabilities are the old ones, and its forward sets vLLM's importance ratio.
+- Rewards scored on a background thread while the GPU computes the reference log-probabilities.
 - Every setting is measured on the card first (`experiments/phase2/profile.py`): micro-batch, checkpointing, regional
-  `torch.compile`, CUDA Graphs. The profiler trace drives the next step (precomputed rope positions, then graphs).
+  `torch.compile`, CUDA Graphs. The profiler trace (GPU busy 70 %, 7,233 `.item()` reads per step) drives the next
+  step.
 - vLLM sleep mode frees its share of the card between generations.
 
 **Checker (`cuda/gpucheck.cpp`).** One source file builds for the CPU and for nvcc. Every algorithm is a
@@ -63,6 +68,7 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
 - A grow-only device arena and two pinned staging buffers per stream lane. Nothing is allocated per call.
 - Two CUDA streams. A large batch splits in two halves, so the copy of one half overlaps the kernels of the other.
 - The raster runs one warp per pixel row, and builds each 32-pixel word with `__ballot_sync`.
+- Bit-exact against the CPU reference (0 mismatches on the box); the box chain runs it under `compute-sanitizer` memcheck.
 
 <img src="docs/figures/warp_ballot.svg" alt="A warp votes with __ballot_sync into one 32-bit word" width="900">
 
@@ -76,16 +82,18 @@ LIDC-IDRI is a 3-D CT collection, and a nodule is a stack of slices. The system 
 <img src="docs/figures/voxels.svg" alt="Slice polygons stacked into a voxel mask with b0, b1 and b2" width="900">
 
 - **Slice to volume.** The model outlines one slice at a time. The polygons of consecutive slices are rasterized
-  and stacked into one voxel mask.
-- **Voxel clusters.** Annotations from different readers are grouped into nodules by shared voxels. Phase 0 already
-  analyses nodules this way (`experiments/phase0/lidc_census.py`; the `b0_3d_*` columns in
+  and stacked into one voxel mask (`objdel.checker.volume.stack`).
+- **Voxel clusters.** Annotations from different readers are grouped into nodules by shared voxels
+  (`experiments/phase0/lidc_census.py`; the `b0_3d_*` and `cavity_any_*` columns in
   `experiments/phase0/results/lidc/clusters.csv`).
-- **Three Betti numbers.** In 3-D the volume has b0 (parts), b1 (tunnels) and b2 (cavities). Slice-level b0 and b1
-  are the 2-D shadows of the same idea.
-- **The checker's role.** It certifies each slice exactly. The volume check adds the 3-D counts on the stacked mask,
-  and the reward scores them against the set of reader volumes, as it does per slice.
+- **Three Betti numbers.** Each voxel is a closed unit cube, so parts are 26-connected and the background is
+  6-connected. `betti3d` counts b0 (parts) and b2 (cavities) by labeling, and b1 (tunnels) from the Euler
+  characteristic of the cube complex (χ = b0 − b1 + b2). Slice-level b0 and b1 are the 2-D shadows of the same idea.
+- **Set-valued scoring.** `topology_any` scores a predicted volume against the set of reader volumes, exactly as
+  the slice-level topology terms do: a match with any reader counts.
 
-This section describes the method. The measured 3-D numbers are in the Phase 0 census, listed below.
+`tests/test_volume.py` checks the counts on worked shapes (a hollow cube has one cavity, a ring one tunnel, a corner
+contact joins two parts) and on stacked slices of a hollow nodule.
 
 ## 📊 Results
 
