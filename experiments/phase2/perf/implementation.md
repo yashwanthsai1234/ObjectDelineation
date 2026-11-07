@@ -511,7 +511,8 @@ Built from its performance list (CPU tests; speed measured on the next rental):
   and on only with `bf16`, where Accelerate wraps every forward in autocast.
 
 Open from that list:
-- Vectorized rope positions (about 9 syncs per row in `get_rope_index` on a cache miss).
+- **Rope position syncs: done.** On a cache miss, `get_rope_index` now runs on host copies (its ~9 per-row host reads
+  are then no GPU syncs) and one copy returns the positions. It is the same function, so the result is exact.
 - TRL's per-chunk and per-loss `.item()` reads; `torch.cuda.set_sync_debug_mode("warn")` on the box lists them.
 
 ## Stage G: R2 G-probe
