@@ -17,9 +17,11 @@ steps:
      mkdir -p {rd}/cuda_checker; cp -r experiments/cuda_checker/results experiments/cuda_checker/RESULTS.md
      {rd}/cuda_checker/ 2>/dev/null; [ $s = 0 ] || exit $s; /opt/venv/bin/python -m pytest -q -p no:cacheprovider
      tests/test_gpu_scoring.py 2>&1 | tee {rd}/cuda_checker/pytest.txt"]
-  # Memory errors in the checker (compute-sanitizer, if the toolkit ships it); recorded, does not stop the chain
-  - ["~", bash, -c, "S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu*/bin/compute-sanitizer 2>/dev/null | head -1);
-     [ -n \"$S\" ] && $S --tool memcheck /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+  # Memory errors in the checker: compute-sanitizer memcheck from the toolkit's own sanitizer pin (run_box.sh);
+  # recorded, does not stop the chain, but a missing binary or any error fails the step
+  - ["~", bash, -c, "S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/compute-sanitizer 2>/dev/null);
+     [ -n \"$S\" ] || {{ echo no compute-sanitizer > {rd}/cuda_checker/memcheck.txt; exit 1; }};
+     $S --tool memcheck --error-exitcode 1 /opt/venv/bin/python -m pytest -q -p no:cacheprovider
      tests/test_cuda_checker_gpu.py > {rd}/cuda_checker/memcheck.txt 2>&1"]
   # RL: the profile arms (short g_probe runs on e2: TRL as shipped, FastGRPO, micro-batch 32, no checkpointing,
   # compiled layers, CUDA Graphs). The fast arm fails loudly if TRL drops the images (vLLM prompt ids, TRL #6294).
