@@ -14,12 +14,13 @@ import numpy as np
 
 from objdel import _gpucheck
 from objdel.checker import bitquads, polycore, polygonize
+from objdel.geometry.shape import unpack_rows
 
 TESTS = Path(__file__).resolve().parents[2] / "tests"
 if str(TESTS) not in sys.path:
     sys.path.append(str(TESTS))  # tests/oracles and the generator functions of the test modules
 
-POLY_FIELDS = ("legal", "defects", "evenodd", "nonzero")  # compared in this order; the first difference is reported
+POLY_FIELDS = ("legal", "defects", "evenodd")  # compared in this order; the first difference is reported
 MASK_FIELDS = ("quads", "rings", "b0", "b1", "ring_sha")
 
 
@@ -52,10 +53,9 @@ def shape_of(p: dict, s: int):
 
 
 def gpu_polygon(out: dict, p: dict, s: int) -> dict:
-    a, b = out["mask_start"][s], out["mask_start"][s + 1]
-    shape = (int(p["H"][s]), int(p["W"][s]))
-    return dict(defects=out["defects"][s], evenodd=out["evenodd"][a:b].reshape(shape),
-                nonzero=out["nonzero"][a:b].reshape(shape))
+    """Shape s of a check_polygons result: its defects and its even-odd mask, unpacked from the packed rows."""
+    a, b = out["word_start"][s], out["word_start"][s + 1]
+    return dict(defects=out["defects"][s], evenodd=unpack_rows(out["evenodd"][a:b], int(p["H"][s]), int(p["W"][s])))
 
 
 def pack_masks(masks) -> dict:
@@ -92,15 +92,14 @@ def ring_sha(rings) -> bytes:
 
 
 def mask_sha(mask) -> bytes:
-    """prepare_data.py's evenodd_sha / nonzero_sha."""
+    """prepare_data.py's evenodd_sha."""
     return hashlib.sha256(np.packbits(np.asarray(mask, bool)).tobytes()).hexdigest().encode()
 
 
 def polygon_reference(rings, roles, W, H, G=1000) -> dict:
     shape = polycore.pack(rings)
     r = polycore.rasterize(shape, W, H, G)
-    return dict(defects=polycore.validate(shape, roles=np.array(roles, np.int32), G=G)["total"],
-                evenodd=r["evenodd"], nonzero=r["nonzero"])
+    return dict(defects=polycore.validate(shape, roles=np.array(roles, np.int32), G=G)["total"], evenodd=r["evenodd"])
 
 
 def polygon_diff(gpu: dict, ref: dict):
@@ -110,9 +109,8 @@ def polygon_diff(gpu: dict, ref: dict):
         "legal": (gpu["defects"].sum() == 0) == (np.asarray(ref["defects"]).sum() == 0),
         "defects": np.array_equal(gpu["defects"], ref["defects"]),
     }
-    for k in ("evenodd", "nonzero"):
-        r = ref[k]
-        same[k] = mask_sha(gpu[k]) == r if isinstance(r, bytes) else np.array_equal(gpu[k], r)
+    r = ref["evenodd"]
+    same["evenodd"] = mask_sha(gpu["evenodd"]) == r if isinstance(r, bytes) else np.array_equal(gpu["evenodd"], r)
     return next((k for k in POLY_FIELDS if not same[k]), None)
 
 

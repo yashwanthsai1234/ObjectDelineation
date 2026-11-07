@@ -1,0 +1,195 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 460" width="900" height="460" role="img" aria-label="A warp of 32 threads each tests one pixel against a polygon, __ballot_sync packs the 32 votes into one 32-bit word, stored coalesced. Below: GPU, SMs, warps, threads.">
+  <style>
+    text{font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#e6edf3}
+    .t{font-size:12px;fill:#9aa7b8}.h{font-size:15px;font-weight:600}
+    .m{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;fill:#9aa7b8}
+    .b{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;font-weight:700}
+  </style>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa7b8"/></marker></defs>
+  <rect width="900" height="460" rx="14" fill="#12161c" stroke="#2d3541"/>
+  <text x="30" y="36" class="h">One warp builds one 32-pixel word</text>
+  <!-- polygon pixel row -->
+  <text x="30" y="68" class="t">one pixel row of the raster, crossed by a polygon edge pair</text>
+  <g id="cells">
+<rect x="30" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="42.0" y="124" text-anchor="middle" class="m" style="font-size:9px">0</text>
+<path d="M42.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="42.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="56" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="68.0" y="124" text-anchor="middle" class="m" style="font-size:9px">1</text>
+<path d="M68.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="68.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="82" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="94.0" y="124" text-anchor="middle" class="m" style="font-size:9px">2</text>
+<path d="M94.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="94.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="108" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="120.0" y="124" text-anchor="middle" class="m" style="font-size:9px">3</text>
+<path d="M120.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="120.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="134" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="146.0" y="124" text-anchor="middle" class="m" style="font-size:9px">4</text>
+<path d="M146.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="146.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="160" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="172.0" y="124" text-anchor="middle" class="m" style="font-size:9px">5</text>
+<path d="M172.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="172.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="186" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="198.0" y="124" text-anchor="middle" class="m" style="font-size:9px">6</text>
+<path d="M198.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="198.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="212" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="224.0" y="124" text-anchor="middle" class="m" style="font-size:9px">7</text>
+<path d="M224.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="224.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="238" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="250.0" y="124" text-anchor="middle" class="m" style="font-size:9px">8</text>
+<path d="M250.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="250.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="264" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="276.0" y="124" text-anchor="middle" class="m" style="font-size:9px">9</text>
+<path d="M276.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="276.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="290" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="302.0" y="124" text-anchor="middle" class="m" style="font-size:9px">10</text>
+<path d="M302.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="302.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="316" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="328.0" y="124" text-anchor="middle" class="m" style="font-size:9px">11</text>
+<path d="M328.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="328.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="342" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="354.0" y="124" text-anchor="middle" class="m" style="font-size:9px">12</text>
+<path d="M354.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="354.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="368" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="380.0" y="124" text-anchor="middle" class="m" style="font-size:9px">13</text>
+<path d="M380.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="380.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="394" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="406.0" y="124" text-anchor="middle" class="m" style="font-size:9px">14</text>
+<path d="M406.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="406.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="420" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="432.0" y="124" text-anchor="middle" class="m" style="font-size:9px">15</text>
+<path d="M432.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="432.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="446" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="458.0" y="124" text-anchor="middle" class="m" style="font-size:9px">16</text>
+<path d="M458.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="458.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="472" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="484.0" y="124" text-anchor="middle" class="m" style="font-size:9px">17</text>
+<path d="M484.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="484.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="498" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="510.0" y="124" text-anchor="middle" class="m" style="font-size:9px">18</text>
+<path d="M510.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="510.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="524" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="536.0" y="124" text-anchor="middle" class="m" style="font-size:9px">19</text>
+<path d="M536.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="536.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="550" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="562.0" y="124" text-anchor="middle" class="m" style="font-size:9px">20</text>
+<path d="M562.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="562.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="576" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="588.0" y="124" text-anchor="middle" class="m" style="font-size:9px">21</text>
+<path d="M588.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="588.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="602" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="614.0" y="124" text-anchor="middle" class="m" style="font-size:9px">22</text>
+<path d="M614.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="614.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="628" y="80" width="24" height="22" rx="3" fill="#3ddc97" stroke="#3a4453"/>
+<text x="640.0" y="124" text-anchor="middle" class="m" style="font-size:9px">23</text>
+<path d="M640.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="640.0" y="162" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<rect x="654" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="666.0" y="124" text-anchor="middle" class="m" style="font-size:9px">24</text>
+<path d="M666.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="666.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="680" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="692.0" y="124" text-anchor="middle" class="m" style="font-size:9px">25</text>
+<path d="M692.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="692.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="706" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="718.0" y="124" text-anchor="middle" class="m" style="font-size:9px">26</text>
+<path d="M718.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="718.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="732" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="744.0" y="124" text-anchor="middle" class="m" style="font-size:9px">27</text>
+<path d="M744.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="744.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="758" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="770.0" y="124" text-anchor="middle" class="m" style="font-size:9px">28</text>
+<path d="M770.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="770.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="784" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="796.0" y="124" text-anchor="middle" class="m" style="font-size:9px">29</text>
+<path d="M796.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="796.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="810" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="822.0" y="124" text-anchor="middle" class="m" style="font-size:9px">30</text>
+<path d="M822.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="822.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<rect x="836" y="80" width="24" height="22" rx="3" fill="#1b2430" stroke="#3a4453"/>
+<text x="848.0" y="124" text-anchor="middle" class="m" style="font-size:9px">31</text>
+<path d="M848.0 128V150" stroke="#3a4453" marker-end="url(#a)"/>
+<text x="848.0" y="162" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+</g>
+<text x="30" y="144" class="t" style="display:none"></text>
+<text x="30" y="188" class="t">lane l tests the centre of pixel 32j + l: inside (1) or outside (0), from the winding of the edges to its left</text>
+<path d="M30 200H860" stroke="#f5a524" stroke-width="2"/>
+<text x="450" y="222" text-anchor="middle" font-size="14" font-weight="600" style="fill:#f5a524">__ballot_sync(0xffffffff, inside)  ->  one uint32</text>
+<rect x="30" y="236" width="832" height="30" rx="6" fill="#1b2430" stroke="#f5a524" stroke-width="2"/>
+<text x="42.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="68.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="94.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="120.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="146.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="172.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="198.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="224.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="250.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="276.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="302.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="328.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="354.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="380.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="406.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="432.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="458.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="484.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="510.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="536.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="562.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="588.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="614.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="640.0" y="256" text-anchor="middle" class="b" style="fill:#3ddc97">1</text>
+<text x="666.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="692.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="718.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="744.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="770.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="796.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="822.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="848.0" y="256" text-anchor="middle" class="b" style="fill:#9aa7b8">0</text>
+<text x="30" y="286" class="t">bit 0 = leftmost pixel. 32 votes cost one instruction, not 32 stores or a shared-memory reduction.</text>
+  <!-- coalesced store -->
+  <text x="30" y="312" class="t">lane j keeps word j, so a 1024-pixel window leaves as one coalesced 128-byte store</text>
+  <rect x="30" y="322" width="256" height="18" rx="4" fill="#1b2430" stroke="#4aa3ff"/>
+  <g stroke="#4aa3ff" opacity=".5"><path d="M62 322V340"/><path d="M94 322V340"/><path d="M126 322V340"/><path d="M158 322V340"/><path d="M190 322V340"/><path d="M222 322V340"/><path d="M254 322V340"/></g>
+  <text x="300" y="336" class="m">32 words x 4 bytes, one transaction</text>
+  <!-- hierarchy -->
+  <text x="30" y="372" class="h">Hierarchy</text>
+  <rect x="30" y="384" width="190" height="56" rx="8" fill="#1b2430" stroke="#3a4453"/><text x="125" y="408" text-anchor="middle" class="h">GPU</text><text x="125" y="427" text-anchor="middle" class="t">many SMs</text>
+  <path d="M222 412H262" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="266" y="384" width="190" height="56" rx="8" fill="#1b2430" stroke="#3a4453"/><text x="361" y="408" text-anchor="middle" class="h">SM</text><text x="361" y="427" text-anchor="middle" class="t">many resident warps</text>
+  <path d="M458 412H498" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="502" y="384" width="190" height="56" rx="8" fill="#1b2430" stroke="#3a4453"/><text x="597" y="408" text-anchor="middle" class="h">Warp</text><text x="597" y="427" text-anchor="middle" class="t">32 threads in lockstep</text>
+  <path d="M694 412H734" stroke="#9aa7b8" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="738" y="384" width="124" height="56" rx="8" fill="#1b2430" stroke="#3ddc97"/><text x="800" y="408" text-anchor="middle" class="h">Thread</text><text x="800" y="427" text-anchor="middle" class="t">one pixel</text>
+</svg>

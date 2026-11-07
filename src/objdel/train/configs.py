@@ -188,7 +188,7 @@ def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
         "multi_objective_aggregation": "sum_then_normalize", "scale_rewards": "none",
         "reward_weights": [0.0] * len(LOGGED) + [1.0],  # TRLReward.funcs() order: loggers, then AGGREGATOR
         "use_vllm": model != "smolvlm-256m", "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,
-        "vllm_enable_sleep_mode": True, **NO_SYNC,
+        "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
 

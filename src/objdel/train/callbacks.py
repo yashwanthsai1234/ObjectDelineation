@@ -205,3 +205,33 @@ class Controller(TrainerCallback):
             self.out.mkdir(parents=True, exist_ok=True)
             with open(self.out / "controller.jsonl", "a") as f:
                 f.write(json.dumps(e) + "\n")
+
+
+class TraceStep(TrainerCallback):
+    """torch.profiler on one optimizer step after `wait` steps and one profiler warm-up step (CPU ops, and CUDA
+    kernels on a GPU): <out>/trace.json.gz and ops.txt (top ops by device and CPU time). train_sft `profile:`,
+    g_probe --trace."""
+
+    def __init__(self, out: str, wait: int):
+        self.out, self.wait = Path(out), wait
+
+    def on_train_begin(self, args, state, control, **kw):
+        from torch.profiler import ProfilerActivity, profile, schedule
+
+        acts = [ProfilerActivity.CPU] + [ProfilerActivity.CUDA] * torch.cuda.is_available()
+        self.prof = profile(activities=acts, schedule=schedule(wait=self.wait, warmup=1, active=1),
+                            on_trace_ready=self.write)  # fmt: skip
+        self.prof.start()
+
+    def on_step_end(self, args, state, control, **kw):
+        self.prof.step()
+
+    def on_train_end(self, args, state, control, **kw):
+        self.prof.stop()
+
+    def write(self, prof):
+        self.out.mkdir(parents=True, exist_ok=True)
+        prof.export_chrome_trace(str(self.out / "trace.json.gz"))
+        ops = prof.key_averages()
+        (self.out / "ops.txt").write_text("\n\n".join(ops.table(sort_by=k, row_limit=40) for k in
+                                                       ("self_device_time_total", "self_cpu_time_total")))

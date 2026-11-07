@@ -2,7 +2,7 @@
 # PLAN §4.7 step 3 (A3 §8.3, D15): first-session image check, run ON THE BOX after sync_up (code in /workspace/src).
 #   image_check.sh [OUT_JSON]   (default /workspace/runs/image_check.json; exit 1 unless every check passes)
 # Records: CUDA available; bf16 8192^3 matmul TFLOPS vs the card's dense BF16 peak (pass >= 0.6; A3 §3.1);
-# objdel._polycore and the /opt/vllm sampler imports; the size of /dev/shm (BK4-19).
+# objdel._polycore and the vLLM import (/opt/vllm when the image has two venvs, else /opt/venv); the size of /dev/shm (BK4-19).
 set -euo pipefail
 OUT=${1:-/workspace/runs/image_check.json}
 mkdir -p "$(dirname "$OUT")"
@@ -31,7 +31,8 @@ r["pass"] = bool(r["cuda"] and r.get("matmul_ok"))
 json.dump(r, open(sys.argv[1], "w"), indent=1)
 print(json.dumps(r, indent=1))
 PY
-/opt/vllm/bin/python -I - "$OUT" <<'PY'
+if [ -x /opt/vllm/bin/python ]; then VLLM_PY=/opt/vllm/bin/python; else VLLM_PY=/opt/venv/bin/python; fi
+$VLLM_PY -I - "$OUT" <<'PY'
 import json, sys
 from vllm import LLM, SamplingParams  # noqa: F401
 import vllm

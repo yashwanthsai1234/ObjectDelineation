@@ -1,69 +1,154 @@
+<div align="center">
+
 # ObjectDelineation
 
-An exact, self-certifying geometry checker for masks and polygons. It is used as a **verifiable reward**
-for training vision-language models to segment, through RL with GRPO.
+**A small vision-language model learns to outline objects as polygons. A GPU checker proves the outlines are right.**
 
-The checker counts parts and holes exactly and validates and rasterizes polygons with integer arithmetic (C++).
-Model outputs are scored against the **set** of answers that expert annotators gave, not against a single ground
-truth. A shape that any expert drew counts as correct, and pixels where experts disagree count as neither right nor
-wrong.
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.14-EE4C2C)
+![CUDA](https://img.shields.io/badge/CUDA-13.0-76B900)
+![TRL](https://img.shields.io/badge/TRL-1.17-orange)
+![vLLM](https://img.shields.io/badge/vLLM-colocated-30A2FF)
 
-## Status
+<img src="docs/figures/hero.svg" alt="Image to VLM to polygon outline to checker reward" width="900">
 
-| | |
-|---|---|
-| Phase 0 (census and baselines) | done: [results](experiments/phase0/RESULTS.md), [model baselines](experiments/phase0/RESULTS_0b.md); scripts run against commit `faaacc4` ([note](experiments/phase0/README.md)) |
-| Phase 1 (reward and data) | done: [results and gates](experiments/phase1/RESULTS.md), [plan](experiments/phase1/PLAN.md), [execution](experiments/phase1/EXECUTION.md), [notes and issues](experiments/phase1/impl/) |
-| Phase 2 (SFT on Vast AI) | in progress: rung 1 (LFM2.5-VL-450M) failed the entry gates; next rung Qwen3-VL-2B (LoRA): [results](experiments/phase2/RESULTS.md), [plan](experiments/phase2/PLAN.md), [build log](experiments/phase2/V0_V1.md), [issues](experiments/phase2/impl/ISSUES.md) |
-| Full plan | [ROADMAP.md](ROADMAP.md) |
+</div>
 
-## Layout
+A model that draws a lung nodule must get more than the overlap right. It must get the shape right: one part or
+two, with a hole or without. This project trains Qwen3-VL-2B (LoRA) to write polygon JSON, and rewards it with an
+exact geometry checker. The checker counts parts and holes (Betti numbers b0 and b1), validates every ring with
+integer arithmetic, and scores against the set of answers that expert annotators gave. Training is SFT, then GRPO
+reinforcement learning with TRL and vLLM on one GPU. The checker itself is a custom CUDA engine.
+
+## 🎯 What it does
+
+- **Input:** a CT slice (lung nodules, LIDC-IDRI) or a fundus crop (optic disc and cup, RIGA).
+- **Output:** polygon JSON on a 0-1000 grid: rings, holes, nothing else.
+- **Reward:** format gate, ring legality, IoU against the expert set, and topology (b0 parts, b1 holes).
+- **Why sets, not one mask:** LIDC readers disagree on topology for 6.1 % of nodules, and every nodule with a hole
+  is one they disagree on (`experiments/phase0/RESULTS.md`). A shape that any expert drew counts as correct.
+  Pixels where experts disagree count as neither right nor wrong.
+
+## ⚙️ How it works
+
+<img src="docs/figures/pipeline.svg" alt="Data, SFT, then the GRPO loop" width="900">
+
+1. **Data.** LIDC-IDRI and RIGA are parsed into a Parquet store with group-aware splits (`src/objdel/data`).
+2. **Polygon targets.** Each expert mask becomes a certified, canonical polygon (`src/objdel/targets`).
+3. **SFT.** The model learns the output format and a first guess at the shapes.
+4. **GRPO.** vLLM writes 8 answers per image. The checker scores each one. Group advantages update the LoRA.
+5. **Reward.** Exact, per-sample, and the same code path in tests, on the CPU and on the GPU.
+
+## 🚀 The GPU story
+
+One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. They share the card in turns.
+
+<img src="docs/figures/gpu_timeline.svg" alt="Timeline of one RL step on one GPU" width="900">
+
+**Trainer (`src/objdel/train/fast.py`).**
+- Per-chunk trimmed forwards. TRL pads all 256 answers of a step to the longest one. Each chunk is cut to its own
+  width, rounded up to one of 8 bucket sizes so compiled code sees few shapes.
+- A per-step vision-feature cache. The 8 answers of a prompt share one image, so the frozen vision tower runs once
+  per distinct image per step, not once per answer per pass.
+- Regional `torch.compile` and CUDA Graph arms for the update step, chosen by profiling before the run
+  (`experiments/phase2/profile.py`).
+- vLLM sleep mode frees its share of the card between generations.
+
+**Checker (`cuda/gpucheck.cpp`).** One source file builds for the CPU and for nvcc. Every algorithm is a
+`__host__ __device__` functor.
+- A grow-only device arena and two pinned staging buffers per stream lane. Nothing is allocated per call.
+- Two CUDA streams. A large batch splits in two halves, so the copy of one half overlaps the kernels of the other.
+- The raster runs one warp per pixel row, and builds each 32-pixel word with `__ballot_sync`.
+
+<img src="docs/figures/warp_ballot.svg" alt="A warp votes with __ballot_sync into one 32-bit word" width="900">
+
+Each thread tests one pixel and votes. One instruction packs 32 votes into a `uint32`. Lane `j` keeps word `j`, so a
+1024-column window leaves in one coalesced store. Masks are bit-packed end to end.
+
+## 🧊 3D volumes
+
+LIDC-IDRI is a 3-D CT collection, and a nodule is a stack of slices. The system treats it that way.
+
+<img src="docs/figures/voxels.svg" alt="Slice polygons stacked into a voxel mask with b0, b1 and b2" width="900">
+
+- **Slice to volume.** The model outlines one slice at a time. The polygons of consecutive slices are rasterized
+  and stacked into one voxel mask.
+- **Voxel clusters.** Annotations from different readers are grouped into nodules by shared voxels. Phase 0 already
+  analyses nodules this way (`experiments/phase0/lidc_census.py`; the `b0_3d_*` columns in
+  `experiments/phase0/results/lidc/clusters.csv`).
+- **Three Betti numbers.** In 3-D the volume has b0 (parts), b1 (tunnels) and b2 (cavities). Slice-level b0 and b1
+  are the 2-D shadows of the same idea.
+- **The checker's role.** It certifies each slice exactly. The volume check adds the 3-D counts on the stacked mask,
+  and the reward scores them against the set of reader volumes, as it does per slice.
+
+This section describes the method. The measured 3-D numbers are in the Phase 0 census, listed below.
+
+## 📊 Results
+
+| What | Result | Source |
+|---|---|---|
+| Checker certificates, real masks | 0 failures on 26,820 RIGA masks and 40,189 LIDC slices | `experiments/phase0/RESULTS.md` |
+| Raster and legality vs oracle | 0 of 849,802,293 pixels differ on 10,000 shapes; 0 of 10,000 rings | `experiments/phase1/RESULTS.md` (K1, K2) |
+| CUDA checker vs CPU checker | 195,809 of 195,809 cases bit-identical (RTX 4090) | `experiments/cuda_checker/RESULTS.md` |
+| LIDC topology disagreement | 114 of 1,877 nodules (6.1 %) after filtering | `experiments/phase0/RESULTS.md` |
+| Rung 1 SFT (LFM2.5-VL-450M) | Failed the entry gates: median IoU 0.495 shifted, 0.092 rescaled; hole recall 0.5 % | `experiments/phase2/RESULTS.md` |
+
+The first CUDA build (R0 v3) was exact but slower than the CPU checker, for example 54,710 polygons/s against
+290,142/s at 16 vertices and batch 1024. The cause was per-call allocation and managed memory. The arena, pinned
+staging and two-stream design above are the fix; it has not been re-measured on a GPU yet.
+
+**RL speed on the RTX 5090**
+
+<!-- RL results: filled after the RTX 5090 run -->
+
+| Setting | s / step | GPU utilization | Notes |
+|---|---|---|---|
+| pending | | | |
+
+## 🗂️ Repository layout
 
 ```
-cpp/polycore/      header-only C++17 core: polygon rasterizer, legality checks, signed area (+ native fuzz tests)
-src/objdel/        installable library
-  _polycore        nanobind extension built from cpp/polycore (scikit-build-core)
-  checker/         bit-quads, Betti numbers, instance topology + size rule, polygons, certificates, polycore wrapper
-  geometry/        the model output spec: strict parser, serializer, canonical rings, polygon -> mask
-  targets/         model frame (crop/scale) and certified SFT polygon targets
-  reward/          reward v4: per-item expert caches, per-rollout terms, group advantages
-  data/            RIGA extractor, LIDC parser, group-aware splits, Parquet item store
-  train/           TRL integration: chat rows, reward functions, controller callback, configs, sampler
-  eval/            metrics harness, hack audit, Phase 2 entry gates
-tests/             pytest suite (oracles in tests/oracles/)
-experiments/       one folder per phase: plan, scripts, results; frozen once the phase is done
-cuda/              the C++/CUDA checker engine (CMake, GoogleTest); its eval is in experiments/cuda_checker/
-docs/research/     research reports and notes behind the direction
+cpp/polycore/      header-only C++17 core: exact polygon rasterizer, legality checks, signed area
+cuda/              the CUDA checker engine (gpucheck.cpp, one source for CPU and GPU), CMake, GoogleTest
+src/objdel/
+  checker/         bit-quads, Betti numbers, instance topology, polygonize, certificates
+  geometry/        output spec: strict parser, serializer, canonical rings, polygon to mask
+  targets/         model frame (crop and scale) and certified SFT polygon targets
+  reward/          per-item expert caches, per-rollout terms, group advantages
+  data/            RIGA extractor, LIDC parser, group-aware splits, Parquet store
+  train/           TRL integration, reward functions, callbacks, configs, fast forwards
+  eval/            metrics, hack audit, entry gates
+tests/             pytest suite, with oracles in tests/oracles/
+experiments/       one folder per phase: plan, scripts, results
+docs/              research reports and notes, figures
 data/              downloaded datasets (git-ignored, never committed)
 ```
 
-**Rules**
-- Reusable code goes in `src/objdel`, with tests.
-- Experiment scripts only wire library code to data. They run as modules in an isolated interpreter, since data is
-  untrusted: `.venv/bin/python -I -m experiments.phase1.<script> --help`.
-- Gate scripts (`reward_gates`, `eval_demo`) reuse the test harness in `tests/oracles/`, so the gates measured on
-  data and in pytest share one implementation. They run from a checkout: the editable install puts the repo root on
-  `sys.path`.
-- Results are committed next to the script that produced them.
-- Data is never committed.
+Plan: [ROADMAP.md](ROADMAP.md). Phase results:
+[Phase 0](experiments/phase0/RESULTS.md), [Phase 1](experiments/phase1/RESULTS.md),
+[Phase 2](experiments/phase2/RESULTS.md), [CUDA checker](experiments/cuda_checker/RESULTS.md).
+Speed work: [issues](experiments/phase2/perf/issues.md), [implementation](experiments/phase2/perf/implementation.md).
 
-## Quick start
+## ⚡ Quick start
 
 ```bash
-make setup        # .venv with Python 3.12 (uv), package editable with the train, data and dev extras; builds the C++ extension
-make test         # fast test suite (rebuilds the extension first if cpp/ changed); make test-all adds the slow gates
+make setup        # .venv with Python 3.12 (uv), editable install, builds the C++ extension
+make test         # fast test suite; make test-all adds the slow gates
 make lint
-make cov          # fast suite with line coverage of src/objdel (fails below 90 %, K13)
-make build        # rebuild the C++ extension only
-make fuzz         # native polycore fuzz under ASan/UBSan
-make wheels       # manylinux wheels in Docker (cibuildwheel)
-make cuda         # build the C++/CUDA engine (the CUDA checker)
-make preflight    # prove data, checker and code on the Mac before any GPU is rented (CONFIG=...)
+make cuda         # build the CUDA checker (needs nvcc)
+make preflight    # prove data, checker and code before any GPU is rented
+```
+
+Experiment scripts run as modules, in an isolated interpreter, because downloaded data is untrusted:
+
+```bash
+.venv/bin/python -I -m experiments.phase1.reward_gates --help
+.venv/bin/python -I -m experiments.phase2.profile --help
 ```
 
 ```python
 import numpy as np
-
 from objdel.checker import certify
 from objdel.reward import ExpertCache, score_completion
 from objdel.targets import build_target
@@ -71,22 +156,30 @@ from objdel.targets import build_target
 y, x = np.ogrid[:100, :100]
 raters = np.stack([(y - 50) ** 2 + (x - 50) ** 2 <= r * r for r in (20, 22, 24)])  # 3 raters, one nodule
 
-report = certify(raters[0])                         # b0 parts, b1 holes, area, perimeter and a certificate
-text = build_target({"nodule": raters[1]}, ("nodule",)).text   # rater 2 as canonical polygon JSON (grid 0-1000)
-caches = {"nodule": ExpertCache.build(raters)}      # built once per item, offline
+report = certify(raters[0])                                    # b0, b1, area, perimeter, certificate
+text = build_target({"nodule": raters[1]}, ("nodule",)).text   # polygon JSON, grid 0-1000
+caches = {"nodule": ExpertCache.build(raters)}                 # built once per item, offline
 score = score_completion(text, False, ("nodule",), caches, 100, 100)
 print(score["format_ok"], score["legal"], score["iou_tc"], score["topo_any"])   # 1.0 1.0 1.0 1.0
 ```
 
-The datasets are LIDC-IDRI (TCIA) and RIGA. Each is downloaded separately under its own licence.
+Rebuilding `data/` from the raw downloads uses the Phase 1 scripts in order (`fetch_lidc_pixels`, `build_data`,
+`prepare_rl`, `build_targets`). Commands and hashes are in
+[Phase 1 RESULTS, section 8](experiments/phase1/RESULTS.md#8-phase-2-handoff).
 
-Rebuilding `data/` (store, prepared RL set, SFT targets) from the raw downloads uses the Phase 1 scripts in order
-(`fetch_lidc_pixels`, `build_data`, `prepare_rl`, `build_targets`). The commands, timings and expected hashes are
-in [RESULTS.md §8](experiments/phase1/RESULTS.md#8-phase-2-handoff).
+## 📚 Research reports
 
-## Licence
+All in `docs/research/reports/`:
+- [GPU delineation use case map](docs/research/reports/GPU%20delineation%20use%20case%20map.md): certified geometry for AI, and why the pitch is correctness and topology.
+- [GPU delineation RL mix and match](docs/research/reports/GPU%20delineation%20RL%20mix%20and%20match.md): the reward design, prior art and safe claims.
+- [NVIDIA CUDA performance for VLM training](docs/research/reports/NVIDIA%20CUDA%20performance%20for%20VLM%20training.md): why the GPU waits on the CPU.
+- [RL speed stack on RTX 5090](docs/research/reports/RL%20speed%20stack%20on%20RTX%205090.md): fixing the GRPO stack before renting.
+- [Code performance audit 2026-11-06](docs/research/reports/Code%20performance%20audit%202026-11-06.md): training, evaluation and checker paths.
 
-The code is under the [MIT licence](LICENSE). The licence covers the code only, not the datasets:
+## 📄 Licence and data
+
+The code is under the [MIT licence](LICENSE). The licence covers the code only, not the datasets.
+- Datasets are not included. LIDC-IDRI (TCIA) and RIGA are downloaded separately, each under its own licence.
 - No images or annotations from either dataset are in this repository.
 - Some result tables hold per-series statistics computed from LIDC-IDRI (TCIA, CC BY 3.0).
-- RIGA-derived tables are not shared: they stay on the owner's machine (git-ignored).
+- RIGA-derived tables are not shared. They stay on the owner's machine.

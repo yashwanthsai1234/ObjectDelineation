@@ -112,7 +112,16 @@ def test_select_refuses_sampler_after_cuda_init(monkeypatch):
     with pytest.raises(RuntimeError, match="CUDA is initialized"):
         SC.cuda_untouched()
     cmd = SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))
-    assert cmd[:2] == ["/opt/vllm/bin/python", "-I"] and cmd[2].endswith("sample_vllm.py")
+    assert cmd[:2] == [sys.executable, "-I"] and cmd[2].endswith("sample_vllm.py")  # vllm_native: one venv
+
+
+def test_sampler_uses_the_second_venv_when_the_image_has_one(monkeypatch, tmp_path):
+    from experiments.phase2 import select_ckpt as SC
+
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "python").touch()
+    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path)
+    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))[0] == str(tmp_path / "bin" / "python")
 
 
 def _summary(fmt=1.0, legal=0.95, dup=0.0, sigma=0.9):
