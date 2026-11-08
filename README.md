@@ -147,6 +147,7 @@ shapes run at **7.74 M polygons/s on an RTX 5090 (141x)**, 87x the polycore loop
 | FastGRPO, no gradient checkpointing | OOM | over 31.45 GiB beside vLLM |
 | FastGRPO + on-device scoring + image memo (R3) | 36.3 | `docs/research/notes/issues_solved_2026-11-07.md` (R2 on the same settings: 56.6) |
 | **Full RL run** (770 steps, same settings) | **27.5** | mean over the run; answers shortened from 128 to ~100 tokens |
+| + 64-wide chunks and the no-merge vLLM sync (R4) | 29.9 vs 32.7 | steps 3-15 at ~130-token answers: **8 % faster**, identical rewards; keeping vLLM awake gains nothing (handovers 1.6 s) |
 
 One step splits into 7.6 s vLLM generation, 12.3 s old and reference log-probabilities, and 24.4 s update; the reward
 (at the time: one checker call for all 256 answers plus scoring on a CPU pool) runs in the background during the
