@@ -31,6 +31,20 @@ def test_dockerfile_installs_each_venv_in_small_layers():
     assert "causal" not in installs and "flash-linear-attention" not in installs and "dedupe" not in installs
 
 
+def test_vllm_native_installs_its_venv_in_small_layers():
+    """2026-11-07 (full RL): vllm_native installed its one venv in one RUN, a 4.14 GB layer of 4.35. Docker cannot
+    resume a layer, so on hosts whose link drops it restarted from zero and never finished: 4 launches on 4 hosts
+    timed out on it (one also failed the registry login). Same four RUNs as phase2: cuBLAS + cuDNN, the other CUDA
+    wheels, torch, the rest (with the lock's overrides), the last importing the entry points."""
+    text = (DOCKER / "Dockerfile.vllm_native").read_text()
+    mine = [s for s in run_steps(text) if "/opt/venv/" in s]
+    assert len(mine) == 4
+    assert "nvidia-(cublas|cudnn)" in mine[0] and "(nvidia|cuda)-" in mine[1] and "(torch|torchvision|triton)" in mine[2]
+    assert all("--no-deps" in s and "/opt/vllm_native.txt" in s for s in mine[:3])
+    assert "-r /opt/vllm_native.txt --override /opt/vllm_native.override" in mine[3]
+    assert "import torch, vllm, vllm.entrypoints.llm, transformers, trl, peft" in mine[3]
+
+
 # The box never runs these: Mac dev tools, raw-DICOM fetchers, Phase 0's Qwen2.5-VL helper and its video decoder
 JUNK_TRAIN = {"ruff", "pytest", "pytest-cov", "coverage", "hypothesis", "pylidc", "pydicom", "sqlalchemy", "matplotlib",
               "scikit-image", "qwen-vl-utils", "av"}
