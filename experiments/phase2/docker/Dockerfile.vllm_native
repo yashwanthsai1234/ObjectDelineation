@@ -5,6 +5,9 @@
 # + vllm==0.32.0, and two uv overrides that keep the hash-relevant pins: numba==0.68.0 and numpy==2.5.4 (B5 Q1).
 # Re-run the fast suite and `xarch_hashes --strict` on every re-pin. Build context (build_images.sh):
 # vllm_native.txt, vllm_native.override. Code and data are never baked in.
+# Layers (2026-11-07): the venv installed in one RUN, a 4.14 GB layer of 4.35 that Docker cannot resume; 4 full-RL
+# launches on 4 hosts timed out restarting it. Now Dockerfile.phase2's four RUNs: cuBLAS + cuDNN, the other CUDA
+# wheels, torch, the rest (same lock and overrides, so the same packages); the last imports the entry points.
 FROM python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,7 +19,14 @@ ENV UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONDONTWRITEBYTECODE=1
 
 COPY vllm_native.txt vllm_native.override /opt/
 RUN uv venv --python /usr/local/bin/python3.12 /opt/venv \
-    && uv pip install --python /opt/venv/bin/python -r /opt/vllm_native.txt --override /opt/vllm_native.override
+    && uv pip install --python /opt/venv/bin/python --no-deps \
+        $(grep -oE '^nvidia-(cublas|cudnn)[^=]*==[^ ]+' /opt/vllm_native.txt)
+RUN uv pip install --python /opt/venv/bin/python --no-deps \
+        $(grep -oE '^(nvidia|cuda)-[^=]+==[^ ]+' /opt/vllm_native.txt | grep -vE '^nvidia-(cublas|cudnn)')
+RUN uv pip install --python /opt/venv/bin/python --no-deps \
+        $(grep -oE '^(torch|torchvision|triton)==[^ ]+' /opt/vllm_native.txt)
+RUN uv pip install --python /opt/venv/bin/python -r /opt/vllm_native.txt --override /opt/vllm_native.override \
+    && /opt/venv/bin/python -c "import torch, vllm, vllm.entrypoints.llm, transformers, trl, peft"
 
 ENV PATH=/opt/venv/bin:$PATH \
     NVIDIA_VISIBLE_DEVICES=all \
