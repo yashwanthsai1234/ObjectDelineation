@@ -131,6 +131,12 @@ counts is on images the model never trained on: 128 shifted-validation images, 8
 
 <img src="docs/figures/rl_heldout.svg" alt="Held-out IoU: e2 0.511, step 250 0.634, final 0.659" width="700">
 
+What the model draws, before and after RL, on held-out crops picked by percentile (not the best ones): green is each
+expert's outline, red is the model's polygon. RL taught it to trace the nodule instead of boxing it or outlining only
+its bright core; the 10th-percentile crop shows the failures that remain (an outline that spills into the chest wall).
+
+<img src="docs/figures/rl_gallery.png" alt="Six held-out LIDC crops: expert outlines in green, the model's polygon in red, before and after RL" width="900">
+
 The first CUDA build (R0 v3) was exact but slower than the CPU checker: 54,710 polygons/s at 16 vertices and batch
 1,024, held back by per-call allocation and managed memory. With the arena, pinned staging and two streams, the same
 shapes run at **7.74 M polygons/s on an RTX 5090 (141x)**, 87x the polycore loop on the box's CPU.
