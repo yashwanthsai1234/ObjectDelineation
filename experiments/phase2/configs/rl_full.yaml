@@ -10,7 +10,7 @@
 # merged into the base (a plain model folder for select_ckpt and vLLM), and train_rl/rl.json (TRL's log, timing).
 #
 # Estimate (R3, 2026-11-07, RTX 5090: 36.3 s per step): 770 steps ~7.8 h + ~30 min of checks, model load and saves,
-# so ~8.3 h at $0.628/h = ~$5.2. Launch with --cap-hours 10 (worst case ~$6.9; owner chose 10 h). Preflight LAST:
+# so ~8.3 h at $0.641/h = ~$5.3. Launch with --cap-hours 10 (worst case ~$7.3; owner chose 10 h). Preflight LAST:
 #   make preflight CONFIG=experiments/phase2/configs/r1_qwen3vl2b.yaml
 #   offers.sh RTX_5090 --pick top
 #   launch.sh OFFER rl --config experiments/phase2/configs/r1_qwen3vl2b.yaml --cap-hours 10 --owner-approved

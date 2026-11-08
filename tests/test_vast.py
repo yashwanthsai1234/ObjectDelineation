@@ -375,7 +375,7 @@ def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     assert P.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090", "lidc")
     E.state(offers=[offer(inet_up_cost=P.INET_CEIL, inet_down_cost=P.INET_CEIL)])
     E.pick()
-    spent(E, 14.2)  # 14.2 + 0.55 x 4 = 16.4 by price alone; the bandwidth estimate takes it past $17.00
+    spent(E, 14.7)  # 14.7 + 0.55 x 4 = 16.9 by price alone; the bandwidth estimate takes it past $17.50
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
     E.state(offers=[offer()])
@@ -584,16 +584,17 @@ def spent(E, usd):
         P.ledger(event="teardown", run_id="old", cost_usd=usd)
 
 
-def test_cost_guard_hard_stop_at_17(E):
-    """Owner 2026-11-07: $9.56 spent, up to $7 more for the full RL run ($16.60), then $17.00 for a 10 h cap."""
-    spent(E, 17.0)
+def test_cost_guard_hard_stop_at_17_50(E):
+    """Owner 2026-11-07: $9.56 spent, up to $7 more for the full RL run ($16.60), then $17.50 for a 10 h cap on the
+    one host that had run the image before (three others failed to pull it)."""
+    spent(E, 17.5)
     E.pick()
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
 
 
 def test_cost_guard_allows_the_owners_extra_7_dollars(E):
-    spent(E, 16.0)  # over the $16.60 stop; 16 + 0.55 x (1 h + the 10 min pull) < 17.00
+    spent(E, 16.5)  # over the $17.00 stop; 16.5 + 0.55 x (1 h + the 10 min pull) < 17.50
     E.pick()
     E.sh("launch.sh", "111", "r1", "--cap-hours", "1", "--owner-approved")
     assert E.vast("create instance")
@@ -602,7 +603,7 @@ def test_cost_guard_allows_the_owners_extra_7_dollars(E):
 def test_cost_guard_projection_and_alarm(E):
     spent(E, 9.0)
     E.pick()
-    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "15", ok=False)  # 9 + 0.55 * 15 > 17.00
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "16", ok=False)  # 9 + 0.55 * 16 > 17.50
     assert "hard stop" in p.stderr
     spent(E, 1.5)
     p = E.sh("launch.sh", "111", "r1", "--cap-hours", "1", ok=False)  # 10.5 >= alarm
@@ -627,7 +628,7 @@ def test_sweep_destroys_orphans_and_overdue(E):
 
 def test_sweep_hard_stop_destroys_everything(E):
     E.launched()
-    spent(E, 17.0)
+    spent(E, 17.5)
     p = E.sh("sweep_orphans.sh")
     assert E.instances() == {} and "hard stop" in p.stderr
 
