@@ -112,7 +112,8 @@ from objdel.reward import (
 THRESHOLDS = (0.1, 0.3, 0.5, 0.7, 0.9)  # MRNet soft Dice
 PASS_KS = (1, 2, 4, 8, 16, 32, 64)
 FAIL = -1.0  # topology answer of unparseable or illegal samples (sig_ids are CRC32 values >= 0)
-_ZEROED = ("iou_tc", "f5", "g_area", "iou_vote", "dice_vote", "d_max")  # scores of failed and illegal samples
+# scores of failed and illegal samples
+_ZEROED = ("iou_tc", "f5", "g_area", "iou_vote", "dice_vote", "d_max", "precision_vote", "recall_vote")
 NSD_TAU = {"nodule": 2.0, "disc": 9.0, "cup": 16.0}  # px at frame resolution (D25)
 _D = 0.5 * np.sqrt(2.0)  # surfel length per 2 x 2 neighbourhood code (surface-distance lookup table, 1 px spacing)
 _SURFEL = np.array([0, _D, _D, 1, _D, 1, 2 * _D, _D, _D, 2 * _D, 1, _D, 1, _D, _D, 0])
@@ -305,10 +306,12 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
         drawn = masks & legal[:, None, None]  # what is scored: illegal rasters count as empty
         iou = _pairwise_iou(np.concatenate([drawn, c.raters, c.vote[None]]))
         area, comps = masks.sum((1, 2)), np.array([len(t.sig) for t in ot])
+        hit = (drawn & c.vote).sum((1, 2))  # answer pixels inside the majority outline
         a_min, a_max = min(c.rater_areas), max(c.rater_areas)
         o = {"iou_tc": [t.iou_tc for t in ot], "f5": [t.f5 for t in ot], "g_area": [t.g_area for t in ot],
              "iou_vote": iou[:K, -1], "dice_vote": 2 * iou[:K, -1] / (1 + iou[:K, -1]),  # Dice = 2 IoU / (1 + IoU)
              "d_max": iou[:K, K:K + k].max(1),
+             "precision_vote": hit / np.maximum(drawn.sum((1, 2)), 1), "recall_vote": hit / max(int(c.vote.sum()), 1),
              "area": area, "a_amax": area / max(a_max, 1), "a_amin": area / a_min if a_min else np.ones(K),
              "m_e": area / max(int(np.count_nonzero(c.union)), 1),
              "components": comps, "extra_components": comps - max(len(s) for s in c.rater_sigs),
