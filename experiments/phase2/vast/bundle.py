@@ -52,6 +52,8 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
     picked = [f for sub in (ds, f"images/{ds}", f"caches/{ds}") for f in walk(data, prep / sub, f"prepared/{sub}")]
     for kind in ("views", "eval_views"):
         names = set(views) if kind == "views" and views else {p.name for p in (data / kind).glob(f"{ds}-*")}
+        if kind == "views" and not views:  # RL train windows (build_eval_views --split train): only when named
+            names = {n for n in names if not n.startswith(f"{ds}-train-")}
         if missing := [n for n in names if not (data / kind / n).is_dir()]:
             die(f"{kind} missing: {missing}")
         if kind == "eval_views" and ds == "lidc":

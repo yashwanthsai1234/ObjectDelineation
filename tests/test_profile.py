@@ -197,3 +197,39 @@ def test_speed_chain_compares_vllm_asleep_and_awake_on_e2():
     assert a["--ckpt"] == b["--ckpt"] == "/workspace/runs/r4/ckpt" and a["--steps"] == b["--steps"] == "15"
     assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
     assert "--grpo" not in a and json.loads(b["--grpo"]) == {"vllm_enable_sleep_mode": False}
+
+
+def test_shared_prefix_chain_compares_the_packed_forward_on_e2():
+    """R5: R4's box facts and env check, then two short train_rl arms on e2: today's forward, then --shared-prefix.
+    The packed arm must not stop the chain, and neither arm saves checkpoints."""
+    from experiments.phase2.vast import policy
+
+    cfg = policy.ROOT / "experiments/phase2/configs"
+    r4, r5 = (policy.chain(cfg / f, "r5") for f in ("r4_speed.yaml", "r5_shared.yaml"))
+    assert r5[:2] == r4[:2] and len(r5) == 4
+    out = r5[2].index("--out") + 1
+    assert r5[2][:out] + r5[2][out + 1:] == r4[2][:out] + r4[2][out + 1:]  # R4's base arm, own folder
+    base, packed = r5[2], r5[3]
+    assert packed[:3] == ["~", "-m", "experiments.phase2.train_rl"] and packed[-1] == "--shared-prefix"
+    assert "--shared-prefix" not in base
+    a, b = (dict(zip(s[i::2], s[i + 1 :: 2], strict=False)) for s, i in ((base, 2), (packed[:-1], 3)))
+    assert a["--ckpt"] == b["--ckpt"] == "/workspace/runs/r5/ckpt" and a["--steps"] == b["--steps"] == "15"
+    assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
+
+
+def test_shifted_rl_chain_trains_on_the_windows_and_scores_both_splits():
+    """rl_shifted: train_rl from the full run's model on the centred frames plus the shifted and rescaled train windows
+    (shared-prefix, resumable), then final_eval on the whole val and test splits of the shifted view."""
+    from experiments.phase2.vast import policy
+
+    chain = policy.chain(policy.ROOT / "experiments/phase2/configs/rl_shifted.yaml", "rl2")
+    train = next(s for s in chain if "experiments.phase2.train_rl" in s)
+    i = train.index("--train-views")
+    assert train[i + 1:i + 3] == ["/workspace/data/lidc/views/lidc-train-shifted",
+                                  "/workspace/data/lidc/views/lidc-train-rescaled"]
+    assert {"--resume", "--shared-prefix"} <= set(train)
+    assert train[train.index("--ckpt") + 1] == "/workspace/runs/rl2/ckpt"
+    evals = [s for s in chain if "experiments.phase2.final_eval" in s]
+    assert [s[s.index("--split") + 1] for s in evals] == ["val", "test"]
+    assert all(s[s.index("--ckpt") + 1] == "/workspace/runs/rl2/train_rl/final" for s in evals)
+    assert evals[1][evals[1].index("--view") + 1] == "/workspace/data/lidc/eval_views/lidc-test-shifted"

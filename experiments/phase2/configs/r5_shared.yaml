@@ -1,0 +1,20 @@
+# R5 shared-prefix test (~$0.60, needs the owner's OK): today's train_rl on e2 for 15 steps twice on one RTX 5090.
+# New since R4: --shared-prefix packs each prompt's 8 answers into one row (the prompt runs once per group, not 8
+# times) for the old-logprob, reference and update forwards. On the Mac it gives TRL's log-probs and gradients.
+#   arm 1 (base):   R4's settings; steps 3-15 should match R4's asleep arm (~29.9 s)
+#   arm 2 (shared): --shared-prefix; "~" so a failure does not stop the chain. Logs shared/token_ratio (~0.37
+#                   expected at the full run's 325-token prompts and ~127-token answers)
+# Compare steps 3-15 (steps 1-2 warm up): time per step, rewards (same seed), memory. Neither arm saves checkpoints.
+# {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
+#   make preflight CONFIG=experiments/phase2/configs/r1_qwen3vl2b.yaml
+#   offers.sh RTX_5090 --pick ID
+#   launch.sh OFFER r5 --config experiments/phase2/configs/r1_qwen3vl2b.yaml --cap-hours 1.2 --owner-approved
+#   sync_up.sh r5 && fetch_hf.sh r5 r1-qwen3vl2b
+#   run.sh r5 experiments/phase2/configs/r5_shared.yaml && teardown.sh r5
+steps:
+  - ["~", bash, -c, "(lscpu; nproc; cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu*/cpu.cfs_*_us; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
+  - [bash, experiments/phase2/docker/env_check.sh, "{rd}/ckpt", "{rd}/env_check.json"]
+  - [-m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/prepared",
+     --out, "{rd}/base", --steps, "15", --save-steps, "1000"]
+  - ["~", -m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/prepared",
+     --out, "{rd}/shared", --steps, "15", --save-steps, "1000", --shared-prefix]
