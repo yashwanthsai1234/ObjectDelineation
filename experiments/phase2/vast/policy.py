@@ -55,7 +55,7 @@ CARDS = {
     "A100_SXM4": {"ram": (79, 82), "ceiling": 1.80},
 }
 CPU_RAM = {"lidc": 32, "riga": 48}  # GB; RIGA caches ~4.5 GB RSS per scoring process (B4 §1)
-ALARM, HARD_STOP = 10.0, 16.6  # G10, USD spent in Phase 2 (owner 2026-11-07: $9.56 spent + $7 for full RL)
+ALARM, HARD_STOP = 10.0, 17.0  # G10, USD spent in Phase 2 (owner 2026-11-07: $9.56 spent + ~$7 for full RL, 10 h cap)
 # BK4-18: $/GB ceiling, up and down (> 2x the A3 snapshot medians of the five cards, $4-13.65/TB; unit UNVERIFIED until
 # V0). Estimate: image 7.5 GB + bundle 2 GB + model downloads once; checkpoint pulls of 3-5 GB per 20 min (§4.4).
 INET_CEIL, DOWN_GB, UP_GB_PER_H = 0.03, 15, 6
@@ -545,7 +545,7 @@ def billed(charges: dict, iid: int) -> float | None:
 def cmd_teardown(a) -> None:
     run, lost = get_run(a.run_id), None
     try:
-        for _ in range(3):
+        for _ in range(3 if "port" in run else 0):  # no port: the box never got ssh, so nothing is on it to pull
             try:
                 cmd_pull(a)
                 lost = None

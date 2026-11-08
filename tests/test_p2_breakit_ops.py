@@ -282,7 +282,7 @@ def test_destroy_never_stop(E):
     E.sh("teardown.sh", "r1")
     E.launched()
     knob(E, instances=dict(E.instances(), **{"9": {"id": 9, "label": "x", "dph_total": 0.3, "start_date": 0}}))
-    V.spent(E, 16.6)
+    V.spent(E, 17.0)
     E.sh("sweep_orphans.sh")
     verbs = {tuple(a[:2]) for a in (c["argv"] for c in E.calls("vastai"))}
     assert not [v for v in verbs if "stop" in v[0] or "stop" in v[1]] and ("destroy", "instance") in verbs

@@ -375,7 +375,7 @@ def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     assert P.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090", "lidc")
     E.state(offers=[offer(inet_up_cost=P.INET_CEIL, inet_down_cost=P.INET_CEIL)])
     E.pick()
-    spent(E, 13.6)  # 13.6 + 0.55 x 4 = 15.8 by price alone; the bandwidth estimate takes it past $16.60
+    spent(E, 14.2)  # 14.2 + 0.55 x 4 = 16.4 by price alone; the bandwidth estimate takes it past $17.00
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
     E.state(offers=[offer()])
@@ -584,16 +584,16 @@ def spent(E, usd):
         P.ledger(event="teardown", run_id="old", cost_usd=usd)
 
 
-def test_cost_guard_hard_stop_at_16_60(E):
-    """Owner 2026-11-07: $9.56 spent, up to $7 more for the full RL run, so the hard stop is $16.60."""
-    spent(E, 16.6)
+def test_cost_guard_hard_stop_at_17(E):
+    """Owner 2026-11-07: $9.56 spent, up to $7 more for the full RL run ($16.60), then $17.00 for a 10 h cap."""
+    spent(E, 17.0)
     E.pick()
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
 
 
 def test_cost_guard_allows_the_owners_extra_7_dollars(E):
-    spent(E, 15.0)  # over the old $15 stop; 15 + 0.55 x (1 h + the 10 min pull) < 16.60
+    spent(E, 16.0)  # over the $16.60 stop; 16 + 0.55 x (1 h + the 10 min pull) < 17.00
     E.pick()
     E.sh("launch.sh", "111", "r1", "--cap-hours", "1", "--owner-approved")
     assert E.vast("create instance")
@@ -602,7 +602,7 @@ def test_cost_guard_allows_the_owners_extra_7_dollars(E):
 def test_cost_guard_projection_and_alarm(E):
     spent(E, 9.0)
     E.pick()
-    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "14", ok=False)  # 9 + 0.55 * 14 > 16.60
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "15", ok=False)  # 9 + 0.55 * 15 > 17.00
     assert "hard stop" in p.stderr
     spent(E, 1.5)
     p = E.sh("launch.sh", "111", "r1", "--cap-hours", "1", ok=False)  # 10.5 >= alarm
@@ -627,7 +627,7 @@ def test_sweep_destroys_orphans_and_overdue(E):
 
 def test_sweep_hard_stop_destroys_everything(E):
     E.launched()
-    spent(E, 16.6)
+    spent(E, 17.0)
     p = E.sh("sweep_orphans.sh")
     assert E.instances() == {} and "hard stop" in p.stderr
 
@@ -1105,7 +1105,7 @@ def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path)
     billing. G8: destroy first-class, then report the failed pull."""
     calls = []
     monkeypatch.setattr(P, "home", lambda: tmp_path)
-    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
+    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "port": 40022})
     monkeypatch.setattr(P, "cmd_pull", lambda a: P.die("rsync failed: ..."))
     monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
     monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
@@ -1125,7 +1125,7 @@ def _teardown(monkeypatch, tmp_path, pulls):
             raise e
 
     monkeypatch.setattr(P, "home", lambda: tmp_path)
-    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
+    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "port": 40022})
     monkeypatch.setattr(P, "cmd_pull", pull)
     monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
     monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
@@ -1278,3 +1278,12 @@ def test_env_check_lists_every_check():
         compile(b, "env_check", "exec")
     # Triton's @jit reads its kernel's source: the checks run from a file, not stdin (box p1, 2026-11-06)
     assert 'cat > "$CHECKS" <<\'PY\'' in text and '/opt/venv/bin/python -I "$CHECKS" "$OUT"' in text
+
+
+def test_teardown_of_a_box_that_never_got_ssh_destroys_it_without_a_pull(monkeypatch, tmp_path):
+    """2026-11-07: a box torn down while its image was still loading has no ssh port; the pull raised KeyError
+    'port' (destroy still ran, from the finally) and the invoice was never recorded. Nothing is on such a box."""
+    calls = _teardown(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
+    P.cmd_teardown(SimpleNamespace(run_id="v1"))
+    assert calls == [(7, "teardown"), "invoice"]
