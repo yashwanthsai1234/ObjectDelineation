@@ -54,7 +54,7 @@ build = "cp312-*"
 skip = "*-musllinux_*"
 build-verbosity = 1
 test-requires = ["pytest", "hypothesis"]
-test-sources = ["tests", "pyproject.toml"]
+test-sources = ["tests", "experiments", "pyproject.toml", "CMakeLists.txt"]
 test-command = "pytest -q -m 'not slow' -p no:cacheprovider tests/test_checker_oracle.py tests/test_cuda_checker.py tests/test_checker_host.py"
 
 [tool.cibuildwheel.linux]
