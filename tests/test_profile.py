@@ -177,3 +177,23 @@ def test_checker_gpu_chain_builds_then_sanitizes_before_the_long_checks():
     assert k[1] == ["bash", "-c", "mkdir -p /workspace/runs/k1/cuda_checker && "
                     "bash experiments/cuda_checker/run_box.sh --build-only"]  # fmt: skip
     assert k[2] == p1[3] and k[3] == ["~", *p1[2]] and len(k) == 4
+
+
+def test_speed_chain_compares_vllm_asleep_and_awake_on_e2():
+    """R4: the full run's card facts and env check, then two short train_rl arms on e2 with today's code: vLLM asleep
+    between steps (the full run's setting), then kept awake. The awake arm may run out of memory: it must not stop the
+    chain, and neither arm saves checkpoints."""
+    import json
+
+    from experiments.phase2.vast import policy
+
+    cfg = policy.ROOT / "experiments/phase2/configs"
+    full, r4 = (policy.chain(cfg / f, "r4") for f in ("rl_full.yaml", "r4_speed.yaml"))
+    assert r4[:2] == full[:2] and len(r4) == 4
+    asleep, awake = r4[2], r4[3]
+    assert asleep[:2] == ["-m", "experiments.phase2.train_rl"]
+    assert awake[:3] == ["~", "-m", "experiments.phase2.train_rl"]
+    a, b = (dict(zip(s[i::2], s[i + 1 :: 2], strict=True)) for s, i in ((asleep, 2), (awake, 3)))
+    assert a["--ckpt"] == b["--ckpt"] == "/workspace/runs/r4/ckpt" and a["--steps"] == b["--steps"] == "15"
+    assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
+    assert "--grpo" not in a and json.loads(b["--grpo"]) == {"vllm_enable_sleep_mode": False}
