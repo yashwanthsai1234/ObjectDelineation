@@ -39,7 +39,8 @@ def test_vllm_native_installs_its_venv_in_small_layers():
     text = (DOCKER / "Dockerfile.vllm_native").read_text()
     mine = [s for s in run_steps(text) if "/opt/venv/" in s]
     assert len(mine) == 4
-    assert "nvidia-(cublas|cudnn)" in mine[0] and "(nvidia|cuda)-" in mine[1] and "(torch|torchvision|triton)" in mine[2]
+    assert "nvidia-(cublas|cudnn)" in mine[0] and "(nvidia|cuda)-" in mine[1]
+    assert "(torch|torchvision|triton)" in mine[2]
     assert all("--no-deps" in s and "/opt/vllm_native.txt" in s for s in mine[:3])
     assert "-r /opt/vllm_native.txt --override /opt/vllm_native.override" in mine[3]
     assert "import torch, vllm, vllm.entrypoints.llm, transformers, trl, peft" in mine[3]
