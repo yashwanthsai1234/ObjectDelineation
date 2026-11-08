@@ -1,5 +1,6 @@
 # Full RL run: tune R1's e2 with GRPO on an RTX 5090, after the same card, checker and sanitizer checks as P1 and R2.
-# NOT STARTED: the owner gives the signal and sets --steps (500 here is a placeholder to change before launch).
+# Owner 2026-11-07: 3 epochs, up to $7. 8,208 RL rows (disagreement items x4) / 32 prompts per step = 256.5 steps per
+# epoch, so 770 steps. Checkpoints every 50 steps keep the 1- and 2-epoch models for the exam to compare.
 # {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
 #
 # train_rl (experiments/phase2/train_rl.py): FastGRPO + OpenOnce + ImageMemo, vLLM colocate, scoring on the GPU next
@@ -8,11 +9,11 @@
 # sync_up of the old box's train_rl/ folder) continues from the last checkpoint. The end: train_rl/final, the LoRA
 # merged into the base (a plain model folder for select_ckpt and vLLM), and train_rl/rl.json (TRL's log, timing).
 #
-# Estimate (R3, 2026-11-07, RTX 5090: 36.3 s per step): 500 steps ~5.0 h + ~15 min of checks and model load, so
-# ~5.3 h at $0.55-0.65/h = ~$2.9-3.5. Launch with --cap-hours 6. Commands (Mac), preflight LAST:
+# Estimate (R3, 2026-11-07, RTX 5090: 36.3 s per step): 770 steps ~7.8 h + ~30 min of checks, model load and saves,
+# so ~8.3 h at $0.566/h = ~$4.7. Launch with --cap-hours 9 (worst case ~$5.4). Commands (Mac), preflight LAST:
 #   make preflight CONFIG=experiments/phase2/configs/r1_qwen3vl2b.yaml
 #   offers.sh RTX_5090 --pick top
-#   launch.sh OFFER rl --config experiments/phase2/configs/r1_qwen3vl2b.yaml --cap-hours 6
+#   launch.sh OFFER rl --config experiments/phase2/configs/r1_qwen3vl2b.yaml --cap-hours 9 --owner-approved
 #   sync_up.sh rl && fetch_hf.sh rl r1-qwen3vl2b      # e2 -> {rd}/ckpt (needs the repo-scoped HF token)
 #   run.sh rl experiments/phase2/configs/rl_full.yaml && pull.sh rl && teardown.sh rl
 steps:
@@ -36,4 +37,4 @@ steps:
      tests/test_reward_one_checker_call.py tests/test_gpu_scoring.py >> $O 2>&1 || exit 1; done"]
   # RL: the full run on e2, resumable (see the header)
   - [-m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/prepared",
-     --out, "{rd}/train_rl", --steps, "500", --save-steps, "50", --resume]
+     --out, "{rd}/train_rl", --steps, "770", --save-steps, "50", --resume]
