@@ -7,10 +7,12 @@ of an image, so a memo keyed by the object serves both passes from one preparati
 import numpy as np
 import PIL.Image
 import pytest
-import torch
-from transformers import Qwen2VLImageProcessor
 
-from objdel.train import fast
+torch = pytest.importorskip("torch")
+pytest.importorskip("trl")
+from transformers import Qwen2VLImageProcessor  # noqa: E402
+
+from objdel.train import fast  # noqa: E402
 
 
 def image(seed, h=64, w=64):

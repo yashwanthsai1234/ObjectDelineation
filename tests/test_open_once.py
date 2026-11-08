@@ -8,11 +8,13 @@ gets 32 prompts per generation batch and a repeat count of 16, and the DataLoade
 import numpy as np
 import PIL.Image
 import pytest
-import torch
-from datasets import Dataset, Image
-from trl.trainer.utils import RepeatSampler
 
-from objdel.train.dataset import OpenOnce
+torch = pytest.importorskip("torch")
+pytest.importorskip("trl")
+from datasets import Dataset, Image  # noqa: E402
+from trl.trainer.utils import RepeatSampler  # noqa: E402
+
+from objdel.train.dataset import OpenOnce  # noqa: E402
 
 G, PROMPTS, GA = 8, 32, 16
 
