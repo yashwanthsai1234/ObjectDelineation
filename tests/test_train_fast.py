@@ -563,3 +563,206 @@ def test_vllm_sync_wake_and_sleep_are_timed():
     assert calls == [("sync",), ("wake", ["kv_cache"]), ("sleep", 2)]
     timed = {k: len(v) for k, v in t._metrics["train"].items()}
     assert timed == {"time/sync_s": 1, "time/wake_s": 1, "time/sleep_s": 1}
+
+
+def group_batch(groups, G, lengths, pads=None, P=12, T=10, seed=3):
+    """GRPO layout: `groups` prompts x G answers, rows of a group consecutive with the same prompt tokens, pads and
+    image; answers of `lengths` (one per row) differ."""
+    g = torch.Generator().manual_seed(seed)
+    n = groups * G
+    ids = torch.randint(0, 99, (n, P + T), generator=g)
+    mask = torch.ones_like(ids)
+    pads = pads or [0] * groups
+    for q in range(groups):
+        p, rows = pads[q], slice(q * G, q * G + G)
+        prompt = torch.randint(0, 99, (P,), generator=g)
+        prompt[p], prompt[p + 1:p + 5], prompt[p + 5] = START, IMG, END
+        ids[rows, :P] = prompt
+        mask[rows, :p] = 0
+    for r, L in enumerate(lengths):
+        mask[r, P + L:] = 0
+    img = torch.randn(groups, 16, PATCH, generator=g)
+    pv = img[[r // G for r in range(n)]].reshape(-1, PATCH)
+    kw = {"pixel_values": pv, "image_grid_thw": torch.tensor([[1, 4, 4]] * n), "num_images": [1] * n,
+          "mm_token_type_ids": (ids == IMG).long()}  # fmt: skip
+    return ids, mask, T, kw
+
+
+def shared(m, **attrs):
+    return trainer(Fast, shared_prefix=True, rope=fast.RopeCache.install(m), **attrs)
+
+
+@pytest.mark.parametrize("batch_size", [8, 4])
+def test_shared_prefix_logps_equal_trls(batch_size):
+    """Each group's prompt runs once: [prompt minus its last token] + G x [last prompt token, answer], answers masked
+    from each other. Same log-probs and entropies as TRL's one-row-per-answer forward."""
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref_lp, ref_ent, _ = trainer(Plain)._get_per_token_logps_and_entropies(
+        m, ids, mask, T, batch_size=batch_size, compute_entropy=True, **kw)
+    lp, ent, _ = shared(m)._get_per_token_logps_and_entropies(
+        m, ids, mask, T, batch_size=batch_size, compute_entropy=True, **kw)
+    real = mask[:, -T:].bool()
+    assert lp.shape == ref_lp.shape == (8, T)
+    torch.testing.assert_close(lp[real], ref_lp[real], atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(ent[real], ref_ent[real], atol=1e-5, rtol=1e-5)
+    assert (lp[~real] == 0).all()
+
+
+def test_shared_prefix_gradients_equal_trls():
+    m = tiny_model().train()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[1, 3])
+    real = mask[:, -T:].float()
+    grads = []
+    for t in (trainer(Plain), shared(m)):
+        m.zero_grad()
+        lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=8, **kw)
+        (lp * real).sum().backward()
+        grads.append({n: p.grad.clone() for n, p in m.named_parameters() if p.grad is not None})
+    assert grads[0].keys() == grads[1].keys()
+    for n in grads[0]:
+        torch.testing.assert_close(grads[1][n], grads[0][n], atol=1e-4, rtol=1e-4)
+
+
+def test_shared_prefix_runs_far_fewer_tokens():
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10])
+    seen, orig = [], m.model.language_model.forward
+
+    def forward(*a, **k):
+        seen.append(k["inputs_embeds"].shape[:2])
+        return orig(*a, **k)
+
+    m.model.language_model.forward = forward
+    t = shared(m)
+    t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=8, **kw)
+    (rows, width), = seen
+    assert rows == 2  # one packed row per group
+    assert width == 11 + 4 * 1 + (2 + 6 + 4 + 10)  # prompt minus its last token + 4 x (last prompt token + answer)
+    assert rows * width < 8 * (12 + 10) / 2  # 74 tokens, not TRL's 8 rows x 22
+    real = 2 * 4 * 12 + (3 + 7 + 1 + 5 + 2 + 6 + 4 + 10)  # every row's prompt + its answer: 134
+    assert t._metrics["train"]["shared/token_ratio"] == [(2 * 11 + 8 + 38) / real]
+
+
+def test_shared_prefix_falls_back_when_rows_do_not_share_prompts():
+    m = tiny_model()
+    ids, mask, T, kw = batch(pads=[2, 0, 5], lengths=[3, 7, 1])  # three different prompts
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    lp, _, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+
+
+def test_by_group_length_keeps_each_group_together_longest_group_first():
+    n = torch.tensor([3, 9, 2, 4, 5, 5, 1, 1, 7, 2, 2, 2])  # 3 groups of 4: longest members 9, 5, 7
+    batch_ = {"prompt_mask": torch.ones(12, 1, dtype=torch.long),
+              "completion_mask": torch.zeros(12, 9, dtype=torch.long),
+              "tag": list(range(12)), "advantages": torch.arange(12.0)}
+    for r, L in enumerate(n.tolist()):
+        batch_["completion_mask"][r, :L] = 1
+    out = fast.by_group_length(batch_, 4)
+    assert out["tag"] == [0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6, 7]
+    assert out["advantages"].tolist() == [float(i) for i in out["tag"]]
+
+
+def test_shared_prefix_update_micro_batches_keep_whole_groups(monkeypatch):
+    """With shared_prefix the update's order keeps each prompt's G answers together (by_group_length), so a
+    micro-batch of whole groups packs; micro-batches that cannot hold whole groups keep by_length."""
+    import trl.trainer.grpo_trainer as G
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append(G.shuffle_sequence_dict))
+    t = c10_trainer()
+    t.model, t.shared_prefix, t.num_generations = type("M", (), {"training": True})(), True, 8
+    t.args.per_device_train_batch_size = 16
+    t._prepare_inputs({})
+    assert seen[0].func is fast.by_group_length and seen[0].keywords == {"G": 8}
+    t.args.per_device_train_batch_size = 12  # not whole groups of 8
+    t._prepare_inputs({})
+    assert seen[1] is fast.by_length
+
+
+def test_shared_prefix_normalizes_over_the_sampled_support_as_trl():
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    g = torch.Generator().manual_seed(5)
+    sup = torch.randint(0, 99, (8, T, 6), generator=g)
+    sup[..., 0] = ids[:, -T:]  # the sampled token is in its support
+    sup[..., 5] = -1  # padded support slot
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, sampling_mask=sup, **kw)
+    lp, _, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, sampling_mask=sup, **kw)
+    real = mask[:, -T:].bool()
+    torch.testing.assert_close(lp[real], ref[real], atol=1e-5, rtol=1e-5)
+
+
+def test_train_rl_and_g_probe_turn_on_shared_prefix_by_flag(capsys):
+    from pathlib import Path
+
+    from experiments.phase2 import train_rl
+
+    with pytest.raises(SystemExit):
+        train_rl.main(["--help"])
+    assert "--shared-prefix" in capsys.readouterr().out
+    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
+    assert 'trainer.shared_prefix = bool(getattr(a, "shared_prefix", False))' in src
+
+
+@pytest.mark.parametrize("impl", ["eager", "sdpa"])
+def test_shared_prefix_mask_works_under_both_attention_kinds(impl):
+    m = tiny_model()
+    m.set_attn_implementation(impl)
+    assert m.config._attn_implementation == impl
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    lp, _, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    real = mask[:, -T:].bool()
+    torch.testing.assert_close(lp[real], ref[real], atol=1e-5, rtol=1e-5)
+
+
+def test_packing_is_chosen_only_when_it_costs_less():
+    """Packed attention is dense over the whole packed row (prompt + 8 answers): with long answers its square
+    outgrows the 8 prompts it saves. Real sizes: 325-token prompts, 16 rows, linear cost ~12,000x an attention pair."""
+    short = [127] * 16
+    assert fast.packing_wins(325, short, groups=2)
+    assert not fast.packing_wins(325, [1536] * 16, groups=2)  # answers at the cap: per-row is cheaper
+    assert not fast.packing_wins(325, short, groups=16)  # nothing shared
+
+
+def test_long_answers_fall_back_to_the_per_row_forward(monkeypatch):
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10])
+    monkeypatch.setattr(fast, "packing_wins", lambda *a, **k: False)
+    t = shared(m)
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    assert not t._metrics["train"]["shared/token_ratio"]
+
+
+def test_a_model_without_the_rope_hook_takes_the_per_row_forward():
+    """A separate reference model (full fine-tuning, beta > 0) has no RopeCache hook: it must not get a packed row."""
+    m, other = tiny_model(), tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(other, ids, mask, T, **kw)
+    t = shared(m)
+    lp, _, _ = t._get_per_token_logps_and_entropies(other, ids, mask, T, **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    assert not t._metrics["train"]["shared/token_ratio"]
+
+
+def test_update_order_keeps_trls_shuffle_under_a_per_micro_batch_entropy_cut(monkeypatch):
+    import trl.trainer.grpo_trainer as G
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append(G.shuffle_sequence_dict))
+    shuffle = G.shuffle_sequence_dict
+    t = c10_trainer()
+    t.model, t.top_entropy_quantile = type("M", (), {"training": True})(), 0.2
+    t._prepare_inputs({})
+    assert seen == [shuffle]
+
+
+def test_shared_prefix_is_off_when_the_text_layers_are_compiled():
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
+    assert 'trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)' in src

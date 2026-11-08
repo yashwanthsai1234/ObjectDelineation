@@ -580,3 +580,54 @@ def test_bundle_covers_every_eval_view():
         for k in keys:
             for cat, share in exam[k].items():
                 assert share < coverage.EVAL_MIN or train[k].get(cat, 0) >= share / 3, (kind, k, cat)
+
+
+# ------------------------------------------------------------------------------- RL on shifted training windows
+@pytest.fixture(scope="module")
+def rl_views(tmp_path_factory, synthetic_items):
+    """The policy frames (dataset.prepare) and the shifted / rescaled windows of the same train items (build_eval_views
+    --split train): RL trained only on the centred frames, the exams are shifted (rl_plateau_diagnosis_2026-11-08)."""
+    pytest.importorskip("datasets")
+    from experiments.phase2 import build_eval_views as BE
+    from objdel.train import dataset as D
+
+    root = tmp_path_factory.mktemp("rl_views")
+    store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
+    D.prepare(root / "store", root / "prepared", procs=1)
+    BE.build(root / "store", root / "views", ("lidc",), "train", seed=0, procs=1)
+    return root / "prepared", root / "views" / "lidc-train-shifted", root / "views" / "lidc-train-rescaled"
+
+
+@pytest.mark.usefixtures("clean_store")
+def test_rl_rows_mix_the_centred_frames_with_shifted_windows(rl_views):
+    from objdel.train import dataset as D
+    from objdel.train import serve
+
+    prepared, shifted, rescaled = rl_views
+    roots = (prepared, shifted, rescaled)
+    for r in roots:
+        serve.preload(r, ["lidc"])
+    rows = D.grpo_rows_views(roots, "lidc", "train")
+    each = [len(D.grpo_rows(r, "lidc", "train")) for r in roots]
+    assert len(rows) == sum(each) and min(each) > 0
+    keys = rows["key"]
+    assert sum("::" not in k for k in keys) == each[0]  # the centred frames keep their item ids
+    assert sum(k.startswith("1::") for k in keys) == each[1] and sum(k.startswith("2::") for k in keys) == each[2]
+    load = serve.loader(*roots)
+    key = next(k for k in keys if "::" not in k)
+    centred, moved = load(key)["nodule"], load(f"1::{key}")["nodule"]
+    assert centred is serve.STORE[str(prepared.resolve())][key]["nodule"]
+    assert moved is serve.STORE[str(shifted.resolve())][key]["nodule"]
+    assert not np.array_equal(centred.vote, moved.vote)  # the shifted window's rater masks, not the centred ones
+
+
+@pytest.mark.usefixtures("clean_store")
+def test_one_root_loader_is_unchanged_and_unknown_view_tags_fail(rl_views):
+    from objdel.train import serve
+
+    prepared, shifted, _ = rl_views
+    serve.preload(prepared, ["lidc"])
+    key = next(iter(serve.STORE[str(prepared.resolve())]))
+    assert serve.loader(prepared)(key).root == str(prepared.resolve())
+    with pytest.raises(KeyError):
+        serve.loader(prepared)(f"1::{key}")  # a view tag with no second root

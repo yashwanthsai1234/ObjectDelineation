@@ -237,6 +237,19 @@ def grpo_rows(root, dataset: str, split: str, oversample: int = 1) -> Dataset:
     return prompt_rows(root, dataset, split, True, oversample)
 
 
+def grpo_rows_views(roots, dataset: str, split: str, oversample: int = 1) -> Dataset:
+    """grpo_rows of several roots in one dataset: the policy frames (roots[0], keys unchanged) and windows of the same
+    items (build_eval_views --split train: shifted, rescaled), keys tagged "<i>::" so serve.loader(*roots) scores each
+    row on its own window's rater masks."""
+    from objdel.train.serve import VIEW_SEP
+
+    rows = []
+    for i, root in enumerate(roots):
+        for r in prompts(root, dataset, split, True, oversample):
+            rows.append(r if i == 0 else r | {"key": f"{i}{VIEW_SEP}{r['key']}"})
+    return Dataset.from_list(rows).cast_column("image", Image())
+
+
 class OpenOnce:
     """GRPO rows whose images are opened once per generation batch (perf: the 16 x 256 opens per step).
 

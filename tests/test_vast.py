@@ -882,6 +882,18 @@ def test_bundle_ships_only_the_named_view(tmp_path):
         B.members("lidc", d, ["lidc-nope"])
 
 
+def test_bundle_ships_rl_train_windows_only_when_named(tmp_path):
+    """build_eval_views --split train windows (views/<ds>-train-shifted, -rescaled: 2.7 GB for LIDC) go into a bundle
+    only when a run names them (rl_shifted.yaml); the default bundle stays the SFT views (sync time)."""
+    d = data_tree(tmp_path)
+    (d / "views/lidc-train-shifted/lidc").mkdir(parents=True)
+    (d / "views/lidc-train-shifted/lidc/train.jsonl").write_text("{}")
+    default = [n for n, _ in B.members("lidc", d)]
+    assert "views/lidc-train/rows.jsonl" in default and not [n for n in default if "lidc-train-shifted" in n]
+    named = [n for n, _ in B.members("lidc", d, ["lidc-train", "lidc-train-shifted"])]
+    assert "views/lidc-train-shifted/lidc/train.jsonl" in named
+
+
 def test_bundle_lidc_needs_the_checker_eval_set(tmp_path):
     d = data_tree(tmp_path)
     shutil.rmtree(d / "checker_eval")

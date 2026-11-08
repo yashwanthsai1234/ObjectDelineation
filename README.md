@@ -118,6 +118,7 @@ contact joins two parts) and on stacked slices of a hollow nodule.
 | CUDA checker on an RTX 5090 | 0 mismatches on 8,559 fuzz polygons and all 13 defect classes | `experiments/phase2/perf/p1_results.md` |
 | G-probe, Qwen3-VL-2B SFT (e2), 20 RL steps | PASS: held-out reward 0.694 / 0.679 → 0.769, legal 94.5 % → 98.2 % | `docs/research/notes/issues_solved_2026-11-07.md` |
 | **Full RL, 3 epochs (770 steps) on e2** | **Held-out IoU 0.511 → 0.659** (+0.148, 95 % CI +0.115 to +0.178; better on 112 of 128 images); legal 94.5 % → 98.8 % | `docs/research/notes/full_rl_2026-11-08.md` |
+| **Final model on the whole splits** (shifted crops, 8 samples each) | **Test (2,200): IoU 0.645, boundary F 0.816, precision 0.695, recall 0.748, Dice 0.701, legal 99.4 %**; validation (1,084): IoU 0.618, F 0.806, precision 0.689, recall 0.716 | `docs/research/notes/final_eval_2026-11-08.md` |
 
 ### 🧠 The full RL run
 
@@ -154,6 +155,7 @@ shapes run at **7.74 M polygons/s on an RTX 5090 (141x)**, 87x the polycore loop
 | FastGRPO + on-device scoring + image memo (R3) | 36.3 | `docs/research/notes/issues_solved_2026-11-07.md` (R2 on the same settings: 56.6) |
 | **Full RL run** (770 steps, same settings) | **27.5** | mean over the run; answers shortened from 128 to ~100 tokens |
 | + 64-wide chunks and the no-merge vLLM sync (R4) | 29.9 vs 32.7 | steps 3-15 at ~130-token answers: **8 % faster**, identical rewards; keeping vLLM awake gains nothing (handovers 1.6 s) |
+| + **shared-prefix forward**, `--shared-prefix` (R5) | **23.6 vs 31.0** | each prompt runs once per group of 8 answers, not 8 times (0.36 of the tokens): **24 % faster**; step 1 identical (same answers, same gradient norm); `docs/research/notes/shared_prefix_2026-11-08.md` |
 
 One step splits into 7.6 s vLLM generation, 12.3 s old and reference log-probabilities, and 24.4 s update; the reward
 (at the time: one checker call for all 256 answers plus scoring on a CPU pool) runs in the background during the

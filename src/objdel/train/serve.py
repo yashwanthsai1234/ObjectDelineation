@@ -105,9 +105,21 @@ class CacheRef(Mapping):
         return CacheRef, (self.key, self.root)
 
 
-def loader(root) -> Callable[[str], CacheRef]:
-    """`caches` bound to one preloaded root (eval views reuse the prepared item ids)."""
-    return partial(CacheRef, root=str(Path(root).resolve()))
+VIEW_SEP = "::"  # "<i>::<item id>": a row of the i-th root (dataset.grpo_rows_views); no tag: the first root
+
+
+def loader(*roots) -> Callable[[str], CacheRef]:
+    """`caches` bound to preloaded roots (eval views reuse the prepared item ids). With several roots a key
+    "<i>::<item id>" resolves in roots[i] and an untagged key in roots[0] (RL on shifted windows)."""
+    paths = [str(Path(r).resolve()) for r in roots]
+    if len(paths) == 1:
+        return partial(CacheRef, root=paths[0])
+    return partial(_tagged, paths)
+
+
+def _tagged(paths: list[str], key: str) -> CacheRef:
+    tag, sep, item = key.partition(VIEW_SEP)
+    return CacheRef(item, paths[int(tag)]) if sep else CacheRef(key, paths[0])
 
 
 class _Pool(ProcessPoolExecutor):

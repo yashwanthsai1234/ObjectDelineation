@@ -87,11 +87,14 @@ def make_trainer(a, ckpt: Path, train, steps: int, **over):
     over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
-    funcs, _ = rewards.TRLReward(serve.loader(a.train), rewards.stop_ids(model, proc)).funcs()
+    roots = [a.train, *getattr(a, "train_views", [])]  # train_rl --train-views: rows tagged per root
+    funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc)).funcs()
     cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
     calls = [callbacks.TraceStep(a.trace, wait=1)] if getattr(a, "trace", None) else []
     trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, processing_class=proc,
                   peft_config=peft, callbacks=calls)  # fmt: skip
+    # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
+    trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
         trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers
@@ -137,6 +140,7 @@ def main(argv=None) -> int:
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config (smoke tests)")
     ap.add_argument("--compile", choices=["default", "reduce-overhead"],
                     help="Stage F arm: torch.compile the text decoder layers (measured; off by default)")
+    ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
     ap.add_argument("--plain", action="store_true", help="profile arm: TRL's GRPOTrainer as shipped (no fast.FastGRPO)")
     ap.add_argument("--trace", help="profile arm: torch.profiler trace of optimizer step 3 to this dir")
     a = ap.parse_args(argv)

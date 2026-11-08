@@ -1,0 +1,31 @@
+# RL on shifted windows (needs the owner's OK and budget): continue the full run's final model on the centred frames
+# plus shifted and rescaled windows of the same train items, then score the whole val and test splits.
+# Why (docs/research/notes/rl_plateau_diagnosis_2026-11-08.md): RL trained only on centred crops (object offset median
+# 0.018 of the side) while the exams are shifted (70 % > 0.2); off-centre objects are missed (23 % at > 0.3). On centred
+# test items the model is already at the doctors' level, so the room left (about +0.09 IoU_tc) is the shifted windows.
+# Rows: 8,208 centred + 8,208 shifted + 8,208 rescaled (disagreement x4 each) = 24,624; 300 steps = 9,600 prompts,
+# about 0.4 of an epoch, every window kind drawn in proportion. --shared-prefix: 23.6 s/step (R5) -> ~2 h + evals
+# (~18 min) + checks; ~2.6 h at ~$0.60/h = ~$1.6. Launch with --cap-hours 3.5 (covers sync through a slow proxy).
+# Data: build the train windows and a bundle that ships them (the old bundle has only views/lidc-bundle-v3):
+#   .venv/bin/python -I -m experiments.phase2.build_eval_views --split train --out data/views --procs 6
+#   .venv/bin/python -I -m experiments.phase2.build_eval_views --split test --out data/eval_views --procs 6
+#   rm -r data/eval_views/lidc-test-rescaled data/eval_views/lidc-test-rotated   # only the shifted test view is scored
+#   (the default bundle leaves views/lidc-train-* out; name them with --view, as below)
+#   .venv/bin/python -I -m experiments.phase2.vast.bundle lidc --view lidc-bundle-v3 --view lidc-train-shifted \
+#       --view lidc-train-rescaled
+# The bundle takes eval_views/lidc-* as they are; check that lidc-test-shifted is listed in it before syncing.
+#   make preflight CONFIG=experiments/phase2/configs/r1_qwen3vl2b.yaml
+#   offers.sh RTX_5090 --pick ID
+#   launch.sh OFFER rl2 --config experiments/phase2/configs/r1_qwen3vl2b.yaml --cap-hours 3.5 --owner-approved
+#   sync_up.sh rl2 && fetch_hf.sh rl2 rl-full-3ep          # the full run's final model -> {rd}/ckpt
+#   run.sh rl2 experiments/phase2/configs/rl_shifted.yaml && pull.sh rl2 && teardown.sh rl2
+# {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
+steps:
+  - [bash, experiments/phase2/docker/env_check.sh, "{rd}/ckpt", "{rd}/env_check.json"]
+  - [-m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/prepared",
+     --train-views, "{data}/views/lidc-train-shifted", "{data}/views/lidc-train-rescaled",
+     --out, "{rd}/train_rl", --steps, "300", --save-steps, "50", --resume, --shared-prefix]
+  - [-m, experiments.phase2.final_eval, --ckpt, "{rd}/train_rl/final", --view, "{data}/eval_views/lidc-val-shifted",
+     --split, val, --train, "{data}/prepared", --out, "{rd}/eval_val"]
+  - [-m, experiments.phase2.final_eval, --ckpt, "{rd}/train_rl/final", --view, "{data}/eval_views/lidc-test-shifted",
+     --split, test, --train, "{data}/prepared", --out, "{rd}/eval_test"]

@@ -16,6 +16,7 @@ image once per generation batch. Valid because LoRA leaves the tower and project
 """
 
 import contextlib
+import functools
 import math
 import time
 
@@ -46,10 +47,57 @@ def window(attention_mask: torch.Tensor, logits_to_keep: int, buckets=BUCKETS) -
     return P + keep - width, keep
 
 
+def per_row(pv, rows, nimg) -> list | None:
+    """Each row's pixel rows (its images' slices of the chunk's pixel_values), or None without images."""
+    if pv is None:
+        return None
+    out, i, at = [], 0, 0
+    for k in nimg:
+        r = sum(rows[i:i + k])
+        out.append(pv[at:at + r])
+        i, at = i + k, at + r
+    return out
+
+
+def prompt_groups(prompt_ids, prompt_mask, pix) -> list[tuple[int, int]] | None:
+    """Runs [a, b) of consecutive rows with the same prompt tokens, padding and pixels (exact compares, one host
+    read), or None when no run has two rows (nothing to share)."""
+    same = (prompt_ids[1:] == prompt_ids[:-1]).all(1) & (prompt_mask[1:] == prompt_mask[:-1]).all(1)
+    if pix is not None:
+        if len({p.shape for p in pix}) == 1:
+            px = torch.stack(pix).flatten(1)
+            same &= (px[1:] == px[:-1]).all(1)
+        else:
+            eq = [p.shape == q.shape and torch.equal(p, q) for p, q in zip(pix[1:], pix[:-1], strict=True)]
+            same &= torch.tensor(eq, dtype=torch.bool, device=same.device)
+    runs, a = [], 0
+    for r, eq in enumerate(same.tolist() + [False], 1):
+        if not eq:
+            runs.append((a, r))
+            a = r
+    return runs if any(b - a > 1 for a, b in runs) else None
+
+
+PAIR = 12_000  # linear-layer cost of one token / attention cost of one query-key pair (Qwen3-VL-2B: ~2.8 GFLOP /
+#                ~0.23 MFLOP); packed attention is dense over the packed row (SDPA's masked kernel skips no tiles)
+
+
+def packing_wins(prompt_len, lens, groups) -> bool:
+    """Whether `groups` packed rows (prompt once + each answer and its repeated last prompt token) cost less than
+    TRL's rows (prompt + the longest answer each), counting n + n^2 / PAIR per row of n tokens."""
+    def cost(n):
+        return n + n * n / PAIR
+
+    size = len(lens) // groups
+    packed = sum(cost(prompt_len + sum(L + 1 for L in lens[g * size:(g + 1) * size])) for g in range(groups))
+    return packed < len(lens) * cost(prompt_len + max(lens))
+
+
 class FastForward:
     """GRPOTrainer mixin: each forward chunk runs on its own window (see the module docstring)."""
 
     buckets = FINE  # make_trainer sets BUCKETS when it compiles the text layers
+    shared_prefix = False  # pack each group's shared prompt once per chunk (packed_chunk); needs the RopeCache
 
     def _get_per_token_logps_and_entropies(self, model, input_ids, attention_mask, logits_to_keep, batch_size=None,
                                            compute_entropy=False, compute_aux_loss=False, **kw):  # fmt: skip
@@ -69,6 +117,23 @@ class FastForward:
         img = row = 0
         for s in range(0, n, size):
             e = min(s + size, n)
+            if self.shared_prefix and pos is not None and not compute_aux_loss and rope.hooks(model):
+                k = sum(nimg[s:e])
+                r = sum(rows[img:img + k])
+                pix = per_row(pv[row:row + r], rows[img:img + k], nimg[s:e])
+                runs = prompt_groups(input_ids[s:e, :P], attention_mask[s:e, :P], pix)
+                lengths = torch.cat([attention_mask[s:e, :P].sum(1), attention_mask[s:e, P:].sum(1)]).tolist()
+                plen, lens = lengths[:e - s], lengths[e - s:]
+                if runs is not None and packing_wins(sum(plen) / len(plen), lens, len(runs)):
+                    smask = kw["sampling_mask"][s:e] if kw.get("sampling_mask") is not None else None
+                    lp, ent = self.packed_chunk(model, input_ids[s:e], P, plen, lens, pos[:, s:e],
+                                                kw["mm_token_type_ids"][s:e], runs, pix, grid[img:img + k],
+                                                nimg[s:e], smask, compute_entropy)  # fmt: skip
+                    img, row = img + k, row + r
+                    lps.append(lp)
+                    if compute_entropy:
+                        ents.append(ent)
+                    continue
             start, keep = window(attention_mask[s:e], logits_to_keep, self.buckets)
             cols = slice(start, P + keep)
             sub = {k: kw[k][s:e, cols] for k in ROW_KEYS if kw.get(k) is not None}
@@ -95,6 +160,83 @@ class FastForward:
                 auxs.append(aux)
         return (torch.cat(lps), torch.cat(ents) if compute_entropy else None,
                 torch.stack(auxs).mean() if compute_aux_loss else None)  # fmt: skip
+
+    def packed_chunk(self, model, ids, P, plen, lens, pos, mm, runs, pix, grid, nimg, sampling_mask, compute_entropy):
+        """One packed row per group of rows sharing a prompt and image (prompt_groups' runs):
+            [prompt minus its last token] + for each answer: [last prompt token, answer tokens]
+        The last prompt token is repeated at the head of each answer block with its own position, so its hidden
+        state (same token, position and visible keys) predicts each answer's first token, and TRL's fused head
+        scores every block with its usual one-token shift. A 4-D mask from segment numbers (0 = prompt, k = answer
+        block k, -1 = padding) lets the prompt attend causally and each block attend to the prompt and causally to
+        itself, never to another answer. Positions are the rows' own (RopeCache), sliced. `plen` and `lens` are the
+        rows' real prompt and answer lengths (host lists). Returns (rows, answer width) log-probs and entropies laid
+        out as TRL's, 0 off the answers."""
+        dev, T = ids.device, ids.size(1) - P
+        toks, poss, mms, labs, segs, gi, pi, ri, ci = [], [], [], [], [], [], [], [], []
+        for g, (a, b) in enumerate(runs):
+            f, lp0 = P - plen[a], plen[a] - 1
+            t, p, m, lab, seg = [ids[a, f:P - 1]], [pos[:, a, f:P - 1]], [mm[a, f:P - 1]], [], [0] * lp0
+            lab.append(torch.full((lp0,), -100, dtype=ids.dtype, device=dev))
+            off = lp0
+            for k, r in enumerate(range(a, b), 1):
+                L = lens[r]
+                t.append(ids[r, P - 1:P + L])
+                p.append(pos[:, r, P - 1:P + L])
+                m.append(mm[r, P - 1:P + L])
+                lab += [torch.full((1,), -100, dtype=ids.dtype, device=dev), ids[r, P:P + L]]
+                seg += [k] * (L + 1)
+                gi += [g] * L  # the fused head's outputs are shifted: index q - 1 scores token q
+                pi += range(off, off + L)
+                ri += [r] * L
+                ci += range(L)
+                off += L + 1
+            toks.append(torch.cat(t)), poss.append(torch.cat(p, 1))
+            mms.append(torch.cat(m)), labs.append(torch.cat(lab)), segs.append(seg)
+        W, c = max(map(len, segs)), len(runs)
+        seg = torch.tensor([x + [-1] * (W - len(x)) for x in segs], device=dev)  # one copy each, before the forward
+        idx = torch.tensor([gi, pi, ri, ci], dtype=torch.long, device=dev)
+        tok = torch.zeros(c, W, dtype=ids.dtype, device=dev)
+        lab = torch.full((c, W), -100, dtype=ids.dtype, device=dev)
+        mmt = torch.zeros(c, W, dtype=mm.dtype, device=dev)
+        posp = torch.zeros(pos.size(0), c, W, dtype=pos.dtype, device=dev)
+        for g in range(c):
+            n_ = len(segs[g])
+            tok[g, :n_], lab[g, :n_], mmt[g, :n_], posp[:, g, :n_] = toks[g], labs[g], mms[g], poss[g]
+        q, k_ = seg[:, :, None], seg[:, None, :]
+        causal = torch.ones(W, W, dtype=torch.bool, device=dev).tril()
+        allow = causal & (k_ >= 0) & (q >= 0) & ((k_ == 0) | (k_ == q))
+        allow |= torch.eye(W, dtype=torch.bool, device=dev)  # padding rows see only themselves
+        impl = getattr(model.config, "_attn_implementation", "sdpa")
+        if impl == "eager":
+            m4 = torch.zeros(c, 1, W, W, dtype=model.dtype, device=dev)
+            m4 = m4.masked_fill(~allow[:, None], torch.finfo(model.dtype).min)
+        elif impl == "sdpa":
+            m4 = allow[:, None]
+        else:
+            raise NotImplementedError(f"shared_prefix needs sdpa or eager attention, not {impl}")
+        inputs = {"input_ids": tok, "attention_mask": m4, "mm_token_type_ids": mmt, "labels": lab}
+        if pix is not None:
+            heads = [a for a, _ in runs]
+            img0 = [sum(nimg[:a]) for a in heads]
+            inputs["pixel_values"] = torch.cat([pix[a] for a in heads])
+            inputs["image_grid_thw"] = torch.cat([grid[i:i + nimg[a]] for i, a in zip(img0, heads, strict=True)])
+        if sampling_mask is not None:
+            sup = sampling_mask.new_full((c, W, sampling_mask.size(-1)), -1)
+            sup[idx[0], idx[1] + 1] = sampling_mask[idx[2], idx[3]]  # aligned with the tokens, shifted like labels
+            inputs["support_ids"] = sup
+        mode = "train" if self.model.training else "eval"  # packed tokens / the rows' own (prompt + answer) tokens
+        self._metrics[mode]["shared/token_ratio"].append(sum(map(len, segs)) / (sum(plen) + sum(lens)))
+        self.rope.pending = posp
+        try:
+            with self.accelerator.autocast():
+                out = model(**inputs, fused_lm_head=True)
+        finally:
+            self.rope.pending = None
+
+        def scatter(x):
+            return x.new_zeros(ids.size(0), T).index_put((idx[2], idx[3]), x[idx[0], idx[1]])
+
+        return scatter(out.log_probs), (scatter(out.entropy) if compute_entropy else None)
 
 
 INT = {4: torch.int32, 2: torch.int16}  # float bits as integers: an exact, order-free hash
@@ -184,6 +326,13 @@ class RopeCache:
         return [(ids[i].tobytes(), mask[i].tobytes(), tuple(map(tuple, g[first[i]:first[i] + nimg[i]])))
                 for i in range(len(nimg))]  # fmt: skip
 
+    def hooks(self, model) -> bool:
+        """Whether `model` contains the hooked base (a separate reference model does not: positions not injected)."""
+        seen = self.__dict__.setdefault("hooked", {})
+        if id(model) not in seen:
+            seen[id(model)] = any(m is self.base for m in model.modules())
+        return seen[id(model)]
+
     def positions(self, input_ids, attention_mask, mm_token_type_ids, grid, nimg) -> torch.Tensor:
         """(3, rows, width) positions of these rows, computing only rows not seen in this generation batch."""
         keys = self.keys(input_ids, attention_mask, grid, nimg)
@@ -229,6 +378,22 @@ def by_length(batch: dict) -> dict:
     indexed, lists reordered). One host read for the order."""
     n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
     order = torch.sort(n, descending=True, stable=True).indices
+    idx = order.tolist()
+
+    def move(v):
+        if v is None or isinstance(v, torch.Tensor) and v.ndim == 0:
+            return v
+        return v[order.to(v.device)] if isinstance(v, torch.Tensor) else [v[i] for i in idx]
+
+    return {k: move(v) for k, v in batch.items()}
+
+
+def by_group_length(batch: dict, G: int) -> dict:
+    """by_length with each group of G consecutive rows (one prompt's answers) kept together: groups longest member
+    first (stable), so update micro-batches of whole groups can share their prompt (FastForward.shared_prefix)."""
+    n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
+    groups = torch.sort(n.view(-1, G).max(1).values, descending=True, stable=True).indices
+    order = (groups[:, None] * G + torch.arange(G, device=groups.device)).flatten()
     idx = order.tolist()
 
     def move(v):
@@ -386,10 +551,14 @@ class FastGRPO(FastForward, GRPOTrainer):
         update unchanged: dr_grpo's constant normaliser and every micro-batch in one optimizer step. Each chunk is
         then trimmed to rows of like length instead of the batch's longest answer."""
         a = self.args
-        if not (self.model.training and self.loss_type == "dr_grpo"
-                and a.gradient_accumulation_steps % a.steps_per_generation == 0):  # fmt: skip
+        if not (self.model.training and self.loss_type == "dr_grpo" and getattr(self, "top_entropy_quantile", 1.0) >= 1
+                and a.gradient_accumulation_steps % a.steps_per_generation == 0):  # fmt: skip (entropy cut: per batch)
             return super()._prepare_inputs(generation_batch)
-        shuffle, trl_grpo.shuffle_sequence_dict = trl_grpo.shuffle_sequence_dict, by_length
+        order = by_length
+        G = getattr(self, "num_generations", None)
+        if self.shared_prefix and G and a.per_device_train_batch_size % G == 0:
+            order = functools.partial(by_group_length, G=G)  # whole groups per micro-batch: packed_chunk shares them
+        shuffle, trl_grpo.shuffle_sequence_dict = trl_grpo.shuffle_sequence_dict, order
         try:
             return super()._prepare_inputs(generation_batch)
         finally:
