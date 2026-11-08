@@ -32,7 +32,7 @@ def _module(*args, env=None, timeout=900):
                           timeout=timeout)
 
 
-@pytest.mark.parametrize("script", ["train_sft", "select_ckpt", "g_probe", "hf_sample"])
+@pytest.mark.parametrize("script", ["train_sft", "select_ckpt", "g_probe", "train_rl", "hf_sample"])
 def test_help(script):
     pytest.importorskip("trl")
     r = _module(f"experiments.phase2.{script}", "--help", timeout=300)
