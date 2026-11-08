@@ -150,6 +150,22 @@ def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregister
     assert not any(f in gp for f in ("--plain", "--grpo", "--items", "--select"))  # the pre-registered G-probe as is
 
 
+def test_full_rl_chain_checks_the_card_and_checker_then_tunes_e2_resumably():
+    """The full RL run: P1's card, checker and sanitizer steps verbatim, then train_rl on R1's e2, saving every 50
+    steps and always with --resume, so rerunning the chain on a new box continues from the last checkpoint."""
+    from experiments.phase2.vast import policy
+
+    cfg = policy.ROOT / "experiments/phase2/configs"
+    p1, rl = (policy.chain(cfg / f, "rl") for f in ("p1_rl.yaml", "rl_full.yaml"))
+    assert rl[:4] == p1[:4] and len(rl) == 5
+    tr = rl[4]
+    assert tr[:2] == ["-m", "experiments.phase2.train_rl"] and tr[-1] == "--resume"
+    args = dict(zip(tr[2:-1:2], tr[3:-1:2], strict=True))
+    data = "/workspace/data/lidc"
+    assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/rl/ckpt", "--train": f"{data}/prepared",
+                    "--out": "/workspace/runs/rl/train_rl", "--steps": "500", "--save-steps": "50"}
+
+
 def test_checker_gpu_chain_builds_then_sanitizes_before_the_long_checks():
     """A checker-only rental (no model, no vLLM, no data bundle): build for the card, memcheck + initcheck first (the
     step P1 never ran), then P1's equivalence and timing step if the cap leaves time."""
