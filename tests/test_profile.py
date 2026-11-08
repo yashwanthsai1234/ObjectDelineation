@@ -163,7 +163,7 @@ def test_full_rl_chain_checks_the_card_and_checker_then_tunes_e2_resumably():
     args = dict(zip(tr[2:-1:2], tr[3:-1:2], strict=True))
     data = "/workspace/data/lidc"
     assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/rl/ckpt", "--train": f"{data}/prepared",
-                    "--out": "/workspace/runs/rl/train_rl", "--steps": "500", "--save-steps": "50"}
+                    "--out": "/workspace/runs/rl/train_rl", "--steps": "770", "--save-steps": "50"}
 
 
 def test_checker_gpu_chain_builds_then_sanitizes_before_the_long_checks():
