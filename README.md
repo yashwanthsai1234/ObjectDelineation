@@ -115,8 +115,21 @@ contact joins two parts) and on stacked slices of a hollow nodule.
 | CUDA checker vs CPU checker | 195,809 of 195,809 cases bit-identical (RTX 4090) | `experiments/cuda_checker/RESULTS.md` |
 | LIDC topology disagreement | 114 of 1,877 nodules (6.1 %) after filtering | `experiments/phase0/RESULTS.md` |
 | Rung 1 SFT (LFM2.5-VL-450M) | Failed the entry gates: median IoU 0.495 shifted, 0.092 rescaled; hole recall 0.5 % | `experiments/phase2/RESULTS.md` |
-
 | CUDA checker on an RTX 5090 | 0 mismatches on 8,559 fuzz polygons and all 13 defect classes | `experiments/phase2/perf/p1_results.md` |
+| G-probe, Qwen3-VL-2B SFT (e2), 20 RL steps | PASS: held-out reward 0.694 / 0.679 → 0.769, legal 94.5 % → 98.2 % | `docs/research/notes/issues_solved_2026-11-07.md` |
+| **Full RL, 3 epochs (770 steps) on e2** | **Held-out IoU 0.511 → 0.659** (+0.148, 95 % CI +0.115 to +0.178; better on 112 of 128 images); legal 94.5 % → 98.8 % | `docs/research/notes/full_rl_2026-11-08.md` |
+
+### 🧠 The full RL run
+
+One RTX 5090, 5 h 52 min, about $4.56. vLLM wrote 197,120 answers (770 steps x 32 images x 8), and the CUDA checker
+scored every one of them on the device.
+
+<img src="docs/figures/rl_training.svg" alt="Training reward parts over 770 RL steps: IoU, boundary F-score and topology" width="900">
+
+Most of the gain comes in the first 50 steps; IoU then keeps rising slowly through epochs 2 and 3. The test that
+counts is on images the model never trained on: 128 shifted-validation images, 8 answers each.
+
+<img src="docs/figures/rl_heldout.svg" alt="Held-out IoU: e2 0.511, step 250 0.634, final 0.659" width="700">
 
 The first CUDA build (R0 v3) was exact but slower than the CPU checker: 54,710 polygons/s at 16 vertices and batch
 1,024, held back by per-call allocation and managed memory. With the arena, pinned staging and two streams, the same
@@ -132,6 +145,8 @@ shapes run at **7.74 M polygons/s on an RTX 5090 (141x)**, 87x the polycore loop
 | FastGRPO + regional `torch.compile` | 47.9 | recompiles across widths and grad modes; off |
 | FastGRPO + CUDA Graphs (`reduce-overhead`) | crash | per-layer graph replay overwrites outputs; conflicts with vLLM's sleep allocator |
 | FastGRPO, no gradient checkpointing | OOM | over 31.45 GiB beside vLLM |
+| FastGRPO + on-device scoring + image memo (R3) | 36.3 | `docs/research/notes/issues_solved_2026-11-07.md` (R2 on the same settings: 56.6) |
+| **Full RL run** (770 steps, same settings) | **27.5** | mean over the run; answers shortened from 128 to ~100 tokens |
 
 One step splits into 7.6 s vLLM generation, 12.3 s old and reference log-probabilities, and 24.4 s update; the reward
 (at the time: one checker call for all 256 answers plus scoring on a CPU pool) runs in the background during the
