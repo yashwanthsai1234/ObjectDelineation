@@ -94,6 +94,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, **over):
                   peft_config=peft, callbacks=calls)  # fmt: skip
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
+        trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers
     return trainer, proc, lr
 
 

@@ -26,7 +26,8 @@ from trl import GRPOTrainer
 
 from objdel.train.dataset import OpenOnce
 
-BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths
+BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
+FINE = tuple(range(64, 2049, 64))  # uncompiled: round to 64 only (BUCKETS would pad a 430-wide chunk to 512)
 ROW_KEYS = ("mm_token_type_ids", "token_type_ids")  # per-token, prompt + completion wide: cut like input_ids
 OTHER_VISION = ("pixel_attention_mask", "spatial_shapes", "num_tiles", "image_sizes", "image_position_ids")
 
@@ -48,7 +49,7 @@ def window(attention_mask: torch.Tensor, logits_to_keep: int, buckets=BUCKETS) -
 class FastForward:
     """GRPOTrainer mixin: each forward chunk runs on its own window (see the module docstring)."""
 
-    buckets = BUCKETS
+    buckets = FINE  # make_trainer sets BUCKETS when it compiles the text layers
 
     def _get_per_token_logps_and_entropies(self, model, input_ids, attention_mask, logits_to_keep, batch_size=None,
                                            compute_entropy=False, compute_aux_loss=False, **kw):  # fmt: skip
@@ -450,6 +451,7 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.images.clear()
         if self.use_vllm:
             self.patch_vllm_prompts()
+            self.time_vllm_phases()
         with self.timed("generate"):
             out = super()._generate(prompts)
         self.prefetch_rewards(out[3], out[1])
@@ -477,6 +479,24 @@ class FastGRPO(FastForward, GRPOTrainer):
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         self._metrics["train" if self.model.training else "eval"][f"time/{phase}_s"].append(time.perf_counter() - t)
+
+    def time_vllm_phases(self):
+        """time/sync_s (weight push, with its weights wake-up), time/wake_s and time/sleep_s: the colocate
+        handovers where the GPU idles between generation and training. Idempotent; the engine exists only after TRL's
+        vLLM init."""
+        vg = self.vllm_generation
+        hooks = ((vg, "sync_weights", "sync"), (vg.llm, "wake_up", "wake"), (vg.llm, "sleep", "sleep"))
+        for host, name, phase in hooks:
+            fn = getattr(host, name)
+            if getattr(fn, "timed_phase", None):
+                continue
+
+            def wrapped(*args, _fn=fn, _phase=phase, **kwargs):
+                with self.timed(_phase):
+                    return _fn(*args, **kwargs)
+
+            wrapped.timed_phase = phase
+            setattr(host, name, wrapped)
 
     def patch_vllm_prompts(self):
         """vLLM gets one image pad per image (one_pad_per_image) and expands it itself. TRL trains on its own

@@ -525,3 +525,41 @@ def test_fast_grpo_routes_trls_vllm_sync_through_the_no_merge_path():
     assert all(torch.equal(p, before[n]) for n, p in m.named_parameters())
     t.vllm_generation = None  # no vLLM (use_vllm False): nothing to route
     assert not t.sync_without_merge()
+
+
+def test_uncompiled_chunks_round_widths_to_64_not_to_the_compile_buckets():
+    """The 8 BUCKETS bound torch.compile's recompiles; uncompiled they only pad (430 tokens ran 512 wide)."""
+    mask = torch.zeros(2, 1000, dtype=torch.long)  # prompt width P = 400, 600 answer columns
+    mask[:, 70:400] = 1  # 330 prompt tokens
+    mask[0, 400:500] = 1  # the longest answer: 100 tokens
+    start, keep = fast.window(mask, 600, fast.FastForward.buckets)
+    assert fast.FastForward.buckets == tuple(range(64, 2049, 64))
+    assert (400 + keep - start, keep) == (448, 118)  # 330 + 100 = 430 -> 448
+    start, keep = fast.window(mask, 600, fast.BUCKETS)
+    assert 400 + keep - start == 512
+
+
+def test_compiled_layers_go_back_to_the_compile_buckets():
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
+    assert "fast.compile_text_layers(trainer.model, a.compile)" in src and "trainer.buckets = fast.BUCKETS" in src
+
+
+def test_vllm_sync_wake_and_sleep_are_timed():
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    calls = []
+    llm = SimpleNamespace(wake_up=lambda tags=None: calls.append(("wake", tags)),
+                          sleep=lambda level=1: calls.append(("sleep", level)))
+    vg = SimpleNamespace(llm=llm, sync_weights=lambda: calls.append(("sync",)))
+    t = object.__new__(fast.FastGRPO)
+    t.model, t.vllm_generation = SimpleNamespace(training=True), vg
+    t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    t.time_vllm_phases()
+    t.time_vllm_phases()  # idempotent: one timer layer
+    vg.sync_weights(), llm.wake_up(tags=["kv_cache"]), llm.sleep(level=2)
+    assert calls == [("sync",), ("wake", ["kv_cache"]), ("sleep", 2)]
+    timed = {k: len(v) for k, v in t._metrics["train"].items()}
+    assert timed == {"time/sync_s": 1, "time/wake_s": 1, "time/sleep_s": 1}
