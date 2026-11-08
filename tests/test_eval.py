@@ -443,3 +443,17 @@ def test_eval_demo_builds_targets_with_the_prepare_size_rule(riga, monkeypatch):
     _, out = eval_demo._texts(("riga/x", {"dataset": "riga", "masks": raters}))
     assert seen and all(m == min_areas(raters) for m in seen) and "rim" in seen[0]
     assert out["raters"] == texts
+
+
+def test_precision_and_recall_vs_the_majority_outline(nod):
+    """Precision = answer pixels inside the doctors' majority outline / answer pixels; recall = majority pixels the
+    answer covers / majority pixels. An answer around the majority has recall 1, one inside it precision 1."""
+    raters, _ = nod
+    vote = ExpertCache.build(raters["nodule"]).vote
+    big, small = disk(25, 25, 18), disk(25, 32, 3)  # small: inside every rater, clear of the majority's hole
+    m = metrics([text_of({"nodule": big}, ("nodule",), raters), text_of({"nodule": small}, ("nodule",), raters),
+                 "not json"], raters, S, S)  # fmt: skip
+    o = m["objects"]["nodule"]
+    assert o["recall_vote"][0] >= 0.99 and o["precision_vote"][0] == pytest.approx(vote.sum() / big.sum(), rel=0.05)
+    assert o["precision_vote"][1] >= 0.99 and o["recall_vote"][1] == pytest.approx(small.sum() / vote.sum(), rel=0.15)
+    assert o["precision_vote"][2] == o["recall_vote"][2] == 0.0  # a failed answer scores 0, as the other terms
