@@ -275,7 +275,16 @@ class ImageMemo:
         return memo
 
     def __getattr__(self, name):
+        if "inner" not in self.__dict__:  # copy / pickle probe a bare instance before __init__ state exists
+            raise AttributeError(name)
         return getattr(self.__dict__["inner"], name)
+
+    def __deepcopy__(self, memo):
+        """The plain image processor: TRL saves the processor with every checkpoint, and ProcessorMixin.to_dict
+        deep-copies its attributes, so the saved files are the processor's own, without the cached pixels."""
+        import copy
+
+        return copy.deepcopy(self.inner, memo)
 
     def clear(self) -> None:
         self.memo.clear()

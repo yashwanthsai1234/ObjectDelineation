@@ -76,3 +76,27 @@ def test_fast_grpo_installs_one_memo_and_clears_it_before_each_generation(monkey
     monkeypatch.setattr(fast.FastGRPO, "prefetch_rewards", lambda self, *a: None)
     fast.FastGRPO._generate(t, ["p"])
     assert memo.memo == {}
+
+
+def test_a_saved_processor_holds_the_plain_image_processor_not_the_memo(tmp_path, monkeypatch):
+    """TRL saves the processor with every checkpoint; ProcessorMixin.to_dict deep-copies its attributes. A copy of
+    the memo is the plain image processor (no cached pixels), so the saved files equal those saved without it."""
+    import copy
+    import os
+
+    from transformers import AutoProcessor
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    try:
+        proc = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
+    except OSError:
+        pytest.skip("Qwen/Qwen3-VL-2B-Instruct processor not in the local HF cache")
+    proc.save_pretrained(tmp_path / "plain")
+    memo = fast.ImageMemo.install(proc)
+    memo([image(0)])  # something cached
+    plain = copy.deepcopy(memo)
+    assert type(plain) is type(memo.inner) and plain.to_dict() == memo.inner.to_dict()
+    proc.save_pretrained(tmp_path / "memo")
+    for f in sorted(os.listdir(tmp_path / "plain")):
+        assert (tmp_path / "memo" / f).read_bytes() == (tmp_path / "plain" / f).read_bytes(), f
+    assert proc.image_processor is memo  # saving left the memo installed
