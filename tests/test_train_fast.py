@@ -459,3 +459,69 @@ def test_lora_input_cast_is_dropped_only_under_bf16_autocast_where_it_is_bit_ide
         assert torch.equal(m(input_ids=ids).logits, ref)
     t = trainer(fast.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False})(), model=m)
     assert fast.FastGRPO.drop_lora_input_cast(t) is False  # no autocast: nothing changed (and the model left as is)
+
+
+def _lora_bf16():
+    """tiny_model with configs.lora's LoRA (all-linear, vision excluded) in bf16, LoRA B set non-zero so the merge
+    moves the weights (a fresh adapter has B = 0)."""
+    from peft import get_peft_model
+
+    from objdel.train import configs
+
+    m = get_peft_model(tiny_model(), configs.lora("qwen3-vl-2b")).to(torch.bfloat16)
+    g = torch.Generator().manual_seed(1)
+    for n, p in m.named_parameters():
+        if "lora_B" in n:
+            p.data = (torch.randn(p.shape, generator=g) * 0.05).to(p.dtype)
+    return m
+
+
+def _trl_iter(model):
+    """TRL 1.17's VLLMGeneration._iter_named_params on one process (in-place merge_adapter / unmerge_adapter)."""
+    from types import MethodType, SimpleNamespace
+
+    from trl.generation.vllm_generation import VLLMGeneration
+
+    dist = SimpleNamespace(is_fsdp=False, gather_params=lambda ps: contextlib.nullcontext())
+    host = SimpleNamespace(model=model, _dist=dist)
+    host._fix_param_name_to_vllm = MethodType(VLLMGeneration._fix_param_name_to_vllm, host)
+    return VLLMGeneration._iter_named_params(host)
+
+
+def test_vllm_sync_pushes_the_same_weights_as_trls_merge():
+    m = _lora_bf16()
+    ours = {n: t.clone() for n, t in fast.lora_merged_params(m)}
+    trl = {n: t.clone() for n, t in _trl_iter(m)}
+    assert ours.keys() == trl.keys() and not any("lora_" in n for n in ours)
+    assert all(torch.equal(ours[n], trl[n]) for n in ours)
+
+
+def test_vllm_sync_never_writes_the_base_weights():
+    """TRL merges LoRA into the bf16 base weights in place and unmerges: W + d - d != W in bf16 (trl #6688), so the
+    frozen base drifts every step. The sync must leave every parameter bit-identical."""
+    m = _lora_bf16()
+    before = {n: p.detach().clone() for n, p in m.named_parameters()}
+    for _ in range(20):
+        for _ in fast.lora_merged_params(m):
+            pass
+    assert all(torch.equal(p, before[n]) for n, p in m.named_parameters())
+    for _ in range(20):  # the bug this replaces, so the test above is not vacuous
+        for _ in _trl_iter(m):
+            pass
+    assert any(not torch.equal(p, before[n]) for n, p in m.named_parameters())
+
+
+def test_fast_grpo_routes_trls_vllm_sync_through_the_no_merge_path():
+    from types import SimpleNamespace
+
+    m = _lora_bf16()
+    t = object.__new__(fast.FastGRPO)
+    t.model, t.accelerator = m, SimpleNamespace(num_processes=1)
+    t.vllm_generation = SimpleNamespace(model=m, _dist=SimpleNamespace(is_fsdp=False))
+    assert t.sync_without_merge()
+    before = {n: p.detach().clone() for n, p in m.named_parameters()}
+    pushed = dict(t.vllm_generation._iter_named_params())
+    assert pushed.keys() == dict(fast.lora_merged_params(m)).keys()
+    assert all(torch.equal(p, before[n]) for n, p in m.named_parameters())
+    t.vllm_generation = None  # no vLLM (use_vllm False): nothing to route
+    assert not t.sync_without_merge()

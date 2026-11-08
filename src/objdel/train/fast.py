@@ -324,6 +324,18 @@ class FastGRPO(FastForward, GRPOTrainer):
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
         self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
+        self.sync_without_merge()
+
+    def sync_without_merge(self) -> bool:
+        """vLLM weight sync through lora_merged_params (the base weights are never written), on one process; FSDP and
+        ZeRO-3 keep TRL's gathered path."""
+        vg = getattr(self, "vllm_generation", None)
+        if vg is None or not hasattr(self.model, "peft_config"):
+            return False
+        if vg._dist.is_fsdp or self.accelerator.num_processes > 1:
+            return False
+        vg._iter_named_params = lambda: lora_merged_params(vg.model)
+        return True
 
     def drop_lora_input_cast(self) -> bool:
         """no_lora_input_cast when TRL trains in bf16 (Accelerate then runs every forward under bf16 autocast)."""
@@ -490,6 +502,30 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     def floating_point_ops(self, inputs):
         return 0  # perf F3: the Trainer default walks ~2.5k PEFT modules per micro-batch
+
+
+def lora_merged_params(model):
+    """(vLLM name, tensor) for every weight of a PEFT model, as TRL 1.17's VLLMGeneration._iter_named_params names
+    them, with each LoRA layer's delta added into a new tensor. TRL instead runs merge_adapter / unmerge_adapter on the
+    bf16 base weights in place, and W + d - d != W in bf16, so the frozen base drifts at every sync (trl #6688,
+    #7423). Same values pushed (W + delta in W's dtype, as PEFT's merge computes it); no parameter is written."""
+    from peft.tuners.lora import LoraLayer
+
+    deltas = {}
+    for name, m in model.named_modules():
+        if isinstance(m, LoraLayer) and not m.merged:
+            ads = [a for a in m.active_adapters if a in m.lora_A]
+            if ads and (getattr(m, "use_dora", {}).get(ads[0]) or getattr(m, "lora_bias", {}).get(ads[0])):
+                raise NotImplementedError(f"{name}: DoRA / LoRA bias are not merged here")
+            if ads:
+                deltas[f"{name}.base_layer.weight"] = sum(m.get_delta_weight(a) for a in ads)
+    for name, p in model.named_parameters():
+        out = name.removeprefix("base_model.model.").replace(".base_layer", "")
+        if model.prefix in out or "original_module" in out:
+            continue
+        out = out.replace("_checkpoint_wrapped_module.", "").replace("modules_to_save.default.", "")
+        d = deltas.get(name)
+        yield out, (p.data if d is None else p.data + d.to(p.dtype))
 
 
 def compile_text_layers(model, mode: str) -> int:
