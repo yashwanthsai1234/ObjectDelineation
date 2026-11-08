@@ -39,6 +39,9 @@ Measured with the real loader code (TRL 1.17.1, transformers, Accelerate) on the
 | Before | 4,096 | 12.9 s (P1 on the RTX 5090 box: 12.96 s) |
 | After | 32 | 0.14 s |
 
+On the RTX 5090 (R3, 8 GRPO steps on e2), the time outside the trainer step fell from 22.6 s (R2) to 0.3 s,
+and the wall time per step from 56.6 s to 36.3 s.
+
 The model gets the same pixels in the same order (test: `tests/test_open_once.py`, every row of every fetch compared).
 Accelerate reads one fetch ahead, so a step's 32 opens happen at the end of the previous step's fetch.
 
