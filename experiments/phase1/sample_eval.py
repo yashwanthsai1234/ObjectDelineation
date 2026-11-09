@@ -13,8 +13,8 @@ The checkpoint must be a full model directory (merge LoRA adapters first). Sampl
 Reads untrusted data: run with python -I.
 
 References:
-- objdel.train.sample (TRL GRPOTrainer._generate, completions tables): TRL 1.16
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py ; log_completions:
+- objdel.train.sample (TRL GRPOTrainer._generate, completions tables): TRL (version pinned in pyproject.toml)
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py ; log_completions:
   https://huggingface.co/docs/trl/main/en/grpo_trainer
 - transformers 5.20 utils.is_torch_bf16_gpu_available (on CUDA: torch.cuda.is_bf16_supported) and the
   TrainingArguments bf16 check:

@@ -25,12 +25,13 @@
   sample() (HF generate through TRL) stays the reference and the Qwen3.5 fallback.
 
 References:
-- TRL 1.16 GRPOTrainer: _generate, _generate_and_score_completions (prepare_multimodal_messages, is_truncated),
+- TRL (version pinned in pyproject.toml) GRPOTrainer: _generate, _generate_and_score_completions
+  (prepare_multimodal_messages, is_truncated),
   log (completions table, log_extra columns, deque of generation_batch_size):
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py
 - TRL GRPO docs (log_completions, log_extra): https://huggingface.co/docs/trl/main/en/grpo_trainer
 - TRL vLLM generation (one request with n = num_generations per G-th prompt):
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/generation/vllm_generation.py
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/generation/vllm_generation.py
 """
 import json
 from collections.abc import Iterable

@@ -46,7 +46,7 @@ References:
 - transformers 5.20 get_wsd_schedule, Trainer resume (optimizer, scheduler, RNG, data skip), LengthGroupedSampler:
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/optimization.py ,
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/trainer.py
-- TRL 1.16 SFTTrainer, TrlParser (--config YAML): https://huggingface.co/docs/trl/main/en/sft_trainer
+- TRL (version pinned in pyproject.toml) SFTTrainer, TrlParser (--config YAML): https://huggingface.co/docs/trl/main/en/sft_trainer
 - PEFT merge_and_unload: https://huggingface.co/docs/peft/main/en/package_reference/lora
 - WSD: Hu et al., MiniCPM (2404.06395); Hägele et al. (2405.18392)
 """

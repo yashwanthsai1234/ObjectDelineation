@@ -21,9 +21,9 @@ geometric sigma above its floor), in <out>/smoke.json.
 Reads untrusted data: run with python -I.
 
 References:
-- TRL 1.16 SFTTrainer / GRPOTrainer (peft_config, reference model = adapter-disabled policy under PEFT):
+- TRL (version pinned in pyproject.toml) SFTTrainer / GRPOTrainer (peft_config, reference model = adapter-disabled policy under PEFT):
   https://huggingface.co/docs/trl/main/en/sft_trainer , https://huggingface.co/docs/trl/main/en/grpo_trainer ,
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py
 - PEFT LoRA (target_modules="all-linear", merge_and_unload): https://huggingface.co/docs/peft/main/en/package_reference/lora
 - torch.mps.set_per_process_memory_fraction (fraction of recommendedMaxWorkingSetSize):
   https://docs.pytorch.org/docs/stable/generated/torch.mps.set_per_process_memory_fraction.html

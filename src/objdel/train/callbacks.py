@@ -42,8 +42,9 @@ References:
 - transformers 5.20 Trainer loop (on_step_end, then _maybe_log_save_evaluate; evaluate logs, then on_evaluate;
   Trainer.log appends to log_history and calls on_log):
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/trainer.py
-- TRL 1.16 GRPOTrainer (reward_weights, beta, ref_model, num_generations_eval; log writes the completions table):
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py
+- TRL (version pinned in pyproject.toml) GRPOTrainer (reward_weights, beta, ref_model, num_generations_eval;
+  log writes the completions table):
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py
 - accelerate gather_object / broadcast_object_list (no-ops in one process):
   https://huggingface.co/docs/accelerate/main/en/package_reference/utilities
 - os.replace is atomic on POSIX: https://docs.python.org/3/library/os.html#os.replace

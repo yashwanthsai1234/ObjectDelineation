@@ -1,4 +1,5 @@
-"""TRL 1.16 SFT and GRPO configurations for the screened models (plan D8, D10, D12; lab t_stack).
+"""TRL (version pinned in pyproject.toml) SFT and GRPO configurations for the screened models
+(plan D8, D10, D12; lab t_stack).
 
 GRPO (D8): loss_type="dr_grpo" (constant length normaliser, no std scaling), clip epsilon 0.2 / epsilon_high 0.28
 (DAPO clip-higher), beta = 1e-3 from the start (with full fine-tuning a beta of 0 at init loads no reference
@@ -45,7 +46,7 @@ processors' defaults (256 tokens at 512 px). Left padding for generation.
 
 References:
 - TRL GRPO trainer and config: https://huggingface.co/docs/trl/main/en/grpo_trainer ;
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_config.py
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_config.py
 - TRL SFT trainer (VLMs: max_length=None; assistant_only_loss with vision datasets): https://huggingface.co/docs/trl/main/en/sft_trainer
 - Dr. GRPO, "Understanding R1-Zero-Like Training": https://arxiv.org/abs/2503.20783
 - DAPO (clip-higher 0.28, dynamic sampling): https://arxiv.org/abs/2503.14476

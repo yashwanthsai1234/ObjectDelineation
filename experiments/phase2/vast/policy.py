@@ -13,11 +13,11 @@
                                                                (hf_push; after pull.sh, before teardown.sh)
     teardown.sh RUN_ID                                         final pull, destroy, verify absent, invoices, ledger
     sweep_orphans.sh                                           destroy unknown / overdue instances, close vanished runs;
-                                                               $10 alarm, $15 stop
+                                                               alarm and hard stop: see ALARM and HARD_STOP below
 
 G10: a launch is refused when the money committed (closed sessions + every active run to its deadline) plus its own
-worst case passes $15, and needs --owner-approved (recorded in the ledger) when that projection reaches $10. Costs are
-dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB); teardown saves
+worst case passes HARD_STOP, and needs --owner-approved (recorded in the ledger) when that projection reaches ALARM.
+Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB); teardown saves
 the raw charges and records what Vast billed beside that estimate (`billed`, BK4-18).
 
 Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; default: this directory), VAST_RUNS
