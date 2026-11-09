@@ -18,6 +18,7 @@ image once per generation batch. Valid because LoRA leaves the tower and project
 import contextlib
 import functools
 import math
+import sys
 import time
 
 import torch
@@ -25,6 +26,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
+from objdel.train import nvtx, trl_adapter
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -272,23 +274,24 @@ class VisionCache:
         return list(zip(h.tolist(), map(tuple, grid_thw.tolist()), strict=True))  # one host read per call
 
     def forward(self, pixel_values, grid_thw=None, **kw):
-        keys = self.keys(pixel_values, grid_thw)
-        rows = grid_thw.prod(-1).tolist()
-        starts = [sum(rows[:i]) for i in range(len(rows))]
-        new = list({k: i for i, k in reversed(list(enumerate(keys))) if k not in self.store}.values())
-        if new:
-            px = torch.cat([pixel_values[starts[i]:starts[i] + rows[i]] for i in new])
-            with torch.no_grad():
-                out = self.encode(px, grid_thw=grid_thw[new], **kw)
-            self.kind = type(out)
-            merged = [rows[i] // self.visual.spatial_merge_size**2 for i in new]
-            embeds = out.pooler_output.split(merged)
-            levels = [f.split(merged) for f in out.deepstack_features]
-            for j, i in enumerate(new):
-                self.store[keys[i]] = (embeds[j], [lv[j] for lv in levels])
-        hits = [self.store[k] for k in keys]
-        return self.kind(pooler_output=torch.cat([e for e, _ in hits]),
-                         deepstack_features=[torch.cat([d[j] for _, d in hits]) for j in range(len(hits[0][1]))])
+        with nvtx.range("vision_cache"):
+            keys = self.keys(pixel_values, grid_thw)
+            rows = grid_thw.prod(-1).tolist()
+            starts = [sum(rows[:i]) for i in range(len(rows))]
+            new = list({k: i for i, k in reversed(list(enumerate(keys))) if k not in self.store}.values())
+            if new:
+                px = torch.cat([pixel_values[starts[i]:starts[i] + rows[i]] for i in new])
+                with torch.no_grad():
+                    out = self.encode(px, grid_thw=grid_thw[new], **kw)
+                self.kind = type(out)
+                merged = [rows[i] // self.visual.spatial_merge_size**2 for i in new]
+                embeds = out.pooler_output.split(merged)
+                levels = [f.split(merged) for f in out.deepstack_features]
+                for j, i in enumerate(new):
+                    self.store[keys[i]] = (embeds[j], [lv[j] for lv in levels])
+            hits = [self.store[k] for k in keys]
+            return self.kind(pooler_output=torch.cat([e for e, _ in hits]),
+                             deepstack_features=[torch.cat([d[j] for _, d in hits]) for j in range(len(hits[0][1]))])
 
 
 class RopeCache:
@@ -335,31 +338,182 @@ class RopeCache:
 
     def positions(self, input_ids, attention_mask, mm_token_type_ids, grid, nimg) -> torch.Tensor:
         """(3, rows, width) positions of these rows, computing only rows not seen in this generation batch."""
-        keys = self.keys(input_ids, attention_mask, grid, nimg)
-        first = [sum(nimg[:i]) for i in range(len(nimg))]
-        miss = list({k: i for i, k in enumerate(keys) if k not in self.store}.values())
-        if miss:  # on host copies: get_rope_index's per-row host reads are then no GPU syncs; one copy back
-            g = torch.cat([grid[first[i]:first[i] + nimg[i]] for i in miss]).cpu()
-            pos, _ = self.base.get_rope_index(input_ids[miss].cpu(), mm_token_type_ids=mm_token_type_ids[miss].cpu(),
-                                              image_grid_thw=g, attention_mask=attention_mask[miss].cpu())  # fmt: skip
-            pos = pos.to(input_ids.device)
-            for j, i in enumerate(miss):
-                self.store[keys[i]] = pos[:, j]
-        return torch.stack([self.store[k] for k in keys], dim=1)
+        with nvtx.range("rope_cache"):
+            keys = self.keys(input_ids, attention_mask, grid, nimg)
+            first = [sum(nimg[:i]) for i in range(len(nimg))]
+            miss = list({k: i for i, k in enumerate(keys) if k not in self.store}.values())
+            if miss:  # on host copies: get_rope_index's per-row host reads are then no GPU syncs; one copy back
+                g = torch.cat([grid[first[i]:first[i] + nimg[i]] for i in miss]).cpu()
+                pos, _ = self.base.get_rope_index(
+                    input_ids[miss].cpu(), mm_token_type_ids=mm_token_type_ids[miss].cpu(), image_grid_thw=g,
+                    attention_mask=attention_mask[miss].cpu())  # fmt: skip
+                pos = pos.to(input_ids.device)
+                for j, i in enumerate(miss):
+                    self.store[keys[i]] = pos[:, j]
+            return torch.stack([self.store[k] for k in keys], dim=1)
 
 
-def is_ratio(logps, sampling, mask, mode: str, lo: float | None, hi: float | None) -> torch.Tensor:
-    """TRL 1.17's vLLM importance-sampling ratio (grpo_trainer.py 2776-2824): exp of the trainer - vLLM logprob gap per
-    token (`token_*`) or summed per sequence (`sequence_*`, shape (B, 1)); `*_truncate` clamps to [lo, hi], `*_mask`
-    zeroes ratios outside it. Tokens vLLM could not score (NaN) get no correction."""
+def raw_ratio(logps, sampling, mask, mode: str) -> torch.Tensor:
+    """exp of the trainer - vLLM logprob gap per token (`token_*`) or summed per sequence (`sequence_*`, shape
+    (B, 1)), before TRL's bounds. Tokens vLLM could not score (NaN) get no correction."""
     diff = torch.nan_to_num((logps - sampling) * mask, nan=0.0)
     if mode.startswith("sequence"):
         diff = diff.sum(-1, keepdim=True)
-    r = torch.exp(diff)
+    return torch.exp(diff)
+
+
+def bounded(r, mode: str, lo: float | None, hi: float | None) -> torch.Tensor:
+    """TRL's bounds on a raw ratio: `*_truncate` clamps to [lo, hi], `*_mask` zeroes ratios outside it. A truncate
+    without clip_max would pass an overflowed exp (inf) to the loss, so it is refused."""
     if mode.endswith("truncate"):
+        if hi is None:
+            raise ValueError(f"{mode} needs vllm_importance_sampling_clip_max (an exp overflow would reach the loss)")
         return torch.clamp(r, min=lo, max=hi)
     lo, hi = -math.inf if lo is None else lo, math.inf if hi is None else hi
     return r.masked_fill((r < lo) | (r > hi), 0.0)
+
+
+def is_ratio(logps, sampling, mask, mode: str, lo: float | None, hi: float | None) -> torch.Tensor:
+    """TRL 1.17's vLLM importance-sampling ratio (grpo_trainer.py 2776-2824): bounded(raw_ratio(...))."""
+    return bounded(raw_ratio(logps, sampling, mask, mode), mode, lo, hi)
+
+
+def clip_counts(raw, r, keep, lo: float | None, hi: float | None) -> torch.Tensor:
+    """(zero, hi, lo) counts over the counted entries `keep`, on the device: the bounded ratio r is 0; the raw ratio
+    is above hi; the raw ratio is below lo or 0 (an fp32 underflow of exp: trainer << vLLM), each entry once."""
+    lo, hi = -math.inf if lo is None else lo, math.inf if hi is None else hi
+    return torch.stack([((r == 0) & keep).sum(), ((raw > hi) & keep).sum(), (((raw < lo) | (raw == 0)) & keep).sum()])
+
+
+OPSM_DELTAS = (0.05, 0.1, 0.5)  # counterfactual OPSM thresholds (B2.1; B2.4 rule 4)
+# is_summary's fields: SUMS merge over micro-batches by addition, MAXES by maximum, MINS by minimum. The first 7 sums,
+# d_max, r_max and r_min are TRL's sampling metrics and the A6 zero / hi / lo counts.
+SUMS = ("d_sum", "d_n", "r_sum", "r_n", "zero", "hi", "lo", "masked", "clamped", "seqs", "seq_gap_sum", "tok",
+        "tok_big", "masked_seqs", "masked_len", "kept_len", "modified", "w_sum", "w_sq", "cf_seqmask3",
+        "cf_tok_clamp2", "cf_geo", *(f"cf_opsm_{d}" for d in OPSM_DELTAS), "cf_bigtok_unmasked", "cf_lt_0.1",
+        "C_sum", "C_sq", "B_sum", "B_sq", *(f"E_{d}_{x}" for d in OPSM_DELTAS for x in ("sum", "sq")), "opsm_masked",
+        "opsm_adv_sum")  # fmt: skip
+MAXES, MINS = ("d_max", "r_max", "seq_gap_max"), ("r_min",)
+SUMMARY = SUMS + MAXES + MINS
+
+
+def seq_kl(logps, sampling, mask) -> torch.Tensor:
+    """TRL's OPSM gap per sequence (grpo_trainer.py get_off_policy_mask): the vLLM-minus-trainer logprob mean over
+    the valid tokens (an unscored, NaN token counts as 0 and stays in the count), shape (B,)."""
+    m = mask.to(logps.dtype)
+    return (torch.nan_to_num(sampling - logps, nan=0.0) * m).sum(-1) / m.sum(-1).clamp(min=1.0)
+
+
+def is_summary(logps, sampling, mask, ratio, advantages, mode: str, lo: float | None, hi: float | None,
+               opsm: float | None = None) -> torch.Tensor:
+    """What the IS correction of `mode` does to one micro-batch, and what other modes would do to the same tensors,
+    as a float32 vector of SUMMARY fields on the input device (no host read). mask: valid answer tokens (bool, B x
+    T); ratio: is_ratio's output; advantages: (B,); opsm: the active off_policy_mask_threshold. Token-level weights
+    broadcast a sequence weight to its tokens; every token count is over valid tokens.
+    - masked / clamped: ratio units (sequences or tokens) outside [lo, hi] (strict) that a `*_mask` mode zeroes / a
+      `*_truncate` mode clamps; masked_seqs, masked_len, kept_len: sequences with a masked unit, and lengths;
+    - seq_gap_*: the signed summed trainer-minus-vLLM gap per sequence; tok_big: tokens with |gap| > 0.5;
+    - modified: tokens whose weight differs from the raw ratio by more than 1 %; w_*: ESS sums of the weights;
+    - cf_*: sequence_mask cap 3 (seqmask3, C), token TIS C = 2 (tok_clamp2, B), the geometric mask [0.99, 1.01],
+      TRL's OPSM at each OPSM_DELTAS (drop: advantage < 0 and seq_kl > delta), the big tokens OPSM at 0.1 keeps,
+      kept sequences with weight in (0, 0.1); E = token TIS times OPSM;
+    - opsm_*: the active OPSM's dropped sequences and the sum of their advantages (0 when opsm is None)."""
+    f = lambda x: x.sum().float()  # noqa: E731
+    seqmode, lo_, hi_ = mode.startswith("sequence"), -math.inf if lo is None else lo, math.inf if hi is None else hi
+    ok = mask & ~torch.isnan(sampling)
+    gap = torch.nan_to_num((logps - sampling) * mask, nan=0.0)  # raw_ratio's gap
+    raw = raw_ratio(logps, sampling, mask, mode)
+    keep = torch.ones_like(ratio, dtype=torch.bool) if seqmode else mask
+    out = ((raw > hi_) | (raw < lo_)) & keep
+    none = torch.zeros_like(out)
+    masked, clamped = (out, none) if mode.endswith("mask") else (none, out)
+    seq_masked = masked.any(-1)
+    lens = mask.sum(-1).float()
+    seq_gap = gap.sum(-1)
+    w = ratio.expand_as(gap) * mask
+    kl = seq_kl(logps, sampling, mask)
+    neg = advantages.reshape(-1) < 0
+    drop = {d: neg & (kl > d) for d in OPSM_DELTAS}
+    big = (gap.abs() > 0.5) & mask
+    tis = torch.exp(gap).clamp(max=2.0) * mask
+    seq_raw = torch.exp(seq_gap)
+    w_c = torch.where(seq_raw > 3.0, 0.0, seq_raw)[:, None] * mask
+    geo = torch.exp(seq_gap / lens.clamp(min=1))  # the geometric mean ratio
+    sw = w.sum(-1) / lens.clamp(min=1)  # a sequence's mean weight
+    act = neg & (kl > opsm) if opsm is not None else torch.zeros_like(neg)
+    absd = (logps - sampling).abs()
+    ess = lambda x: (f(x), f(x * x))  # noqa: E731
+    sums = [f(absd.masked_fill(~ok, 0)), f(ok), f(ratio.masked_fill(~keep, 0)), f(keep),
+            *clip_counts(raw, ratio, keep, lo, hi).float(), f(masked), f(clamped),
+            f(torch.ones_like(seq_gap)), f(seq_gap), f(mask), f(big), f(seq_masked),
+            f(lens * seq_masked), f(lens * ~seq_masked), f(((w / raw.expand_as(w) - 1).abs() > 0.01) & mask),
+            *ess(w), f(seq_raw > 3.0), f((torch.exp(gap) > 2.0) & mask), f((geo < 0.99) | (geo > 1.01)),
+            *(f(drop[x]) for x in OPSM_DELTAS), f(big & ~drop[0.1][:, None]), f((sw > 0) & (sw < 0.1)), *ess(w_c),
+            *ess(tis), *(v for x in OPSM_DELTAS for v in ess(tis * ~drop[x][:, None])), f(act),
+            f(advantages.reshape(-1) * act)]  # fmt: skip
+    return torch.cat([torch.stack(sums), torch.stack([
+        absd.masked_fill(~ok, -math.inf).amax(), ratio.masked_fill(~keep, -math.inf).amax(), seq_gap.amax(),
+        ratio.masked_fill(~keep, math.inf).amin()]).float()])  # fmt: skip
+
+
+def merge_summary(old, new) -> torch.Tensor:
+    """Two is_summary vectors of one generation batch as one (on the device)."""
+    if old is None:
+        return new
+    a, b = len(SUMS), len(SUMS) + len(MAXES)
+    return torch.cat([old[:a] + new[:a], torch.maximum(old[a:b], new[a:b]), torch.minimum(old[b:], new[b:])])
+
+
+SEQ_KL_Q = (0.5, 0.99, 0.995)  # logged seq_kl quantiles: sampling/seq_kl/{q50,q99,q99.5}
+
+
+def summary_metrics(s: dict, opsm: float | None) -> dict:
+    """The logged `sampling/*` values from a merged is_summary (field name -> float); a ratio of an empty count is
+    0, never NaN. The opsm_* keys only when OPSM is active."""
+    div = lambda a, b: a / b if b else 0.0  # noqa: E731
+    ess = lambda k: div(s[f"{k}_sum"] ** 2, s["tok"] * s[f"{k}_sq"])  # noqa: E731
+    out = {"sampling_logp_difference/mean": div(s["d_sum"], s["d_n"]),
+           "sampling_logp_difference/max": s["d_max"] if s["d_n"] else 0.0,
+           "importance_sampling_ratio/min": s["r_min"] if s["r_n"] else 0.0,
+           "importance_sampling_ratio/mean": div(s["r_sum"], s["r_n"]),
+           "importance_sampling_ratio/max": s["r_max"] if s["r_n"] else 0.0,
+           **{f"importance_sampling_ratio/{k}_share": div(s[k], s["r_n"]) for k in ("zero", "hi", "lo")},
+           "is_masked_share": div(s["masked"], s["r_n"]), "is_clamped_share": div(s["clamped"], s["r_n"]),
+           "seq_logdiff_mean": div(s["seq_gap_sum"], s["seqs"]),
+           "seq_logdiff_max": s["seq_gap_max"] if s["seqs"] else 0.0,
+           "tok_absdiff_gt_0.5_share": div(s["tok_big"], s["tok"]),
+           "masked_len_mean": div(s["masked_len"], s["masked_seqs"]),
+           "kept_len_mean": div(s["kept_len"], s["seqs"] - s["masked_seqs"]),
+           "modified_token_share": div(s["modified"], s["tok"]), "ess": ess("w"),
+           "cf/seqmask3_share": div(s["cf_seqmask3"], s["seqs"]),
+           "cf/tok_clamp2_share": div(s["cf_tok_clamp2"], s["tok"]),
+           "cf/geo_0.99_1.01_share": div(s["cf_geo"], s["seqs"]),
+           **{f"cf/opsm_share@{d}": div(s[f"cf_opsm_{d}"], s["seqs"]) for d in OPSM_DELTAS},
+           "cf/opsm0.1_bigtok_unmasked_share": div(s["cf_bigtok_unmasked"], s["tok"]),
+           "cf/seq_ratio_lt_0.1_share": div(s["cf_lt_0.1"], s["seqs"]), "cf/ess_C": ess("C"), "cf/ess_B": ess("B"),
+           **{f"cf/ess_E@{d}": ess(f"E_{d}") for d in OPSM_DELTAS}}  # fmt: skip
+    if opsm is not None:
+        out |= {"opsm_masked_share": div(s["opsm_masked"], s["seqs"]), "opsm_masked_adv_sum": s["opsm_adv_sum"]}
+    return out
+
+
+def write_seq_gaps(out_dir: str, values: list[float], rows: int) -> None:
+    """Appends one logged step's (rows x 3) per-sequence values to <out_dir>/seq_gaps.f32 (raw little-endian float32,
+    steps in order) and rewrites seq_gaps.json; B2.4 rules 3 and 4 read the file (B1 runs once)."""
+    import json
+    from array import array
+    from pathlib import Path
+
+    d = Path(out_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    a = array("f", values)
+    if sys.byteorder != "little":
+        a.byteswap()
+    with open(d / "seq_gaps.f32", "ab") as f:
+        a.tofile(f)
+    steps = (d / "seq_gaps.f32").stat().st_size // (rows * 3 * 4)
+    (d / "seq_gaps.json").write_text(json.dumps({"rows_per_step": rows, "cols": ["seq_kl", "advantage",
+                                                 "valid_tokens"], "steps": steps}) + "\n")  # fmt: skip
 
 
 def no_lora_input_cast(model) -> int:
@@ -456,23 +610,24 @@ class ImageMemo:
         self.memo.clear()
 
     def __call__(self, images, **kwargs):
-        from transformers.feature_extraction_utils import BatchFeature
-        from transformers.image_utils import make_flat_list_of_images
+        with nvtx.range("image_memo"):
+            from transformers.feature_extraction_utils import BatchFeature
+            from transformers.image_utils import make_flat_list_of_images
 
-        flat, kw = make_flat_list_of_images(images), repr(sorted(kwargs.items()))
-        miss = list({id(x): x for x in flat if (id(x), kw) not in self.memo}.values())
-        if miss:
-            out = self.inner(miss, **kwargs)
-            if set(out.keys()) != self.KEYS:  # another processor family: no memo
-                return self.inner(images, **kwargs)
-            grid = out["image_grid_thw"]
-            rows = torch.split(out["pixel_values"], grid.prod(-1).tolist())
-            for x, r, g in zip(miss, rows, grid, strict=True):
-                self.memo[(id(x), kw)] = (x, r, g)
-        parts = [self.memo[(id(x), kw)] for x in flat]
-        data = {"pixel_values": torch.cat([r for _, r, _ in parts]),
-                "image_grid_thw": torch.stack([g for *_, g in parts])}
-        return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
+            flat, kw = make_flat_list_of_images(images), repr(sorted(kwargs.items()))
+            miss = list({id(x): x for x in flat if (id(x), kw) not in self.memo}.values())
+            if miss:
+                out = self.inner(miss, **kwargs)
+                if set(out.keys()) != self.KEYS:  # another processor family: no memo
+                    return self.inner(images, **kwargs)
+                grid = out["image_grid_thw"]
+                rows = torch.split(out["pixel_values"], grid.prod(-1).tolist())
+                for x, r, g in zip(miss, rows, grid, strict=True):
+                    self.memo[(id(x), kw)] = (x, r, g)
+            parts = [self.memo[(id(x), kw)] for x in flat]
+            data = {"pixel_values": torch.cat([r for _, r, _ in parts]),
+                    "image_grid_thw": torch.stack([g for *_, g in parts])}
+            return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
 
 
 class FastGRPO(FastForward, GRPOTrainer):
@@ -481,11 +636,15 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     rows = None  # the generation batch's dataset rows; None outside one (g_probe's step-0 sampling calls _generate)
     loss_inputs = None  # the micro-batch inside _compute_loss (C10: its forward sets the IS ratio)
-    is_stats = None  # C10: the generation batch's IS-metric sums, counts, min and max, on the device until `log`
+    is_stats = None  # C10, B2.1: the generation batch's merged is_summary, on the device until `log`
+    seq_gaps = []  # B2.1: the step's per-sequence (seq_kl, advantage, valid tokens) rows (train mode), on the device
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
+    cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
+    last_log = None  # perf_counter at the previous `log` (time/step_s)
 
     def __init__(self, *args, **kwargs):
+        trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
         super().__init__(*args, **kwargs)
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
         self.images = ImageMemo.install(self.processing_class)
@@ -564,56 +723,81 @@ class FastGRPO(FastForward, GRPOTrainer):
         finally:
             trl_grpo.shuffle_sequence_dict = shuffle
 
+    def training_step(self, *args, **kwargs):
+        with nvtx.range("micro"):  # the micro-batch's forward and backward (the first one also generates: `batch`)
+            return super().training_step(*args, **kwargs)
+
+    def get_batch_samples(self, *args, **kwargs):
+        with nvtx.range("loader"):  # transformers fetches the step's 16 micro-batches before on_step_begin
+            return super().get_batch_samples(*args, **kwargs)
+
     def _compute_loss(self, model, inputs):
         if "importance_sampling_ratio" not in inputs and self.use_vllm and self.vllm_importance_sampling_correction:
             self.loss_inputs = inputs
         try:
-            return super()._compute_loss(model, inputs)
+            with nvtx.range("forward"):
+                return super()._compute_loss(model, inputs)
         finally:
             self.loss_inputs = None
 
     def _get_per_token_logps_and_entropies(self, *args, **kwargs):
-        out = super()._get_per_token_logps_and_entropies(*args, **kwargs)
+        with nvtx.range("logps"):
+            out = super()._get_per_token_logps_and_entropies(*args, **kwargs)
         if self.loss_inputs is not None:
             self.set_is_ratio(out[0].detach(), self.loss_inputs)
         return out
 
     def set_is_ratio(self, logps, inputs):
-        """inputs["importance_sampling_ratio"] from the update's own logprobs. TRL's sampling metrics are kept on the
-        device over the generation batch's micro-batches (no host read here) and logged once by `log`."""
+        """inputs["importance_sampling_ratio"] from the update's own logprobs. The micro-batch's is_summary is merged
+        into the generation batch's on the device, and in train mode its per-sequence (seq_kl, advantage, valid
+        tokens) rows are kept for `log` (no host read here)."""
         sampling = inputs.get("sampling_per_token_logps")
         if sampling is None:
             raise RuntimeError("C10 needs vLLM's sampling logprobs (vllm_generation logprobs=0) for the IS ratio")
         mask = (inputs["completion_mask"] * inputs.get("tool_mask", 1)).bool()
-        mode = self.vllm_importance_sampling_mode
-        r = is_ratio(logps, sampling, mask, mode, self.vllm_importance_sampling_clip_min,
-                     self.vllm_importance_sampling_clip_max)  # fmt: skip
-        inputs["importance_sampling_ratio"] = r
-        ok = mask & ~torch.isnan(sampling)
-        d = (logps - sampling).abs()
-        rk = torch.ones_like(r, dtype=torch.bool) if mode.startswith("sequence") else mask
-        new = torch.stack([d.masked_fill(~ok, 0).sum(), ok.sum(), d.masked_fill(~ok, -math.inf).amax(),
-                           r.masked_fill(~rk, 0).sum(), rk.sum(), r.masked_fill(~rk, math.inf).amin(),
-                           r.masked_fill(~rk, -math.inf).amax()]).float()  # fmt: skip
-        old = self.is_stats
-        if old is not None:  # sums and counts add; min and max combine
-            new = torch.stack([new[0] + old[0], new[1] + old[1], torch.maximum(new[2], old[2]), new[3] + old[3],
-                               new[4] + old[4], torch.minimum(new[5], old[5]), torch.maximum(new[6], old[6])])
-        self.is_stats = new
+        mode, lo, hi = (self.vllm_importance_sampling_mode, self.vllm_importance_sampling_clip_min,
+                        self.vllm_importance_sampling_clip_max)  # fmt: skip
+        r = inputs["importance_sampling_ratio"] = is_ratio(logps, sampling, mask, mode, lo, hi)
+        adv = inputs["advantages"].reshape(-1)
+        new = is_summary(logps, sampling, mask, r, adv, mode, lo, hi, self.off_policy_mask_threshold)
+        self.is_stats = merge_summary(self.is_stats, new)
+        if self.model.training:  # eval rows inform the eval metrics only; they never enter seq_gaps (B2.1, R01c)
+            rows = torch.stack([seq_kl(logps, sampling, mask), adv.to(logps.dtype), mask.sum(-1).to(logps.dtype)], 1)
+            self.seq_gaps = [*self.seq_gaps, rows.float()]
 
     def log(self, logs, start_time=None):
-        """TRL's sampling metrics of the generation batch, from the device in one read (C10), then TRL's log."""
-        if self.is_stats is not None:
-            d_sum, d_n, d_max, r_sum, r_n, r_min, r_max = self.is_stats.tolist()
-            self.is_stats = None
-            m = self._metrics["train" if self.model.training else "eval"]
-            for k, v in (("sampling_logp_difference/mean", d_sum / d_n if d_n else 0.0),
-                         ("sampling_logp_difference/max", d_max if d_n else 0.0),
-                         ("importance_sampling_ratio/min", r_min if r_n else 0.0),
-                         ("importance_sampling_ratio/mean", r_sum / r_n if r_n else 0.0),
-                         ("importance_sampling_ratio/max", r_max if r_n else 0.0)):  # fmt: skip
-                m[f"sampling/{k}"].append(v)
-        return super().log(logs, start_time)
+        """TRL's sampling metrics of the generation batch, the A6 zero / hi / lo shares and the B2.1 keys, from the
+        device in one read (C10, A6, B2.1), time/step_s (the host-clock gap since the previous log: one log per step
+        at logging_steps 1) and, with OBJDEL_NVTX_SYNC=0, the phase times of the CUDA event pairs; then TRL's log.
+        In train mode the same read takes the step's seq_kl quantiles and its per-sequence rows, appended to
+        <output_dir>/seq_gaps.f32 (write_seq_gaps)."""
+        with nvtx.range("log"):
+            train = self.model.training
+            m = self._metrics["train" if train else "eval"]
+            now = time.perf_counter()
+            if self.last_log is not None:
+                m["time/step_s"].append(now - self.last_log)
+            self.last_log = now
+            if self.is_stats is not None:
+                rows = torch.cat(self.seq_gaps) if train and self.seq_gaps else None
+                parts = [self.is_stats]
+                if rows is not None:  # scalar q: no host-to-device copy
+                    parts += [torch.stack([torch.quantile(rows[:, 0], q) for q in SEQ_KL_Q]), rows.flatten()]
+                vals, n = torch.cat(parts).tolist(), len(SUMMARY)
+                self.is_stats, self.seq_gaps = None, []
+                s = dict(zip(SUMMARY, vals[:n], strict=True))
+                for k, v in summary_metrics(s, self.off_policy_mask_threshold).items():
+                    m[f"sampling/{k}"].append(v)
+                if rows is not None:
+                    for k, v in zip(("q50", "q99", "q99.5"), vals[n:n + 3], strict=True):
+                        m[f"sampling/seq_kl/{k}"].append(v)
+                    if self.accelerator.is_main_process:
+                        write_seq_gaps(self.args.output_dir, vals[n + 3:], len(rows))
+            for mode, phase, start, end in self.cuda_times or ():
+                end.synchronize()  # long done: TRL's loss read and the stats read above waited for the stream
+                self._metrics[mode][f"time/{phase}_s"].append(start.elapsed_time(end) / 1e3)
+            self.cuda_times = None
+            return super().log(logs, start_time)
 
     def _generate(self, prompts):
         if self.images is not None:  # the previous batch's images
@@ -641,13 +825,28 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     @contextlib.contextmanager
     def timed(self, phase: str):
-        """time/<phase>_s in TRL's metrics (logged as the mean per logging step). One device sync at the end, so
-        queued GPU work is charged to the phase that queued it (a few per step: negligible)."""
-        t = time.perf_counter()
-        yield
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        self._metrics["train" if self.model.training else "eval"][f"time/{phase}_s"].append(time.perf_counter() - t)
+        """time/<phase>_s in TRL's metrics (logged as the mean per logging step), inside the NVTX range `phase`, also
+        when the phase raises. By default one device sync at the end, so queued GPU work is charged to the phase that
+        queued it (a few per step: negligible). With OBJDEL_NVTX_SYNC=0 and CUDA: no sync, a CUDA event pair on the
+        current stream instead, read by `log` (a trace then shows the real overlap between phases)."""
+        mode = "train" if self.model.training else "eval"
+        with nvtx.range(phase):
+            if not nvtx.SYNC and torch.cuda.is_available():
+                start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+                start.record()
+                try:
+                    yield
+                finally:
+                    end.record()
+                    self.cuda_times = [*(self.cuda_times or ()), (mode, phase, start, end)]
+                return
+            t = time.perf_counter()
+            try:
+                yield
+            finally:
+                if nvtx.SYNC and torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                self._metrics[mode][f"time/{phase}_s"].append(time.perf_counter() - t)
 
     def time_vllm_phases(self):
         """time/sync_s (weight push, with its weights wake-up), time/wake_s and time/sleep_s: the colocate

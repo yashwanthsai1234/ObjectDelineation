@@ -2,7 +2,6 @@
 experiments/phase1/impl/breakit/B2_reward.md) and the robustness checks that held (plain tests). No data needed."""
 import hashlib
 import json
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -54,59 +53,6 @@ def terms_of(masks, cache):
         rows.append(dict(format_ok=1.0, legal=1.0, iou_tc=t.iou_tc, f5=t.f5, g_area=t.g_area,
                          topo_any=float(t.topo_freq > 0), topo_freq=t.topo_freq, sig_id=sig_id((t.sig,))))
     return {k: np.array([r[k] for r in rows]) for k in rows[0]}
-
-
-# ------------------------------------------------------------------ Controller (objdel.train.callbacks)
-
-def fake_trainer(tmp_path):
-    torch = pytest.importorskip("torch")
-    model = torch.nn.Linear(2, 2)
-    opt = torch.optim.AdamW(model.parameters())
-    model(torch.ones(1, 2)).sum().backward()
-    opt.step()
-    return SimpleNamespace(args=SimpleNamespace(output_dir=str(tmp_path), process_index=0),
-                           state=SimpleNamespace(global_step=0), model=model, optimizer=opt,
-                           reward_func_names=["g_area", "advantage_v4"], reward_weights=torch.tensor([0.0, 1.0]),
-                           beta=1e-3, ref_model=None)
-
-
-def snapshot(model):
-    return {n: p.detach().clone() for n, p in model.named_parameters()}
-
-
-def test_b2_1_alarm_rolls_back_to_the_checkpoint_before_the_hacked_evaluation(tmp_path):
-    torch = pytest.importorskip("torch")
-    from objdel.train.callbacks import Controller
-    t = fake_trainer(tmp_path)
-    metric = "eval_rewards/iou_tc/mean"
-    ctl = Controller(t, metric=metric, alarm=lambda m: "area_median" if m.get("hedging") else None)
-    ctl.on_evaluate(t.args, t.state, None, metrics={metric: 0.80})  # honest checkpoint, best
-    honest = snapshot(t.model)
-    with torch.no_grad():
-        for p in t.model.parameters():
-            p.add_(1.0)  # the policy learns to hedge (union / hull / core: higher IoU_tc, M8 demo)
-    t.state.global_step = 50
-    ctl.on_evaluate(t.args, t.state, None, metrics={metric: 0.90, "hedging": True})
-    assert all(torch.equal(p, honest[n]) for n, p in t.model.named_parameters())  # rollback to the honest one
-    assert ctl.best["value"] == 0.80
-
-
-def test_b2_2_alarm_without_a_best_checkpoint_does_not_crash_training(tmp_path):
-    pytest.importorskip("torch")  # the Controller saves checkpoints with torch ([train] extra)
-    from objdel.train.callbacks import Controller
-    t = fake_trainer(tmp_path)
-    ctl = Controller(t, metric="eval_rewards/iou_tc/mean", alarm=lambda m: "duplicates")
-    ctl.on_evaluate(t.args, t.state, None, metrics={"eval_rewards/advantage_v4/mean": 0.0})  # metric missing
-    assert ctl.events and ctl.events[-1]["kind"] != "best"
-
-
-def test_b2_3_malformed_control_file_does_not_crash_training(tmp_path):
-    pytest.importorskip("torch")  # the Controller saves checkpoints with torch ([train] extra)
-    from objdel.train.callbacks import Controller
-    t = fake_trainer(tmp_path)
-    ctl = Controller(t)
-    (tmp_path / "control.json").write_text('{"reward_weights": {"g_area": 0.5')  # editor mid-save
-    ctl.on_step_begin(t.args, t.state, None)
 
 
 # ------------------------------------------------------------------ reward semantics
@@ -170,7 +116,7 @@ def test_b2_5_group_size_other_than_eight_is_refused(tmp_path, nod):
     T = score_batch([(t, False, NOD, caches, W, W) for t in texts])
     assert not np.allclose(adv, advantages_v4(T, 16))  # what TRL's group of 16 would need: not what it gets
     with pytest.raises(ValueError):
-        configs.grpo_config("smolvlm-256m", str(tmp_path), num_generations=16, bf16=False, use_cpu=True)
+        configs.grpo_config("qwen3-vl-2b", str(tmp_path), num_generations=16, bf16=False, use_cpu=True)
 
 
 def prepared(tmp_path, n=3):

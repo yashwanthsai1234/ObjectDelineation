@@ -16,7 +16,7 @@ if its prefix parses.
 Surrounding whitespace is exactly JSON's insignificant whitespace, space, tab, LF and CR (RFC 8259 §2); str.strip()
 with no argument would also strip Unicode spaces and the separators U+001C-U+001F (break-it B1-1).
 Texts longer than MAX_CHARS = 16,384 characters are refused first ("too_long"), so parse time is bounded by the
-cap and not by the input. The densest grammar text measured costs 2.14 characters per token (LFM2.5-VL; SmolVLM 1.6,
+cap and not by the input. The densest grammar text measured costs 2.14 characters per token (LFM2.5-VL;
 Qwen3-VL 1.7; real targets and adversarial texts), so a 1,536-token completion is at most ~3,300 characters and the
 longest of the 30,843 targets in data/targets (summary.json) has 2,864: the cap leaves 5x headroom over the largest
 completion budget and still rejects a 10 MB input in microseconds (implementation note fixes/F1.md).

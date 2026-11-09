@@ -217,13 +217,16 @@ def sft_rows(root, dataset: str, split: str, tokenizer=None, max_tokens: int | N
 def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: int = 1, subset=None) -> list[dict]:
     """Prompt rows (prompt, image path, key, W, H, names) of the records (images checked against them): RL-eligible
     items only, or with rl_only=False every item (probe views, whose records are rl: false); disagreement items
-    repeated `oversample` times; subset = (n, seed): n records drawn once with that seed, in record order."""
+    repeated `oversample` times; subset = (n, seed): n records drawn once with that seed, in record order. Window
+    records of a rows root (build_rl_rows: `cell` and view.kind) add the columns kind and cell (TRLReward logs per
+    kind and cell); other records have no such columns."""
     recs = [r for r in records(root, dataset, split) if r["rl"] or not rl_only]
     if subset and subset[0] < len(recs):
         n, seed = subset
         recs = [recs[i] for i in sorted(np.random.default_rng(seed).choice(len(recs), n, replace=False))]
     return [{"prompt": [_user(dataset)], "image": _image(root, r["item_id"]), "key": r["item_id"], "W": r["W"],
-             "H": r["H"], "names": list(SCHEMAS[dataset])}
+             "H": r["H"], "names": list(SCHEMAS[dataset]),
+             **({"kind": r["view"]["kind"], "cell": r["cell"]} if "cell" in r else {})}
             for r in _verified(root, recs) for _ in range(oversample if r["disagreement"] else 1)]
 
 
@@ -235,19 +238,6 @@ def prompt_rows(root, dataset: str, split: str, rl_only: bool = True, oversample
 def grpo_rows(root, dataset: str, split: str, oversample: int = 1) -> Dataset:
     """RL prompts: RL-eligible items, disagreement items repeated `oversample` times."""
     return prompt_rows(root, dataset, split, True, oversample)
-
-
-def grpo_rows_views(roots, dataset: str, split: str, oversample: int = 1) -> Dataset:
-    """grpo_rows of several roots in one dataset: the policy frames (roots[0], keys unchanged) and windows of the same
-    items (build_eval_views --split train: shifted, rescaled), keys tagged "<i>::" so serve.loader(*roots) scores each
-    row on its own window's rater masks."""
-    from objdel.train.serve import VIEW_SEP
-
-    rows = []
-    for i, root in enumerate(roots):
-        for r in prompts(root, dataset, split, True, oversample):
-            rows.append(r if i == 0 else r | {"key": f"{i}{VIEW_SEP}{r['key']}"})
-    return Dataset.from_list(rows).cast_column("image", Image())
 
 
 class OpenOnce:

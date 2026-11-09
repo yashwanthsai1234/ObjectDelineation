@@ -886,7 +886,7 @@ def test_a3_plan_files_are_valid_plans(tmp_path, monkeypatch):
     from experiments.phase2.vast import policy as P
 
     fe_steps, sent = {}, []
-    monkeypatch.setattr(P, "get_run", lambda r: {"deadline": time.time() + 1e5, "instance": 1})
+    monkeypatch.setattr(P, "get_run", lambda r: {"deadline": time.time() + 1e5, "instance": 1, "dph": 0.5, "started": 0.0})
     monkeypatch.setattr(P, "remote", lambda run, cmd, *a, **k: sent.append(cmd))
     monkeypatch.setattr(P, "ledger", lambda **k: None)
     for name in ("a3_measure", "a3_test"):

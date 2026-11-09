@@ -1,0 +1,10 @@
+# The V1 launch config (Implementation.md front 6.2; B1.5): the one file `make preflight CONFIG=` stamps for the B1
+# run, launch.sh --config and push_hf.sh read. No branches: it is never given to run.sh. view stays the SFT bundle
+# (preflight hashes its view_hash and rows.jsonl); rows_plan names the plan whose train_rl step pins the rows root
+# (preflight ROWS checks). push_hf.sh <run> experiments/phase2/configs/b1_launch.yaml pushes the train_rl output
+# {rd}/b1-rows (final/ and final_adapter/) to the HF revision b1-rows.
+model: qwen3-vl-2b
+view: views/lidc-bundle-v3
+seed: 1
+output_dir: b1-rows
+rows_plan: experiments/phase2/configs/b1_rows.yaml

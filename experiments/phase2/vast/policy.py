@@ -522,8 +522,12 @@ def cmd_run(a) -> None:
 
     rd = f"/workspace/runs/{a.run_id}"
     jobs = " && ".join([*guard, *map(job, stages)])
+    # the session clock of train_rl --budget-usd (callbacks.BudgetStop): accrued(run, t) = fixed + rate x hours
+    rate, fixed = run["dph"] + run.get("inet_up_cost", 0) * UP_GB_PER_H, run.get("inet_down_cost", 0) * DOWN_GB
+    clock = f"OBJDEL_SESSION_START={run['started']!r} OBJDEL_RATE_USD_PER_H={rate!r} OBJDEL_FIXED_USD={fixed!r}"
     # EXIT is removed first: the watchdog's idle destroy needs it (BK4-11); `;` keeps cd/export in this shell
-    inner = (f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} && mkdir -p {rd} && rm -f {rd}/EXIT || exit 1; "
+    inner = (f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} {clock} && mkdir -p {rd} && rm -f {rd}/EXIT "
+             "|| exit 1; "
              f"(while :; do date -u +%s > {rd}/HEARTBEAT; sleep 60; done) & "
              f"timeout -k 120 {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1")  # fmt: skip
     remote(run, f"tmux new-session -d -s {a.run_id}-{name} {shlex.quote('bash -c ' + shlex.quote(inner))}")
@@ -543,30 +547,64 @@ def cmd_pull(a) -> None:
 
 
 def cmd_push_hf(a) -> None:
-    """hf_push on the box for CONFIG's run (repo branch = its output_dir); the token is checked here first."""
+    """hf_push on the box for CONFIG's run (repo branch = its output_dir; a config with rows_plan names a train_rl
+    output: --rl); the token is checked here first."""
     import yaml
 
     from experiments.phase2 import hf_push
 
-    run, out = get_run(a.run_id), yaml.safe_load((ROOT / a.config).read_text())["output_dir"]
+    run, c = get_run(a.run_id), yaml.safe_load((ROOT / a.config).read_text())
+    out, kind = c["output_dir"], "--rl" if c.get("rows_plan") else "--run"
     token = secret("objdel-hf-write")
     if bad := hf_push.token_problems(hf_push.whoami(token), hf_push.REPO):
         die(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: {'; '.join(bad)}. Recreate it at "
             f"huggingface.co/settings/tokens as fine-grained with only {hf_push.REPO}: write (no other boxes ticked)")
-    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push --run /workspace/runs/"
+    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push {kind} /workspace/runs/"
            f"{a.run_id}/{out} --repo {hf_push.REPO} --revision {out}")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.secrets")
 
 
+ROWS_CHECK = ("import hashlib, json, pathlib, sys; d, want = pathlib.Path(sys.argv[1]), sys.argv[2]; "
+              "m = d / 'manifest.json'; ok = m.is_file() and hashlib.sha256(m.read_bytes()).hexdigest() == want "
+              "and sum(p.is_file() for p in d.rglob('*')) - 1 == json.loads(m.read_text())['schedule']['files_count']; "
+              "sys.exit(0 if ok else f'rows root {d}: no manifest.json, not SHA-256 {want}, or not files_count files')")
+
+
+def rows_pin(revision: str) -> str:
+    """The --rows-manifest-sha256 that the plans in experiments/phase2/configs pin beside --rows-revision REVISION."""
+    import yaml
+
+    plans = sorted((ROOT / "experiments/phase2/configs").glob("*.yaml"))
+    pins = {str(s[s.index("--rows-manifest-sha256") + 1]) for p in plans
+            for s in (yaml.safe_load(p.read_text()) or {}).get("steps", [])
+            if "--rows-revision" in s and str(s[s.index("--rows-revision") + 1]) == revision}
+    if len(pins) != 1:
+        die(f"--rows {revision}: the plans pin {len(pins)} manifest SHA-256 values for it (need exactly one)")
+    return pins.pop()
+
+
 def cmd_fetch_hf(a) -> None:
-    """hf_pull on the box: REVISION of the private HF repo to /workspace/runs/RUN_ID/ckpt (RL's start checkpoint)."""
+    """hf_pull on the box: REVISION of the private HF repo to /workspace/runs/RUN_ID/NAME (--as; default ckpt, RL's
+    start checkpoint); or --rows REVISION ROOT: the repo folder rows/ROOT/ to /workspace/data/lidc/rows/ROOT, then
+    the same ssh call checks it there (manifest.json with the SHA-256 the plans pin for REVISION, files_count files)."""
     from experiments.phase2 import hf_push
 
+    if (a.revision is None) == (a.rows is None):
+        die("fetch_hf: give REVISION or --rows REVISION ROOT")
+    rev, name = a.rows or (a.revision, a.name)
+    if "/" in name or ".." in name or name in ("", "."):
+        die(f"fetch_hf: folder name {name!r} may not hold / or ..")
+    pull = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_pull --repo {hf_push.REPO} "
+            f"--revision {shlex.quote(rev)}")
+    if a.rows:
+        d = f"/workspace/data/lidc/rows/{name}"
+        cmd = (f"{pull} --out /workspace/data/lidc --allow {shlex.quote(f'rows/{name}/**')} && /opt/venv/bin/python "
+               f"-I -c {shlex.quote(ROWS_CHECK)} {shlex.quote(d)} {rows_pin(rev)}")
+    else:
+        cmd = f"{pull} --out /workspace/runs/{a.run_id}/{name}"
     run, token = get_run(a.run_id), secret("objdel-hf-write")
     if bad := hf_push.token_problems(hf_push.whoami(token), hf_push.REPO):
         die(f"secret objdel-hf-write is too broad for a rented box: {'; '.join(bad)}")
-    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_pull --repo {hf_push.REPO} "
-           f"--revision {a.revision} --out /workspace/runs/{a.run_id}/ckpt")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.secrets")
 
 
@@ -641,7 +679,8 @@ CLI = {  # subcommand -> its arguments, in order
             "args": {"nargs": argparse.REMAINDER}},
     "pull": {"run_id": {"nargs": "?"}},
     "push_hf": {"run_id": {}, "config": {}},
-    "fetch_hf": {"run_id": {}, "revision": {}},
+    "fetch_hf": {"run_id": {}, "revision": {"nargs": "?"}, "--rows": {"nargs": 2, "metavar": ("REVISION", "ROOT")},
+                 "--as": {"dest": "name", "default": "ckpt", "help": "folder under the run dir (default ckpt)"}},
     "teardown": {"run_id": {}},
     "sweep_orphans": {},
 }  # fmt: skip

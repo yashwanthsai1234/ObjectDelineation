@@ -15,15 +15,14 @@ whole groups at any world size. vLLM colocate (perf F1): vllm_gpu_memory_utiliza
 frees its memory during the update). num_generations_eval = None (= 8): held-out evaluation samples groups like
 training, which is what the Phase 2 GRPO-signal gate (duplicates, sigma above the floor at T = 1) measures.
 
-max_completion_length: 1,536 tokens for Qwen3-VL and SmolVLM, 1,024 for LFM2.5-VL (5.2 vs 8.2 tokens per vertex,
+max_completion_length: 1,536 tokens for Qwen3-VL, 1,024 for LFM2.5-VL (5.2 vs 8.2 tokens per vertex,
 D10). Issue I5: on the final prepared set 1 of 3,282 RIGA train targets is over budget for each of the three
 models and 0 of 23,469 LIDC train targets (prepare_rl's token_budget, re-counted with each tokenizer; 10 / 3,546
 before BinRushed1 lost its model image, B3-1). The budget stays; such answers are dropped from SFT
 (objdel.train.dataset.sft_rows with the model's tokenizer and MAX_COMPLETION), see experiments/phase1/impl/M7_train.md.
 
-Generation: HF generate for SmolVLM, because TRL + vLLM re-expands SmolVLM/Idefics3's pre-expanded image tokens
-(issue #6294 and fix PR #6718 still open on 2026-10-19); vLLM colocate for LFM2.5-VL and Qwen3-VL, whose image
-placeholder expands to one contiguous run (lab t_stack T5).
+Generation: vLLM colocate for every model (each image placeholder expands to one contiguous run, lab t_stack T5);
+a CPU caller passes use_vllm=False for HF generate.
 
 Both configs (perf F3): logging_nan_inf_filter off (an isnan/isinf host sync on every micro-batch; a NaN loss still
 shows at the log steps) and non-blocking host-to-GPU copies (pinned memory is on).
@@ -32,8 +31,8 @@ SFT: assistant-only loss (vision datasets need transformers >= 5.18; TRL swaps i
 the processor's chat template, qwen3_vl_training for Qwen3-VL and lfm2_training for LFM2.5-VL), max_length=None
 (truncation can cut image tokens), no packing. Full fine-tuning lr 5e-5, LoRA r16 on the language model's linear
 layers lr 5e-4 (lab T4). LoRA only for Qwen3-VL-2B (full fine-tuning with AdamW needs ~34 GB for weights, gradients
-and optimizer state, more than a 24 GB card has; LoRA with a frozen bf16 base peaks far below); SmolVLM-256M and
-LFM2.5-VL-450M are trained in full. GRPO learning rate: every real run takes it from `prereg.G_PROBE` through
+and optimizer state, more than a 24 GB card has; LoRA with a frozen bf16 base peaks far below); LFM2.5-VL-450M
+is trained in full. GRPO learning rate: every real run takes it from `prereg.G_PROBE` through
 `g_probe.make_trainer` (5e-5 LoRA, 5e-6 full); the `grpo_config` default (1e-5 / 1e-6) is used only by tests, and
 E1.1 replaces it with `rl_lr`.
 Precision: bf16 exactly where transformers accepts it (transformers.utils.is_torch_bf16_gpu_available: CUDA with
@@ -41,10 +40,8 @@ bf16 support, i.e. Ampere or newer such as the Vast cards, MPS on macOS >= 14, X
 own default (bf16=True unless fp16) makes TrainingArguments raise "Your setup doesn't support bf16/gpu" on a
 CPU-only machine such as the Linux CI train job. fp16=True or an explicit bf16 override wins.
 
-Images (D12): SmolVLM resizes every image so its longest edge equals size["longest_edge"] (64 tokens per 512 px
-tile plus a global tile): 1,024 for RIGA crops (320 tokens; 500 px crops would otherwise be compressed into 64
-tokens), 512 for LIDC (the frame image is already upscaled to 512, 64 tokens). LFM2.5-VL and Qwen3-VL keep their
-processors' defaults (256 tokens at 512 px). Left padding for generation.
+Images (D12): every model keeps its processor's default image size (256 tokens at 512 px). Left padding for
+generation.
 
 References:
 - TRL GRPO trainer and config: https://huggingface.co/docs/trl/main/en/grpo_trainer ;
@@ -52,10 +49,6 @@ References:
 - TRL SFT trainer (VLMs: max_length=None; assistant_only_loss with vision datasets): https://huggingface.co/docs/trl/main/en/sft_trainer
 - Dr. GRPO, "Understanding R1-Zero-Like Training": https://arxiv.org/abs/2503.20783
 - DAPO (clip-higher 0.28, dynamic sampling): https://arxiv.org/abs/2503.14476
-- TRL issue #6294 / PR #6718 (SmolVLM + vLLM): https://github.com/huggingface/trl/issues/6294 ,
-  https://github.com/huggingface/trl/pull/6718
-- SmolVLM processor (longest_edge, 512 px tiles): https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct ;
-  sandbox measurement in experiments/phase1/impl/M7_train.md
 - transformers 5.20 TrainingArguments.__post_init__ (bf16 check) and utils.is_torch_bf16_gpu_available:
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/training_args.py
 - Lab: archive/phase1_lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
@@ -71,11 +64,10 @@ from objdel.reward import REWARD_V4
 from .rewards import LOGGED
 
 MODELS = {
-    "smolvlm-256m": "HuggingFaceTB/SmolVLM-256M-Instruct",
     "lfm2.5-vl-450m": "LiquidAI/LFM2.5-VL-450M",
     "qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct",
 }
-MAX_COMPLETION = {"smolvlm-256m": 1536, "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
+MAX_COMPLETION = {"lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
 _LORA = {"qwen3-vl-2b"}
 _GRAD_CKPT = {"qwen3-vl-2b"}
 # vision tower + projector of every model (recorded module names in tests/test_p2_train.py;
@@ -137,8 +129,7 @@ def as_names(s: dict, api: str) -> dict:
 
 def processor_kwargs(model: str, dataset: str) -> dict:
     """AutoProcessor.from_pretrained(MODELS[model], **processor_kwargs(model, dataset))."""
-    size = {"size": {"longest_edge": {"riga": 1024, "lidc": 512}[dataset]}} if model == "smolvlm-256m" else {}
-    return size | {"padding_side": "left"}
+    return {"padding_side": "left"}
 
 
 def _bf16(overrides: dict) -> bool:
@@ -193,7 +184,7 @@ def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
         "learning_rate": 1e-5 if model in _LORA else 1e-6, "lr_scheduler_type": "constant", "warmup_steps": 0,
         "multi_objective_aggregation": "sum_then_normalize", "scale_rewards": "none",
         "reward_weights": [0.0] * len(LOGGED) + [1.0],  # TRLReward.funcs() order: loggers, then AGGREGATOR
-        "use_vllm": model != "smolvlm-256m", "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,
+        "use_vllm": True, "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,
         "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)

@@ -9,9 +9,9 @@ The aggregator (weight 1) returns objdel.reward.advantages_v4, whose group means
 (weight 0) return one term each, so A = advantages_v4 to float32 precision (R2, tests/test_train_trl.py) and every
 term is logged as rewards/<term>/mean. The geometric loggers (GATED: iou_tc, f5, g_area) return the term times
 objdel.reward.legal_gate, as advantages_v4 sees it: an illegal rollout logs 0, so neither the curves nor the
-Controller's best-checkpoint metric (eval_rewards/iou_tc/mean) credit illegal output (R2 follow-up). A weight-0
-logger adds 0 * value = 0 to TRL's sum, so the advantages do not depend on what the loggers return. A guard switch
-that gives a logger weight w adds w (term - group mean) (objdel.train.callbacks), with the gated term. TRL's own
+held-out eval_rewards/iou_tc/mean credit illegal output (R2 follow-up). A weight-0 logger adds 0 * value = 0 to
+TRL's sum, so the advantages do not depend on what the loggers return. A logger given weight w (GRPOConfig
+reward_weights) adds w (term - group mean), with the gated term. TRL's own
 `reward` metric is then the mean advantage, about 0: dashboards use the per-term logs.
 
 All functions share one computation per batch: the first call scores the batch (objdel.reward.score_batch: one CUDA
@@ -31,16 +31,15 @@ even when its prefix parses.
 
 Typed logs (log_metric, averaged by TRL per logging step, eval-prefixed in evaluation): error/<parser code> is
 the share of completions with that error (codes enter the set when first seen and are logged every batch after),
-defect/<class> the share with that checker defect. log_extra adds the columns key (item id), truncated and group
+defect/<class> the share with that checker defect, allmiss_share the share of groups whose answers are all
+missed answers (gated IoU_tc < MISS_IOU); rows with the kind and cell columns (a B1 rows root) add kind/<k>/iou_tc,
+cell/<ij>/iou_tc and cell/<ij>/allmiss_groups. log_extra adds the columns key (item id), truncated and group
 (index of the completion's group within its reward call) to the completions table (log_completions=True), so
 objdel.train.sample.export can turn it into eval_run JSONL (break-it B4-3), and error (the parser code).
 
 Group size: TRL's num_generations must be REWARD_V4.group, or v4 would silently score each TRL group as several
 independent groups (break-it B2-5). The keys cannot show it (an oversampled item drawn twice in a row gives 16
-equal keys), so objdel.train.configs.grpo_config and callbacks.Controller refuse any other value.
-
-Held-out audit: when `recorded` is a list (callbacks.Controller sets it), every scored completion is appended as
-(key, text, truncated, W, H, names); the controller audits the held-out evaluation's completions with it.
+equal keys), so objdel.train.configs.grpo_config refuses any other value.
 
 References:
 - TRL GRPOTrainer docs (reward function kwargs, log_metric / log_extra, multi_objective_aggregation,
@@ -59,12 +58,16 @@ References:
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 
+import numpy as np
+
 from objdel._gpucheck import DEFECTS
 from objdel.reward import REWARD_V4, ExpertCache, advantages_v4, legal_gate, score_batch, topology_reward
+from objdel.train import nvtx
 
 LOGGED = ("format_ok", "legal", "iou_tc", "f5", "g_area", "topo_any", "r_topo")
 GATED = ("iou_tc", "f5", "g_area")  # logged times legal_gate: 0 for an illegal rollout, as advantages_v4 sees them
 AGGREGATOR = "advantage_v4"
+MISS_IOU = 0.1  # a missed answer: gated IoU_tc below this (glossary)
 
 
 def stop_ids(model, processing_class) -> set[int]:
@@ -77,6 +80,13 @@ def stop_ids(model, processing_class) -> set[int]:
 def truncated(ids, stop) -> bool:
     """TRL's rule: a completion is truncated when its last id is not a stop id (an empty one has no end either)."""
     return not ids or ids[-1] not in stop
+
+
+def _score(jobs) -> dict:
+    """score_batch inside the NVTX range `checker`, on whichever thread scores (the prefetch thread or the reward
+    call). The range lives here, not in objdel.reward, which never imports objdel.train (S12)."""
+    with nvtx.range("checker"):
+        return score_batch(jobs)
 
 
 def _text(completion) -> str:
@@ -96,17 +106,18 @@ class TRLReward:
     def __init__(self, caches: Callable[[str], Mapping[str, ExpertCache]], stop_ids: Iterable[int]):
         self.caches, self.stop = caches, frozenset(stop_ids)
         self.codes: set[str] = set()
-        self.recorded: list[tuple] | None = None
         self._last = (None, None)
         self._ahead, self._thread = None, None
 
     def funcs(self) -> tuple[list[Callable], list[float]]:
         """(reward_funcs, reward_weights) for GRPOTrainer / GRPOConfig."""
         def make(name):
-            def f(completions, completion_ids, key, W, H, names, log_metric=None, log_extra=None, **_):
-                return self._terms(completions, completion_ids, key, W, H, names, log_metric, log_extra)[name]
+            def f(completions, completion_ids, key, W, H, names, log_metric=None, log_extra=None, kind=None,
+                  cell=None, **_):
+                return self._terms(completions, completion_ids, key, W, H, names, log_metric, log_extra, kind,
+                                   cell)[name]
             f.__name__ = name
-            f.trl_reward = self  # lets callbacks.Controller find the reward among trainer.reward_funcs
+            f.trl_reward = self  # lets FastGRPO.prefetch_rewards find the reward among trainer.reward_funcs
             return f
         return [make(n) for n in (*LOGGED, AGGREGATOR)], [0.0] * len(LOGGED) + [1.0]
 
@@ -118,7 +129,7 @@ class TRLReward:
         jobs = self._jobs(completions, completion_ids, keys, W, H, names)
         if self._thread is None:
             self._thread = ThreadPoolExecutor(1, thread_name_prefix="reward-prefetch")
-        self._ahead = (self._signature(keys, jobs), self._thread.submit(score_batch, jobs))
+        self._ahead = (self._signature(keys, jobs), self._thread.submit(_score, jobs))
 
     def _jobs(self, completions, completion_ids, keys, W, H, names) -> list[tuple]:
         return [(_text(c), truncated(ids, self.stop), tuple(n), self.caches(k), w, h)
@@ -128,7 +139,8 @@ class TRLReward:
     def _signature(keys, jobs) -> list[tuple]:
         return [(k, t, tr, n, w, h) for k, (t, tr, n, _, w, h) in zip(keys, jobs, strict=True)]
 
-    def _terms(self, completions, completion_ids, key, W, H, names, log_metric, log_extra) -> dict:
+    def _terms(self, completions, completion_ids, key, W, H, names, log_metric, log_extra, kind=None,
+               cell=None) -> dict:
         if self._last[0] is completions:
             return self._last[1]
         g = REWARD_V4.group
@@ -138,11 +150,9 @@ class TRLReward:
                              f"{len(keys)} completions (per_device_train_batch_size * steps_per_generation and "
                              f"per_device_eval_batch_size must be multiples of {g})")
         jobs = self._jobs(completions, completion_ids, keys, W, H, names)
-        if self.recorded is not None:
-            self.recorded += [(k, t, tr, w, h, n) for k, (t, tr, n, _, w, h) in zip(keys, jobs, strict=True)]
         ahead, self._ahead = self._ahead, None
         same = ahead is not None and ahead[0] == self._signature(keys, jobs)
-        T = ahead[1].result() if same else score_batch(jobs)
+        T = ahead[1].result() if same else _score(jobs)
         legal = legal_gate(T)
         out = {n: (T[n] * legal if n in GATED else T[n]).tolist() for n in LOGGED[:-1]}
         out["r_topo"] = topology_reward(T).tolist()
@@ -153,6 +163,7 @@ class TRLReward:
                 log_metric(f"error/{code}", T["error"].count(code) / len(jobs))
             for d in DEFECTS:
                 log_metric(f"defect/{d}", sum(d in x for x in T["defects"]) / len(jobs))
+            self._log_views(log_metric, T["iou_tc"] * legal, kind, cell)
         if log_extra is not None:
             log_extra("key", keys)
             log_extra("truncated", [j[1] for j in jobs])
@@ -160,3 +171,17 @@ class TRLReward:
             log_extra("error", T["error"])
         self._last = (completions, out)
         return out
+
+    @staticmethod
+    def _log_views(log_metric, iou, kind, cell) -> None:
+        """allmiss_share: the share of groups whose G answers are all missed answers (gated IoU_tc < MISS_IOU); with
+        the rows root's kind and cell columns also kind/<k>/iou_tc, cell/<ij>/iou_tc and cell/<ij>/allmiss_groups."""
+        g = REWARD_V4.group
+        allmiss = (iou < MISS_IOU).reshape(-1, g).all(1)
+        log_metric("allmiss_share", float(allmiss.mean()))
+        for col, vals in (("kind", kind), ("cell", cell)):
+            vals = None if vals is None else np.asarray(vals)
+            for v in [] if vals is None else sorted(set(vals)):
+                log_metric(f"{col}/{v}/iou_tc", float(iou[vals == v].mean()))
+                if col == "cell":
+                    log_metric(f"cell/{v}/allmiss_groups", float(allmiss[vals[::g] == v].mean()))

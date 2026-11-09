@@ -170,3 +170,23 @@ def test_rows_revision_compares_the_pinned_hf_revision(rows_cfg, monkeypatch, tm
     a, _ = PF.load(rows_cfg.cfg)
     assert (PF.rows_revision(a, rows_cfg.cfg) == []) is ok
     assert hub.calls[0] == "a" * 40
+
+
+def test_the_trl_contract_is_the_first_code_check(monkeypatch):
+    from objdel.train import trl_adapter as T
+
+    name, fn = next(c for c in PF.CHECKS if c[0].startswith("CODE"))
+    assert name == "CODE TRL private names" and fn(None, None) == []
+
+    def broken():
+        raise T.TRLContractError("boom: _compute_loss")
+
+    monkeypatch.setattr(T, "check", broken)
+    assert fn(None, None) == ["boom: _compute_loss"]
+
+    def missing():
+        raise ImportError("no trl")
+
+    monkeypatch.setattr(T, "check", missing)
+    with pytest.raises(ImportError):  # any other error propagates: main() records it as a crashed (failed) check
+        fn(None, None)

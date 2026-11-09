@@ -20,7 +20,7 @@
   export_prompts.py and vllm_parity.py). The
   prompt is TRL GRPO's generation prompt as text (prepare_multimodal_messages, then the processor's
   apply_chat_template with add_generation_prompt=True, tokenize=False; B5: vLLM's prompt ids equal the training
-  env's in 64 / 64 LFM items and through the renderer for Qwen3.5 and SmolVLM), the image path, the processor
+  env's in 64 / 64 LFM items and through the renderer for Qwen3.5), the image path, the processor
   kwargs minus padding_side (vLLM's mm_processor_kwargs) and every sampling field (configs.sampling, seed,
   stop_token_ids). Completions come back as token ids; truncation is rewards.truncated, the reward's rule.
   sample() (HF generate through TRL) stays the reference and the Qwen3.5 fallback.

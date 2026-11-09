@@ -1,0 +1,14 @@
+Start (ns),Duration (ns),Name,Result,CorrID,Pid,Tid,T-Pri,Thread Name
+5,1,cudaMemcpy_v3020,0,1,7,1,20,python
+41,1,cudaEventSynchronize,0,2,7,1,20,python
+56,1,cudaStreamSynchronize_v3020,0,3,7,1,20,python
+65,1,cudaMemcpyToSymbol,0,4,7,1,20,python
+70,1,cudaMemcpyAsync,0,5,7,1,20,python
+71,1,cudaMemcpy2DAsync,0,6,7,1,20,python
+72,1,cudaLaunchKernel,0,7,7,1,20,python
+92,1,cudaDeviceSynchronize,0,8,7,1,20,python
+98,10,cudaStreamSynchronize_v3020,0,9,7,1,20,python
+120,1,cuCtxSynchronize,0,10,7,1,20,python
+130,1,cuMemcpyDtoHAsync_v2,0,11,7,1,20,python
+155,1,cuGraphLaunch_v10000,0,12,7,2,20,python
+160,1,cuStreamSynchronize_v2,0,13,7,2,20,python

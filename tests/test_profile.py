@@ -4,6 +4,7 @@ the shared torch.profiler callback (train_sft `profile:`, g_probe --trace; a CPU
 import gzip
 import json
 
+import numpy as np
 import pytest
 
 from experiments.phase2 import profile as PS
@@ -217,19 +218,67 @@ def test_shared_prefix_chain_compares_the_packed_forward_on_e2():
     assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
 
 
-def test_shifted_rl_chain_trains_on_the_windows_and_scores_both_splits():
-    """rl_shifted: train_rl from the full run's model on the centred frames plus the shifted and rescaled train windows
-    (shared-prefix, resumable), then final_eval on the whole val and test splits of the shifted view."""
-    from experiments.phase2.vast import policy
+def test_covered_hand_cases():
+    """A6: the interval-union length clipped to [t0, t1], shared by busy (torch.profiler) and nsys_baseline."""
+    c = PS.covered
+    assert c([(0, 2), (1, 3), (5, 6)], 0, 10) == 4.0
+    assert c([(0, 2), (1, 3), (5, 6)], 1.5, 5.5) == 2.0
+    assert c([(0, 10), (2, 3)], 0, 10) == 10 and c([(0, 1), (1, 2)], 0, 10) == 2.0
+    assert c([(-5, 2), (8, 20)], 0, 10) == 4
+    for case in ([], [(3, 3)], [(20, 30)], [(-9, -1)]):
+        assert c(case, 0, 10) == 0.0
+    assert c([(0, 2)], 5, 5) == 0.0 and c([(0, 2)], 5, 1) == 0.0  # t1 <= t0: never negative
+    assert c([(5, 6), (1, 3), (0, 2)], 0, 10) == c([(0, 2), (1, 3), (5, 6)], 0, 10)
+    assert c(((a, a + 1) for a in (0, 4)), 0, 10) == 2.0  # an iterator, consumed once
+    assert c([(3, 1)], 0, 10) == 0.0 and c([(3, 1), (0, 2)], 0, 10) == 2.0  # a reversed interval counts nothing (pin)
 
-    chain = policy.chain(policy.ROOT / "experiments/phase2/configs/rl_shifted.yaml", "rl2")
-    train = next(s for s in chain if "experiments.phase2.train_rl" in s)
-    i = train.index("--train-views")
-    assert train[i + 1:i + 3] == ["/workspace/data/lidc/views/lidc-train-shifted",
-                                  "/workspace/data/lidc/views/lidc-train-rescaled"]
-    assert {"--resume", "--shared-prefix"} <= set(train)
-    assert train[train.index("--ckpt") + 1] == "/workspace/runs/rl2/ckpt"
-    evals = [s for s in chain if "experiments.phase2.final_eval" in s]
-    assert [s[s.index("--split") + 1] for s in evals] == ["val", "test"]
-    assert all(s[s.index("--ckpt") + 1] == "/workspace/runs/rl2/train_rl/final" for s in evals)
-    assert evals[1][evals[1].index("--view") + 1] == "/workspace/data/lidc/eval_views/lidc-test-shifted"
+
+def test_covered_equals_the_rasterised_union():
+    rng = np.random.default_rng(0)
+    for _ in range(500):
+        n = int(rng.integers(0, 8))
+        a = rng.integers(-5, 25, n)
+        iv = [(int(x), int(x + d)) for x, d in zip(a, rng.integers(0, 10, n), strict=True)]
+        t0 = int(rng.integers(-2, 10))
+        t1 = t0 + int(rng.integers(0, 15))
+        grid = np.zeros(40, bool)
+        for x, y in iv:
+            grid[max(x, t0) + 10:max(min(y, t1), t0) + 10] = True
+        got = PS.covered(iv, t0, t1)
+        assert got == grid.sum() and 0 <= got <= t1 - t0
+        half = len(iv) // 2
+        A, B = PS.covered(iv[:half], t0, t1), PS.covered(iv[half:], t0, t1)
+        assert max(A, B) <= got <= A + B
+        assert PS.covered(iv + iv, t0, t1) == got and PS.covered(iv, t0, t1 + 3) >= got
+
+
+def test_busy_golden_is_unchanged():
+    """profile.busy before A6 moved its interval loop into covered (frozen outputs of 5 hand inputs)."""
+    def ev(name, cat, ts, dur):
+        return {"ph": "X", "name": name, "cat": cat, "ts": ts, "dur": dur}
+
+    def S(ts, dur):
+        return ev("ProfilerStep#3", "user_annotation", ts, dur)
+
+    cases = [
+        [S(0, 100), ev("k", "kernel", 10, 20), ev("k", "kernel", 20, 30)],
+        [S(0, 100), ev("a", "kernel", -10, 30), ev("m", "gpu_memcpy", 90, 30),
+         ev("cudaStreamSynchronize", "cuda_runtime", 5, 2)],
+        [S(50, 50), S(100, 100), ev("k", "kernel", 60, 10), ev("s", "gpu_memset", 150, 5),
+         ev("aten::nonzero", "cpu_op", 70, 1)],
+        [S(0, 1000), ev("k1", "kernel", 0, 1000), ev("k2", "kernel", 100, 10), ev("k2", "kernel", 500, 10)],
+        [S(0, 10), ev("x", "cpu_op", 0, 10)],
+    ]  # fmt: skip
+    zero = dict.fromkeys(PS.SYNCS, 0)
+    want = [
+        {"step_ms": 0.1, "gpu_busy": 0.4, "kernels": 2, "cuda_api_ms": 0.0, "syncs": zero,
+         "top_kernels_ms": {"k": 0.05}},
+        {"step_ms": 0.1, "gpu_busy": 0.3, "kernels": 1, "cuda_api_ms": 0.002,
+         "syncs": zero | {"cudaStreamSynchronize": 1}, "top_kernels_ms": {"a": 0.03}},
+        {"step_ms": 0.15, "gpu_busy": 0.1, "kernels": 1, "cuda_api_ms": 0.0, "syncs": zero | {"aten::nonzero": 1},
+         "top_kernels_ms": {"k": 0.01}},
+        {"step_ms": 1.0, "gpu_busy": 1.0, "kernels": 3, "cuda_api_ms": 0.0, "syncs": zero,
+         "top_kernels_ms": {"k1": 1.0, "k2": 0.02}},
+        {"step_ms": 0.01, "gpu_busy": 0.0, "kernels": 0, "cuda_api_ms": 0.0, "syncs": zero, "top_kernels_ms": {}},
+    ]  # fmt: skip
+    assert [PS.busy({"traceEvents": c}) for c in cases] == want

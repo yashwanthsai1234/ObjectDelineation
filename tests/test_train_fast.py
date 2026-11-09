@@ -5,7 +5,11 @@ run on a tiny random Qwen3-VL (CPU, fp32) with TRL's fused LM head.
 """
 
 import contextlib
+import json
+import math
+import time
 
+import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -359,7 +363,8 @@ def c10_trainer(steps_per_generation=16, num_iterations=1):
     args = type("A", (), {"gradient_accumulation_steps": 16, "steps_per_generation": steps_per_generation})()
     return trainer(fast.FastGRPO, vision=None, use_vllm=True, vllm_importance_sampling_correction=True, args=args,
                    num_iterations=num_iterations, loss_type="dr_grpo", vllm_importance_sampling_mode="sequence_mask",
-                   vllm_importance_sampling_clip_min=None, vllm_importance_sampling_clip_max=3.0)  # fmt: skip
+                   vllm_importance_sampling_clip_min=None, vllm_importance_sampling_clip_max=3.0,
+                   off_policy_mask_threshold=None)  # fmt: skip
 
 
 def test_fast_grpo_skips_the_old_logprob_pass_when_generation_and_update_align(monkeypatch):
@@ -376,7 +381,7 @@ def test_fast_grpo_skips_the_old_logprob_pass_when_generation_and_update_align(m
     assert seen == [False, True]
 
 
-def test_update_forward_gives_trl_its_importance_ratio(monkeypatch):
+def test_update_forward_gives_trl_its_importance_ratio(monkeypatch, tmp_path):
     """The update micro-batch's own logprobs (detached) stand in for the old ones: the ratio is set before TRL's loss
     multiplies by inputs["importance_sampling_ratio"]. TRL's sampling metrics cover the whole generation batch (min,
     max and token-weighted means over every micro-batch), kept on the device and read once, at log time."""
@@ -385,10 +390,13 @@ def test_update_forward_gives_trl_its_importance_ratio(monkeypatch):
     logged = []
     monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: logged.append({**self._metrics["train"]}))
     t = c10_trainer()
+    t.args.output_dir = str(tmp_path)  # log appends the step's seq_gaps rows there
     a = {"sampling_per_token_logps": torch.tensor([[0.0, -1.5, -1.0], [-0.5, -0.5, -0.5]]),
-         "completion_mask": torch.tensor([[1, 1, 0], [1, 1, 1]])}  # token gaps 0, 0.5 | 0, 0, 0: ratios e^0.5, 1
+         "completion_mask": torch.tensor([[1, 1, 0], [1, 1, 1]]),
+         "advantages": torch.tensor([1.0, -1.0])}  # token gaps 0, 0.5 | 0, 0, 0: ratios e^0.5, 1
     b = {"sampling_per_token_logps": torch.tensor([[0.0, -1.0, -2.0], [-0.5, -0.5, float("nan")]]),
-         "completion_mask": torch.tensor([[1, 0, 0], [1, 1, 1]])}  # gaps 0 | 0, 0, NaN (not counted): ratios 1, 1
+         "completion_mask": torch.tensor([[1, 0, 0], [1, 1, 1]]),
+         "advantages": torch.tensor([1.0, -1.0])}  # gaps 0 | 0, 0, NaN (not counted): ratios 1, 1
     for inputs in (a, b):  # two micro-batches of one generation batch
         t.loss_inputs = inputs
         assert t._get_per_token_logps_and_entropies(None, None, None, 3)[0] is lp
@@ -766,3 +774,418 @@ def test_shared_prefix_is_off_when_the_text_layers_are_compiled():
 
     src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
     assert 'trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)' in src
+
+
+# B2.1: what the IS correction loses, and what every other mode would do ------------------------------------------
+
+
+class FakeVLLM:
+    """TRL's VLLMGeneration without an engine (fixture tiny_loop_vllm_fake, B.9.0). Each row's answer and planted
+    per-sequence gap c are drawn from a generator seeded by the row's prompt and its place in the group, so an
+    eval in between does not change later train rows. Its sampling logprobs are the model's own plus c on every
+    token: seq_kl (vLLM minus trainer, mean over the answer) of row i is c_i up to float error. planted: (c, length)
+    per generated row."""
+
+    VOCAB = 43
+
+    def __init__(self, model, max_completion_length, **kw):
+        self.model, self.max_len, self.planted = model, max_completion_length, []
+        noop = lambda *a, **k: None  # noqa: E731
+        self.llm = type("LLM", (), {"generate": staticmethod(noop), "wake_up": staticmethod(noop),
+                                    "sleep": staticmethod(noop)})()  # fmt: skip
+
+    def sync_weights(self):
+        pass
+
+    @torch.no_grad()
+    def generate(self, prompts, images, num_generations, profiler=None):
+        ids, lps = [], []
+        for j, p in enumerate(prompts):
+            g = torch.Generator().manual_seed(hash((tuple(p), j % num_generations)) % 2**31)
+            n = int(torch.randint(1, self.max_len + 1, (1,), generator=g))
+            c = float(torch.rand(1, generator=g) * 0.4 - 0.2)
+            a = torch.randint(3, self.VOCAB, (n,), generator=g)
+            x = torch.cat([torch.tensor(p), a])[None]
+            lp = self.model(input_ids=x).logits[0, len(p) - 1:-1].float().log_softmax(-1)[torch.arange(n), a]
+            ids.append(a.tolist())
+            lps.append([[v + c] for v in lp.tolist()])
+            self.planted.append((c, n))
+        return prompts, ids, lps, None, None
+
+
+def tiny_loop_vllm_fake(monkeypatch, out, steps=3, eval_steps=None):
+    """FastGRPO on a 1-layer Llama (CPU) for `steps` steps, logging every step, with TRL's vLLM path on (IS
+    correction, sequence_mask cap 3) and FakeVLLM in place of the engine; 8 rows per step (rows_per_step); TRL's
+    own train loader (OpenOnce needs an image column).
+    eval_steps: a held-out eval every eval_steps steps. Returns the trained trainer."""
+    import trl.trainer.grpo_trainer as G
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
+    from trl import GRPOConfig
+
+    monkeypatch.setattr(G, "VLLMGeneration", FakeVLLM)
+    monkeypatch.setattr(fast.FastGRPO, "get_train_dataloader", GRPOTrainer.get_train_dataloader)  # rows: no image
+    monkeypatch.setattr(fast.FastGRPO, "patch_vllm_prompts", lambda self: None)  # text only: no image pads
+    vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "prompt", *map(str, range(FakeVLLM.VOCAB - 3))])}
+    tk = Tokenizer(models.WordLevel(vocab, unk_token="<pad>"))
+    tk.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
+    tok = PreTrainedTokenizerFast(tokenizer_object=tk, pad_token="<pad>", eos_token="<eos>", padding_side="left")
+    torch.manual_seed(0)
+    model = LlamaForCausalLM(LlamaConfig(vocab_size=len(vocab), hidden_size=16, intermediate_size=32,
+                                         num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
+                                         pad_token_id=0, eos_token_id=1, bos_token_id=1))  # fmt: skip
+    ev = {"eval_strategy": "steps", "eval_steps": eval_steps, "per_device_eval_batch_size": 8} if eval_steps else {}
+    args = GRPOConfig(output_dir=str(out), max_steps=steps, per_device_train_batch_size=8, num_generations=8,
+                      max_completion_length=4, use_cpu=True, bf16=False, report_to="none", logging_steps=1,
+                      save_strategy="no", seed=0, remove_unused_columns=False, learning_rate=1e-2, beta=0.0,
+                      loss_type="dr_grpo", use_vllm=True, vllm_mode="colocate",
+                      vllm_importance_sampling_correction=True, vllm_importance_sampling_mode="sequence_mask",
+                      **ev)  # fmt: skip
+    rows = lambda *n: Dataset.from_list([{"prompt": f"prompt {i}"} for i in n])  # noqa: E731
+    t = fast.FastGRPO(model=model, reward_funcs=lambda completions, **kw: [len(c) % 3 * 1.0 for c in completions],
+                      args=args, train_dataset=rows(1, 2, 3, 4), eval_dataset=rows(7) if eval_steps else None,
+                      processing_class=tok)  # fmt: skip
+    t.train()
+    return t
+
+
+OLD5 = ("sampling_logp_difference/mean", "sampling_logp_difference/max", "importance_sampling_ratio/min",
+        "importance_sampling_ratio/mean", "importance_sampling_ratio/max")
+
+
+def train_logs(t) -> list[dict]:
+    return [h for h in t.state.log_history if "loss" in h]
+
+
+R01_GOLDEN = {  # captured on this fixture before B2.1 (commit f5e0a05 + A6), CPU fp32
+    "sampling_logp_difference/mean": [0.07079750015622094, 0.11064745903015137, 0.09729175269603729],
+    "sampling_logp_difference/max": [0.17806434631347656, 0.19784259796142578, 0.19302105903625488],
+    "importance_sampling_ratio/min": [0.8013280034065247, 0.632602870464325, 0.4812847077846527],
+    "importance_sampling_ratio/mean": [1.092457890510559, 1.2020281553268433, 1.005218505859375],
+    "importance_sampling_ratio/max": [1.706070899963379, 2.050137758255005, 1.2129082679748535]}
+
+
+def test_r01_old_sampling_metrics_unchanged(monkeypatch, tmp_path):
+    logs = train_logs(tiny_loop_vllm_fake(monkeypatch, tmp_path))
+    assert {k: [h[f"sampling/{k}"] for h in logs] for k in OLD5} == R01_GOLDEN
+
+
+B21_KEYS = ("is_masked_share", "is_clamped_share", "seq_logdiff_mean", "seq_logdiff_max", "tok_absdiff_gt_0.5_share",
+            "masked_len_mean", "kept_len_mean", "modified_token_share", "ess", "cf/seqmask3_share",
+            "cf/tok_clamp2_share", "cf/geo_0.99_1.01_share", "cf/opsm_share@0.05", "cf/opsm_share@0.1",
+            "cf/opsm_share@0.5", "cf/opsm0.1_bigtok_unmasked_share", "cf/seq_ratio_lt_0.1_share", "cf/ess_C",
+            "cf/ess_B", "cf/ess_E@0.05", "cf/ess_E@0.1", "cf/ess_E@0.5", "seq_kl/q50", "seq_kl/q99",
+            "seq_kl/q99.5")  # fmt: skip
+
+
+def rows(*gaps, adv=None, kl_nan=()):
+    """One micro-batch from per-row trainer-minus-vLLM token gaps (rows right-padded): logps 0, sampling = -gap;
+    kl_nan: (row, token) places where vLLM could not score (sampling NaN)."""
+    T = max(map(len, gaps))
+    g = torch.zeros(len(gaps), T)
+    m = torch.zeros(len(gaps), T, dtype=torch.long)
+    for i, x in enumerate(gaps):
+        g[i, : len(x)], m[i, : len(x)] = torch.tensor(x, dtype=torch.float32), 1
+    s = -g
+    for i, j in kl_nan:
+        s[i, j] = float("nan")
+    a = torch.tensor(adv if adv is not None else [1.0] * len(gaps))
+    return torch.zeros_like(g), {"sampling_per_token_logps": s, "completion_mask": m, "advantages": a}
+
+
+def is_trainer(mode, lo, hi, out, opsm=None):
+    from types import SimpleNamespace
+
+    return trainer(fast.FastGRPO, use_vllm=True, vllm_importance_sampling_correction=True, args=SimpleNamespace(
+        output_dir=str(out)), vllm_importance_sampling_mode=mode, vllm_importance_sampling_clip_min=lo,
+        vllm_importance_sampling_clip_max=hi, off_policy_mask_threshold=opsm)  # fmt: skip
+
+
+def logged(monkeypatch, out, mode, lo, hi, *micro, opsm=None) -> dict:
+    """set_is_ratio on each micro-batch of one generation batch, then log: the train metrics (one value each)."""
+    got = []
+    monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: got.append(dict(self._metrics["train"])))
+    t = is_trainer(mode, lo, hi, out, opsm)
+    for lp, inputs in micro:
+        t.set_is_ratio(lp, inputs)
+    t.log({})
+    return {k.removeprefix("sampling/"): v[0] for k, v in got[0].items() if k.startswith("sampling/")}
+
+
+def test_u37_active_mode_stats_on_a_hand_case(monkeypatch, tmp_path):
+    """sequence_mask, cap 3: row 1 sums 1.8 (e^1.8 = 6.05 > 3: masked, 3 tokens); the others are kept (0.2 over 2
+    tokens, 0 over 1, -2.0 over 4). Tokens with |gap| > 0.5: three 0.6 and one -0.6; -0.5 is not (strict)."""
+    m = logged(monkeypatch, tmp_path, "sequence_mask", None, 3.0,
+               rows([0.1, 0.1], [0.6, 0.6, 0.6], [0.0], [-0.5, -0.5, -0.6, -0.4]))  # fmt: skip
+    assert m["is_masked_share"] == 0.25 and m["is_clamped_share"] == 0.0
+    assert m["seq_logdiff_mean"] == pytest.approx(0.0, abs=1e-6) and m["seq_logdiff_max"] == pytest.approx(1.8)
+    assert m["tok_absdiff_gt_0.5_share"] == pytest.approx(4 / 10)
+    assert m["masked_len_mean"] == 3.0 and m["kept_len_mean"] == pytest.approx(7 / 3)
+    m = logged(monkeypatch, tmp_path, "sequence_mask", None, 3.0, rows([0.1], [0.2]))
+    assert m["masked_len_mean"] == 0.0 and m["is_masked_share"] == 0.0  # none masked: 0, not NaN
+
+
+def test_u37_clamped_counts_only_outside_the_bounds(monkeypatch, tmp_path):
+    """token_truncate: e^0.8 = 2.23 > 2 is clamped; a ratio exactly equal to hi is not; with lo None nothing counts
+    below (e^-5)."""
+    hi = float(torch.exp(torch.tensor(0.3)))  # the float32 ratio of a 0.3 gap, exactly
+    m = logged(monkeypatch, tmp_path, "token_truncate", None, hi, rows([0.8, 0.3, -5.0, 0.0]))
+    assert m["is_clamped_share"] == 0.25 and m["is_masked_share"] == 0.0
+    m = logged(monkeypatch, tmp_path, "token_truncate", 0.1, hi, rows([0.8, 0.3, -5.0, 0.0]))
+    assert m["is_clamped_share"] == 0.5  # e^-5 < 0.1 now counts
+
+
+def test_u37_summary_is_float32_on_the_input_device():
+    lp, x = rows([0.1, 0.2], [0.3])
+    s = fast.is_summary(lp, x["sampling_per_token_logps"], x["completion_mask"].bool(),
+                        fast.is_ratio(lp, x["sampling_per_token_logps"], x["completion_mask"], "token_mask", None, 3.0),
+                        x["advantages"], "token_mask", None, 3.0)  # fmt: skip
+    assert s.dtype == torch.float32 and s.device == lp.device and s.shape == (len(fast.SUMMARY),)
+
+
+U54 = rows([0.005] * 800,  # 0: sum 4.0 (e^4 > 3), mean 0.005 inside the geo band, seq_kl -0.005
+           [-0.2] * 5,  # 1: seq_kl +0.2, negative advantage: OPSM drops it at 0.05 and 0.1, not at 0.5
+           [0.2] * 5,  # 2: mirror, seq_kl -0.2: OPSM keeps it
+           [-0.8] * 2,  # 3: seq_kl 0.8 but positive advantage: never OPSM; 2 big tokens
+           [-0.15, -0.15],  # 4: first token unscored (NaN): seq_kl (0 + 0.15) / 2 = 0.075, as TRL
+           [math.log(0.05)],  # 5: weight 0.05 under sequence_mask (no lower bound): kept, down-weighted; 1 big token
+           adv=[-1.0, -1.0, -1.0, 1.0, -1.0, 1.0], kl_nan=[(4, 0)])  # fmt: skip
+
+
+def test_u54_counterfactual_shares_on_planted_rows(monkeypatch, tmp_path):
+    m = logged(monkeypatch, tmp_path, "sequence_mask", None, 3.0, U54)
+    assert m["cf/seqmask3_share"] == pytest.approx(1 / 6)  # row 0 only
+    assert m["cf/geo_0.99_1.01_share"] == pytest.approx(5 / 6)  # all but row 0 (row 4: e^-0.075 < 0.99)
+    assert m["cf/opsm_share@0.05"] == pytest.approx(2 / 6)  # rows 1 and 4
+    assert m["cf/opsm_share@0.1"] == pytest.approx(1 / 6)  # row 1; the mirror row 2 is kept
+    assert m["cf/opsm_share@0.5"] == 0.0
+    assert m["cf/seq_ratio_lt_0.1_share"] == pytest.approx(1 / 6)  # row 5
+    assert m["cf/tok_clamp2_share"] == 0.0  # no token gap above ln 2
+    assert m["cf/opsm0.1_bigtok_unmasked_share"] == pytest.approx(3 / 815)  # rows 3 and 5 kept; row 1 is not big
+    assert m["is_masked_share"] == pytest.approx(1 / 6)  # active sequence_mask drops row 0
+
+
+def test_u54_seq_kl_quantiles_equal_numpy(monkeypatch, tmp_path):
+    m = logged(monkeypatch, tmp_path, "sequence_mask", None, 3.0, U54)
+    kl = np.array([-0.005, 0.2, -0.2, 0.8, 0.075, -math.log(0.05)], dtype=np.float32)
+    for q, k in ((0.5, "q50"), (0.99, "q99"), (0.995, "q99.5")):
+        assert m[f"seq_kl/{k}"] == pytest.approx(float(np.quantile(kl, q)), abs=1e-6)
+
+
+def test_u54_ess_active_and_counterfactual_at_token_level(monkeypatch, tmp_path):
+    """Row 0: gaps (1, 1), seq_kl -1; row 1: gaps (0, -1), seq_kl 0.5; both negative advantage. Token weights:
+    active sequence_mask cap 3 and C: (0, 0, a, a) with a = e^-1 (e^2 > 3 dropped); B, token TIS C = 2: (2, 2, 1, a);
+    E@0.1: OPSM drops row 1, (2, 2, 0, 0); E@0.5 keeps it (0.5 <= 0.5). ESS = (sum w)^2 / (N sum w^2), N = 4."""
+    a = math.exp(-1)
+    m = logged(monkeypatch, tmp_path, "sequence_mask", None, 3.0, rows([1.0, 1.0], [0.0, -1.0], adv=[-1.0, -1.0]))
+    assert m["ess"] == pytest.approx(0.5) and m["cf/ess_C"] == pytest.approx(0.5)
+    assert m["cf/ess_B"] == pytest.approx((5 + a) ** 2 / (4 * (9 + a * a)))
+    assert m["cf/ess_E@0.1"] == pytest.approx(16 / (4 * 8))
+    assert m["cf/ess_E@0.5"] == pytest.approx(m["cf/ess_B"]) and m["cf/ess_E@0.05"] == pytest.approx(0.5)
+    assert logged(monkeypatch, tmp_path, "token_mask", None, 3.0, rows([0.0] * 4))["ess"] == 1.0  # equal weights
+    one = logged(monkeypatch, tmp_path, "token_mask", None, 3.0, rows([5.0, 5.0, 0.0, 5.0]))  # one non-zero weight
+    assert one["ess"] == pytest.approx(1 / 4)
+
+
+def test_u54_modified_token_share_counts_a_mask_and_a_2pct_clamp_not_half_a_pct(monkeypatch, tmp_path):
+    m = logged(monkeypatch, tmp_path, "token_mask", None, 3.0, rows([math.log(4), 0.0, 0.0, 0.0]))
+    assert m["modified_token_share"] == 0.25
+    m = logged(monkeypatch, tmp_path, "token_truncate", 1.0, 3.0,
+               rows([math.log(0.98), math.log(0.995), 0.0, 0.0]))  # fmt: skip
+    assert m["modified_token_share"] == 0.25
+
+
+def test_u62_counterfactual_opsm_equals_trls_off_policy_mask():
+    """Oracle: TRL's own GRPOTrainer.get_off_policy_mask (imported here only), drops = rows it returns 0 for."""
+    g = torch.Generator().manual_seed(0)
+    names = list(fast.SUMMARY)
+    for _ in range(200):
+        lp = -torch.rand(6, 9, generator=g) * 3
+        sp = lp + torch.randn(6, 9, generator=g) * torch.rand(6, 1, generator=g)
+        sp[0, 2] = float("nan")
+        mask = (torch.rand(6, 9, generator=g) < 0.8).long()
+        mask[1] = 0
+        adv = torch.randn(6, generator=g)
+        r = fast.is_ratio(lp, sp, mask, "sequence_mask", None, 3.0)
+        s = fast.is_summary(lp, sp, mask.bool(), r, adv, "sequence_mask", None, 3.0).tolist()
+        for d in fast.OPSM_DELTAS:
+            keep = GRPOTrainer.get_off_policy_mask(adv[:, None], lp, sp, mask.float(), d)
+            assert s[names.index(f"cf_opsm_{d}")] == float((keep == 0).sum())
+
+
+def test_u67_sixteen_micro_batches_give_the_quantiles_of_one_batch(monkeypatch, tmp_path):
+    g = torch.Generator().manual_seed(1)
+    gaps = torch.randn(256, 20, generator=g) * 0.1
+    batch = lambda sl: (torch.zeros(len(gaps[sl]), 20), {  # noqa: E731
+        "sampling_per_token_logps": -gaps[sl], "completion_mask": torch.ones(len(gaps[sl]), 20),
+        "advantages": torch.ones(len(gaps[sl]))})  # fmt: skip
+    one = logged(monkeypatch, tmp_path / "a", "sequence_mask", None, 3.0, batch(slice(None)))
+    many = logged(monkeypatch, tmp_path / "b", "sequence_mask", None, 3.0,
+                  *(batch(slice(16 * i, 16 * i + 16)) for i in range(16)))  # fmt: skip
+    for k in ("q50", "q99", "q99.5"):
+        assert many[f"seq_kl/{k}"] == pytest.approx(one[f"seq_kl/{k}"], abs=1e-6)
+
+
+def test_u67_the_buffer_stays_on_the_device_until_log_and_is_cleared(monkeypatch, tmp_path):
+    t = is_trainer("sequence_mask", None, 3.0, tmp_path)
+    monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: None)
+    reads = []
+    for name in ("item", "cpu", "tolist", "numpy", "__float__", "__bool__"):
+        orig = getattr(torch.Tensor, name)
+        monkeypatch.setattr(torch.Tensor, name, lambda self, *a, _o=orig, _n=name: reads.append(_n) or _o(self, *a))
+    for _ in range(3):
+        t.set_is_ratio(*U54)
+    assert reads == [] and isinstance(t.is_stats, torch.Tensor) and len(t.seq_gaps) == 3
+    t.log({})
+    assert reads == ["tolist"] and t.seq_gaps == [] and t.is_stats is None
+
+
+def test_u75_active_opsm_logs_its_drops(monkeypatch, tmp_path):
+    """OPSM at 0.1: rows 1 (seq_kl 0.2) and 3 (0.3) have negative advantages and are dropped; row 2 (0.3, positive)
+    and row 0 (0.05) are kept."""
+    x = rows([-0.05], [-0.2], [-0.3], [-0.3], adv=[-1.0, -0.5, 2.0, -0.25])
+    m = logged(monkeypatch, tmp_path, "sequence_mask", None, 3.0, x, opsm=0.1)
+    assert m["opsm_masked_share"] == 0.5 and m["opsm_masked_adv_sum"] == -0.75
+    assert "opsm_masked_share" not in logged(monkeypatch, tmp_path, "sequence_mask", None, 3.0, x)
+
+
+def test_u36_is_ratio_and_summary_edges():
+    lp, x = rows([0.0, 0.0], [1e4], [-1e4], [0.3])
+    x["completion_mask"][0] = 0  # an all-masked row
+    sp, mask = x["sampling_per_token_logps"], x["completion_mask"]
+    for mode in ("sequence_mask", "token_mask", "token_truncate", "sequence_truncate"):
+        r = fast.is_ratio(lp, sp, mask, mode, None, 3.0)
+        s = fast.is_summary(lp, sp, mask.bool(), r, x["advantages"], mode, None, 3.0)
+        assert torch.isfinite(r).all() and torch.isfinite(s[: len(fast.SUMS)]).all(), mode
+    with pytest.raises(ValueError, match="clip_max"):
+        fast.is_ratio(lp, sp, mask, "token_truncate", 0.5, None)
+
+
+def test_p13_the_summary_never_changes_the_ratio(monkeypatch, tmp_path):
+    """The ratio TRL multiplies by is is_ratio's (A7 pins is_ratio to TRL's block), whatever the summary computes."""
+    t = is_trainer("sequence_mask", None, 3.0, tmp_path)
+    lp, x = U54
+    t.set_is_ratio(lp, x)
+    assert torch.equal(x["importance_sampling_ratio"],
+                       fast.is_ratio(lp, x["sampling_per_token_logps"], x["completion_mask"], "sequence_mask", None,
+                                     3.0))  # fmt: skip
+
+
+def test_eval_rows_stay_out_of_the_seq_kl_buffer(monkeypatch, tmp_path):
+    """R01c unit part: in eval mode the stats still go to the eval metrics, but no seq_kl row is kept."""
+    t = is_trainer("sequence_mask", None, 3.0, tmp_path)
+    t.model.training = False
+    t.set_is_ratio(*U54)
+    assert t.seq_gaps == [] and t.is_stats is not None
+
+
+def test_r01_every_b21_key_once_per_logging_step(monkeypatch, tmp_path):
+    counts, log = [], GRPOTrainer.log
+
+    def counted(self, logs, start_time=None):
+        if self.model.training and "loss" in logs:  # train steps, not the end-of-train summary
+            counts.append({k: len(v) for k, v in self._metrics["train"].items() if k.startswith("sampling/")})
+        return log(self, logs, start_time)
+
+    monkeypatch.setattr(GRPOTrainer, "log", counted)
+    logs = train_logs(tiny_loop_vllm_fake(monkeypatch, tmp_path))
+    assert len(counts) == len(logs) == 3
+    for c, h in zip(counts, logs, strict=True):
+        assert all(c[f"sampling/{k}"] == 1 for k in B21_KEYS), c  # one value per step, not one per micro-batch
+        assert not any(k.startswith("sampling/opsm_") for k in h)  # OPSM off
+
+
+def read_seq_gaps(out):
+    meta = json.loads((out / "seq_gaps.json").read_text())
+    a = np.fromfile(out / "seq_gaps.f32", dtype="<f4")
+    return meta, a.reshape(meta["steps"], meta["rows_per_step"], 3)
+
+
+def test_r01b_seq_gaps_file_holds_each_steps_rows_in_order(monkeypatch, tmp_path):
+    t = tiny_loop_vllm_fake(monkeypatch, tmp_path)
+    rows = t.args.per_device_train_batch_size * t.args.gradient_accumulation_steps  # rows_per_step
+    meta, a = read_seq_gaps(tmp_path)
+    assert meta == {"rows_per_step": rows, "cols": ["seq_kl", "advantage", "valid_tokens"], "steps": 3}
+    assert (tmp_path / "seq_gaps.f32").stat().st_size == 3 * rows * 3 * 4
+    planted = t.vllm_generation.planted  # (c, n) per generated row, in generation order
+    for k in range(3):  # rows are length-sorted inside a step (by_length): compare as sets of (seq_kl, length)
+        got = sorted(zip(a[k, :, 0].tolist(), a[k, :, 2].tolist(), strict=True))
+        want = sorted(planted[k * rows:(k + 1) * rows])
+        assert [n for _, n in got] == [n for _, n in want]
+        np.testing.assert_allclose([c for c, _ in got], [c for c, _ in want], atol=1e-5)
+        assert abs(a[k, :, 1].sum()) < 1e-4  # group advantages sum to 0
+
+
+def test_r01c_an_eval_between_steps_adds_no_rows(monkeypatch, tmp_path):
+    q = lambda logs: [[h[f"sampling/seq_kl/{k}"] for k in ("q50", "q99", "q99.5")] for h in logs]  # noqa: E731
+    plain = q(train_logs(tiny_loop_vllm_fake(monkeypatch, tmp_path / "plain", steps=2)))
+    t = tiny_loop_vllm_fake(monkeypatch, tmp_path / "eval", steps=2, eval_steps=1)
+    evals = [h for h in t.state.log_history if "eval_loss" in h]
+    assert len(evals) == 2 and all("eval_sampling/importance_sampling_ratio/mean" in h for h in evals)
+    assert not any(k.startswith("eval_sampling/seq_kl") for h in evals for k in h)
+    meta, a = read_seq_gaps(tmp_path / "eval")
+    assert meta["steps"] == 2 and a.shape == (2, 8, 3)
+    assert q(train_logs(t)) == plain
+    np.testing.assert_array_equal(a, read_seq_gaps(tmp_path / "plain")[1])
+
+
+CUDA = pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device: runs on the box (b1_rows.yaml step 2)")
+
+
+def g02_run(device="cuda"):
+    """16 update micro-batches of 16 x 1536 through set_is_ratio under sync-debug "error", then one log."""
+    import tempfile
+
+    g = torch.Generator(device=device).manual_seed(0)
+    t = is_trainer("sequence_mask", None, 3.0, tempfile.mkdtemp())
+    torch.cuda.set_sync_debug_mode("error")
+    try:
+        for _ in range(16):
+            lp = -torch.rand(16, 1536, device=device, generator=g) * 3
+            x = {"sampling_per_token_logps": lp + torch.randn(16, 1536, device=device, generator=g) * 1e-3,
+                 "completion_mask": (torch.rand(16, 1536, device=device, generator=g) < 0.7).long(),
+                 "advantages": torch.randn(16, device=device, generator=g)}  # fmt: skip
+            t.set_is_ratio(lp, x)
+        assert isinstance(t.is_stats, torch.Tensor) and t.is_stats.is_cuda
+    finally:
+        torch.cuda.set_sync_debug_mode(0)
+    return t
+
+
+@pytest.mark.gpu
+@CUDA
+def test_g02_is_summary_no_sync(monkeypatch):
+    """G02: is_ratio + is_summary on the device raise nothing under sync-debug "error"; the log reads once."""
+    t = g02_run()
+    monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: None)
+    t.log({})
+    assert t.is_stats is None and t.seq_gaps == []
+
+
+@pytest.mark.gpu
+@CUDA
+def test_g08a_smoke(monkeypatch):
+    """G08a: the CUDA checker build (fails, never skips, on the box) and the G02 no-sync run, counterfactuals on."""
+    from objdel import _gpucheck
+
+    assert _gpucheck.build() == "cuda"
+    test_g02_is_summary_no_sync(monkeypatch)
+
+
+@pytest.mark.gpu
+@CUDA
+def test_f04_is_summary_costs_under_2pct_of_a_step():
+    """F04: the summary of a step's 16 micro-batches (16 x 1536 each) costs < 2 % of the R5 step (23.6 s, measured
+    with --shared-prefix on an RTX 5090)."""
+    g = torch.Generator(device="cuda").manual_seed(0)
+    lp = -torch.rand(16, 1536, device="cuda", generator=g) * 3
+    sp, adv = lp + torch.randn(16, 1536, device="cuda", generator=g) * 1e-3, torch.randn(16, device="cuda")
+    mask = torch.rand(16, 1536, device="cuda", generator=g) < 0.7
+    r = fast.is_ratio(lp, sp, mask, "sequence_mask", None, 3.0)
+    run = lambda: [fast.is_summary(lp, sp, mask, r, adv, "sequence_mask", None, 3.0) for _ in range(16)]  # noqa: E731
+    run()
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()  # host launches and device time together
+    run()
+    torch.cuda.synchronize()
+    assert time.perf_counter() - t0 < 0.02 * 23.6

@@ -1,6 +1,7 @@
 """Upload a run's selected branch to the owner's private HF model repo (on the box; the Mac runs push_hf.sh).
 
     python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-lfm < token
+    python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
     be the run's)
 
@@ -11,6 +12,9 @@ not private, a run trained on anything but LIDC (RIGA's licence forbids redistri
 branch (select_ckpt: none passed D12). One commit on branch `revision` (created if missing): the files of
 <run>/branches/<selected>, the base model's LICENSE (LFM Open License v1.0 §4(a); Apache-2.0 for Qwen) and a model
 card stating the change (§4(b)), the base model, the selection and the LIDC-IDRI attribution (CC BY 3.0).
+--rl (a train_rl output, always LIDC): <out>/final at the revision's root (the plain model folder fetch_hf.sh and
+final_eval --ckpt read) and <out>/final_adapter as final_adapter/ (the unmerged LoRA), with the licence and a card;
+refused without either folder.
 
 Reference: https://huggingface.co/docs/huggingface_hub/guides/upload#upload-files
 """
@@ -93,16 +97,62 @@ def card(base: str, meta: dict, man: dict, sel: dict, run: Path) -> str:
             f"## Data\n\n{LIDC}\n\nResearch use only; not a medical device.\n")  # fmt: skip
 
 
+def rl_card(base: str, meta: dict, doc: dict, out: Path) -> str:
+    import yaml
+
+    head = {k: meta[k] for k in ("license", "license_name", "license_link") if meta.get(k)}
+    head |= {"base_model": base, "tags": ["medical-imaging", "segmentation", "lidc-idri"]}
+    rows = doc.get("rows") or {}
+    return (f"---\n{yaml.safe_dump(head, sort_keys=False)}---\n\n# objdel RL {out.name}\n\n"
+            f"Modified from [{base}](https://huggingface.co/{base}) by the objdel project (GRPO on a LoRA adapter, "
+            f"merged into the base weights; the unmerged adapter is in final_adapter/): every weight file here "
+            f"differs from the base model's. The base licence is in LICENSE.\n\n"
+            f"- {doc['steps']} steps{' (partial: merged from the last checkpoint)' * bool(doc.get('partial'))} "
+            f"from {doc['ckpt']}; rows revision {rows.get('revision')}, ids SHA-256 {rows.get('ids_sha256')}\n\n"
+            f"## Data\n\n{LIDC}\n\nResearch use only; not a medical device.\n")  # fmt: skip
+
+
+def rl_ops(out: Path, hub, repo: str) -> list:
+    """--rl: the commit's files (final/ at the root, final_adapter/ under its name, LICENSE, README.md)."""
+    from huggingface_hub import CommitOperationAdd
+
+    from objdel.train import configs
+
+    for d in ("final", "final_adapter"):
+        if not (out / d).is_dir():
+            sys.exit(f"hf_push: {out}/{d} missing (train_rl --merge-last writes both from the last checkpoint)")
+    if not hub.repo_info(repo, repo_type="model").private:
+        sys.exit(f"hf_push: {repo} is not private")
+    doc = json.loads((out / "rl.json").read_text())
+    base = configs.MODELS[doc["model"]]
+    lic, meta = base_card(base)
+    files = [(f.relative_to(out / "final"), f) for f in sorted((out / "final").rglob("*")) if f.is_file()]
+    files += [(f.relative_to(out), f) for f in sorted((out / "final_adapter").rglob("*")) if f.is_file()]
+    card = rl_card(base, meta, doc, out).encode()
+    return [CommitOperationAdd(r.as_posix(), str(f)) for r, f in files] + [CommitOperationAdd("LICENSE", lic),
+                                                                           CommitOperationAdd("README.md", card)]
+
+
 def main(argv=None) -> int:
     from objdel.train import configs
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--run", type=Path, required=True, help="train_sft output dir (select/ inside)")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--run", type=Path, help="train_sft output dir (select/ inside)")
+    src.add_argument("--rl", type=Path, help="train_rl output dir (final/ and final_adapter/ inside)")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--revision", required=True, help="the repo branch, e.g. r1-lfm")
     ap.add_argument("--view", type=Path, help="local copy of the training view (default: the manifest's path)")
     a = ap.parse_args(argv)
     token = sys.stdin.readline().strip() or sys.exit("hf_push: no token on stdin")
+    if a.rl:
+        hub = api(token)
+        ops = rl_ops(a.rl, hub, a.repo)
+        hub.create_branch(a.repo, branch=a.revision, repo_type="model", exist_ok=True)
+        hub.create_commit(a.repo, operations=ops, commit_message=f"{a.rl.name}: train_rl final and final_adapter",
+                          revision=a.revision, repo_type="model")  # fmt: skip
+        print(f"hf_push: {a.rl} -> {a.repo}@{a.revision}")
+        return 0
     sel = json.loads((a.run / "select" / "selected.json").read_text())
     if not sel["selected"]:
         sys.exit(f"hf_push: {a.run}: no branch selected (none passed D12); nothing to upload")

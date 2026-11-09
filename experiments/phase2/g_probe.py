@@ -71,28 +71,35 @@ def candidates(sel: dict) -> list[str]:
     return [sel["selected"]] + [n for _, n in earlier[-1:]]
 
 
-def make_trainer(a, ckpt: Path, train, steps: int, **over):
+def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None, calls=(), **over):
     """(trainer, processor, lr): FastGRPO (or, with a.plain, TRL's GRPOTrainer) on ckpt with configs.grpo_config,
     the model's GRPO sampling, the probe LR (LoRA or full FT; a.lr overrides when set), logging every step, then
-    `over` and a.grpo's JSON overrides. Shared by the G-probe and the full run (train_rl)."""
+    `over` and a.grpo's JSON overrides. check(config) runs before the model loads (train_rl's sampler guards); calls:
+    more callbacks; eval_dataset: rows of the view a.heldout (its caches resolve first). Shared by the G-probe and
+    the full run (train_rl)."""
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
     from objdel.train import callbacks, configs, fast, rewards, serve
 
-    model = AutoModelForImageTextToText.from_pretrained(ckpt)
-    proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
     peft = configs.lora(a.model)
     lr = getattr(a, "lr", None) or (G_PROBE["lr_lora"] if peft else G_PROBE["lr_full"])
     over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
-    roots = [a.train, *getattr(a, "train_views", [])]  # train_rl --train-views: rows tagged per root
+    if check:
+        check(cfg)
+    model = AutoModelForImageTextToText.from_pretrained(ckpt)
+    proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
+    roots = [a.train] if eval_dataset is None else [a.heldout, a.train]
     funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc)).funcs()
     cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
-    calls = [callbacks.TraceStep(a.trace, wait=1)] if getattr(a, "trace", None) else []
-    trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, processing_class=proc,
-                  peft_config=peft, callbacks=calls)  # fmt: skip
+    win = getattr(a, "profile_window", None)  # train_rl --profile-window S E: NVTX steps and the nsys capture window
+    calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])  # raises on S < 2 (TraceStep's wait < 0)
+    if getattr(a, "trace", None):  # torch.profiler on step S (the nsys fallback), else on step 3
+        calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
+    trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, eval_dataset=eval_dataset,
+                  processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
     if getattr(a, "compile", None):

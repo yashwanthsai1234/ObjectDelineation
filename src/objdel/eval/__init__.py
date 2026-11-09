@@ -6,10 +6,9 @@ sampled completions per item.
     gates.phase2_entry({"views": {"shifted": view, "rescaled": ...}, "prior": ..., "probes": ...,
                         "vision": vision.check(model, processor, images, items, reference=base)}, datasets)
     # plan §5.1, schema in objdel.eval.gates; datasets=("riga",) for a model dropped from LIDC
-    audit = alarms_for([(key, text, truncated, W, H, names), ...], cache_loader, baseline)  # in training
 """
 from . import gates, vision
-from .audit import alarms_for, hack_audit
+from .audit import hack_audit
 from .metrics import metrics, summarize
 
-__all__ = ["alarms_for", "gates", "hack_audit", "metrics", "summarize", "vision"]
+__all__ = ["gates", "hack_audit", "metrics", "summarize", "vision"]
