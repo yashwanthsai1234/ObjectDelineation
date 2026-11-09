@@ -54,3 +54,4 @@ docs/research/*.pdf
 /experiments/phase1/lab/t_reward/results/advantage_groups.json
 /experiments/phase1/lab/t_reward/results/iter3_r5_raw.json
 /experiments/phase1/lab/t_stack/results/t[24]_*.json
+/.claude/worktrees/

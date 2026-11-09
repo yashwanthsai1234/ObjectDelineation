@@ -375,7 +375,7 @@ def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     assert P.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090", "lidc")
     E.state(offers=[offer(inet_up_cost=P.INET_CEIL, inet_down_cost=P.INET_CEIL)])
     E.pick()
-    spent(E, 14.7)  # 14.7 + 0.55 x 4 = 16.9 by price alone; the bandwidth estimate takes it past $17.50
+    spent(E, P.HARD_STOP - 2.8)  # + 0.55 x 4 = HARD_STOP - 0.6 by price alone; the bandwidth estimate takes it past
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
     E.state(offers=[offer()])
@@ -584,17 +584,16 @@ def spent(E, usd):
         P.ledger(event="teardown", run_id="old", cost_usd=usd)
 
 
-def test_cost_guard_hard_stop_at_17_50(E):
-    """Owner 2026-11-07: $9.56 spent, up to $7 more for the full RL run ($16.60), then $17.50 for a 10 h cap on the
-    one host that had run the image before (three others failed to pull it)."""
-    spent(E, 17.5)
+def test_cost_guard_hard_stop(E):
+    """Owner 2026-11-07: a 10 h cap on the one host that had run the image before (three others failed to pull it)."""
+    spent(E, P.HARD_STOP)
     E.pick()
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
 
 
 def test_cost_guard_allows_the_owners_extra_7_dollars(E):
-    spent(E, 16.5)  # over the $17.00 stop; 16.5 + 0.55 x (1 h + the 10 min pull) < 17.50
+    spent(E, P.HARD_STOP - 1.0)  # + 0.55 x (1 h + the 10 min pull) < HARD_STOP
     E.pick()
     E.sh("launch.sh", "111", "r1", "--cap-hours", "1", "--owner-approved")
     assert E.vast("create instance")
@@ -603,7 +602,7 @@ def test_cost_guard_allows_the_owners_extra_7_dollars(E):
 def test_cost_guard_projection_and_alarm(E):
     spent(E, 9.0)
     E.pick()
-    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "16", ok=False)  # 9 + 0.55 * 16 > 17.50
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "20", ok=False)  # 9 + 0.55 * 20 > HARD_STOP
     assert "hard stop" in p.stderr
     spent(E, 1.5)
     p = E.sh("launch.sh", "111", "r1", "--cap-hours", "1", ok=False)  # 10.5 >= alarm
@@ -628,7 +627,7 @@ def test_sweep_destroys_orphans_and_overdue(E):
 
 def test_sweep_hard_stop_destroys_everything(E):
     E.launched()
-    spent(E, 17.5)
+    spent(E, P.HARD_STOP)
     p = E.sh("sweep_orphans.sh")
     assert E.instances() == {} and "hard stop" in p.stderr
 
@@ -1198,6 +1197,64 @@ def test_code_files_keep_paths_with_spaces_whole(tmp_path, monkeypatch):
     assert sorted(P.code_files()) == ["experiments/my dir/a b.py", "tests/oracles/o.py"]
 
 
+def _git_repo(root, files):
+    for f in files:
+        (root / f).parent.mkdir(parents=True, exist_ok=True)
+        (root / f).write_text("x")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+
+def test_code_snapshot_drops_agent_and_archive_folders(tmp_path, monkeypatch):
+    """CLEAN1: .claude/ and archive/ never ship, even untracked; tracked-but-moved files and look-alikes are handled."""
+    keep = ["tests/oracles/o.py", "src/a.py", "src/archive_util.py", "tests/data_helpers.py", "experiments/p/riga.py"]
+    drop = [".claude/x", ".claude/worktrees/w/a.py", "archive/x/y.py", "data/d.npz", "docs/a.md",
+            "experiments/p/lab/l.py", "experiments/p/results/r.json", "experiments/p/RIGA_x.CSV"]  # fmt: skip
+    _git_repo(tmp_path, keep + drop + ["src/gone.py"])
+    subprocess.run(["git", "add", "src/gone.py"], cwd=tmp_path, check=True)
+    (tmp_path / "src/gone.py").unlink()  # tracked, deleted on disk: rsync --files-from would abort on it
+    monkeypatch.setattr(P, "ROOT", tmp_path)
+    assert sorted(P.code_files()) == sorted(keep)
+    monkeypatch.undo()
+    assert not [f for f in P.code_files() if f.startswith((".claude/", "archive/"))]  # the real repo
+
+
+def test_agent_worktrees_are_git_ignored():
+    assert subprocess.run(["git", "check-ignore", "-q", ".claude/worktrees/x/y"], cwd=ROOT).returncode == 0
+
+
+def test_bundle_imports_standalone(tmp_path):
+    """CLEAN1: the files code_files() returns, plus the built extension, import by themselves ($0 IMPORT_CHECK)."""
+    pytest.importorskip("cv2")
+    pytest.importorskip("scipy")
+    import importlib.util
+    import site
+
+    for f in P.code_files():
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / f, tmp_path / f)
+    ext = Path(importlib.util.find_spec("objdel._gpucheck").origin)
+    shutil.copy2(ext, tmp_path / "src" / "objdel" / ext.name)
+    mods = [m.strip() for m in P.IMPORT_CHECK.removeprefix("import ").split(",")] + ["objdel", *P.LIVE_CLIS]
+    # -S: without it the editable install's .pth files serve objdel and tests from the repo, whatever sys.path says
+    code = (
+        "import sys, json, importlib\n"
+        "root, sp, mods = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3])\n"
+        "sys.path[:0] = [root + '/src', root, *sp]\n"
+        "[importlib.import_module(m) for m in mods]\n"
+        "out = []\n"
+        "for n, m in sorted(sys.modules.items()):\n"
+        "    if n.split('.')[0] in ('objdel', 'experiments', 'tests'):\n"
+        "        out += [m.__file__] if getattr(m, '__file__', None) else list(m.__path__)\n"
+        "print(json.dumps(out))\n"
+    )
+    argv = [sys.executable, "-I", "-S", "-c", code, str(tmp_path), json.dumps(site.getsitepackages()), json.dumps(mods)]
+    p = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr[-2000:]
+    files = json.loads(p.stdout)
+    assert len(files) > 10
+    assert [f for f in files if not Path(f).resolve().is_relative_to(tmp_path.resolve())] == []
+
+
 def test_sync_up_sends_both_bundle_files_to_the_box_data_dir(E):
     """V1 (2026-11-02): rsync(run, src, dst, *extra) was called with two sources, so the .sha256 became the destination
     and the remote path an option ("local file in list of remote sources"). Sources first, the remote dir last."""
@@ -1300,3 +1357,13 @@ def test_teardown_of_a_box_that_never_got_ssh_destroys_it_without_a_pull(monkeyp
     monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
     P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls == [(7, "teardown"), "invoice"]
+
+
+def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp_path, monkeypatch):
+    """6.1 step 0: with $16.90 closed spend, a $0.90/h offer and a 2.4 h cap (plus PULL_S) is within HARD_STOP."""
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    (tmp_path / "ledger.csv").write_text(",".join(P.FIELDS) + "\n" + "," * 13 + "16.90,\n")
+    assert P.HARD_STOP == 19.9 and P.ALARM == 10.0
+    offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
+    assert P.launch_refusal(offer, 2.4) == ""
+    assert "hard stop" in P.launch_refusal(dict(offer, dph_total=1.5), 2.4)
