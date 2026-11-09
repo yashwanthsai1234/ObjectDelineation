@@ -20,6 +20,8 @@ from objdel.geometry import parse, to_mask
 from objdel.targets import FRAMES, BuildConfig, FrameConfig, augment, build_target, frame, min_areas
 from objdel.targets.frame import CLEARANCE, centred, crowded, union_box, upscale
 
+INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
+
 ROOT = Path(__file__).resolve().parents[1]
 NOD = ("nodule",)
 
@@ -154,13 +156,13 @@ def test_ops_round_trip_targets_with_holes_and_parts(S):
         ma = min_areas({"nodule": m[None]})
         for op in augment.OPS:
             src = augment.apply(m, op)
-            assert np.array_equal(augment.apply(src, augment.INVERSE[op]), m)
+            assert np.array_equal(augment.apply(src, INVERSE[op]), m)
             t = build_target({"nodule": src}, NOD, None, ma)
             g = to_mask(parse(t.text, NOD).objs["nodule"], S, S)
-            assert g.legal and np.array_equal(augment.apply(g.mask, augment.INVERSE[op]), m), op
+            assert g.legal and np.array_equal(augment.apply(g.mask, INVERSE[op]), m), op
             assert signature(g.mask, ma["nodule"]) == signature(m, ma["nodule"])
     a = np.arange(6 * 7).reshape(6, 7)  # non-square: ops and inverses still compose to the identity
-    assert all(np.array_equal(augment.apply(augment.apply(a, op), augment.INVERSE[op]), a) for op in augment.OPS)
+    assert all(np.array_equal(augment.apply(augment.apply(a, op), INVERSE[op]), a) for op in augment.OPS)
 
 
 def test_riga_nested_cup_under_hflip_keeps_the_rim():

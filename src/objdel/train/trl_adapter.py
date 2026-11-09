@@ -70,7 +70,6 @@ BEHAVIOURS = {  # C10: TRL skips the old-logprob pass when the IS correction is 
 }  # fmt: skip
 _SIGNED = {"method": METHODS, "global": GLOBALS, "VLLMGeneration method": VLLM_METHODS}
 _TEXT = {"private attribute": PRIVATE_ATTRS, "attribute": ATTRS, "key": KEYS, "behaviour": BEHAVIOURS}
-ALL_ITEMS = tuple((kind, name) for kinds in (_SIGNED, _TEXT) for kind, items in kinds.items() for name in items)
 
 
 class TRLContractError(RuntimeError):

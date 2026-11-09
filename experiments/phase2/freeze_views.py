@@ -14,11 +14,11 @@ frozen (a report: the measured check is the content hash). final_eval refuses a 
 """
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 from objdel.data import quality as Q
+from objdel.io import git
 
 ROOT = Path(__file__).resolve().parents[2]
 RENDER_FILES = ("src/objdel/targets/augment.py", "src/objdel/targets/frame.py", "src/objdel/targets/build.py",
@@ -30,7 +30,7 @@ R5_IDENTITY = {"lidc-test-shifted": (
 
 
 def _git(*args, root=ROOT) -> str:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    return git(*args, root=root)  # the box has no .git: a missing one raises
 
 
 def render_files(root=ROOT) -> dict[str, str]:

@@ -67,6 +67,8 @@ from PIL import Image as PILImage
 
 from objdel.data import store
 from objdel.geometry import SCHEMAS, canonicalize, parse, serialize
+from objdel.hashing import pixels_sha256
+from objdel.io import read_jsonl
 from objdel.reward import ExpertCache, fingerprint, rater_answers, rl_eligible
 from objdel.targets import build_target, frame, min_areas, target_set_hash
 
@@ -81,10 +83,6 @@ PROMPTS = {
 DISAGREEMENT_OVERSAMPLE = 4  # decided in experiments/phase1/impl/M7_train.md
 _PINS = ("numpy", "numba", "opencv-python-headless", "objdel")
 _BATCH = 12  # items framed per pool.map: bounds main-process memory (RIGA: 1.8 GB at 6, 2.4 GB at 32)
-
-
-def _pixels_sha(image: np.ndarray) -> str:
-    return hashlib.sha256(repr(image.shape).encode() + image.tobytes()).hexdigest()
 
 
 def _prepare(job) -> dict:
@@ -105,7 +103,7 @@ def _prepare(job) -> dict:
         raise OSError(f"{path}: cv2.imwrite failed")
     rec = {"item_id": item_id, "group_id": group_id, "W": f.W, "H": f.H, "box": list(map(int, f.box)),
            "scale": f.scale, "raters": list(raters), "targets": targets, "rl": rl_eligible(raters),
-           "disagreement": False, "image_sha256": _pixels_sha(f.image), "caches": {}, "errors": errors}
+           "disagreement": False, "image_sha256": pixels_sha256(f.image), "caches": {}, "errors": errors}
     if rec["rl"]:
         caches = {n: ExpertCache.build(f.masks[n]) for n in names}
         cdir = Path(out, "caches", item_id)
@@ -174,8 +172,7 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
 
 def records(root, dataset: str, split: str) -> list[dict]:
     """The rows of `<root>/<dataset>/<split>.jsonl` as dicts."""
-    with open(Path(root, dataset, f"{split}.jsonl")) as f:
-        return [json.loads(line) for line in f]
+    return read_jsonl(Path(root, dataset, f"{split}.jsonl"))
 
 
 def _user(dataset: str) -> dict:
@@ -188,7 +185,7 @@ def _image(root, item_id: str) -> str:
 
 def _check(root, rec: dict) -> None:
     im = cv2.imread(_image(root, rec["item_id"]), cv2.IMREAD_COLOR)
-    if im is None or _pixels_sha(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) != rec["image_sha256"]:
+    if im is None or pixels_sha256(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) != rec["image_sha256"]:
         raise ValueError(f"{rec['item_id']}: prepared image missing or not the one recorded (image_sha256)")
 
 

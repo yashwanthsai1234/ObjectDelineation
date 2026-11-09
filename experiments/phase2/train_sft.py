@@ -59,11 +59,13 @@ import os
 import re
 import shutil
 import socket
-import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from objdel.hashing import file_sha256
+from objdel.io import git, write_atomic
 
 ABORTED = 3  # exit code of a G-vision abort
 WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator and loader warm-up)
@@ -220,25 +222,19 @@ def record_vision(man: dict, step: int, res: dict) -> bool:
     return res["action"] == "abort"
 
 
-def sha256(path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
 CODE = ("src/objdel/**/*.py", "src/objdel/*.cpp", "cpp/**/*.hpp", "cuda/*.h", "cuda/*.cpp", "experiments/phase2/*.py",
         "experiments/phase2/vast/*.py", "CMakeLists.txt", "pyproject.toml")  # everything that runs on the box
 
 
 def code_hashes() -> dict:
     files = sorted({p for g in CODE for p in ROOT.glob(g)})
-    h = hashlib.sha256(b"".join(p.relative_to(ROOT).as_posix().encode() + bytes.fromhex(sha256(p)) for p in files))
-    git = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True)
-    return {"objdel_and_script_sha256": h.hexdigest(), "git_head": git.stdout.strip() or None, "files": len(files)}
+    h = hashlib.sha256(b"".join(p.relative_to(ROOT).as_posix().encode() + bytes.fromhex(file_sha256(p)) for p in files))
+    return {"objdel_and_script_sha256": h.hexdigest(), "git_head": git("rev-parse", "HEAD", root=ROOT, required=False) or None,
+            "files": len(files)}
 
 
 def write_json(path, doc) -> None:
-    tmp = Path(f"{path}.tmp")
-    tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + "\n")
-    os.replace(tmp, path)
+    write_atomic(path, json.dumps(doc, indent=1, sort_keys=True, default=str) + "\n")
 
 
 def latest(d) -> str | None:
@@ -298,7 +294,7 @@ def train(args: RunArgs) -> int:
         raise ValueError(f"{out} holds a run: --resume true continues it, or pick another output_dir")
     man = {"config": asdict(args), "code": code_hashes(), "vision": [], "log": {},
            "view": {"dir": args.view, "view_hash": view.get("view_hash"),
-                    "manifest_sha256": sha256(Path(args.view, "manifest.json"))}}
+                    "manifest_sha256": file_sha256(Path(args.view, "manifest.json"))}}
     if args.resume:
         same = old and all(old["config"][k] == man["config"][k] for k in SAME_RUN)
         if not (same and old["status"] == "running" and old["view"]["view_hash"] == man["view"]["view_hash"]):
