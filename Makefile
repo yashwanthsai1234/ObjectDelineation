@@ -17,10 +17,10 @@ $(EXT_STAMP): $(EXT_SRC)
 	@mkdir -p build && touch $@
 
 test: $(EXT_STAMP) ## run the test suite without the slow exhaustive runs
-	$(PY) -m pytest -q -m "not slow"
+	$(PY) -m pytest -q -m "not slow" -n auto
 
 test-all: $(EXT_STAMP) ## run every test, including the slow K1/K2 10k-case gates
-	$(PY) -m pytest -q
+	$(PY) -m pytest -q -n auto
 
 cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objdel; fails below 90 % (K13, as CI)
 	$(PY) -m pytest -q -m "not slow" --cov=objdel --cov-report=term-missing:skip-covered --cov-fail-under=90
