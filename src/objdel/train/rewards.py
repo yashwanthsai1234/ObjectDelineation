@@ -82,11 +82,18 @@ def truncated(ids, stop) -> bool:
     return not ids or ids[-1] not in stop
 
 
-def _score(jobs) -> dict:
+def score_jobs(jobs) -> dict:
     """score_batch inside the NVTX range `checker`, on whichever thread scores (the prefetch thread or the reward
-    call). The range lives here, not in objdel.reward, which never imports objdel.train (S12)."""
+    call). The range lives here, not in objdel.reward, which never imports objdel.train (S12). The one scoring
+    function of the trainer and of the verifier service (objdel.verify)."""
     with nvtx.range("checker"):
         return score_batch(jobs)
+
+
+def logged_terms(T: dict) -> dict[str, np.ndarray]:
+    """The LOGGED terms of score_batch's T but r_topo (which needs whole groups): the GATED ones times legal_gate."""
+    legal = legal_gate(T)
+    return {n: T[n] * legal if n in GATED else T[n] for n in LOGGED[:-1]}
 
 
 def _text(completion) -> str:
@@ -129,7 +136,7 @@ class TRLReward:
         jobs = self._jobs(completions, completion_ids, keys, W, H, names)
         if self._thread is None:
             self._thread = ThreadPoolExecutor(1, thread_name_prefix="reward-prefetch")
-        self._ahead = (self._signature(keys, jobs), self._thread.submit(_score, jobs))
+        self._ahead = (self._signature(keys, jobs), self._thread.submit(score_jobs, jobs))
 
     def _jobs(self, completions, completion_ids, keys, W, H, names) -> list[tuple]:
         return [(_text(c), truncated(ids, self.stop), tuple(n), self.caches(k), w, h)
@@ -152,9 +159,9 @@ class TRLReward:
         jobs = self._jobs(completions, completion_ids, keys, W, H, names)
         ahead, self._ahead = self._ahead, None
         same = ahead is not None and ahead[0] == self._signature(keys, jobs)
-        T = ahead[1].result() if same else _score(jobs)
+        T = ahead[1].result() if same else score_jobs(jobs)
         legal = legal_gate(T)
-        out = {n: (T[n] * legal if n in GATED else T[n]).tolist() for n in LOGGED[:-1]}
+        out = {n: v.tolist() for n, v in logged_terms(T).items()}
         out["r_topo"] = topology_reward(T).tolist()
         out[AGGREGATOR] = advantages_v4(T).tolist()
         if log_metric is not None:

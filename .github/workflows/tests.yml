@@ -40,7 +40,7 @@ jobs:
       - run: uv venv --python 3.12
       # CPU-only torch from download.pytorch.org/whl/cpu (no CUDA wheels); the CPU index has no macOS wheels, so
       # this job is Linux only. https://docs.astral.sh/uv/guides/integration/pytorch/
-      - run: uv pip install -e ".[dev,data,train]" --torch-backend cpu
+      - run: uv pip install -e ".[dev,data,train,serve]" --torch-backend cpu
       - run: .venv/bin/python -m pytest -q -m "not slow" --cov=objdel --cov-report=term-missing:skip-covered --cov-fail-under=90
 
   gates:
