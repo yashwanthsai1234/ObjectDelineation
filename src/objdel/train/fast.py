@@ -869,8 +869,9 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     def patch_vllm_prompts(self):
         """vLLM gets one image pad per image (one_pad_per_image) and expands it itself. TRL trains on its own
-        processor-expanded ids (grpo_trainer.py 1844), so vLLM's expansion must give exactly those ids, or vLLM
-        samples from other image features than the trainer scores (off-policy, silently): checked per prompt.
+        processor-expanded ids (grpo_trainer.py 1832, `_generate_single_turn`), so vLLM's expansion must give exactly
+        those ids, or vLLM samples from other image features than the trainer scores (off-policy, silently): checked
+        per prompt.
         Idempotent; the engine exists only after TRL's vLLM init."""
         llm = self.vllm_generation.llm
         if getattr(llm.generate, "one_pad", False):

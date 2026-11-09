@@ -32,9 +32,8 @@ the processor's chat template, qwen3_vl_training for Qwen3-VL and lfm2_training 
 (truncation can cut image tokens), no packing. Full fine-tuning lr 5e-5, LoRA r16 on the language model's linear
 layers lr 5e-4 (lab T4). LoRA only for Qwen3-VL-2B (full fine-tuning with AdamW needs ~34 GB for weights, gradients
 and optimizer state, more than a 24 GB card has; LoRA with a frozen bf16 base peaks far below); LFM2.5-VL-450M
-is trained in full. GRPO learning rate: every real run takes it from `prereg.G_PROBE` through
-`g_probe.make_trainer` (5e-5 LoRA, 5e-6 full); the `grpo_config` default (1e-5 / 1e-6) is used only by tests, and
-E1.1 replaces it with `rl_lr`.
+is trained in full. GRPO learning rate: `rl_lr` (5e-5 LoRA, 5e-6 full), the default of `grpo_config` and the value
+`g_probe.make_trainer` uses; `tests/experiments/test_prereg_lr.py` pins it to the pre-registered `prereg.G_PROBE`.
 Precision: bf16 exactly where transformers accepts it (transformers.utils.is_torch_bf16_gpu_available: CUDA with
 bf16 support, i.e. Ampere or newer such as the Vast cards, MPS on macOS >= 14, XPU / NPU / TPU), else fp32. TRL's
 own default (bf16=True unless fp16) makes TrainingArguments raise "Your setup doesn't support bf16/gpu" on a
@@ -169,6 +168,11 @@ def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at:
         "remove_unused_columns": False, "report_to": "none", "seed": 0, "data_seed": 0} | overrides)
 
 
+def rl_lr(model: str) -> float:
+    """The GRPO learning rate of every real run: 5e-5 for LoRA models, 5e-6 for full fine-tuning."""
+    return 5e-5 if model in _LORA else 5e-6
+
+
 # Numerics presets (B2.2, ADR-0013): the importance-sampling mode and dtype of a run. The shared parts are named first
 # (a literal cannot refer to itself). Only the keys a preset changes are listed; vllm_lora is ours (see grpo_config).
 _SEQMASK = {"vllm_importance_sampling_mode": "sequence_mask", "vllm_importance_sampling_clip_max": 3.0,
@@ -204,7 +208,7 @@ def grpo_config(model: str, output_dir: str, numerics: str = DEFAULT_NUMERICS, *
         "gradient_checkpointing": True,
         "max_completion_length": MAX_COMPLETION[model], "temperature": 1.0,
         "loss_type": "dr_grpo", "epsilon": 0.2, "epsilon_high": 0.28, "beta": 1e-3, "mask_truncated_completions": True,
-        "learning_rate": 1e-5 if model in _LORA else 1e-6, "lr_scheduler_type": "constant", "warmup_steps": 0,
+        "learning_rate": rl_lr(model), "lr_scheduler_type": "constant", "warmup_steps": 0,
         "multi_objective_aggregation": "sum_then_normalize", "scale_rewards": "none",
         "reward_weights": [0.0] * len(LOGGED) + [1.0],  # TRLReward.funcs() order: loggers, then AGGREGATOR
         "use_vllm": True, "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,

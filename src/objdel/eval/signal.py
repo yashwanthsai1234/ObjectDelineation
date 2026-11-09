@@ -28,7 +28,9 @@ from collections.abc import Callable, Sequence
 import numpy as np
 from scipy import stats
 
-WEIGHTS = {"iou_tc": 0.3, "f5": 0.3, "legal": 0.1, "g_area": 0.3}  # REWARD_V4.weights on the raw gated terms
+from objdel.reward.spec import REWARD_V4, TERMS
+
+WEIGHTS = dict(zip(TERMS, REWARD_V4.weights, strict=True))  # REWARD_V4.weights on the raw gated terms
 IOU_OK = 0.5  # legal_wrong: legal and IoU_tc < this (REWARD_V4.iou_gate)
 BOOT, LEVEL, SEED = 2000, 0.95, 0
 VETO_REL = 0.15

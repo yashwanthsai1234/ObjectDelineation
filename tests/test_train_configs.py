@@ -75,7 +75,7 @@ GRPO_PRE_CLEAN = {  # captured at 08e6455 (asdict of grpo_config(m, out, use_cpu
         "per_device_train_batch_size": 16, "max_completion_length": n, "vllm_gpu_memory_utilization": 0.35,
         "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, "learning_rate": lr,
         "reward_weights": [0.0] * 7 + [1.0]}
-    for m, n, lr in (("qwen3-vl-2b", 1536, 1e-05), ("lfm2.5-vl-450m", 1024, 1e-06))}
+    for m, n, lr in (("qwen3-vl-2b", 1536, 5e-05), ("lfm2.5-vl-450m", 1024, 5e-06))}  # E1: rl_lr, pre-registered
 
 
 @pytest.mark.parametrize("model", sorted(GRPO_PRE_CLEAN))
