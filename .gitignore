@@ -14,6 +14,13 @@ htmlcov/
 
 # Build output
 /build/
+/site/
+/.cache/
+.lycheecache
+docs/implementation2.0/kernels/*/build/
+
+# Papers: licence not confirmed, cite by arXiv id
+docs/research/*.pdf
 
 # Run logs
 *.log
