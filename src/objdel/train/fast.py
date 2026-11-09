@@ -630,6 +630,23 @@ class ImageMemo:
             return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
 
 
+@contextlib.contextmanager
+def vllm_kwargs(**kw):
+    """Inside the block TRL's module-level `LLM` (imported at trl/generation/vllm_generation.py top) gets these
+    keyword arguments; no `kw` leaves it alone."""
+    if not kw:
+        yield
+        return
+    import trl.generation.vllm_generation as vg
+
+    orig = vg.LLM
+    vg.LLM = functools.partial(orig, **kw)
+    try:
+        yield
+    finally:
+        vg.LLM = orig
+
+
 class FastGRPO(FastForward, GRPOTrainer):
     """GRPOTrainer with the per-chunk windows, the vision cache (cleared per generation batch), rewards scored while
     the old and reference logprobs run (C9), phase timers and no FLOP count."""
@@ -642,10 +659,14 @@ class FastGRPO(FastForward, GRPOTrainer):
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
+    log_by_prompt = False  # B2.3: train logs also hold rewards/iou_tc/by_prompt (one mean per prompt of the step)
 
     def __init__(self, *args, **kwargs):
         trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
-        super().__init__(*args, **kwargs)
+        fp16 = getattr(kwargs.get("args"), "fp16", False)
+        with vllm_kwargs(**({"dtype": "float16"} if fp16 else {})):  # TRL builds its vLLM engine without a dtype
+            super().__init__(*args, **kwargs)
+        self.check_engine_dtype()
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
         self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
@@ -662,9 +683,18 @@ class FastGRPO(FastForward, GRPOTrainer):
         vg._iter_named_params = lambda: lora_merged_params(vg.model)
         return True
 
+    def check_engine_dtype(self) -> None:
+        """fp16 runs only: the vLLM engine must hold float16 (the vllm_kwargs patch took effect)."""
+        vg = getattr(self, "vllm_generation", None)
+        if vg is None or not getattr(self.args, "fp16", False):
+            return
+        got = vg.llm.llm_engine.model_config.dtype
+        if got != torch.float16:
+            raise RuntimeError(f"fp16 run, but the vLLM engine dtype is {got}, not torch.float16")
+
     def drop_lora_input_cast(self) -> bool:
-        """no_lora_input_cast when TRL trains in bf16 (Accelerate then runs every forward under bf16 autocast)."""
-        if not getattr(self.args, "bf16", False):
+        """no_lora_input_cast when TRL trains in bf16 or fp16 (Accelerate then runs every forward under autocast)."""
+        if not (getattr(self.args, "bf16", False) or getattr(self.args, "fp16", False)):
             return False
         no_lora_input_cast(self.model)
         return True
@@ -797,6 +827,9 @@ class FastGRPO(FastForward, GRPOTrainer):
                 end.synchronize()  # long done: TRL's loss read and the stats read above waited for the stream
                 self._metrics[mode][f"time/{phase}_s"].append(start.elapsed_time(end) / 1e3)
             self.cuda_times = None
+            reward = next((f.trl_reward for f in self.reward_funcs if hasattr(f, "trl_reward")), None)
+            if self.log_by_prompt and train and reward is not None:
+                logs = {**logs, "rewards/iou_tc/by_prompt": reward.by_prompt}
             return super().log(logs, start_time)
 
     def _generate(self, prompts):

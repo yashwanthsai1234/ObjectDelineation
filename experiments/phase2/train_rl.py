@@ -43,8 +43,8 @@ import sys
 import time
 from pathlib import Path
 
-# fp16-seqmask needs fp16 weights and vLLM dtype, lora-seqmask needs LoRA serving: both are FastGRPO plumbing (B2.2)
-NEEDS_FASTGRPO = ("fp16-seqmask", "lora-seqmask")
+# lora-seqmask needs vLLM LoRA serving (option F plumbing, B2.2), not built yet
+NEEDS_FASTGRPO = ("lora-seqmask",)
 
 
 def _hex(n: int):
@@ -66,6 +66,8 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--steps", type=int, help="optimizer steps in total (a resumed run included)")
     ap.add_argument("--save-steps", type=int, default=50, help="checkpoint every N steps (default 50)")
+    ap.add_argument("--log-by-prompt", action="store_true",
+                    help="rl.json logs rewards/iou_tc/by_prompt per step (b2_summary's paired bootstrap reads it)")
     ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
     ap.add_argument("--lr", type=float, help="learning rate (default: the G-probe's, LoRA or full FT)")
     ap.add_argument("--resume", action="store_true", help="continue from the last <out>/trainer/checkpoint-N")
@@ -100,7 +102,7 @@ def parse(argv=None) -> argparse.Namespace:
     if a.budget_usd is not None and a.rate_usd_per_h is None:
         ap.error("--budget-usd needs a rate: --rate-usd-per-h or OBJDEL_RATE_USD_PER_H (run.sh exports it)")
     if a.numerics in NEEDS_FASTGRPO:
-        ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM dtype or LoRA serving, B2.2), not built yet")
+        ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM LoRA serving, B2.2), not built yet")
     if a.opsm_start_delta is not None and (a.numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
         ap.error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
     if "off_policy_mask_threshold" in json.loads(a.grpo):

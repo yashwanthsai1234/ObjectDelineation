@@ -426,9 +426,12 @@ def test_unknown_numerics_is_refused(capsys, monkeypatch):
     assert "bf16-fp8" in refused(capsys, *TRAIN, "--numerics", "bf16-fp8", monkeypatch=monkeypatch)
 
 
-@pytest.mark.parametrize("name", ["fp16-seqmask", "lora-seqmask"])
-def test_presets_that_need_fastgrpo_plumbing_are_refused_until_it_lands(capsys, monkeypatch, name):
-    assert "FastGRPO" in refused(capsys, *TRAIN, "--numerics", name, monkeypatch=monkeypatch)
+def test_lora_seqmask_is_refused_until_the_lora_serving_plumbing_lands(capsys, monkeypatch):
+    assert "FastGRPO" in refused(capsys, *TRAIN, "--numerics", "lora-seqmask", monkeypatch=monkeypatch)
+
+
+def test_fp16_seqmask_parses(monkeypatch):
+    assert parse(*TRAIN, "--numerics", "fp16-seqmask", monkeypatch=monkeypatch).numerics == "fp16-seqmask"
 
 
 def test_opsm_start_delta_only_with_the_opsm_preset(capsys, monkeypatch):

@@ -3,7 +3,7 @@
 # reward v4, the control IS mode) with fp16 numerics, 60 steps (the mismatch shows only after about 20), no eval.
 #   0  the CUDA build of b1_rows.yaml step 0 (else every reward scores on the CPU build)
 #   1  G08b's fp16 part: the vLLM engine dtype is float16 (its model is {rd}/ckpt; a missing folder fails)
-#   2  train_rl --numerics fp16-seqmask (NOT runnable until FastGRPO's fp16 plumbing lands, B2.2: train_rl refuses it)
+#   2  train_rl --numerics fp16-seqmask (fp16 weights and vLLM dtype; the engine dtype is asserted in FastGRPO.__init__)
 # Read the result with: python -I -m experiments.phase2.b2_summary summary --fp16 {rd}/b2-fp16 --b1 {rd}/b1-rows
 #   fetch_hf.sh <run> rl-full-3ep && fetch_hf.sh <run> --rows <rows_revision> lidc-train-b1
 #   run.sh <run> experiments/phase2/configs/b2_fp16.yaml
@@ -12,7 +12,7 @@ steps:
   - [bash, -c, "bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c \"import objdel._gpucheck as g; assert g.build() == 'cuda'\" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_gpu_scoring.py"]
   - [-m, pytest, -q, -p, "no:cacheprovider", -m, gpu, "tests/test_train_fast.py::test_g08b_fp16_dtype"]
   - [-m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/rows/lidc-train-b1",
-     --out, "{rd}/b2-fp16", --steps, "60", --save-steps, "60", --shared-prefix, --lr, "5e-5",
+     --out, "{rd}/b2-fp16", --steps, "60", --save-steps, "60", --shared-prefix, --log-by-prompt, --lr, "5e-5",
      --numerics, fp16-seqmask,
      --rows-revision, "0000000000000000000000000000000000000000",
      --rows-manifest-sha256, "0000000000000000000000000000000000000000000000000000000000000000"]

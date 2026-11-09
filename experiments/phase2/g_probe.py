@@ -77,6 +77,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     `over` and a.grpo's JSON overrides. check(config) runs before the model loads (train_rl's sampler guards); calls:
     more callbacks; eval_dataset: rows of the view a.heldout (its caches resolve first). Shared by the G-probe and
     the full run (train_rl)."""
+    import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
@@ -89,7 +90,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
     if check:
         check(cfg)
-    model = AutoModelForImageTextToText.from_pretrained(ckpt)
+    model = AutoModelForImageTextToText.from_pretrained(ckpt, **({"dtype": torch.float16} if cfg.fp16 else {}))
     proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
     roots = [a.train] if eval_dataset is None else [a.heldout, a.train]
     funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc)).funcs()
@@ -102,6 +103,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
                   processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
+    trainer.log_by_prompt = bool(getattr(a, "log_by_prompt", False))
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
         trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers

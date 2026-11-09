@@ -1189,3 +1189,78 @@ def test_f04_is_summary_costs_under_2pct_of_a_step():
     run()
     torch.cuda.synchronize()
     assert time.perf_counter() - t0 < 0.02 * 23.6
+
+
+def test_vllm_kwargs_wraps_trls_llm_only_inside_the_block(monkeypatch):
+    import trl.generation.vllm_generation as vg
+
+    seen = []
+    monkeypatch.setattr(vg, "LLM", lambda **kw: seen.append(kw) or "engine", raising=False)
+    outer = vg.LLM
+    with fast.vllm_kwargs(dtype="float16"):
+        assert vg.LLM(model="m") == "engine"
+    assert seen == [{"dtype": "float16", "model": "m"}] and vg.LLM is outer
+    with fast.vllm_kwargs():  # nothing to add: TRL's name is left alone
+        assert vg.LLM is outer
+
+
+def _fp16_trainer(engine_dtype, fp16=True):
+    from types import SimpleNamespace
+
+    t = object.__new__(fast.FastGRPO)
+    t.args = SimpleNamespace(fp16=fp16)
+    t.vllm_generation = SimpleNamespace(llm=SimpleNamespace(
+        llm_engine=SimpleNamespace(model_config=SimpleNamespace(dtype=engine_dtype))))  # fmt: skip
+    return t
+
+
+def test_fp16_run_refuses_an_engine_that_is_not_float16():
+    _fp16_trainer(torch.float16).check_engine_dtype()
+    with pytest.raises(RuntimeError, match="float16"):
+        _fp16_trainer(torch.bfloat16).check_engine_dtype()
+    _fp16_trainer(torch.bfloat16, fp16=False).check_engine_dtype()  # other presets are not checked
+    t = _fp16_trainer(torch.bfloat16)
+    t.vllm_generation = None  # use_vllm False
+    t.check_engine_dtype()
+
+
+def test_lora_input_cast_is_dropped_under_fp16_autocast_too():
+    m = _lora_bf16()
+    t = trainer(fast.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False, "fp16": True})(), model=m)
+    assert fast.FastGRPO.drop_lora_input_cast(t) is True
+    assert all(not mod.cast_input_dtype_enabled for _, mod in m.named_modules()
+               if hasattr(mod, "cast_input_dtype_enabled"))  # fmt: skip
+
+
+@pytest.mark.gpu
+@CUDA
+def test_g08b_fp16_dtype():
+    """G08b fp16 part: vllm_kwargs makes TRL's LLM build a float16 engine on the start checkpoint (a missing
+    folder fails, never skips)."""
+    import os
+
+    import trl.generation.vllm_generation as vg
+
+    ckpt = os.environ["OBJDEL_RUN_DIR"] + "/ckpt"
+    with fast.vllm_kwargs(dtype="float16"):
+        llm = vg.LLM(model=ckpt, gpu_memory_utilization=0.3, max_model_len=2048, enforce_eager=True)
+    assert llm.llm_engine.model_config.dtype == torch.float16
+
+
+def test_log_by_prompt_adds_the_per_prompt_rewards_to_train_logs_only(monkeypatch):
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start_time=None: seen.append(dict(logs)))
+    reward = SimpleNamespace(by_prompt=[0.5, 0.25])
+    t = object.__new__(fast.FastGRPO)
+    t.model, t.is_stats, t.cuda_times, t.last_log = SimpleNamespace(training=True), None, None, None
+    t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    t.reward_funcs = [SimpleNamespace(trl_reward=reward)]
+    t.log({})  # the default keeps the B1 log
+    t.log_by_prompt = True
+    t.log({})
+    t.model.training = False
+    t.log({})
+    assert seen == [{}, {"rewards/iou_tc/by_prompt": [0.5, 0.25]}, {}]

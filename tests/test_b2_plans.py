@@ -34,14 +34,10 @@ def test_b2_fp16_is_the_b1_recipe_with_fp16_numerics():
     assert "--grpo" not in train and "--heldout" not in train
 
 
-def test_the_train_step_parses_with_train_rl_but_the_fp16_preset_waits_for_fastgrpo(capsys):
+def test_the_train_step_parses_with_train_rl():
     pytest.importorskip("trl")
     from experiments.phase2 import train_rl
 
-    argv = steps("b2_fp16.yaml")[2][2:]
-    with pytest.raises(SystemExit):
-        train_rl.parse(argv)
-    assert "FastGRPO" in capsys.readouterr().err
-    swapped = [*argv[:argv.index("--numerics") + 1], "bf16-seqmask", *argv[argv.index("--numerics") + 2:]]
-    a = train_rl.parse(swapped)
-    assert a.steps == 60 and a.save_steps == 60 and a.shared_prefix and a.lr == 5e-5
+    a = train_rl.parse(steps("b2_fp16.yaml")[2][2:])
+    assert a.numerics == "fp16-seqmask" and a.steps == 60 and a.save_steps == 60 and a.shared_prefix and a.lr == 5e-5
+    assert a.log_by_prompt

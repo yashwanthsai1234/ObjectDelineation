@@ -248,3 +248,14 @@ def test_fastgrpo_prefetch_finds_the_reward_through_the_back_reference():
                               kw["completion_ids"])
     assert rw._ahead is not None
     assert call_all(rw, kw)[R.AGGREGATOR] == call_all(reward(), kw)[R.AGGREGATOR]
+
+
+def test_by_prompt_is_the_iou_tc_mean_of_each_group():
+    r = reward()
+    texts = [HIT] * G + [MISS] * G
+    n = len(texts)
+    kw = dict(prompts=[[{"role": "user", "content": "p"}]] * n,
+              completions=[[{"role": "assistant", "content": t}] for t in texts], completion_ids=[[5, EOS]] * n,
+              key=["a"] * n, W=[W] * n, H=[W] * n, names=[list(NAMES)] * n)
+    call_all(r, kw, log_metric=lambda *_: None)
+    assert len(r.by_prompt) == 2 and r.by_prompt[0] > 0.9 and r.by_prompt[1] == 0.0
