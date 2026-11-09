@@ -1,11 +1,13 @@
 """C2 (experiments/phase2/perf/implementation.md; issues CK-1 to CK-3): the checker returns the even-odd mask only,
 bit-packed per row as uint32 words (LSB = leftmost pixel), and objdel.geometry unpacks it. The references here are
-independent of the code under test: masks packed bit by bit in Python, and polycore's to_mask."""
+independent of the code under test: masks packed bit by bit in Python, and the results of the archived CPU checker
+(polycore), recorded per case in tests/goldens/polycore.npz."""
 import numpy as np
 import pytest
 
+from experiments.cuda_checker import compare as C
 from objdel import _gpucheck
-from objdel.geometry import shape, to_mask, to_masks
+from objdel.geometry import shape, to_masks
 
 WIDTHS = (1, 31, 32, 33, 63, 64, 65, 512)
 
@@ -83,11 +85,10 @@ def _objects(seed: int, n: int):
 
 
 def test_to_masks_unchanged_on_fixtures():
-    """The checker's masks and defects equal polycore's (to_mask) bit for bit, at every width around a word edge."""
+    """The checker's masks and defects equal polycore's bit for bit, at every width around a word edge."""
     objs = _objects(1, 400)
-    ref = [to_mask(p, W, H) for p, W, H in objs]
     got = to_masks(objs)
-    bad = [i for i, (a, b) in enumerate(zip(ref, got, strict=True))
-           if not (a.legal == b.legal and a.defects == b.defects and np.array_equal(a.mask, b.mask))]
+    bad = [i for i, ((p, W, H), g) in enumerate(zip(objs, got, strict=True))
+           if C.geometry_diff(g, C.polygon_reference(*C.object_case(p), W, H)) or g.legal != (not g.defects)]
     assert bad == []
-    assert any(not g.legal for g in ref) and sum(g.mask.any() for g in ref) > 100
+    assert any(not g.legal for g in got) and sum(g.mask.any() for g in got) > 100

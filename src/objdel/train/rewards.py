@@ -1,4 +1,5 @@
-"""Reward v4 as TRL 1.16 GRPOTrainer reward functions: weight-0 per-term loggers plus one aggregator (plan D7, §4.6).
+"""Reward v4 as TRL (version pinned in pyproject.toml) GRPOTrainer reward functions: weight-0 per-term loggers
+plus one aggregator (plan D7, §4.6).
 
 TRL calls every reward function once per generation batch with the same arguments (prompts, completions,
 completion_ids, every dataset column, trainer_state, log_metric, log_extra) and gathers their outputs into
@@ -13,8 +14,9 @@ logger adds 0 * value = 0 to TRL's sum, so the advantages do not depend on what 
 that gives a logger weight w adds w (term - group mean) (objdel.train.callbacks), with the gated term. TRL's own
 `reward` metric is then the mean advantage, about 0: dashboards use the per-term logs.
 
-All functions share one computation per batch: the first call scores the batch (objdel.reward.score_batch), the
-others reuse it (the same `completions` list object is passed to each function).
+All functions share one computation per batch: the first call scores the batch (objdel.reward.score_batch: one CUDA
+checker call checks and scores all its answers against the item caches resident on the device), the others reuse it
+(the same `completions` list object is passed to each function).
 
 Groups: advantages_v4 needs each prompt's G completions contiguous within one call. TRL computes rewards on each
 process's local slice before gathering; TRL's RepeatSampler yields each prompt G times in a row and accelerate
@@ -29,7 +31,7 @@ even when its prefix parses.
 
 Typed logs (log_metric, averaged by TRL per logging step, eval-prefixed in evaluation): error/<parser code> is
 the share of completions with that error (codes enter the set when first seen and are logged every batch after),
-defect/<class> the share with that polycore defect. log_extra adds the columns key (item id), truncated and group
+defect/<class> the share with that checker defect. log_extra adds the columns key (item id), truncated and group
 (index of the completion's group within its reward call) to the completions table (log_completions=True), so
 objdel.train.sample.export can turn it into eval_run JSONL (break-it B4-3), and error (the parser code).
 
@@ -43,20 +45,21 @@ Held-out audit: when `recorded` is a list (callbacks.Controller sets it), every 
 References:
 - TRL GRPOTrainer docs (reward function kwargs, log_metric / log_extra, multi_objective_aggregation,
   scale_rewards, mask_truncated_completions): https://huggingface.co/docs/trl/main/en/grpo_trainer
-- TRL 1.16 source, trl/trainer/grpo_trainer.py: `_calculate_rewards` (local call, then gather),
+- TRL (version pinned in pyproject.toml) source, trl/trainer/grpo_trainer.py: `_calculate_rewards` (local call,
+  then gather),
   `_generate_and_score_completions` (sum_then_normalize, process_slice), `_generate_single_turn` (mask after the
   first EOS), eos_token_ids (generation_config.eos_token_id + tokenizer.eos_token_id); trl/trainer/utils.py
-  RepeatSampler: https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py
+  RepeatSampler: https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py
 - accelerate DataLoaderShard / BatchSamplerShard (process p takes batch p of every num_processes batches):
   https://huggingface.co/docs/accelerate/main/en/package_reference/torch_wrappers
 - Dr. GRPO (no std scaling): https://arxiv.org/abs/2503.20783 ; GDPO (per-term normalization, the arm TRL's
   normalize_then_sum implements and v4 replaces): https://arxiv.org/abs/2601.05242
-- Lab: experiments/phase1/lab/t_stack/prod.py (TRLReward), r2_trl_equiv.py, results/INTEGRATION.md.
+- Lab: archive/phase1_lab/t_stack/prod.py (TRLReward), r2_trl_equiv.py, results/INTEGRATION.md.
 """
 from collections.abc import Callable, Iterable, Mapping
-from concurrent.futures import Executor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 
-from objdel.checker.polycore import DEFECTS
+from objdel._gpucheck import DEFECTS
 from objdel.reward import REWARD_V4, ExpertCache, advantages_v4, legal_gate, score_batch, topology_reward
 
 LOGGED = ("format_ok", "legal", "iou_tc", "f5", "g_area", "topo_any", "r_topo")
@@ -85,16 +88,13 @@ def _text(completion) -> str:
 
 
 class TRLReward:
-    """caches(key) -> {object name: ExpertCache} for one prompt (objdel.train.dataset.cache_loader); stop_ids: the
-    ids TRL treats as the end of a completion (`stop_ids(model, processor)`); pool: optional executor for
-    score_batch, one map per reward call. Scoring processes use caches=serve.loader(root) with
-    pool=serve.fork_pool(4) (objdel.train.serve, plan D14): jobs then pickle as cache keys, not masks. Masks come
-    from the CUDA checker in one call per reward call (256 answers), in this process; the pool workers only score
-    them on the CPU and never touch CUDA (score_batch; C3, RL-5)."""
+    """caches(key) -> {object name: ExpertCache} for one prompt (objdel.train.dataset.cache_loader, or
+    serve.loader(root) on preloaded caches); stop_ids: the ids TRL treats as the end of a completion
+    (`stop_ids(model, processor)`). Each reward call (256 answers) is one CUDA checker call that checks and scores
+    them all; each cache's tables are uploaded to the device the first time it is scored (score_batch)."""
 
-    def __init__(self, caches: Callable[[str], Mapping[str, ExpertCache]], stop_ids: Iterable[int],
-                 pool: Executor | None = None):
-        self.caches, self.stop, self.pool = caches, frozenset(stop_ids), pool
+    def __init__(self, caches: Callable[[str], Mapping[str, ExpertCache]], stop_ids: Iterable[int]):
+        self.caches, self.stop = caches, frozenset(stop_ids)
         self.codes: set[str] = set()
         self.recorded: list[tuple] | None = None
         self._last = (None, None)
@@ -111,14 +111,14 @@ class TRLReward:
         return [make(n) for n in (*LOGGED, AGGREGATOR)], [0.0] * len(LOGGED) + [1.0]
 
     def prefetch(self, completions, completion_ids, key, W, H, names) -> None:
-        """Start scoring these answers on a background thread (the checker releases the GIL; the pool workers are
-        processes), so scoring overlaps TRL's old-logprob and reference forwards. The next reward call uses the
+        """Start scoring these answers on a background thread (the checker releases the GIL), so scoring overlaps
+        TRL's old-logprob and reference forwards. The next reward call uses the
         result only for exactly these answers; otherwise it scores as usual."""
         keys = list(key)
         jobs = self._jobs(completions, completion_ids, keys, W, H, names)
         if self._thread is None:
             self._thread = ThreadPoolExecutor(1, thread_name_prefix="reward-prefetch")
-        self._ahead = (self._signature(keys, jobs), self._thread.submit(score_batch, jobs, self.pool))
+        self._ahead = (self._signature(keys, jobs), self._thread.submit(score_batch, jobs))
 
     def _jobs(self, completions, completion_ids, keys, W, H, names) -> list[tuple]:
         return [(_text(c), truncated(ids, self.stop), tuple(n), self.caches(k), w, h)
@@ -142,7 +142,7 @@ class TRLReward:
             self.recorded += [(k, t, tr, w, h, n) for k, (t, tr, n, _, w, h) in zip(keys, jobs, strict=True)]
         ahead, self._ahead = self._ahead, None
         same = ahead is not None and ahead[0] == self._signature(keys, jobs)
-        T = ahead[1].result() if same else score_batch(jobs, self.pool)
+        T = ahead[1].result() if same else score_batch(jobs)
         legal = legal_gate(T)
         out = {n: (T[n] * legal if n in GATED else T[n]).tolist() for n in LOGGED[:-1]}
         out["r_topo"] = topology_reward(T).tolist()

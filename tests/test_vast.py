@@ -28,7 +28,7 @@ from experiments.phase2.vast import policy as P
 ROOT = Path(__file__).resolve().parents[1]
 VAST = ROOT / "experiments" / "phase2" / "vast"
 DOCKER = ROOT / "experiments" / "phase2" / "docker"
-SNAP = ROOT / "experiments" / "phase2" / "lab" / "A3" / "vast_snapshot.json"
+SNAP = ROOT / "tests" / "fixtures" / "vast_snapshot.json"
 IDENTITY = "AGE-SECRET-KEY-1FAKEIDENTITYFORTESTSQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
 API_KEY = "fakevastscopedkey0123456789abcdef"
 PAT = "ghp_fakeGHCRreadPAT0123456789"
@@ -375,7 +375,7 @@ def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     assert P.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090", "lidc")
     E.state(offers=[offer(inet_up_cost=P.INET_CEIL, inet_down_cost=P.INET_CEIL)])
     E.pick()
-    spent(E, 12.0)  # 12 + 0.55 x 4 = 14.2 by price alone; the bandwidth estimate takes it past $15
+    spent(E, P.HARD_STOP - 2.8)  # + 0.55 x 4 = HARD_STOP - 0.6 by price alone; the bandwidth estimate takes it past
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
     E.state(offers=[offer()])
@@ -500,6 +500,16 @@ def test_sync_up_checks_the_gpu_before_the_bundle(E):
     assert "image_check.sh" not in E.sh("sync_up.sh", "r1", "--code-only").stdout  # mid-session the GPU is busy
 
 
+def test_sync_up_writes_code_sha_also_with_code_only(E):
+    """A3 U49: after the code rsync, the box gets /workspace/src/CODE_SHA (final_eval.code_sha reads it)."""
+    E.launched()
+    for args in ((), ("--code-only",)):
+        out = E.sh("sync_up.sh", "r1", *args).stdout.splitlines()
+        code = next(i for i, ln in enumerate(out) if ln.startswith("DRY_RUN: rsync") and "--files-from" in ln)
+        sha = next(i for i, ln in enumerate(out) if "/workspace/src/CODE_SHA" in ln)
+        assert code < sha and P.code_sha_text() in out[sha]
+
+
 def test_offers_search_and_launch_keep_to_north_america(E):
     E.state(offers=[offer(1, dph_total=0.3, geolocation="Thailand, TH"), offer(3, dph_total=0.35, geolocation=None),
                     offer(2, dph_total=0.4, geolocation="Quebec, CA")])  # fmt: skip
@@ -576,6 +586,59 @@ def test_rsync_never_sends_data_raw(E):
     assert all(not f.startswith("data/") for f in P.code_files())
 
 
+SHIPPED = ("docs/reference/frozen_views.json", "docs/reference/val_halves.json")
+
+
+def _child(cwd: Path, code: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-I", "-c", code], cwd=cwd, capture_output=True, text=True, timeout=120)
+
+
+def test_frozen_views_ship(tmp_path, monkeypatch):
+    """I50: the code snapshot keeps the two docs/reference records the box reads (final_eval's frozen check, the
+    held-out val_half) and drops the rest of docs/; on a copy of the snapshot both lookups find their file."""
+    repo = tmp_path / "repo"
+    for f in (*SHIPPED, "docs/a.md", "docs/reference/data.md", "tests/oracles/o.py"):
+        (repo / f).parent.mkdir(parents=True, exist_ok=True)
+        (repo / f).write_text("{}")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    with monkeypatch.context() as m:
+        m.setattr(P, "ROOT", repo)
+        assert sorted(P.code_files()) == sorted([*SHIPPED, "tests/oracles/o.py"])
+    files = P.code_files()  # (b) the real repo
+    assert set(SHIPPED) <= set(files) and not [f for f in files if f.startswith("docs/") and f not in SHIPPED]
+
+    box = tmp_path / "box"  # (c) the box's /workspace/src
+    for f in files:
+        if (ROOT / f).is_file():
+            (box / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / f, box / f)
+    view = box / "views" / "lidc-val-edge"
+    (view / "lidc").mkdir(parents=True)
+    (view / "lidc" / "val.jsonl").write_text("")
+    (view / "manifest.json").write_text(json.dumps({"sets": {"lidc/val": {"target_set_sha256": "0"}}}))
+    fe = (f"import sys, json; sys.path.insert(0, {str(box)!r}); from experiments.phase2 import final_eval as FE; "
+          f"assert FE.__file__.startswith({str(box)!r}), FE.__file__; "
+          "print(json.dumps(FE.frozen_entry('lidc-val-edge')), flush=True); "
+          f"FE.check_view(FE.Path({str(view)!r}), 'val')")
+    p = _child(box, fe)
+    assert p.returncode != 0 and "content_sha256" in json.loads(p.stdout.splitlines()[0])  # the entry, then E05
+    assert "content_sha256" in p.stderr
+    (box / SHIPPED[0]).unlink()
+    p = _child(box, fe)
+    assert p.stdout.splitlines()[0] == "null" and p.returncode != 0 and "frozen_views.json" in p.stderr
+
+    # (d) objdel from the copy (the box installs /workspace/src; here the worktree's editable finder steps aside)
+    vh = (f"import sys; sys.path.insert(0, {str(box / 'src')!r}); "
+          "sys.meta_path[:] = [f for f in sys.meta_path if 'ScikitBuild' not in type(f).__name__]; "
+          f"from objdel.data import splits; assert splits.__file__.startswith({str(box)!r}), splits.__file__; "
+          "print(splits.val_half('LIDC-IDRI-0026'))")
+    p = _child(box, vh)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == json.loads((ROOT / SHIPPED[1]).read_text())["halves"]["LIDC-IDRI-0026"]
+    (box / SHIPPED[1]).unlink()
+    assert _child(box, vh).returncode != 0
+
+
 # --- cost guard (G10) and orphans (G6) -----------------------------------------------------------------------------
 
 
@@ -584,17 +647,25 @@ def spent(E, usd):
         P.ledger(event="teardown", run_id="old", cost_usd=usd)
 
 
-def test_cost_guard_hard_stop_at_15(E):
-    spent(E, 15.0)
+def test_cost_guard_hard_stop(E):
+    """Owner 2026-11-07: a 10 h cap on the one host that had run the image before (three others failed to pull it)."""
+    spent(E, P.HARD_STOP)
     E.pick()
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
 
 
+def test_cost_guard_allows_the_owners_extra_7_dollars(E):
+    spent(E, P.HARD_STOP - 1.0)  # + 0.55 x (1 h + the 10 min pull) < HARD_STOP
+    E.pick()
+    E.sh("launch.sh", "111", "r1", "--cap-hours", "1", "--owner-approved")
+    assert E.vast("create instance")
+
+
 def test_cost_guard_projection_and_alarm(E):
     spent(E, 9.0)
     E.pick()
-    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "12", ok=False)  # 9 + 0.55 * 12 > 15
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "20", ok=False)  # 9 + 0.55 * 20 > HARD_STOP
     assert "hard stop" in p.stderr
     spent(E, 1.5)
     p = E.sh("launch.sh", "111", "r1", "--cap-hours", "1", ok=False)  # 10.5 >= alarm
@@ -619,7 +690,7 @@ def test_sweep_destroys_orphans_and_overdue(E):
 
 def test_sweep_hard_stop_destroys_everything(E):
     E.launched()
-    spent(E, 15.0)
+    spent(E, P.HARD_STOP)
     p = E.sh("sweep_orphans.sh")
     assert E.instances() == {} and "hard stop" in p.stderr
 
@@ -771,18 +842,19 @@ def test_image_check_python_compiles():
     assert blocks
     for b in blocks:
         compile(b, "image_check", "exec")
-    words = ("0.6", "objdel._polycore", "/opt/vllm/bin/python")
+    words = ("0.6", "objdel._gpucheck", "/opt/vllm/bin/python")
     assert [w for w in words if w not in text] == []
+
+
+BASE_DIGEST = "python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
 
 
 def test_dockerfile_phase2():
     text = (DOCKER / "Dockerfile.phase2").read_text()
-    lab = (ROOT / "experiments/phase2/lab/B5/Dockerfile.phase2").read_text()
-    digest = re.search(r"python:3\.12-slim-trixie@sha256:[0-9a-f]{64}", lab).group(0)
-    words = ("/opt/venv", "/opt/vllm", "train.txt", "vllm.txt", " age ", "openssh-server", "rsync", "tmux", digest)
+    words = ("/opt/venv", "/opt/vllm", "train.txt", "vllm.txt", " age ", "openssh-server", "rsync", "tmux", BASE_DIGEST)
     assert [w for w in words if w not in text] == []
     assert "COPY src" not in text and "COPY . " not in text  # code is never baked in
-    assert digest in (DOCKER / "Dockerfile.vllm_native").read_text()
+    assert BASE_DIGEST in (DOCKER / "Dockerfile.vllm_native").read_text()
 
 
 # --- bundle builder (§4.4) ------------------------------------------------------------------------------------------
@@ -871,6 +943,18 @@ def test_bundle_ships_only_the_named_view(tmp_path):
     assert "views/lidc-train/rows.jsonl" in names and not [n for n in names if n.startswith("views/lidc-old/")]
     with pytest.raises(SystemExit):
         B.members("lidc", d, ["lidc-nope"])
+
+
+def test_bundle_ships_rl_train_windows_only_when_named(tmp_path):
+    """build_eval_views --split train windows (views/<ds>-train-shifted, -rescaled: 2.7 GB for LIDC) go into a bundle
+    only when a run names them (rl_shifted.yaml); the default bundle stays the SFT views (sync time)."""
+    d = data_tree(tmp_path)
+    (d / "views/lidc-train-shifted/lidc").mkdir(parents=True)
+    (d / "views/lidc-train-shifted/lidc/train.jsonl").write_text("{}")
+    default = [n for n, _ in B.members("lidc", d)]
+    assert "views/lidc-train/rows.jsonl" in default and not [n for n in default if "lidc-train-shifted" in n]
+    named = [n for n, _ in B.members("lidc", d, ["lidc-train", "lidc-train-shifted"])]
+    assert "views/lidc-train-shifted/lidc/train.jsonl" in named
 
 
 def test_bundle_lidc_needs_the_checker_eval_set(tmp_path):
@@ -1097,7 +1181,7 @@ def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path)
     billing. G8: destroy first-class, then report the failed pull."""
     calls = []
     monkeypatch.setattr(P, "home", lambda: tmp_path)
-    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
+    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "port": 40022})
     monkeypatch.setattr(P, "cmd_pull", lambda a: P.die("rsync failed: ..."))
     monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
     monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
@@ -1117,7 +1201,7 @@ def _teardown(monkeypatch, tmp_path, pulls):
             raise e
 
     monkeypatch.setattr(P, "home", lambda: tmp_path)
-    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
+    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "port": 40022})
     monkeypatch.setattr(P, "cmd_pull", pull)
     monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
     monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
@@ -1175,6 +1259,64 @@ def test_code_files_keep_paths_with_spaces_whole(tmp_path, monkeypatch):
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     monkeypatch.setattr(P, "ROOT", tmp_path)
     assert sorted(P.code_files()) == ["experiments/my dir/a b.py", "tests/oracles/o.py"]
+
+
+def _git_repo(root, files):
+    for f in files:
+        (root / f).parent.mkdir(parents=True, exist_ok=True)
+        (root / f).write_text("x")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+
+def test_code_snapshot_drops_agent_and_archive_folders(tmp_path, monkeypatch):
+    """CLEAN1: .claude/ and archive/ never ship, even untracked; tracked-but-moved files and look-alikes are handled."""
+    keep = ["tests/oracles/o.py", "src/a.py", "src/archive_util.py", "tests/data_helpers.py", "experiments/p/riga.py"]
+    drop = [".claude/x", ".claude/worktrees/w/a.py", "archive/x/y.py", "data/d.npz", "docs/a.md",
+            "experiments/p/lab/l.py", "experiments/p/results/r.json", "experiments/p/RIGA_x.CSV"]  # fmt: skip
+    _git_repo(tmp_path, keep + drop + ["src/gone.py"])
+    subprocess.run(["git", "add", "src/gone.py"], cwd=tmp_path, check=True)
+    (tmp_path / "src/gone.py").unlink()  # tracked, deleted on disk: rsync --files-from would abort on it
+    monkeypatch.setattr(P, "ROOT", tmp_path)
+    assert sorted(P.code_files()) == sorted(keep)
+    monkeypatch.undo()
+    assert not [f for f in P.code_files() if f.startswith((".claude/", "archive/"))]  # the real repo
+
+
+def test_agent_worktrees_are_git_ignored():
+    assert subprocess.run(["git", "check-ignore", "-q", ".claude/worktrees/x/y"], cwd=ROOT).returncode == 0
+
+
+def test_bundle_imports_standalone(tmp_path):
+    """CLEAN1: the files code_files() returns, plus the built extension, import by themselves ($0 IMPORT_CHECK)."""
+    pytest.importorskip("cv2")
+    pytest.importorskip("scipy")
+    import importlib.util
+    import site
+
+    for f in P.code_files():
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / f, tmp_path / f)
+    ext = Path(importlib.util.find_spec("objdel._gpucheck").origin)
+    shutil.copy2(ext, tmp_path / "src" / "objdel" / ext.name)
+    mods = [m.strip() for m in P.IMPORT_CHECK.removeprefix("import ").split(",")] + ["objdel", *P.LIVE_CLIS]
+    # -S: without it the editable install's .pth files serve objdel and tests from the repo, whatever sys.path says
+    code = (
+        "import sys, json, importlib\n"
+        "root, sp, mods = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3])\n"
+        "sys.path[:0] = [root + '/src', root, *sp]\n"
+        "[importlib.import_module(m) for m in mods]\n"
+        "out = []\n"
+        "for n, m in sorted(sys.modules.items()):\n"
+        "    if n.split('.')[0] in ('objdel', 'experiments', 'tests'):\n"
+        "        out += [m.__file__] if getattr(m, '__file__', None) else list(m.__path__)\n"
+        "print(json.dumps(out))\n"
+    )
+    argv = [sys.executable, "-I", "-S", "-c", code, str(tmp_path), json.dumps(site.getsitepackages()), json.dumps(mods)]
+    p = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr[-2000:]
+    files = json.loads(p.stdout)
+    assert len(files) > 10
+    assert [f for f in files if not Path(f).resolve().is_relative_to(tmp_path.resolve())] == []
 
 
 def test_sync_up_sends_both_bundle_files_to_the_box_data_dir(E):
@@ -1270,3 +1412,22 @@ def test_env_check_lists_every_check():
         compile(b, "env_check", "exec")
     # Triton's @jit reads its kernel's source: the checks run from a file, not stdin (box p1, 2026-11-06)
     assert 'cat > "$CHECKS" <<\'PY\'' in text and '/opt/venv/bin/python -I "$CHECKS" "$OUT"' in text
+
+
+def test_teardown_of_a_box_that_never_got_ssh_destroys_it_without_a_pull(monkeypatch, tmp_path):
+    """2026-11-07: a box torn down while its image was still loading has no ssh port; the pull raised KeyError
+    'port' (destroy still ran, from the finally) and the invoice was never recorded. Nothing is on such a box."""
+    calls = _teardown(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7})
+    P.cmd_teardown(SimpleNamespace(run_id="v1"))
+    assert calls == [(7, "teardown"), "invoice"]
+
+
+def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp_path, monkeypatch):
+    """6.1 step 0: with $16.90 closed spend, a $0.90/h offer and a 2.4 h cap (plus PULL_S) is within HARD_STOP."""
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    (tmp_path / "ledger.csv").write_text(",".join(P.FIELDS) + "\n" + "," * 13 + "16.90,\n")
+    assert P.HARD_STOP == 19.9 and P.ALARM == 10.0
+    offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
+    assert P.launch_refusal(offer, 2.4) == ""
+    assert "hard stop" in P.launch_refusal(dict(offer, dph_total=1.5), 2.4)

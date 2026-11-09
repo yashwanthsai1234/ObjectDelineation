@@ -3,14 +3,13 @@
 RIGA-like prompts are synthetic (below; caches built at start, ~0.3 s per item); LIDC prompts are the first --lidc
 RL train items of a prepared root, after the production preload of every LIDC cache (serve.preload, timed). Three
 workloads (RIGA-only, mixed 40 % RIGA, LIDC-only), --batches batches of 32 prompts x 8 completions
-(reward_gates.make_jobs). Per workload: the warm wall (second of two runs of advantages_v4(score_batch)) serially,
-on --threads threads and on a fork pool of each --workers size, serial re-timed per batch beside the pool (paired
-speed-up); per-rollout latency (serial); every batch's hash (reward_gates.digest), which every executor must
-reproduce. Gate: K3 = best of serial / pool median <= 250 ms on RIGA-only and mixed; K4 = per-rollout p99 <= 5 ms;
-hashes equal; D14's C++ trigger = pool-4 RIGA-only median > 125 ms or paired speed-up < 3 (reported). Exit 1 unless
-K3, K4 and the hashes all pass (R0 step 6 stops the chain).
+(reward_gates.make_jobs). Scoring runs on the CUDA checker (one score_batch call per batch, the caches resident on
+the device), so there is no CPU pool to sweep. Per workload: the warm wall (second of two runs of
+advantages_v4(score_batch)), per-rollout latency, and every batch's hash (reward_gates.digest), which a repeat run
+must reproduce. Gate: K3 = median wall <= 250 ms on RIGA-only and mixed; K4 = per-rollout p99 <= 5 ms; hashes equal.
+Exit 1 unless K3, K4 and the hashes all pass (R0 step 6 stops the chain).
 
-    python -I -m experiments.phase2.k3_harness --out k3.json [--root data/prepared --workers 2,4,8 --batches 5]
+    python -I -m experiments.phase2.k3_harness --out k3.json [--root data/prepared --batches 5]
 
 Synthetic items (lab B4 synth.py, H-K3SYN): 500 x 500 frames, 6 raters' disc and cup, smooth outlines
 r(t) = R (1 + sum of low harmonics) with per-rater perturbations, the cup inside the disc, parameters from the
@@ -26,7 +25,6 @@ import os
 import platform
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -99,11 +97,11 @@ def batch(riga, lidc, share: float, seed: int) -> list[tuple]:
     return make_jobs(pick(riga, n_r) + pick(lidc, 32 - n_r), 1000 + seed)
 
 
-def warm_wall(jobs, pool=None) -> tuple[float, str]:
-    """(ms of the second of two runs of advantages_v4(score_batch(jobs, pool)), that run's hash)."""
+def warm_wall(jobs) -> tuple[float, str]:
+    """(ms of the second of two runs of advantages_v4(score_batch(jobs)), that run's hash)."""
     for _ in range(2):
         t0 = time.perf_counter()
-        T = score_batch(jobs, pool)
+        T = score_batch(jobs)
         advantages_v4(T)
         ms = 1e3 * (time.perf_counter() - t0)
     return ms, digest(T)
@@ -145,10 +143,7 @@ def main(argv=None) -> int:
     ap.add_argument("--synth", type=int, default=64, help="synthetic RIGA-like items")
     ap.add_argument("--lidc", type=int, default=200, help="LIDC prompts (first RL train items)")
     ap.add_argument("--batches", type=int, default=5)
-    ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--workers", default="2,4,8", help="fork pool sizes")
     a = ap.parse_args(argv)
-    cv2.setNumThreads(0)
     res = {"env": env()}
     t0 = time.perf_counter()
     res["lidc_items_preloaded"] = serve.preload(a.root, ("lidc",))
@@ -163,48 +158,18 @@ def main(argv=None) -> int:
     riga = [(SCHEMAS["riga"], serve.CacheRef(f"synth/{i}", "synthetic")) for i in range(a.synth)]
     res |= {"synthetic_digest": corpus_digest(items), "synthetic_build_s": time.perf_counter() - t0}
     batches = {w: [batch(riga, lidc, s, b) for b in range(a.batches)] for w, s in WORKLOADS.items()}
-    with ThreadPoolExecutor(a.threads) as ex:
-        for w, bl in batches.items():
-            walls, hashes = zip(*map(warm_wall, bl), strict=True)
-            tw, th = zip(*[warm_wall(jobs, ex) for jobs in bl], strict=True)
-            res[w] = {
-                "serial": stats(walls),
-                "hashes": list(hashes),
-                "per_rollout": stats([x for jobs in bl for x in per_rollout_ms(jobs)]),
-                f"threads{a.threads}": {**stats(tw), "hash_equal": th == hashes},
-            }
-            print(w, "serial", round(np.median(walls), 1), "threads", round(np.median(tw), 1), flush=True)
-    for n in map(int, a.workers.split(",")):
-        pool = serve.fork_pool(n)
-        for w, bl in batches.items():
-            sw, pw, ph = [], [], []
-            for jobs in bl:  # serial and pool interleaved per batch: the paired speed-up resists load swings
-                sw.append(warm_wall(jobs)[0])
-                ms, h = warm_wall(jobs, pool)
-                pw.append(ms)
-                ph.append(h)
-            res[w][f"fork{n}"] = {
-                **stats(pw),
-                "hash_equal": ph == res[w]["hashes"],
-                "paired_speedup": float(np.median(np.array(sw) / np.array(pw))),
-            }
-            print(
-                w, f"fork{n}", round(np.median(pw), 1), "x", round(res[w][f"fork{n}"]["paired_speedup"], 2), flush=True
-            )
-        pool.shutdown()
-    best = {
-        w: min(v["median"] for k, v in res[w].items() if k == "serial" or k.startswith("fork"))
-        for w in ("riga", "mixed")
-    }
-    f4 = res["riga"].get("fork4")
+    for w, bl in batches.items():
+        walls, hashes = zip(*map(warm_wall, bl), strict=True)
+        res[w] = {"serial": stats(walls), "hashes": list(hashes),
+                  "hash_equal": [warm_wall(jobs)[1] for jobs in bl] == list(hashes),
+                  "per_rollout": stats([x for jobs in bl for x in per_rollout_ms(jobs)])}
+        print(w, "wall", round(np.median(walls), 1), flush=True)
+    best = {w: res[w]["serial"]["median"] for w in ("riga", "mixed")}
     res["gate"] = {
         "K3_best_ms": best,
         "K3_pass": max(best.values()) <= 250.0,
         "K4_p99_ms": max(res[w]["per_rollout"]["p99"] for w in WORKLOADS),
-        "all_hashes_equal": all(
-            v["hash_equal"] for w in WORKLOADS for v in res[w].values() if isinstance(v, dict) and "hash_equal" in v
-        ),
-        "d14_cpp_trigger": None if f4 is None else f4["median"] > 125.0 or f4["paired_speedup"] < 3.0,
+        "all_hashes_equal": all(res[w]["hash_equal"] for w in WORKLOADS),
     }
     res["gate"]["K4_pass"] = res["gate"]["K4_p99_ms"] <= 5.0
     res["env_end"] = env()

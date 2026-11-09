@@ -1,18 +1,25 @@
-"""Scoring on the CUDA checker: objdel.geometry.to_masks (objdel._gpucheck) and every scorer above it give the same
-results as the polycore reference (to_mask). On a CUDA box the chain runs this file on the GPU build before training
-(policy.chain); elsewhere it runs on the same source compiled for the CPU."""
+"""Scoring on the CUDA checker (objdel._gpucheck): polygon -> mask -> defects -> IoU_tc, F5, g_area and the
+size-filtered signature, all on the device against expert tables resident there; only per-object numbers come back.
+The reference is the host scorer it replaced (oracles/score_numpy.py, numpy + OpenCV): every term must be
+bit-identical, on hypothesis-generated rater stacks and masks and on polygon completions. On a CUDA box the chain runs
+this file on the GPU build before training (policy.chain); elsewhere it runs on the same source compiled for the CPU.
+"""
+import dataclasses
+import gc
 import json
 
 import numpy as np
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from oracles import score_numpy as host
 
 from experiments.cuda_checker import compare as C
 from experiments.phase2.vast import policy as P
 from objdel import _gpucheck
 from objdel.eval import metrics
-from objdel.geometry import parse, serialize, to_mask, to_masks
-from objdel.reward import ExpertCache, score_batch, score_many
-from objdel.reward import score as score_mod
+from objdel.geometry import parse, serialize, to_masks
+from objdel.reward import ExpertCache, score_batch, score_many, score_mask
 
 ROOT = P.ROOT
 
@@ -41,26 +48,146 @@ def fuzz_objects():
     return out
 
 
-def same_geometry(a, b) -> bool:
-    return a.legal == b.legal and a.defects == b.defects and a.mask.shape == b.mask.shape and \
-        np.array_equal(a.mask, b.mask)
-
-
-def reference(objs):
-    return [to_mask(parts, W, H) for parts, W, H in objs]
-
-
 def test_to_masks_equals_polycore():
+    """Masks and defects equal those the archived CPU checker recorded (tests/goldens/polycore.npz)."""
     objs = fuzz_objects() + [([], 5, 4)]  # + an object with no parts: a legal empty mask
     assert len(objs) > 300
-    cpu, gpu = reference(objs), to_masks(objs)
-    assert [i for i, (a, b) in enumerate(zip(cpu, gpu, strict=True)) if not same_geometry(a, b)] == []
-    assert any(not g.legal for g in cpu) and any(g.legal and g.mask.any() for g in cpu)
+    gpu = to_masks(objs)
+    assert [i for i, ((p, W, H), g) in enumerate(zip(objs, gpu, strict=True))
+            if g.mask.shape != (H, W) or C.geometry_diff(g, C.polygon_reference(*C.object_case(p), W, H))] == []
+    assert any(not g.legal for g in gpu) and any(g.legal and g.mask.any() for g in gpu)
 
 
 def test_to_masks_of_nothing():
     assert to_masks([]) == [] and _gpucheck.build() in ("cuda", "cpu")
 
+
+# ------------------------------------------------------------------ masks: device scorer vs the host scorer
+
+def blobs(rng, H, W, n, holes=True):
+    """n random ellipses (some with an elliptic hole), some 1-4 px specks."""
+    y, x = np.mgrid[:H, :W]
+    m = np.zeros((H, W), bool)
+    for _ in range(n):
+        cy, cx = rng.uniform(-2, H + 2), rng.uniform(-2, W + 2)
+        ry, rx = rng.uniform(0.5, max(1.0, H / 2)), rng.uniform(0.5, max(1.0, W / 2))
+        e = ((y - cy) / ry) ** 2 + ((x - cx) / rx) ** 2
+        m |= e <= 1
+        if holes and rng.random() < 0.4:
+            m &= ~(e <= rng.uniform(0.05, 0.5))
+    for _ in range(int(rng.integers(0, 4))):
+        sy, sx = int(rng.integers(0, H)), int(rng.integers(0, W))
+        m[sy:sy + int(rng.integers(1, 3)), sx:sx + int(rng.integers(1, 3))] = True
+    return m
+
+
+def rater_stack(rng, H, W):
+    """k = 2..5 raters around one or two shared blobs: grown, shrunk, shifted, holed or speckled copies."""
+    base = blobs(rng, H, W, int(rng.integers(1, 3)), holes=False)
+    out = []
+    for _ in range(int(rng.integers(2, 6))):
+        r = np.roll(base, (int(rng.integers(-1, 2)), int(rng.integers(-1, 2))), (0, 1))
+        r = r | (blobs(rng, H, W, 1, holes=False) & (rng.random() < 0.3))
+        if rng.random() < 0.3:
+            r &= ~blobs(rng, H, W, 1, holes=False)
+        out.append(r)
+    return np.stack(out)
+
+
+def predictions(rng, stack, cache):
+    """Masks a model could draw: rater masks and their union, core and vote, perturbed copies, noise, nothing."""
+    k, H, W = stack.shape
+    noise = rng.random((H, W))
+    out = [*stack, cache.union, cache.core, cache.vote, np.zeros((H, W), bool), np.ones((H, W), bool),
+           noise < 0.5, noise < 0.08, blobs(rng, H, W, int(rng.integers(1, 5)))]
+    for r in stack[:2]:
+        out += [r ^ (noise < 0.05), np.roll(r, int(rng.integers(-3, 4)), 1), r & ~blobs(rng, H, W, 2)]
+    return out
+
+
+def device_terms(m, cache) -> dict:
+    return dataclasses.asdict(score_mask(m, cache))
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.integers(0, 2**32 - 1), st.integers(1, 70), st.integers(1, 70))
+def test_score_mask_equals_the_host_scorer(seed, H, W):
+    """Every term bit-identical: IoU_tc (same-signature raters, else the vote), F5 (band depth: float64 sums),
+    g_area, the size-filtered signature and its rater share; frames of every width around the 32-pixel words."""
+    rng = np.random.default_rng(seed)
+    stack = rater_stack(rng, H, W)
+    try:
+        cache = ExpertCache.build(stack)
+    except ValueError:  # e.g. raters without any contour pair: not a cache the reward can have
+        return
+    for m in predictions(rng, stack, cache):
+        assert device_terms(m, cache) == host.score_mask(m, cache)
+
+
+@settings(max_examples=6, deadline=None)
+@given(st.integers(0, 2**32 - 1), st.integers(180, 320), st.integers(180, 320))
+def test_score_mask_on_large_frames_equals_the_host_scorer(seed, H, W):
+    """Frames of 180-320 px (review 2026-11-07: the other cases stop at 70 px): many rows per crop, many labels
+    merging at once in the device union-find, long band-depth sums. The chain runs it on the GPU and under memcheck."""
+    rng = np.random.default_rng(seed)
+    stack = rater_stack(rng, H, W)
+    try:
+        cache = ExpertCache.build(stack)
+    except ValueError:
+        return
+    for m in predictions(rng, stack, cache):
+        assert device_terms(m, cache) == host.score_mask(m, cache)
+
+
+def test_score_mask_edge_cases_equal_the_host_scorer():
+    """A full-frame core (its band distances are the 1e6 sentinel), components and holes exactly at the size
+    filter, a checkerboard (one 8-connected part, many holes), single pixels, a frame of one row."""
+    full = np.ones((2, 9, 40), bool)
+    full[1, 0, 0] = False
+    sq = np.zeros((3, 40, 37), bool)
+    sq[:, 5:30, 4:33] = True
+    sq[1, 10:12, 10:12] = False  # a 4 px hole: below min_area 5
+    sq[2, 10:13, 10:12] = False  # a 6 px hole
+    caches = [ExpertCache.build(s) for s in (full, sq)]
+    fy, fx = np.mgrid[:9, :40]
+    cases = [np.ones((9, 40), bool), (fy + fx) % 2 == 0, fy % 3 == 0]
+    yy, xx = np.mgrid[:40, :37]
+    sq_cases = [sq[1], sq[2], (yy + xx) % 2 == 0, (yy % 2 == 0) & (xx % 2 == 0), np.eye(40, 37, dtype=bool)]
+    one = np.zeros((40, 37), bool)
+    one[0, 36] = True
+    for m in sq_cases[:2]:
+        for size in (4, 5, 6):  # a part of exactly min_area - 1, min_area, min_area + 1 pixels beside it
+            extra = m.copy()
+            extra[35, 2:2 + size] = True
+            sq_cases.append(extra)
+    for c, ms in zip(caches, (cases, [*sq_cases, one]), strict=True):
+        for m in ms:
+            assert device_terms(m, c) == host.score_mask(m, c)
+    line = np.stack([np.arange(70) < 30, np.arange(70) < 34])[:, None, :]
+    c = ExpertCache.build(line)
+    for m in (line[0, 0], ~line[1, 0], np.arange(70) % 3 == 0):
+        assert device_terms(m[None], c) == host.score_mask(m[None], c)
+
+
+def test_score_mask_refuses_another_frame():
+    c = ExpertCache.build(np.stack([disk(20, r, 10, 10) for r in (4, 5)]))
+    with pytest.raises(ValueError, match="shape"):
+        score_mask(np.zeros((20, 21), bool), c)
+
+
+def test_tables_are_uploaded_once_and_freed_with_the_cache():
+    before = _gpucheck.resident()
+    c = ExpertCache.build(np.stack([disk(20, r, 10, 10) for r in (4, 5)]))
+    h = c.device()
+    assert c.device() == h and _gpucheck.resident() == before + 1
+    score_mask(c.vote, c)
+    assert _gpucheck.resident() == before + 1
+    del c
+    gc.collect()
+    assert _gpucheck.resident() == before
+
+
+# ------------------------------------------------------------------ polygons: completions end to end
 
 @pytest.fixture(scope="module")
 def jobs():
@@ -81,6 +208,7 @@ def jobs():
               '[600,600],[600,400]]]}]}', "garbage", '{"disc":[]}']
     out = [(t, False, ("nodule",), lidc, 40, 40) for t in texts]
     out.append((texts[0], True, ("nodule",), lidc, 40, 40))
+
     def square(a, b):
         return [(np.array([[a, a], [b, a], [b, b], [a, b]]), [])]
 
@@ -89,33 +217,44 @@ def jobs():
     return out
 
 
-def test_score_batch_equals_polycore(jobs, monkeypatch):
+def test_score_batch_equals_the_host_scorer(jobs):
     gpu = score_batch(jobs)
-    monkeypatch.setattr(score_mod, "to_masks", reference)
-    cpu = score_batch(jobs)
-    assert cpu.keys() == gpu.keys()
-    for k, v in cpu.items():
-        assert (np.array_equal(v, gpu[k]) if isinstance(v, np.ndarray) else v == gpu[k]), k
-    assert 0 < cpu["legal"].sum() < len(jobs) and cpu["format_ok"].sum() < len(jobs)
+    ref = [host.score_completion(*j) for j in jobs]
+    for k, v in gpu.items():
+        want = [r[k] for r in ref]
+        assert (v.tolist() if isinstance(v, np.ndarray) else v) == want, k
+    assert 0 < gpu["legal"].sum() < len(jobs) and gpu["format_ok"].sum() < len(jobs)
 
 
-def test_score_many_keeps_job_order_and_masks(jobs):
+def test_score_many_keeps_job_order(jobs):
     one = [score_many([j])[0] for j in jobs]
     many = score_many(jobs)
-    for (t1, m1, _), (t2, m2, _) in zip(one, many, strict=True):
-        assert json.dumps(t1, sort_keys=True) == json.dumps(t2, sort_keys=True)
-        assert (m1 is None) == (m2 is None)
-        if m1 is not None:
-            assert all(np.array_equal(m1[n], m2[n]) for n in m1)
+    for (t1, o1), (t2, o2) in zip(one, many, strict=True):
+        assert json.dumps(t1, sort_keys=True) == json.dumps(t2, sort_keys=True) and o1 == o2
 
 
-def test_exam_metrics_equal_polycore(jobs, monkeypatch):
+def test_score_polygons_returns_numbers_only(jobs):
+    """The device scorer's result: per-object defects, area, terms and signature, never a mask."""
+    c = jobs[0][3]["nodule"]
+    r = _gpucheck.score_polygons(np.array([[0, 0], [1000, 0], [1000, 1000]], np.int32), np.array([0, 3], np.int64),
+                                 np.array([0, 1], np.int64), None, np.array([40], np.int32), np.array([40], np.int32),
+                                 1000, np.array([c.device()], np.int64))
+    assert set(r) == {"defects", "area", "iou_tc", "f5", "g_area", "topo_freq", "sig_start", "sig"}
+    assert all(v.size <= 13 for v in r.values())
+    with pytest.raises(ValueError, match="frame"):
+        _gpucheck.score_polygons(np.zeros((0, 2), np.int32), np.array([0], np.int64), np.array([0, 0], np.int64),
+                                 None, np.array([41], np.int32), np.array([40], np.int32), 1000,
+                                 np.array([c.device()], np.int64))
+
+
+def test_exam_metrics_equal_the_host_scorer(jobs):
     lidc = [j for j in jobs if j[2] == ("nodule",)][:16]
     texts, flags, caches = [j[0] for j in lidc], [j[1] for j in lidc], lidc[0][3]
-    b = metrics(texts, {}, 40, 40, ("nodule",), flags, caches)
-    monkeypatch.setattr(score_mod, "to_masks", reference)
-    a = metrics(texts, {}, 40, 40, ("nodule",), flags, caches)
-    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+    m = metrics(texts, {}, 40, 40, ("nodule",), flags, caches)
+    ref = [host.score_completion(*j) for j in lidc]
+    legal = np.array([r["legal"] for r in ref])
+    assert m["samples"]["iou_tc"] == (np.array([r["iou_tc"] for r in ref]) * legal).tolist()
+    assert m["samples"]["topo_any"] == [r["topo_any"] for r in ref]
 
 
 def test_every_scoring_chain_builds_and_checks_the_cuda_checker_first():

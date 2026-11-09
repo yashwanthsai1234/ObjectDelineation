@@ -1,5 +1,5 @@
 """Differential test: objdel.geometry.parse vs the lab's hand-written recursive-descent parser (slow oracle,
-experiments/phase1/lab/t_stack/prod.py, trimmed to accept/reject and the parsed values).
+archive/phase1_lab/t_stack/prod.py, trimmed to accept/reject and the parsed values).
 
 One fix to the lab code: it tested digits with str.isdigit and converted with int(), so it accepted Unicode digits
 ("1\u0661" parsed as 11); the oracle uses ASCII digits, as the spec says."""

@@ -9,9 +9,8 @@
 #   fast     pytest -q -m "not slow and not data" (data/ is absent, so data tests would skip anyway)
 #   hashes   experiments.phase1.bench.xarch_hashes -> /io/hashes-x86.json; hashes2: a second run (x86 run-to-run);
 #            noipp: the same with OpenCV's Intel IPP HAL off (diagnostic, impl/M9_x86.md)
-#   slow     the K1/K2 exhaustive polycore oracle gates (pytest -m slow tests/test_polycore_oracle.py), or reduced
+#   slow     the K1/K2 exhaustive checker oracle gates (pytest -m slow tests/test_checker_oracle.py), or reduced
 #            with SLOW=0
-#   fuzz     make fuzz (ASan + UBSan, FUZZ_N shapes)
 #   wheel    pip wheel of the same source, then auditwheel show and abi3audit --strict
 #
 # References:
@@ -47,28 +46,20 @@ step() {  # step <name> <command...>: run, log, time, record the exit status; ne
 step build uv pip install --python /opt/venv/bin/python --offline --no-deps --no-build-isolation -e .
 # the flags the extension was actually compiled with (CMake Release + nanobind)
 grep -h -E '^ *(FLAGS|DEFINES) *=' build/*/build.ninja 2>/dev/null | sort -u > "$IO/compile_flags.txt" \
-    || grep -rh -E 'CXX_FLAGS|CXX_DEFINES' build/*/CMakeFiles/_polycore.dir/flags.make > "$IO/compile_flags.txt" 2>/dev/null
+    || grep -rh -E 'CXX_FLAGS|CXX_DEFINES' build/*/CMakeFiles/gpucheck.dir/flags.make > "$IO/compile_flags.txt" 2>/dev/null
 grep -h -E '^CMAKE_(BUILD_TYPE|CXX_COMPILER|CXX_FLAGS_RELEASE|CXX_FLAGS):' build/*/CMakeCache.txt >> "$IO/compile_flags.txt"
-
-# Under Rosetta (cpuinfo "VirtualApple") the RLIMIT_AS out-of-memory test kills the translator itself ("rosetta error:
-# mmap_anonymous_rw mmap failed") at random: it is deselected from the gate and run separately as information.
-OOM=tests/test_polycore.py::test_score_batch_out_of_memory_raises_in_python
-DESELECT=()
-if grep -q VirtualApple /proc/cpuinfo; then DESELECT=(--deselect "$OOM"); fi
 
 step lint python -m ruff check src tests experiments
 step fast python -m pytest -q -m "not slow and not data" -p no:cacheprovider --durations=15 \
-    --junitxml="$IO/junit-fast.xml" "${DESELECT[@]}"
-[ ${#DESELECT[@]} = 0 ] || step oom-info python -m pytest -q -p no:cacheprovider "$OOM"
+    --junitxml="$IO/junit-fast.xml"
 step hashes python -I -m experiments.phase1.bench.xarch_hashes --out "$IO/hashes-x86.json"
 # run-to-run determinism on x86 (the IPP distance transform used before F1 was not: OpenCV issue 24082), and the
 # IPP-off diagnostic
 step hashes2 python -I -m experiments.phase1.bench.xarch_hashes --out "$IO/hashes-x86-run2.json"
 step noipp python -I -m experiments.phase1.bench.xarch_hashes --opencv no-ipp --out "$IO/hashes-x86-noipp.json"
 if [ "${SLOW:-1}" = 1 ]; then
-    step slow python -m pytest -q -s -m slow -p no:cacheprovider tests/test_polycore_oracle.py --durations=0
+    step slow python -m pytest -q -s -m slow -p no:cacheprovider tests/test_checker_oracle.py --durations=0
 fi
-step fuzz make fuzz "FUZZ_N=${FUZZ_N:-10000}" CXX=g++
 mkdir -p "$IO/wheel"
 step wheel bash -c "rm -f $IO/wheel/*.whl && \
     uv build --wheel --offline --no-build-isolation --python /opt/venv/bin/python --out-dir $IO/wheel . \

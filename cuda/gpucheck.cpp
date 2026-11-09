@@ -3,8 +3,8 @@
 // C++ compiler builds this file and a kernel launch when nvcc does. The other CPU/GPU differences are in the
 // "platform" section (memory, copies, streams, four atomic helpers) and the last step of the raster (below).
 //
-// Polygons (port of cpp/polycore/polycore.hpp, same exact integer arithmetic, int64 or __int128 chosen per shape
-// by the same bounds):
+// Polygons (port of the archived CPU checker, archive/cpu_checker/cpp/polycore/polycore.hpp: same exact integer
+// arithmetic, int64 or __int128 chosen per shape by the same bounds):
 //  * raster: one pixel row per item (one warp per row on the GPU). Each edge crossing the row's centre line adds its
 //    sign to the winding of the centres left of the crossing; a suffix sum over a 1024-column window gives the
 //    winding, so no sort. Only the even-odd mask is made, bit-packed: 32 pixels per uint32 word, LSB = leftmost. On
@@ -28,7 +28,7 @@
 // one copy out, one stream synchronize. A large polygon batch is cut into two halves on two lanes, so the second
 // half's copy and the host's packing overlap the first half's kernels (C7). One mutex serializes the calls.
 //
-// References: the headers of cpp/polycore/polycore.hpp and src/objdel/checker/polygonize.py; CUDA C++ Programming
+// References: the headers of archive/cpu_checker/cpp/polycore/polycore.hpp and src/objdel/checker/polygonize.py; CUDA C++ Programming
 // Guide (https://docs.nvidia.com/cuda/cuda-c-programming-guide/): __int128 in device code (CUDA >= 11.5, "Supported
 // Types"), warp vote and shuffle functions (__ballot_sync, __shfl_sync: every lane named in the mask must execute
 // them), __syncwarp (memory ordering among the warp's lanes), page-locked host memory and asynchronous concurrent
@@ -42,8 +42,6 @@
 #include <stdexcept>
 #include <string>
 
-#include "polycore/polycore.hpp"  // Defect, kNumDefects, kMaxRings (constants only; the kernels are below)
-
 #ifdef __CUDACC__
 #include <cuda_runtime.h>
 #define HD __host__ __device__
@@ -55,8 +53,6 @@ namespace gpucheck {
 namespace {
 
 using i128 = __int128;
-using polycore::kMaxRings;
-using polycore::kNumDefects;
 constexpr i32 kPairs = kMaxRings * kMaxRings;
 
 // ===================================================================== platform
@@ -153,9 +149,9 @@ struct Block {
   }
 };
 
-struct Lane {  // one stream with its device arena and its staging buffers (in: host -> device, out: device -> host)
-  Stream stream{};
-  Block<true> dev;
+struct Lane {  // one stream with its device arenas (dev: checker, score: scorer) and its staging buffers (in: host ->
+  Stream stream{};  // device, out: device -> host)
+  Block<true> dev, score;
   Block<false> in, out;
 };
 
@@ -231,6 +227,48 @@ HD inline void atomic_min(i32* p, i32 v) {
   atomicMin(p, v);
 #else
   if (v < *p) *p = v;
+#endif
+}
+
+HD inline i32 atomic_min_old(i32* p, i32 v) {  // returns the old value
+#ifdef __CUDA_ARCH__
+  return atomicMin(p, v);
+#else
+  const i32 old = *p;
+  if (v < old) *p = v;
+  return old;
+#endif
+}
+
+HD inline i32 load(const i32* p) {  // a fresh read of memory other threads write (union-find parents)
+#ifdef __CUDA_ARCH__
+  return *static_cast<const volatile i32*>(p);
+#else
+  return *p;
+#endif
+}
+
+HD inline int popc(u32 x) {
+#ifdef __CUDA_ARCH__
+  return __popc(x);
+#else
+  return __builtin_popcount(x);
+#endif
+}
+
+HD inline int ctz(u32 x) {  // x != 0
+#ifdef __CUDA_ARCH__
+  return __ffs(x) - 1;
+#else
+  return __builtin_ctz(x);
+#endif
+}
+
+HD inline int clz(u32 x) {  // x != 0
+#ifdef __CUDA_ARCH__
+  return __clz(x);
+#else
+  return __builtin_clz(x);
 #endif
 }
 
@@ -454,7 +492,7 @@ struct CleanRings {
     }
     if (m > 1 && c[0] == c[2 * m - 2] && c[1] == c[2 * m - 1]) --m;
     r.len[ring] = m;
-    cnt[polycore::kOutOfRange] = oor;
+    cnt[kOutOfRange] = oor;
     i32* box = r.box + 4 * ring;
     for (i32 k = 0; k < m; ++k) {
       box[0] = k ? mn(box[0], c[2 * k]) : c[0];
@@ -476,8 +514,8 @@ struct CleanRings {
     }
     r.area2[ring] = saturate(a2);
     r.fewer[ring] = distinct < 3;
-    if (distinct < 3) cnt[polycore::kFewerThan3Points] = 1;
-    else if (a2 == 0) cnt[polycore::kZeroArea] = 1;
+    if (distinct < 3) cnt[kFewerThan3Points] = 1;
+    else if (a2 == 0) cnt[kZeroArea] = 1;
   }
 };
 
@@ -561,9 +599,9 @@ struct EdgePairs {
         const PairKind kind = classify<T>(e, f);
         if (kind == kNone) continue;
         if (q == ring) {
-          const int d = kind == kCross ? polycore::kSelfCrossing
-                      : kind == kPinch ? polycore::kVertexPinch
-                      : kind == kOverlap ? polycore::kCollinearOverlap : polycore::kSpike;
+          const int d = kind == kCross ? kSelfCrossing
+                      : kind == kPinch ? kVertexPinch
+                      : kind == kOverlap ? kCollinearOverlap : kSpike;
           atomic_add(r.counts + ring * kNumDefects + d, 1);
         } else {
           i32* m = pc + (kind == kCross ? 0 : kPairs);
@@ -660,18 +698,18 @@ struct ShapeTotals {
     i64* tot = defects + sh * kNumDefects;
     for (i32 a = 0; a < R; ++a)
       for (i32 b = 0; b < R; ++b) {
-        at(a, polycore::kRingRingCrossing) += pcross[a * kMaxRings + b];
-        at(a, polycore::kRingRingTouching) += ptouch[a * kMaxRings + b];
+        at(a, kRingRingCrossing) += pcross[a * kMaxRings + b];
+        at(a, kRingRingTouching) += ptouch[a * kMaxRings + b];
       }
     for (i32 a = 0; a < R; ++a) {
       if (fewer(a)) continue;
       const i64 a2 = r.area2[r0 + a];
-      if ((roles[a] < 0 && a2 < 0) || (roles[a] >= 0 && a2 > 0)) at(a, polycore::kWrongWinding) = 1;
+      if ((roles[a] < 0 && a2 < 0) || (roles[a] >= 0 && a2 > 0)) at(a, kWrongWinding) = 1;
     }
     for (i32 h = 0; h < R; ++h) {
       const i32 p = roles[h];
       if (p < 0 || fewer(h) || fewer(p)) continue;
-      if (any_witness<T>(r0, R, h, -1, apart(h, p), p, false)) at(h, polycore::kHoleOutsideOuter) = 1;
+      if (any_witness<T>(r0, R, h, -1, apart(h, p), p, false)) at(h, kHoleOutsideOuter) = 1;
     }
     for (i32 a = 0; a < R; ++a) {
       if (fewer(a)) continue;
@@ -680,27 +718,27 @@ struct ShapeTotals {
         if (roles[a] >= 0 && roles[a] == roles[b]) {  // sibling holes
           const bool single = apart(a, b);
           if (any_witness<T>(r0, R, b, 1, single, a, false) || any_witness<T>(r0, R, a, 1, single, b, false)) {
-            at(a, polycore::kNestedHoles) += 1, at(b, polycore::kNestedHoles) += 1;
-            tot[polycore::kNestedHoles] += 1;
+            at(a, kNestedHoles) += 1, at(b, kNestedHoles) += 1;
+            tot[kNestedHoles] += 1;
           }
         } else if (roles[a] < 0 && roles[b] < 0) {  // two outers
           if (any_witness<T>(r0, R, b, 1, apart_region(b, a), a, true) ||
               any_witness<T>(r0, R, a, 1, apart_region(a, b), b, true)) {
-            at(a, polycore::kNestedOuters) += 1, at(b, polycore::kNestedOuters) += 1;
-            tot[polycore::kNestedOuters] += 1;
+            at(a, kNestedOuters) += 1, at(b, kNestedOuters) += 1;
+            tot[kNestedOuters] += 1;
           }
         }
       }
     }
     for (i32 a = 0; a < R; ++a)
       for (int d = 0; d < kNumDefects; ++d)
-        if (d != polycore::kRingRingCrossing && d != polycore::kRingRingTouching && d != polycore::kNestedHoles &&
-            d != polycore::kNestedOuters)
+        if (d != kRingRingCrossing && d != kRingRingTouching && d != kNestedHoles &&
+            d != kNestedOuters)
           tot[d] += at(a, d);
     for (i32 a = 0; a < R; ++a)
       for (i32 b = a + 1; b < R; ++b) {
-        tot[polycore::kRingRingCrossing] += pcross[a * kMaxRings + b];
-        tot[polycore::kRingRingTouching] += ptouch[a * kMaxRings + b];
+        tot[kRingRingCrossing] += pcross[a * kMaxRings + b];
+        tot[kRingRingTouching] += ptouch[a * kMaxRings + b];
       }
   }
 
@@ -1067,8 +1105,9 @@ void pack(const Polygons& in, const std::vector<i64>& word_start, const PolyChun
   ptr<i64>(h, c.word_start)[c.n] = c.nwords;
 }
 
-// Queues the chunk on its lane: copy in, zero the counters, the kernels, copy out. Nothing waits.
-void launch(const PolyChunk& c, i64 G, Lane& L) {
+// Queues the chunk on its lane: copy in, zero the counters, the kernels, copy out (the defects, and the masks when
+// `masks`; else they stay in the lane's arena for the scorer). Nothing waits.
+void launch(const PolyChunk& c, i64 G, Lane& L, bool masks) {
   u8* d = L.dev.p;
   const Stream st = L.stream;
   const Shapes s{ptr<i32>(d, c.xy), ptr<i64>(d, c.ring_start), ptr<i64>(d, c.shape_start), ptr<i64>(d, c.row_start),
@@ -1083,7 +1122,522 @@ void launch(const PolyChunk& c, i64 G, Lane& L) {
   for_each(st, c.nr, CleanRings{s, r});
   for_each(st, c.nv, EdgePairs{s, r, validate_wide});
   for_each(st, c.n, ShapeTotals{s, r, validate_wide, ptr<i64>(d, c.defects)});
-  to_host(L.out.p, d + c.defects, c.size - c.defects, st);
+  to_host(L.out.p, d + c.defects, (masks ? c.size : c.words) - c.defects, st);
+}
+
+// ===================================================================== scoring
+// The reward's per-object terms (objdel.reward.score), computed where the mask is: the masks of a call stay in the
+// lane's arena, every expert table is resident (add_tables), and only per-object numbers are copied back. Bit-identical
+// to the host scorer it replaced (docs/research/notes/gpu_scoring.md):
+//  * counts (area, intersections with each rater and the vote) are integers; IoU = inter / union in float64;
+//  * band depth D sums float32 distances that are 0 or >= 1, hence multiples of 2^-23: each sum is an exact integer
+//    count of 2^-23 (per row in int64, rows in order in int128), so its float64 value equals that of any float64
+//    summation order (numpy's) while the sum is below 2^30; F5, g_area and the shares are the same IEEE operations in
+//    the same order as the Python code (built without FMA contraction, CMakeLists.txt);
+//  * the signature: union-find labeling on the mask's bounding box padded by one pixel (8-connected foreground,
+//    4-connected background; the outside is the background component of pixel 0), the steps of
+//    objdel.checker.topology.signature: drop components below min_area, fill holes below min_area, relabel, count each
+//    hole for the component above its first raster pixel, sort descending.
+// One call: the box of every mask (round trip 1: the crop layout), the labeling, row partials and per-object terms
+// (round trip 2: the terms and signature lengths), the signatures (round trip 3).
+
+struct TableView {  // device view of resident tables: bit planes of H rows of words_per_row(W) words, LSB = leftmost
+  const u32 *raters, *uni, *core, *vote;  // raters: k planes
+  const float* dist;
+  const i64 *rater_area, *sig_start;
+  const i32* sig;
+  const u8* voter;
+  i64 n_vote, perimeter;
+  double t5;
+  i32 H, W, k, min_area;
+};
+
+struct Registry {  // resident tables; handle = index (reused once dropped)
+  std::vector<u8*> block;
+  std::vector<TableView> view;
+  std::vector<i64> free;
+  i64 live = 0;
+};
+
+Registry& registry() {  // never destroyed, as engine()
+  static Registry* r = new Registry;
+  return *r;
+}
+
+void pack_plane(const u8* px, i32 H, i32 W, u32* out) {  // out zeroed
+  const i64 wpr = words_per_row(W);
+  for (i32 y = 0; y < H; ++y)
+    for (i32 x = 0; x < W; ++x)
+      if (px[i64(y) * W + x]) out[y * wpr + x / 32] |= u32(1) << (x % 32);
+}
+
+std::vector<TableView> views(const i64* handles, i64 n, const i32* W, const i32* H) {  // called with the mutex held
+  const Registry& r = registry();
+  std::vector<TableView> v(static_cast<size_t>(n));
+  for (i64 s = 0; s < n; ++s) {
+    const i64 h = handles[s];
+    if (h < 0 || h >= i64(r.block.size()) || !r.block[size_t(h)]) throw std::invalid_argument("unknown tables handle");
+    v[size_t(s)] = r.view[size_t(h)];
+    if (v[size_t(s)].W != W[s] || v[size_t(s)].H != H[s])
+      throw std::invalid_argument("an object's frame must be its tables' frame");
+  }
+  return v;
+}
+
+constexpr int kPart = 5;  // row partials after the k rater intersections: vote intersection, spill count and sum, miss
+                          // count and sum (sums in units of 2^-23)
+
+struct Obj {  // one object of a scoring call
+  TableView t;
+  i64 words;           // its mask: t.H rows of words_per_row(t.W) words
+  i64 part;            // its row partials: t.H rows of t.k + kPart
+  i64 crop;            // its crop pixels: bh + 2 rows of bw + 2 (none for an empty mask)
+  i64 area;
+  i32 bx, by, bw, bh;  // the mask's bounding box
+};
+
+struct ObjOut {  // copied back per object
+  i64 area, ncomp;
+  double iou_tc, f5, g_area, topo_freq;
+};
+
+// Per frame row: first and last foreground column, foreground pixels.
+struct RowBox {
+  const Obj* obj;
+  const i64* row_start;
+  i64 n;
+  const u32* words;
+  i32* rbox;
+  HD void operator()(i64 i) const {
+    const i64 o = segment(row_start, n, i);
+    const i32 wpr = words_per_row(obj[o].t.W);
+    const u32* w = words + obj[o].words + (i - row_start[o]) * wpr;
+    i32 first = -1, last = -1, count = 0;
+    for (i32 j = 0; j < wpr; ++j) {
+      if (!w[j]) continue;
+      if (first < 0) first = 32 * j + ctz(w[j]);
+      last = 32 * j + 31 - clz(w[j]);
+      count += popc(w[j]);
+    }
+    rbox[3 * i] = first, rbox[3 * i + 1] = last, rbox[3 * i + 2] = count;
+  }
+};
+
+// Per object: box (x, y, w, h) and area.
+struct ObjBox {
+  const i64* row_start;
+  const i32* rbox;
+  i64* box;
+  HD void operator()(i64 o) const {
+    i64 area = 0;
+    i32 x0 = 0, x1 = 0, y0 = -1, y1 = 0;
+    for (i64 i = row_start[o]; i < row_start[o + 1]; ++i) {
+      const i32* r = rbox + 3 * i;
+      if (!r[2]) continue;
+      x0 = y0 < 0 ? r[0] : mn(x0, r[0]), x1 = y0 < 0 ? r[1] : mx(x1, r[1]);
+      y1 = i32(i - row_start[o]), area += r[2];
+      if (y0 < 0) y0 = y1;
+    }
+    i64* b = box + 5 * o;
+    b[0] = area ? x0 : 0, b[1] = area ? y0 : 0, b[2] = area ? x1 - x0 + 1 : 0, b[3] = area ? y1 - y0 + 1 : 0;
+    b[4] = area;
+  }
+};
+
+// ---------------------------------------------------------------- signature: union-find labeling on the crops
+struct Crops {  // the call's crops, one item per crop row; pixel p of a crop = y (bw + 2) + x, local to it
+  const Obj* obj;
+  const i64* crow_start;
+  i64 n;
+  u8* img;             // 1 = foreground
+  i32 *fg, *bg, *aux;  // labels (root = the component's first raster pixel), per-root counts
+  i32* ncomp;          // per object: components after the filter
+  HD i64 row(i64 r, i32& y) const {
+    const i64 o = segment(crow_start, n, r);
+    y = i32(r - crow_start[o]);
+    return o;
+  }
+};
+
+HD inline i32 find(const i32* par, i32 x) {
+  for (i32 p = load(par + x); p != x; p = load(par + x)) x = p;
+  return x;
+}
+
+// Union by linking the larger root under the smaller (Playne and Hawick 2018: a failed atomicMin means the root was
+// linked meanwhile; retry from the value it had). Roots only ever get smaller parents, so the final root of a
+// component is its smallest pixel index, its first raster pixel.
+HD inline void unite(i32* par, i32 a, i32 b) {
+  for (;;) {
+    a = find(par, a), b = find(par, b);
+    if (a == b) return;
+    if (a < b) {
+      const i32 t = a;
+      a = b, b = t;
+    }
+    const i32 old = atomic_min_old(par + a, b);
+    if (old == a) return;
+    a = old;
+  }
+}
+
+struct CropFill {
+  Crops c;
+  const u32* words;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Obj& b = c.obj[c.row(r, y)];
+    const i32 cw = b.bw + 2, wpr = words_per_row(b.t.W);
+    u8* img = c.img + b.crop + i64(y) * cw;
+    const bool inside = y >= 1 && y <= b.bh;
+    const u32* row = words + b.words + i64(b.by + (inside ? y - 1 : 0)) * wpr;
+    for (i32 x = 0; x < cw; ++x) {
+      const i32 fx = b.bx + x - 1;
+      img[x] = (inside && x >= 1 && x <= b.bw) ? u8(row[fx / 32] >> (fx % 32) & 1) : u8(0);
+    }
+  }
+};
+
+// The three labeling steps of one class: which = 1 (foreground, 8-connected) or 0 (background, 4-connected).
+struct LabelInit {
+  Crops c;
+  int which;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Obj& b = c.obj[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    i32* par = (which ? c.fg : c.bg) + b.crop;
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p) par[p] = c.img[b.crop + p] == which ? p : -1;
+  }
+};
+
+struct LabelMerge {
+  Crops c;
+  int which;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Obj& b = c.obj[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    const u8* img = c.img + b.crop;
+    i32* par = (which ? c.fg : c.bg) + b.crop;
+    for (i32 x = 0; x < cw; ++x) {
+      const i32 p = y * cw + x;
+      if (img[p] != which) continue;
+      if (x > 0 && img[p - 1] == which) unite(par, p, p - 1);
+      if (y == 0) continue;
+      if (img[p - cw] == which) unite(par, p, p - cw);
+      if (!which) continue;
+      if (x > 0 && img[p - cw - 1]) unite(par, p, p - cw - 1);
+      if (x + 1 < cw && img[p - cw + 1]) unite(par, p, p - cw + 1);
+    }
+  }
+};
+
+struct LabelFlatten {
+  Crops c;
+  int which;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Obj& b = c.obj[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    i32* par = (which ? c.fg : c.bg) + b.crop;
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p)
+      if (c.img[b.crop + p] == which) par[p] = find(par, p);
+  }
+};
+
+struct Count {  // aux[root] = pixels of the class's component (aux zeroed)
+  Crops c;
+  int which;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Obj& b = c.obj[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    const i32* par = (which ? c.fg : c.bg) + b.crop;
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p)
+      if (c.img[b.crop + p] == which) atomic_add(c.aux + b.crop + par[p], 1);
+  }
+};
+
+// Size filter (topology.size_filter): which = 1 drops foreground components below min_area, which = 0 fills holes
+// (background components other than the outside, root 0) below min_area. aux holds the class's counts.
+struct Filter {
+  Crops c;
+  int which;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Obj& b = c.obj[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    const i32* par = (which ? c.fg : c.bg) + b.crop;
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p) {
+      if (c.img[b.crop + p] != which || (!which && par[p] == 0)) continue;
+      if (c.aux[b.crop + par[p]] < b.t.min_area) c.img[b.crop + p] = u8(1 - which);
+    }
+  }
+};
+
+// A hole's first raster pixel is its root; the pixel above it is foreground of the enclosing component (an island
+// inside the hole lies strictly below the hole's top row): aux[foreground root] += 1 (aux zeroed).
+struct Holes {
+  Crops c;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Obj& b = c.obj[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p)
+      if (p != 0 && c.img[b.crop + p] == 0 && c.bg[b.crop + p] == p)
+        atomic_add(c.aux + b.crop + c.fg[b.crop + p - cw], 1);
+  }
+};
+
+// Every component's hole count into the object's list: the first ncomp entries of its crop in bg (no longer needed).
+struct Gather {
+  Crops c;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const i64 o = c.row(r, y);
+    const Obj& b = c.obj[o];
+    const i32 cw = b.bw + 2;
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p)
+      if (c.img[b.crop + p] == 1 && c.fg[b.crop + p] == p) c.bg[b.crop + atomic_inc(c.ncomp + o)] = c.aux[b.crop + p];
+  }
+};
+
+// ---------------------------------------------------------------- terms
+HD inline i64 units(float d) { return i64(double(d) * 8388608.0); }  // d in units of 2^-23: exact for 0 and d >= 1
+
+// Per frame row: intersections with each rater and the vote, spill (mask outside the union) and core miss (core outside
+// the mask) pixel counts and distance sums. The bits past W are 0 in every plane and mask.
+struct ScoreRows {
+  const Obj* obj;
+  const i64* row_start;
+  i64 n;
+  const u32* words;
+  i64* parts;
+  HD void operator()(i64 i) const {
+    const i64 o = segment(row_start, n, i);
+    const Obj& b = obj[o];
+    const TableView& t = b.t;
+    const i64 y = i - row_start[o], wpr = words_per_row(t.W);
+    const u32* m = words + b.words + y * wpr;
+    i64* out = parts + b.part + y * (t.k + kPart);
+    for (i32 j = 0; j < t.k; ++j) {
+      const u32* r = t.raters + (j * i64(t.H) + y) * wpr;
+      i64 s = 0;
+      for (i64 w = 0; w < wpr; ++w) s += popc(m[w] & r[w]);
+      out[j] = s;
+    }
+    i64 vote = 0, spill_n = 0, spill = 0, miss_n = 0, miss = 0;
+    const float* d = t.dist + y * t.W;
+    for (i64 w = 0; w < wpr; ++w) {
+      vote += popc(m[w] & t.vote[y * wpr + w]);
+      u32 s = m[w] & ~t.uni[y * wpr + w], c = t.core[y * wpr + w] & ~m[w];
+      spill_n += popc(s), miss_n += popc(c);
+      for (; s; s &= s - 1) spill += units(d[32 * w + ctz(s)]);
+      for (; c; c &= c - 1) miss += units(d[32 * w + ctz(c)]);
+    }
+    i64* f = out + t.k;
+    f[0] = vote, f[1] = spill_n, f[2] = spill, f[3] = miss_n, f[4] = miss;
+  }
+};
+
+HD inline void sift_min(i32* a, i32 i, i32 n) {
+  for (;;) {
+    i32 c = 2 * i + 1;
+    if (c >= n) return;
+    if (c + 1 < n && a[c + 1] < a[c]) ++c;
+    if (!(a[c] < a[i])) return;
+    const i32 t = a[i];
+    a[i] = a[c], a[c] = t, i = c;
+  }
+}
+
+HD inline void sort_descending(i32* a, i32 n) {  // heapsort on a min-heap: each minimum goes last
+  for (i32 i = n / 2 - 1; i >= 0; --i) sift_min(a, i, n);
+  for (i32 e = n - 1; e > 0; --e) {
+    const i32 t = a[0];
+    a[0] = a[e], a[e] = t;
+    sift_min(a, 0, e);
+  }
+}
+
+HD inline double iou(i64 inter, i64 a, i64 b) {
+  const i64 uni = a + b - inter;
+  return uni ? double(inter) / double(uni) : 1.0;
+}
+
+HD inline double sum_value(i128 units) {  // exact below 2^53 units (2^30 px of distance), deterministic above
+  const i128 lim = i128(1) << 62;
+  if (units < lim && units > -lim) return double(i64(units)) / 8388608.0;
+  return (double(i64(units >> 32)) * 4294967296.0 + double(u32(units & 0xFFFFFFFF))) / 8388608.0;
+}
+
+// Per object: its signature sorted, then the terms (score_mask's formulas, operation by operation).
+struct ObjTerms {
+  const Obj* obj;
+  const i64* parts;
+  const i32* ncomp;
+  i32* lists;
+  ObjOut* out;
+  HD static bool same_sig(const TableView& t, i32 r, const i32* s, i32 m) {
+    if (t.sig_start[r + 1] - t.sig_start[r] != m) return false;
+    for (i32 j = 0; j < m; ++j)
+      if (t.sig[t.sig_start[r] + j] != s[j]) return false;
+    return true;
+  }
+  HD void operator()(i64 o) const {
+    const Obj& b = obj[o];
+    const TableView& t = b.t;
+    const i32 m = ncomp[o], F = t.k + kPart;
+    i32* s = lists + b.crop;
+    sort_descending(s, m);
+    const i64* rows = parts + b.part;
+    i64 vote = 0, spill_n = 0, miss_n = 0;
+    i128 spill = 0, miss = 0;
+    for (i32 y = 0; y < t.H; ++y) {
+      const i64* f = rows + i64(y) * F + t.k;
+      vote += f[0], spill_n += f[1], spill += f[2], miss_n += f[3], miss += f[4];
+    }
+    i32 same = 0, voters = 0;
+    double best = 0;
+    for (i32 r = 0; r < t.k; ++r) {
+      if (!t.voter[r]) continue;
+      ++voters;
+      if (!same_sig(t, r, s, m)) continue;
+      i64 inter = 0;
+      for (i32 y = 0; y < t.H; ++y) inter += rows[i64(y) * F + r];
+      const double v = iou(inter, b.area, t.rater_area[r]);
+      if (!same || v > best) best = v;  // Python's max: the first of equal values
+      ++same;
+    }
+    const double d = (sum_value(spill) - 0.5 * double(spill_n)) + (sum_value(miss) - 0.5 * double(miss_n));
+    double g = 0.0;
+    if (b.area > 0) {
+      i64 lo = t.rater_area[0], hi = t.rater_area[0];
+      for (i32 r = 1; r < t.k; ++r) lo = mn(lo, t.rater_area[r]), hi = mx(hi, t.rater_area[r]);
+      const double up = double(hi) / double(b.area), down = lo > 0 ? double(b.area) / double(lo) : 1.0;
+      g = (up < 1.0 ? up : 1.0) * (down < 1.0 ? down : 1.0);
+    }
+    out[o] = ObjOut{b.area, m, same ? best : iou(vote, b.area, t.n_vote),
+                    1.0 / (1.0 + (2.0 * d / double(t.perimeter)) / (t.t5 * t.t5)), g, double(same) / double(voters)};
+  }
+};
+
+struct SigScan {  // one item
+  const i32* ncomp;
+  i64 n;
+  i64* sig_start;
+  HD void operator()(i64) const {
+    sig_start[0] = 0;
+    for (i64 o = 0; o < n; ++o) sig_start[o + 1] = sig_start[o] + ncomp[o];
+  }
+};
+
+struct SigCompact {
+  const Obj* obj;
+  const i32* ncomp;
+  const i64* sig_start;
+  const i32* lists;
+  i32* sig;
+  HD void operator()(i64 o) const {
+    for (i32 j = 0; j < ncomp[o]; ++j) sig[sig_start[o] + j] = lists[obj[o].crop + j];
+  }
+};
+
+// Scores the masks at `words` in lane L's checker arena (mask s at word_start[s]) against their tables. The staging
+// buffers and the scorer's arena are free (the caller waited for the lane).
+void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, const std::vector<i64>& word_start,
+                 Scores& out) {
+  const i64 n = i64(tv.size());
+  const Stream st = L.stream;
+  std::vector<Obj> obj(size_t(n), Obj{});
+  std::vector<i64> row_start(size_t(n + 1), 0), crow_start(size_t(n + 1), 0);
+  for (i64 o = 0; o < n; ++o) {
+    obj[size_t(o)].t = tv[size_t(o)], obj[size_t(o)].words = word_start[size_t(o)];
+    row_start[size_t(o + 1)] = row_start[size_t(o)] + tv[size_t(o)].H;
+  }
+  const i64 rows = row_start[size_t(n)];
+
+  // Boxes: the crop layout.
+  Layout a;
+  const size_t a_obj = a.put<Obj>(n), a_rows = a.put<i64>(n + 1), a_rbox = a.put<i32>(3 * rows),
+               a_box = a.put<i64>(5 * n);
+  u8* d = L.score.get(a.size);
+  u8* h = L.in.get(a_rbox);
+  std::copy_n(obj.data(), n, ptr<Obj>(h, a_obj));
+  std::copy_n(row_start.data(), n + 1, ptr<i64>(h, a_rows));
+  to_device(d, h, a_rbox, st);
+  for_each(st, rows, RowBox{ptr<Obj>(d, a_obj), ptr<i64>(d, a_rows), n, words, ptr<i32>(d, a_rbox)});
+  for_each(st, n, ObjBox{ptr<i64>(d, a_rows), ptr<i32>(d, a_rbox), ptr<i64>(d, a_box)});
+  const i64* box = ptr<i64>(L.out.get(sizeof(i64) * size_t(5 * n)), 0);
+  to_host(L.out.p, d + a_box, sizeof(i64) * size_t(5 * n), st);
+  wait(st);
+  i64 parts = 0, crop = 0;
+  for (i64 o = 0; o < n; ++o) {
+    Obj& b = obj[size_t(o)];
+    const i64* x = box + 5 * o;
+    b.bx = i32(x[0]), b.by = i32(x[1]), b.bw = i32(x[2]), b.bh = i32(x[3]), b.area = x[4];
+    b.part = parts, b.crop = crop;
+    parts += i64(b.t.H) * (b.t.k + kPart);
+    if (b.area) crop += i64(b.bw + 2) * (b.bh + 2);
+    crow_start[size_t(o + 1)] = crow_start[size_t(o)] + (b.area ? b.bh + 2 : 0);
+  }
+  const i64 crows = crow_start[size_t(n)];
+
+  // Labeling, row partials, terms.
+  Layout l;
+  const size_t o_obj = l.put<Obj>(n), o_rows = l.put<i64>(n + 1), o_crows = l.put<i64>(n + 1),
+               o_parts = l.put<i64>(parts), o_img = l.put<u8>(crop), o_fg = l.put<i32>(crop), o_bg = l.put<i32>(crop),
+               o_aux = l.put<i32>(crop), o_nc = l.put<i32>(n), o_out = l.put<ObjOut>(n), o_ss = l.put<i64>(n + 1);
+  d = L.score.get(l.size);
+  h = L.in.get(o_parts);
+  std::copy_n(obj.data(), n, ptr<Obj>(h, o_obj));
+  std::copy_n(row_start.data(), n + 1, ptr<i64>(h, o_rows));
+  std::copy_n(crow_start.data(), n + 1, ptr<i64>(h, o_crows));
+  to_device(d, h, o_parts, st);
+  zero(d + o_nc, sizeof(i32) * size_t(n), st);
+  const Obj* dobj = ptr<Obj>(d, o_obj);
+  const Crops c{dobj, ptr<i64>(d, o_crows), n, ptr<u8>(d, o_img), ptr<i32>(d, o_fg), ptr<i32>(d, o_bg),
+                ptr<i32>(d, o_aux), ptr<i32>(d, o_nc)};
+  auto label = [&](int which) {
+    for_each(st, crows, LabelInit{c, which});
+    for_each(st, crows, LabelMerge{c, which});
+    for_each(st, crows, LabelFlatten{c, which});
+  };
+  auto count = [&](int which) {
+    zero(c.aux, sizeof(i32) * size_t(crop), st);
+    for_each(st, crows, Count{c, which});
+  };
+  for_each(st, crows, CropFill{c, words});
+  label(1), count(1), for_each(st, crows, Filter{c, 1});
+  label(0), count(0), for_each(st, crows, Filter{c, 0});
+  label(1), label(0);
+  zero(c.aux, sizeof(i32) * size_t(crop), st);
+  for_each(st, crows, Holes{c});
+  for_each(st, crows, Gather{c});
+  for_each(st, rows, ScoreRows{dobj, ptr<i64>(d, o_rows), n, words, ptr<i64>(d, o_parts)});
+  for_each(st, n, ObjTerms{dobj, ptr<i64>(d, o_parts), c.ncomp, c.bg, ptr<ObjOut>(d, o_out)});
+  for_each(st, 1, SigScan{c.ncomp, n, ptr<i64>(d, o_ss)});
+  for_each(st, n, SigCompact{dobj, c.ncomp, ptr<i64>(d, o_ss), c.bg, c.aux});
+  const size_t res = sizeof(ObjOut) * size_t(n), res_pad = (res + 255) / 256 * 256;
+  u8* ho = L.out.get(res_pad + sizeof(i64) * size_t(n + 1));
+  to_host(ho, d + o_out, res, st);
+  to_host(ho + res_pad, d + o_ss, sizeof(i64) * size_t(n + 1), st);
+  wait(st);
+  const ObjOut* r = ptr<ObjOut>(ho, 0);
+  for (i64 o = 0; o < n; ++o) {
+    out.area.push_back(r[o].area);
+    out.iou_tc.push_back(r[o].iou_tc), out.f5.push_back(r[o].f5), out.g_area.push_back(r[o].g_area);
+    out.topo_freq.push_back(r[o].topo_freq);
+  }
+  out.sig_start.assign(ptr<i64>(ho + res_pad, 0), ptr<i64>(ho + res_pad, 0) + n + 1);
+
+  // The signatures.
+  const i64 total = out.sig_start.back();
+  out.sig.resize(size_t(total));
+  to_host(L.out.get(sizeof(i32) * size_t(total)), c.aux, sizeof(i32) * size_t(total), st);
+  wait(st);
+  std::copy_n(ptr<i32>(L.out.p, 0), total, out.sig.data());
 }
 
 }  // namespace
@@ -1128,7 +1682,7 @@ PolygonResult check_polygons(const Polygons& in) {
   }
   for (int k = 0; k < used; ++k) {  // lane 1 is packed while lane 0 runs
     pack(in, out.word_start, chunks[k], e.lanes[k].in.p);
-    launch(chunks[k], in.G, e.lanes[k]);
+    launch(chunks[k], in.G, e.lanes[k], true);
   }
   for (int k = 0; k < used; ++k) {
     const PolyChunk& c = chunks[k];
@@ -1160,6 +1714,121 @@ MaskResult check_masks(const Masks& in) {
     check_mask_chunk(in, m0, m1, out, e.lanes[0]);
     m0 = m1;
   }
+  return out;
+}
+
+i64 add_tables(const Tables& t) {
+  const i64 wpr = words_per_row(t.W), plane = i64(t.H) * wpr, px = i64(t.H) * t.W, nsig = t.sig_start[t.k];
+  Layout l;
+  const size_t o_r = l.put<u32>(t.k * plane), o_u = l.put<u32>(plane), o_c = l.put<u32>(plane),
+               o_v = l.put<u32>(plane), o_d = l.put<float>(px), o_a = l.put<i64>(t.k), o_ss = l.put<i64>(t.k + 1),
+               o_s = l.put<i32>(nsig), o_vt = l.put<u8>(t.k);
+  std::vector<u8> h(l.size, 0);
+  for (i32 r = 0; r < t.k; ++r) pack_plane(t.raters + r * px, t.H, t.W, ptr<u32>(h.data(), o_r) + r * plane);
+  pack_plane(t.uni, t.H, t.W, ptr<u32>(h.data(), o_u));
+  pack_plane(t.core, t.H, t.W, ptr<u32>(h.data(), o_c));
+  pack_plane(t.vote, t.H, t.W, ptr<u32>(h.data(), o_v));
+  std::copy_n(t.dist, px, ptr<float>(h.data(), o_d));
+  std::copy_n(t.rater_area, t.k, ptr<i64>(h.data(), o_a));
+  std::copy_n(t.sig_start, t.k + 1, ptr<i64>(h.data(), o_ss));
+  std::copy_n(t.sig, nsig, ptr<i32>(h.data(), o_s));
+  std::copy_n(t.voter, t.k, ptr<u8>(h.data(), o_vt));
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  clear_error();
+  Drain drain{e};
+  e.start();
+  u8* d = static_cast<u8*>(alloc(true, l.size));
+  try {
+    to_device(d, h.data(), l.size, e.lanes[0].stream);
+    wait(e.lanes[0].stream);
+  } catch (...) {
+    release(true, d);
+    throw;
+  }
+  const TableView v{ptr<u32>(d, o_r), ptr<u32>(d, o_u), ptr<u32>(d, o_c), ptr<u32>(d, o_v), ptr<float>(d, o_d),
+                    ptr<i64>(d, o_a), ptr<i64>(d, o_ss), ptr<i32>(d, o_s), ptr<u8>(d, o_vt), t.n_vote, t.perimeter,
+                    t.t5, t.H, t.W, t.k, t.min_area};
+  Registry& r = registry();
+  i64 handle = i64(r.block.size());
+  if (r.free.empty()) {
+    r.block.push_back(d), r.view.push_back(v);
+  } else {
+    handle = r.free.back();
+    r.free.pop_back();
+    r.block[size_t(handle)] = d, r.view[size_t(handle)] = v;
+  }
+  ++r.live;
+  return handle;
+}
+
+void drop_tables(i64 handle) {
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  Registry& r = registry();
+  if (handle < 0 || handle >= i64(r.block.size()) || !r.block[size_t(handle)])
+    throw std::invalid_argument("unknown tables handle");
+  clear_error();
+  release(true, r.block[size_t(handle)]);
+  r.block[size_t(handle)] = nullptr;
+  r.free.push_back(handle);
+  --r.live;
+}
+
+i64 resident() {
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  return registry().live;
+}
+
+Scores score_polygons(const Polygons& in, const i64* tables) {
+  const i64 n = in.n;
+  Scores out;
+  out.sig_start = {0};
+  std::vector<i64> word_start(size_t(n + 1), 0);
+  for (i64 k = 0; k < n; ++k) word_start[size_t(k + 1)] = word_start[size_t(k)] + i64(in.H[k]) * words_per_row(in.W[k]);
+  if (n == 0) return out;
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  const std::vector<TableView> tv = views(tables, n, in.W, in.H);
+  clear_error();
+  Drain drain{e};
+  e.start();
+  Lane& L = e.lanes[0];
+  const PolyChunk c = plan(in, word_start, 0, n);
+  L.dev.get(c.size), L.in.get(c.in_bytes), L.out.get(c.words - c.defects);
+  pack(in, word_start, c, L.in.p);
+  launch(c, in.G, L, false);
+  wait(L.stream);
+  out.defects.assign(ptr<i64>(L.out.p, 0), ptr<i64>(L.out.p, 0) + n * kNumDefects);
+  score_words(L, tv, ptr<u32>(L.dev.p, c.words), word_start, out);
+  return out;
+}
+
+Scores score_masks(const Masks& in, const i64* tables) {
+  const i64 n = in.n;
+  Scores out;
+  out.sig_start = {0};
+  std::vector<i64> word_start(size_t(n + 1), 0);
+  for (i64 k = 0; k < n; ++k) word_start[size_t(k + 1)] = word_start[size_t(k)] + i64(in.H[k]) * words_per_row(in.W[k]);
+  if (n == 0) return out;
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  const std::vector<TableView> tv = views(tables, n, in.W, in.H);
+  clear_error();
+  Drain drain{e};
+  e.start();
+  Lane& L = e.lanes[0];
+  const size_t bytes = sizeof(u32) * size_t(word_start[size_t(n)]);
+  u8* h = L.in.get(bytes);
+  std::fill_n(h, bytes, u8(0));
+  for (i64 k = 0; k < n; ++k)
+    pack_plane(in.bits + in.start[k], in.H[k], in.W[k], ptr<u32>(h, 0) + word_start[size_t(k)]);
+  u8* d = L.dev.get(bytes);
+  to_device(d, h, bytes, L.stream);
+  wait(L.stream);
+  out.defects.assign(size_t(n * kNumDefects), 0);
+  score_words(L, tv, ptr<u32>(d, 0), word_start, out);
   return out;
 }
 

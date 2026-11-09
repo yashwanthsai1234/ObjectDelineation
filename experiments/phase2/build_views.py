@@ -23,7 +23,7 @@ outside the view (the bundle stays deterministic, BK1-7). Default 3 epochs: R1's
 (S1-8). Reads untrusted data: run with python -I.
 
 References:
-- plan experiments/phase2/PLAN.md D9, D10, D11, §6.0; promoted from lab/B3/dihedral.py (P3) and lab/A4, lab/B1 shifts
+- plan experiments/phase2/PLAN.md D9, D10, D11, §6.0; promoted from archive/phase2_lab/B3/dihedral.py (P3) and archive/phase2_lab/A4, archive/phase2_lab/B1 shifts
 - multiprocessing.Pool.imap (ordered results): https://docs.python.org/3/library/multiprocessing.html
 """
 import argparse

@@ -1,5 +1,5 @@
 """GRPO-signal panel of K = 8 sampled groups per item, D12 checkpoint rule R-B and the per-item Spearman (PLAN §5.1
-G-signal / G-probe, D12, M11; promoted from experiments/phase2/lab/B2 score.py, analyze.py, posthoc.py `parts`).
+G-signal / G-probe, D12, M11; promoted from archive/phase2_lab/B2 score.py, analyze.py, posthoc.py `parts`).
 
 Per item (one GRPO group of G = 8 samples at T = 1), from `objdel.eval.metrics` output (`group`):
 - R = 0.3 IoU_tc + 0.3 F5 + 0.1 legal + 0.3 g_area, the G-probe raw composite on the legality-gated terms
@@ -23,7 +23,7 @@ that does not fire (ties stay deep). The same walk under r_std (B2's pre-registe
 `disagree` when the two statistics would select differently or fire differently on an evaluated pair.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from scipy import stats
@@ -32,6 +32,7 @@ WEIGHTS = {"iou_tc": 0.3, "f5": 0.3, "legal": 0.1, "g_area": 0.3}  # REWARD_V4.w
 IOU_OK = 0.5  # legal_wrong: legal and IoU_tc < this (REWARD_V4.iou_gate)
 BOOT, LEVEL, SEED = 2000, 0.95, 0
 VETO_REL = 0.15
+MISS = 0.1  # an item is a miss when its K-mean IoU_tc is below this (final_eval, ceiling)
 DIGITS = 12  # decision values are rounded to 12 decimals before a >= / <= line (BK2-4, BK2-7): float sums of exact
 #              shares land 1e-16 off (0.345 / 0.30 - 1 = 0.1499999...), real differences are far above 1e-12
 VETO_STAT, ALT_STAT = "sd_geom", "r_std"
@@ -99,9 +100,14 @@ def cluster(item_id: str) -> str:
     return item_id.rsplit("/", 1)[0] if item_id.startswith("lidc/") else item_id
 
 
-def draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED) -> list[np.ndarray]:
-    """B nodule-cluster bootstrap index draws (B2's analyze.draws)."""
-    nod = [cluster(i) for i in ids]
+def draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: Callable[[str], str] = cluster
+          ) -> list[np.ndarray]:
+    """B cluster bootstrap index draws: each draw picks C of the C clusters (key(id); first-appearance order) with
+    replacement and keeps all their items. The default key (nodule) reproduces B2's analyze.draws bit for bit;
+    key = {item_id: group_id}.__getitem__ draws patients (A1's gate CI)."""
+    if len(ids) == 0:
+        raise ValueError("draws: no ids to resample")
+    nod = [key(i) for i in ids]
     groups = [np.array([j for j, x in enumerate(nod) if x == u]) for u in dict.fromkeys(nod)]
     rng = np.random.default_rng(seed)
     return [np.concatenate([groups[g] for g in rng.integers(0, len(groups), len(groups))]) for _ in range(boot)]
@@ -117,6 +123,20 @@ def ci(x: np.ndarray, D: list[np.ndarray]) -> list[float]:
     """[mean, lo, hi] of x under the draws D."""
     x = np.asarray(x, float)
     return _ci(lambda d: x[d].mean(), len(x), D)
+
+
+def cluster_t(x, groups: Sequence[str], level: float = LEVEL) -> list[float]:
+    """[mean, lo, hi]: the CR1 cluster-robust t interval of the item-weighted mean of x, with groups[i] the cluster
+    (patient) of item i. se^2 = P/(P-1) sum_p (S_p - m N_p)^2 / N^2, t with P - 1 degrees of freedom (Cameron and
+    Miller 2015, eq. 11-12 at one regressor). The decision interval of a gate on fewer than 50 patients (A1 step 5)."""
+    x = np.asarray(x, float)
+    _, inv = np.unique(np.asarray(groups), return_inverse=True)
+    S, N, P = np.bincount(inv, x), np.bincount(inv).astype(float), inv.max() + 1
+    if P < 2:
+        raise ValueError(f"cluster_t: needs at least 2 patients, got {P}")
+    m = S.sum() / N.sum()
+    h = stats.t.ppf((1 + level) / 2, P - 1) * np.sqrt(P / (P - 1) * ((S - m * N) ** 2).sum() / N.sum() ** 2)
+    return [float(m), float(m - h), float(m + h)]
 
 
 def panel(groups: Sequence[dict], boot: int = BOOT, seed: int = SEED) -> dict:

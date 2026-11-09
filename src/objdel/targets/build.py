@@ -6,7 +6,7 @@ Per object (structure) of one rater:
 3. corners mapped to the 0-1000 grid; every vertex the object uses twice (a pinch: two pixels touching at a corner)
    split into two points one grid unit along the pinch's incoming and outgoing crack steps ("bevel", legal and
    pixel-neutral for crops <= 500 px); repeated and straight-through vertices dropped;
-4. certified with polycore through objdel.geometry.to_mask: legal, at most MAX_VERTICES per ring, the same
+4. certified by the CUDA checker through objdel.geometry.to_mask: legal, at most MAX_VERTICES per ring, the same
    per-instance signature as the mask under the size rule (plan §4.2: the rule applies to targets, reward and eval),
    and IoU >= iou_min. The rule is the reward's min_area (of the raters' union) when the caller passes it; without
    it the union is unknown, so the signature must agree at every rule a union on this crop can have, from the
@@ -39,7 +39,7 @@ References:
     D. Estkowski, J. S. B. Mitchell, "Simplifying a polygonal subdivision while keeping it simple" (min-vertex
         simplification without crossings is hard; simplify per ring, then verify and repair):
         https://www.uni-trier.de/fileadmin/fb4/prof/INF/DEA/Seminar0708/Estkowski.pdf
-    experiments/phase1/lab/t_targets/REPORT.md (minseg_hybrid, tau = 3, IoU >= 0.99, bevel, crop policy)
+    archive/phase1_lab/t_targets/REPORT.md (minseg_hybrid, tau = 3, IoU >= 0.99, bevel, crop policy)
 """
 import hashlib
 import time

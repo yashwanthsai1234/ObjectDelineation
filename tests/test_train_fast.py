@@ -10,6 +10,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
+from datasets import Dataset  # noqa: E402
 from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration  # noqa: E402
 from trl import GRPOTrainer  # noqa: E402
 from trl.trainer.utils import add_fused_lm_head  # noqa: E402
@@ -210,6 +211,20 @@ def test_fast_grpo_clears_the_vision_cache_per_generation_batch(monkeypatch):
     monkeypatch.setattr(GRPOTrainer, "_generate_and_score_completions", lambda self, inputs: {"done": inputs})
     assert t._generate_and_score_completions(["prompts"]) == {"done": ["prompts"]}
     assert t.vision.store == {}
+
+
+def test_fast_grpo_trains_on_open_once_rows_from_the_main_process(monkeypatch):
+    from objdel.train.dataset import OpenOnce
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "get_train_dataloader", lambda self: seen.append(self.train_dataset) or "dl")
+    rows = Dataset.from_list([{"prompt": "q", "image": None, "key": "k"}])
+    t = trainer(fast.FastGRPO, train_dataset=rows, args=type("A", (), {"dataloader_num_workers": 0})())
+    assert fast.FastGRPO.get_train_dataloader(t) == "dl"
+    assert isinstance(seen[0], OpenOnce) and t.train_dataset is rows  # wrapped only for the loader
+    t.args.dataloader_num_workers = 2  # a worker would keep its own last stack: the 16 fetches spread over workers
+    with pytest.raises(ValueError, match="dataloader_num_workers"):
+        fast.FastGRPO.get_train_dataloader(t)
 
 
 def test_fast_grpo_skips_flop_counting():
@@ -444,3 +459,310 @@ def test_lora_input_cast_is_dropped_only_under_bf16_autocast_where_it_is_bit_ide
         assert torch.equal(m(input_ids=ids).logits, ref)
     t = trainer(fast.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False})(), model=m)
     assert fast.FastGRPO.drop_lora_input_cast(t) is False  # no autocast: nothing changed (and the model left as is)
+
+
+def _lora_bf16():
+    """tiny_model with configs.lora's LoRA (all-linear, vision excluded) in bf16, LoRA B set non-zero so the merge
+    moves the weights (a fresh adapter has B = 0)."""
+    from peft import get_peft_model
+
+    from objdel.train import configs
+
+    m = get_peft_model(tiny_model(), configs.lora("qwen3-vl-2b")).to(torch.bfloat16)
+    g = torch.Generator().manual_seed(1)
+    for n, p in m.named_parameters():
+        if "lora_B" in n:
+            p.data = (torch.randn(p.shape, generator=g) * 0.05).to(p.dtype)
+    return m
+
+
+def _trl_iter(model):
+    """TRL 1.17's VLLMGeneration._iter_named_params on one process (in-place merge_adapter / unmerge_adapter)."""
+    from types import MethodType, SimpleNamespace
+
+    from trl.generation.vllm_generation import VLLMGeneration
+
+    dist = SimpleNamespace(is_fsdp=False, gather_params=lambda ps: contextlib.nullcontext())
+    host = SimpleNamespace(model=model, _dist=dist)
+    host._fix_param_name_to_vllm = MethodType(VLLMGeneration._fix_param_name_to_vllm, host)
+    return VLLMGeneration._iter_named_params(host)
+
+
+def test_vllm_sync_pushes_the_same_weights_as_trls_merge():
+    m = _lora_bf16()
+    ours = {n: t.clone() for n, t in fast.lora_merged_params(m)}
+    trl = {n: t.clone() for n, t in _trl_iter(m)}
+    assert ours.keys() == trl.keys() and not any("lora_" in n for n in ours)
+    assert all(torch.equal(ours[n], trl[n]) for n in ours)
+
+
+def test_vllm_sync_never_writes_the_base_weights():
+    """TRL merges LoRA into the bf16 base weights in place and unmerges: W + d - d != W in bf16 (trl #6688), so the
+    frozen base drifts every step. The sync must leave every parameter bit-identical."""
+    m = _lora_bf16()
+    before = {n: p.detach().clone() for n, p in m.named_parameters()}
+    for _ in range(20):
+        for _ in fast.lora_merged_params(m):
+            pass
+    assert all(torch.equal(p, before[n]) for n, p in m.named_parameters())
+    for _ in range(20):  # the bug this replaces, so the test above is not vacuous
+        for _ in _trl_iter(m):
+            pass
+    assert any(not torch.equal(p, before[n]) for n, p in m.named_parameters())
+
+
+def test_fast_grpo_routes_trls_vllm_sync_through_the_no_merge_path():
+    from types import SimpleNamespace
+
+    m = _lora_bf16()
+    t = object.__new__(fast.FastGRPO)
+    t.model, t.accelerator = m, SimpleNamespace(num_processes=1)
+    t.vllm_generation = SimpleNamespace(model=m, _dist=SimpleNamespace(is_fsdp=False))
+    assert t.sync_without_merge()
+    before = {n: p.detach().clone() for n, p in m.named_parameters()}
+    pushed = dict(t.vllm_generation._iter_named_params())
+    assert pushed.keys() == dict(fast.lora_merged_params(m)).keys()
+    assert all(torch.equal(p, before[n]) for n, p in m.named_parameters())
+    t.vllm_generation = None  # no vLLM (use_vllm False): nothing to route
+    assert not t.sync_without_merge()
+
+
+def test_uncompiled_chunks_round_widths_to_64_not_to_the_compile_buckets():
+    """The 8 BUCKETS bound torch.compile's recompiles; uncompiled they only pad (430 tokens ran 512 wide)."""
+    mask = torch.zeros(2, 1000, dtype=torch.long)  # prompt width P = 400, 600 answer columns
+    mask[:, 70:400] = 1  # 330 prompt tokens
+    mask[0, 400:500] = 1  # the longest answer: 100 tokens
+    start, keep = fast.window(mask, 600, fast.FastForward.buckets)
+    assert fast.FastForward.buckets == tuple(range(64, 2049, 64))
+    assert (400 + keep - start, keep) == (448, 118)  # 330 + 100 = 430 -> 448
+    start, keep = fast.window(mask, 600, fast.BUCKETS)
+    assert 400 + keep - start == 512
+
+
+def test_compiled_layers_go_back_to_the_compile_buckets():
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
+    assert "fast.compile_text_layers(trainer.model, a.compile)" in src and "trainer.buckets = fast.BUCKETS" in src
+
+
+def test_vllm_sync_wake_and_sleep_are_timed():
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    calls = []
+    llm = SimpleNamespace(wake_up=lambda tags=None: calls.append(("wake", tags)),
+                          sleep=lambda level=1: calls.append(("sleep", level)))
+    vg = SimpleNamespace(llm=llm, sync_weights=lambda: calls.append(("sync",)))
+    t = object.__new__(fast.FastGRPO)
+    t.model, t.vllm_generation = SimpleNamespace(training=True), vg
+    t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    t.time_vllm_phases()
+    t.time_vllm_phases()  # idempotent: one timer layer
+    vg.sync_weights(), llm.wake_up(tags=["kv_cache"]), llm.sleep(level=2)
+    assert calls == [("sync",), ("wake", ["kv_cache"]), ("sleep", 2)]
+    timed = {k: len(v) for k, v in t._metrics["train"].items()}
+    assert timed == {"time/sync_s": 1, "time/wake_s": 1, "time/sleep_s": 1}
+
+
+def group_batch(groups, G, lengths, pads=None, P=12, T=10, seed=3):
+    """GRPO layout: `groups` prompts x G answers, rows of a group consecutive with the same prompt tokens, pads and
+    image; answers of `lengths` (one per row) differ."""
+    g = torch.Generator().manual_seed(seed)
+    n = groups * G
+    ids = torch.randint(0, 99, (n, P + T), generator=g)
+    mask = torch.ones_like(ids)
+    pads = pads or [0] * groups
+    for q in range(groups):
+        p, rows = pads[q], slice(q * G, q * G + G)
+        prompt = torch.randint(0, 99, (P,), generator=g)
+        prompt[p], prompt[p + 1:p + 5], prompt[p + 5] = START, IMG, END
+        ids[rows, :P] = prompt
+        mask[rows, :p] = 0
+    for r, L in enumerate(lengths):
+        mask[r, P + L:] = 0
+    img = torch.randn(groups, 16, PATCH, generator=g)
+    pv = img[[r // G for r in range(n)]].reshape(-1, PATCH)
+    kw = {"pixel_values": pv, "image_grid_thw": torch.tensor([[1, 4, 4]] * n), "num_images": [1] * n,
+          "mm_token_type_ids": (ids == IMG).long()}  # fmt: skip
+    return ids, mask, T, kw
+
+
+def shared(m, **attrs):
+    return trainer(Fast, shared_prefix=True, rope=fast.RopeCache.install(m), **attrs)
+
+
+@pytest.mark.parametrize("batch_size", [8, 4])
+def test_shared_prefix_logps_equal_trls(batch_size):
+    """Each group's prompt runs once: [prompt minus its last token] + G x [last prompt token, answer], answers masked
+    from each other. Same log-probs and entropies as TRL's one-row-per-answer forward."""
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref_lp, ref_ent, _ = trainer(Plain)._get_per_token_logps_and_entropies(
+        m, ids, mask, T, batch_size=batch_size, compute_entropy=True, **kw)
+    lp, ent, _ = shared(m)._get_per_token_logps_and_entropies(
+        m, ids, mask, T, batch_size=batch_size, compute_entropy=True, **kw)
+    real = mask[:, -T:].bool()
+    assert lp.shape == ref_lp.shape == (8, T)
+    torch.testing.assert_close(lp[real], ref_lp[real], atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(ent[real], ref_ent[real], atol=1e-5, rtol=1e-5)
+    assert (lp[~real] == 0).all()
+
+
+def test_shared_prefix_gradients_equal_trls():
+    m = tiny_model().train()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[1, 3])
+    real = mask[:, -T:].float()
+    grads = []
+    for t in (trainer(Plain), shared(m)):
+        m.zero_grad()
+        lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=8, **kw)
+        (lp * real).sum().backward()
+        grads.append({n: p.grad.clone() for n, p in m.named_parameters() if p.grad is not None})
+    assert grads[0].keys() == grads[1].keys()
+    for n in grads[0]:
+        torch.testing.assert_close(grads[1][n], grads[0][n], atol=1e-4, rtol=1e-4)
+
+
+def test_shared_prefix_runs_far_fewer_tokens():
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10])
+    seen, orig = [], m.model.language_model.forward
+
+    def forward(*a, **k):
+        seen.append(k["inputs_embeds"].shape[:2])
+        return orig(*a, **k)
+
+    m.model.language_model.forward = forward
+    t = shared(m)
+    t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=8, **kw)
+    (rows, width), = seen
+    assert rows == 2  # one packed row per group
+    assert width == 11 + 4 * 1 + (2 + 6 + 4 + 10)  # prompt minus its last token + 4 x (last prompt token + answer)
+    assert rows * width < 8 * (12 + 10) / 2  # 74 tokens, not TRL's 8 rows x 22
+    real = 2 * 4 * 12 + (3 + 7 + 1 + 5 + 2 + 6 + 4 + 10)  # every row's prompt + its answer: 134
+    assert t._metrics["train"]["shared/token_ratio"] == [(2 * 11 + 8 + 38) / real]
+
+
+def test_shared_prefix_falls_back_when_rows_do_not_share_prompts():
+    m = tiny_model()
+    ids, mask, T, kw = batch(pads=[2, 0, 5], lengths=[3, 7, 1])  # three different prompts
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    lp, _, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+
+
+def test_by_group_length_keeps_each_group_together_longest_group_first():
+    n = torch.tensor([3, 9, 2, 4, 5, 5, 1, 1, 7, 2, 2, 2])  # 3 groups of 4: longest members 9, 5, 7
+    batch_ = {"prompt_mask": torch.ones(12, 1, dtype=torch.long),
+              "completion_mask": torch.zeros(12, 9, dtype=torch.long),
+              "tag": list(range(12)), "advantages": torch.arange(12.0)}
+    for r, L in enumerate(n.tolist()):
+        batch_["completion_mask"][r, :L] = 1
+    out = fast.by_group_length(batch_, 4)
+    assert out["tag"] == [0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6, 7]
+    assert out["advantages"].tolist() == [float(i) for i in out["tag"]]
+
+
+def test_shared_prefix_update_micro_batches_keep_whole_groups(monkeypatch):
+    """With shared_prefix the update's order keeps each prompt's G answers together (by_group_length), so a
+    micro-batch of whole groups packs; micro-batches that cannot hold whole groups keep by_length."""
+    import trl.trainer.grpo_trainer as G
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append(G.shuffle_sequence_dict))
+    t = c10_trainer()
+    t.model, t.shared_prefix, t.num_generations = type("M", (), {"training": True})(), True, 8
+    t.args.per_device_train_batch_size = 16
+    t._prepare_inputs({})
+    assert seen[0].func is fast.by_group_length and seen[0].keywords == {"G": 8}
+    t.args.per_device_train_batch_size = 12  # not whole groups of 8
+    t._prepare_inputs({})
+    assert seen[1] is fast.by_length
+
+
+def test_shared_prefix_normalizes_over_the_sampled_support_as_trl():
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    g = torch.Generator().manual_seed(5)
+    sup = torch.randint(0, 99, (8, T, 6), generator=g)
+    sup[..., 0] = ids[:, -T:]  # the sampled token is in its support
+    sup[..., 5] = -1  # padded support slot
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, sampling_mask=sup, **kw)
+    lp, _, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, sampling_mask=sup, **kw)
+    real = mask[:, -T:].bool()
+    torch.testing.assert_close(lp[real], ref[real], atol=1e-5, rtol=1e-5)
+
+
+def test_train_rl_and_g_probe_turn_on_shared_prefix_by_flag(capsys):
+    from pathlib import Path
+
+    from experiments.phase2 import train_rl
+
+    with pytest.raises(SystemExit):
+        train_rl.main(["--help"])
+    assert "--shared-prefix" in capsys.readouterr().out
+    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
+    assert 'trainer.shared_prefix = bool(getattr(a, "shared_prefix", False))' in src
+
+
+@pytest.mark.parametrize("impl", ["eager", "sdpa"])
+def test_shared_prefix_mask_works_under_both_attention_kinds(impl):
+    m = tiny_model()
+    m.set_attn_implementation(impl)
+    assert m.config._attn_implementation == impl
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    lp, _, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    real = mask[:, -T:].bool()
+    torch.testing.assert_close(lp[real], ref[real], atol=1e-5, rtol=1e-5)
+
+
+def test_packing_is_chosen_only_when_it_costs_less():
+    """Packed attention is dense over the whole packed row (prompt + 8 answers): with long answers its square
+    outgrows the 8 prompts it saves. Real sizes: 325-token prompts, 16 rows, linear cost ~12,000x an attention pair."""
+    short = [127] * 16
+    assert fast.packing_wins(325, short, groups=2)
+    assert not fast.packing_wins(325, [1536] * 16, groups=2)  # answers at the cap: per-row is cheaper
+    assert not fast.packing_wins(325, short, groups=16)  # nothing shared
+
+
+def test_long_answers_fall_back_to_the_per_row_forward(monkeypatch):
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10])
+    monkeypatch.setattr(fast, "packing_wins", lambda *a, **k: False)
+    t = shared(m)
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    assert not t._metrics["train"]["shared/token_ratio"]
+
+
+def test_a_model_without_the_rope_hook_takes_the_per_row_forward():
+    """A separate reference model (full fine-tuning, beta > 0) has no RopeCache hook: it must not get a packed row."""
+    m, other = tiny_model(), tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(other, ids, mask, T, **kw)
+    t = shared(m)
+    lp, _, _ = t._get_per_token_logps_and_entropies(other, ids, mask, T, **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    assert not t._metrics["train"]["shared/token_ratio"]
+
+
+def test_update_order_keeps_trls_shuffle_under_a_per_micro_batch_entropy_cut(monkeypatch):
+    import trl.trainer.grpo_trainer as G
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append(G.shuffle_sequence_dict))
+    shuffle = G.shuffle_sequence_dict
+    t = c10_trainer()
+    t.model, t.top_entropy_quantile = type("M", (), {"training": True})(), 0.2
+    t._prepare_inputs({})
+    assert seen == [shuffle]
+
+
+def test_shared_prefix_is_off_when_the_text_layers_are_compiled():
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
+    assert 'trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)' in src

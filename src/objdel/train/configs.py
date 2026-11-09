@@ -1,4 +1,5 @@
-"""TRL 1.16 SFT and GRPO configurations for the screened models (plan D8, D10, D12; lab t_stack).
+"""TRL (version pinned in pyproject.toml) SFT and GRPO configurations for the screened models
+(plan D8, D10, D12; lab t_stack).
 
 GRPO (D8): loss_type="dr_grpo" (constant length normaliser, no std scaling), clip epsilon 0.2 / epsilon_high 0.28
 (DAPO clip-higher), beta = 1e-3 from the start (with full fine-tuning a beta of 0 at init loads no reference
@@ -32,7 +33,9 @@ the processor's chat template, qwen3_vl_training for Qwen3-VL and lfm2_training 
 (truncation can cut image tokens), no packing. Full fine-tuning lr 5e-5, LoRA r16 on the language model's linear
 layers lr 5e-4 (lab T4). LoRA only for Qwen3-VL-2B (full fine-tuning with AdamW needs ~34 GB for weights, gradients
 and optimizer state, more than a 24 GB card has; LoRA with a frozen bf16 base peaks far below); SmolVLM-256M and
-LFM2.5-VL-450M are trained in full. GRPO learning rates: 1e-6 full, 1e-5 LoRA (lab K12 used 1e-5 with LoRA).
+LFM2.5-VL-450M are trained in full. GRPO learning rate: every real run takes it from `prereg.G_PROBE` through
+`g_probe.make_trainer` (5e-5 LoRA, 5e-6 full); the `grpo_config` default (1e-5 / 1e-6) is used only by tests, and
+E1.1 replaces it with `rl_lr`.
 Precision: bf16 exactly where transformers accepts it (transformers.utils.is_torch_bf16_gpu_available: CUDA with
 bf16 support, i.e. Ampere or newer such as the Vast cards, MPS on macOS >= 14, XPU / NPU / TPU), else fp32. TRL's
 own default (bf16=True unless fp16) makes TrainingArguments raise "Your setup doesn't support bf16/gpu" on a
@@ -45,7 +48,7 @@ processors' defaults (256 tokens at 512 px). Left padding for generation.
 
 References:
 - TRL GRPO trainer and config: https://huggingface.co/docs/trl/main/en/grpo_trainer ;
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_config.py
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_config.py
 - TRL SFT trainer (VLMs: max_length=None; assistant_only_loss with vision datasets): https://huggingface.co/docs/trl/main/en/sft_trainer
 - Dr. GRPO, "Understanding R1-Zero-Like Training": https://arxiv.org/abs/2503.20783
 - DAPO (clip-higher 0.28, dynamic sampling): https://arxiv.org/abs/2503.14476
@@ -55,7 +58,7 @@ References:
   sandbox measurement in experiments/phase1/impl/M7_train.md
 - transformers 5.20 TrainingArguments.__post_init__ (bf16 check) and utils.is_torch_bf16_gpu_available:
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/training_args.py
-- Lab: experiments/phase1/lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
+- Lab: archive/phase1_lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
 """
 import re
 
@@ -75,7 +78,8 @@ MODELS = {
 MAX_COMPLETION = {"smolvlm-256m": 1536, "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
 _LORA = {"qwen3-vl-2b"}
 _GRAD_CKPT = {"qwen3-vl-2b"}
-# vision tower + projector of every model (recorded module names in tests/test_p2_train.py; lab/B1/common.VISION)
+# vision tower + projector of every model (recorded module names in tests/test_p2_train.py;
+# archive/phase2_lab/B1/common.VISION)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
 WARMUP, DECAY = 0.03, 0.15  # D5: of the stable run's steps; of the branch point's steps
 

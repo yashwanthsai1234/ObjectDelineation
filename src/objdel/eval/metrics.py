@@ -1,16 +1,20 @@
 """Evaluation metrics of K sampled completions per item against its raters (plan §4.7, judge R10).
 
-Everything goes through the training path: objdel.reward.score_many (score_completion's parse, CUDA checker raster,
-size-filtered signatures and per-object score_mask, with the masks and per-object terms kept) and advantages_v4 on
-the item's ExpertCaches. Per item (`metrics`):
+Everything goes through the training path: objdel.reward.score_many (score_completion's parse, then the CUDA checker
+scores every object: mask, defects, IoU_tc, F5, g_area, size-filtered signature) and advantages_v4 on the item's
+ExpertCaches. The item-level comparisons between samples and raters (pairwise IoU, NSD, soft Dice, GED, HM-IoU,
+duplicates) still read the samples' masks, from one objdel.geometry.to_masks call per item. Per item (`metrics`):
 
 - per sample: format_ok, legal, IoU_tc, F5, g_area (legality-gated), topology-any (the joint size-filtered signature
   is some rater's), the v4 advantage in its group, `passed` = legal and topology-any and IoU_tc >= 0.5 for every object;
 - per object and sample: IoU_tc, F5, g_area, IoU and Dice vs the strict-majority vote, D_max (best IoU to any single
   rater), area A, A / A_max, A / A_min, |M| / |E| (A over the raters' union, the egg of the egg-yolk band),
   size-filtered components and their excess over the most fragmented rater;
-- per object and sample: NSD@tau (surface Dice) against the best rater, tau = NSD_TAU per structure;
-- per object: soft Dice (MRNet protocol), the squared generalized energy distance (GED) and HM-IoU;
+- per object and sample: NSD@tau (surface Dice) against the best rater, tau = NSD_TAU per structure; boundary IoU
+  against the best rater and against the strict-majority vote, d = BIOU_D per structure;
+- per object: soft Dice (MRNet protocol), the squared generalized energy distance (GED), HM-IoU, the K x K IoU of the
+  answers (`sample_iou`, illegal answers as empty masks; objdel.eval.select reads it), the IoU_tc of the answers'
+  pixel vote (`pixel_vote_iou_tc`, analysis only) and the doctors' vote area (`vote_area`, px);
 - per item: TV and JS (base 2) between the K-sample topology histogram and the rater histogram, minimum-mode
   retention, mode coverage, pass@k for k in 1, 2, 4, ..., <= min(K, 64), and per GRPO group of G = 8 samples (one
   group of K when K is not a multiple of 8) the duplicate share and whether some geometric term's std is above its
@@ -43,14 +47,20 @@ Definitions and choices:
 - Soft Dice (Ji et al. 2021, MRNet code): the soft ground truth is the mean of the rater masks (uniform expertness
   1/k), the prediction the mean of the K sample masks; both are binarized with >= t for t in 0.1, 0.3, 0.5, 0.7, 0.9,
   Dice is computed per threshold (two empty masks: 1) and averaged. QUBIQ's BDice is the same with 9 thresholds.
-- GED (Kohl et al. 2018, App. B): 2 E d(S, Y) - E d(S, S') - E d(Y, Y') over all sample / rater pairs (V-statistic),
+- GED (Kohl et al. 2018, App. B): Kohl's squared form D2_GED, with K = 8 samples (final_eval) and the k raters who
+  drew: 2 E d(S, Y) - E d(S, S') - E d(Y, Y') over all sample / rater pairs (V-statistic, as PHiSeg's code),
   d = 1 - IoU, d(empty, empty) = 0.
 - pass@k: the unbiased estimator 1 - C(n - c, k) / C(n, k), in Chen et al.'s numerically stable product form.
-- HM-IoU (HPU-Net, CAR; "HM-IoU16" at K = 16): Hungarian matching of the K samples to the k raters, each rater
-  duplicated so that it is matched floor(K / k) or ceil(K / k) times (exactly K / k when k divides K, the published
-  protocol), maximising the total IoU; the mean IoU of the matched pairs (two empty masks: 1). Solved as one
-  rectangular assignment (scipy linear_sum_assignment) on floor(K / k) mandatory copies of each rater, forced by a
-  bonus, plus one optional copy per rater (impl/M4.md: the ceil-only tiling lets a rater go unmatched).
+- HM-IoU (HPU-Net App. B.1): "duplicate both sets so that their number of elements matches their least common
+  multiple" L = lcm(K, k), then one square Hungarian matching (scipy linear_sum_assignment) on the L x L IoU, and the
+  mean IoU of the matched pairs (two empty masks: 1). At K = 8 this is HM-IoU8, not comparable with the published
+  HM-IoU16 (CAR, K = 16); published LIDC values also use 4 graders with empty masks, ours the k raters who drew.
+- Boundary IoU (Cheng et al. 2021), as the official boundary-iou-api `mask_to_boundary`: the band of a mask is the
+  mask minus its erosion (1 px zero border, 3 x 3 ones, d iterations of cv2.erode, border cropped);
+  boundary IoU = |band(a) & band(b)| / |band(a) | band(b)|; two empty bands: 1, one empty band: 0 (the official code
+  has no empty rule). d = BIOU_D px at frame resolution (as NSD_TAU). Computed on the masks' joint bounding box,
+  which gives the full-frame value exactly (outside the box every pixel is 0, as the zero border is). d = 2 on a
+  nodule about 8 px wide covers most of it, so there boundary IoU adds little over IoU.
 - NSD@tau (Nikolov et al. 2018; Metrics Reloaded's default boundary metric), as google-deepmind/surface-distance
   (compute_surface_distances + compute_surface_dice_at_tolerance, spacing 1 px): surfels on the corner grid of 2 x 2
   neighbourhood codes, weighted by their contour length; (|S_P within tau of S_G| + |S_G within tau of S_P|) /
@@ -77,22 +87,28 @@ References:
 - HM-IoU: C. Kohl et al., "A hierarchical probabilistic U-Net", 2019, https://arxiv.org/abs/1905.13077 ; E. Kassapis
   et al., CAR (HM-IoU16), https://arxiv.org/abs/2006.13144 ; scipy.optimize.linear_sum_assignment:
   https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.linear_sum_assignment.html
+- Boundary IoU: B. Cheng et al., https://arxiv.org/abs/2103.16562 ; official code:
+  https://github.com/bowenc0221/boundary-iou-api/blob/master/boundary_iou/utils/boundary_utils.py
 - NSD: S. Nikolov et al., https://arxiv.org/abs/1809.04430 ; reference code:
   https://github.com/google-deepmind/surface-distance (metrics.py, lookup_tables.py) ; Metrics Reloaded:
   https://arxiv.org/abs/2206.01653
-- Per-image TV / JS and minimum-mode retention: experiments/phase1/lab/t_dynamics/REPORT.md, grpo_toy.py
+- Per-image TV / JS and minimum-mode retention: archive/phase1_lab/t_dynamics/REPORT.md, grpo_toy.py
 - Duplicate hash on packed rasters (numpy.packbits):
   https://numpy.org/doc/stable/reference/generated/numpy.packbits.html ; identical rewards give a zero-signal group
   (DAPO dynamic sampling): https://arxiv.org/abs/2503.14476
 """
 import hashlib
+import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 
+import cv2
 import numpy as np
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
+from objdel.eval.select import vote_mask
+from objdel.geometry import parse, to_masks
 from objdel.reward import (
     NUMERIC,
     REWARD_V4,
@@ -110,8 +126,11 @@ from objdel.reward import (
 THRESHOLDS = (0.1, 0.3, 0.5, 0.7, 0.9)  # MRNet soft Dice
 PASS_KS = (1, 2, 4, 8, 16, 32, 64)
 FAIL = -1.0  # topology answer of unparseable or illegal samples (sig_ids are CRC32 values >= 0)
-_ZEROED = ("iou_tc", "f5", "g_area", "iou_vote", "dice_vote", "d_max")  # scores of failed and illegal samples
+# scores of failed and illegal samples
+_ZEROED = ("iou_tc", "f5", "g_area", "iou_vote", "dice_vote", "d_max", "precision_vote", "recall_vote",
+           "boundary_iou", "boundary_iou_vote")
 NSD_TAU = {"nodule": 2.0, "disc": 9.0, "cup": 16.0}  # px at frame resolution (D25)
+BIOU_D = {"nodule": 2, "disc": 9, "cup": 16}  # boundary IoU band width, px at frame resolution
 _D = 0.5 * np.sqrt(2.0)  # surfel length per 2 x 2 neighbourhood code (surface-distance lookup table, 1 px spacing)
 _SURFEL = np.array([0, _D, _D, 1, _D, 1, 2 * _D, _D, _D, 2 * _D, 1, _D, 1, _D, _D, 0])
 _GEOMETRIC = [(t, f) for t, f in zip(TERMS, REWARD_V4.floors, strict=True) if t != "legal"]  # (term, sigma floor)
@@ -184,13 +203,33 @@ def _pairwise_iou(masks: np.ndarray) -> np.ndarray:
 
 
 def hm_iou(iou: np.ndarray) -> float:
-    """Hungarian-matched IoU from the (K samples, k raters) IoU matrix (module docstring)."""
+    """Hungarian-matched IoU from the (K samples, k raters) IoU matrix, both sets duplicated to lcm(K, k) (module
+    docstring)."""
     K, k = iou.shape
-    base, extra = divmod(K, k)
-    cols = np.concatenate([np.tile(np.arange(k), base), np.arange(k) if extra else []]).astype(int)
-    bonus = np.where(np.arange(len(cols)) < base * k, 2.0 * K + 2, 0.0)  # every mandatory copy is matched
-    r, c = linear_sum_assignment(iou[:, cols] + bonus, maximize=True)
-    return float(iou[r, cols[c]].mean())
+    L = math.lcm(K, k)
+    big = np.repeat(np.repeat(iou, L // K, 0), L // k, 1)
+    r, c = linear_sum_assignment(big, maximize=True)
+    return float(big[r, c].mean())
+
+
+def band(m: np.ndarray, d: int) -> np.ndarray:
+    """The inner d px band of a mask (H, W): the official mask_to_boundary (module docstring); bool."""
+    m = np.asarray(m, bool)
+    e = cv2.erode(np.pad(m, 1).view(np.uint8), np.ones((3, 3), np.uint8), iterations=d)[1:-1, 1:-1]
+    return m & ~e.view(bool)
+
+
+def _band_iou(masks: np.ndarray, d: int) -> np.ndarray:
+    """Boundary IoU of every pair of masks (n, H, W): the IoU of their bands, on the joint bounding box."""
+    box = _joint_box(masks)
+    if box is None:
+        return np.ones((len(masks), len(masks)))
+    return _pairwise_iou(np.stack([band(m[box], d) for m in masks]))
+
+
+def boundary_iou(a: np.ndarray, b: np.ndarray, d: int) -> float:
+    """Boundary IoU of two masks at band width d px (module docstring)."""
+    return float(_band_iou(np.stack([np.asarray(a, bool), np.asarray(b, bool)]), d)[0, 1])
 
 
 def _surface(m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -244,13 +283,21 @@ def ged(samples: np.ndarray, raters: np.ndarray) -> float:
 
 
 def _samples(keys: Sequence[tuple[str, bool]], names, caches, W: int, H: int) -> list[dict]:
-    """Training-path terms of distinct completions (text, truncated), from one score_many call: per completion its
-    terms, per-object masks and terms (empty masks for a failed sample), and its duplicate hash."""
+    """Training-path terms of distinct completions (text, truncated), scored by the CUDA checker in one score_many
+    call: per completion its terms, per-object terms and masks (empty for a failed sample), and its duplicate hash.
+    The masks (one to_masks call) feed only the item-level comparisons below (pairwise IoU, NSD, soft Dice,
+    duplicates), not the terms."""
+    parsed = [parse(t, names, tr) for t, tr in keys]
+    geoms = iter(to_masks([(p.objs[n], W, H) for p in parsed if p.ok for n in names]))
+    empty = {}
     out = []
-    for terms, masks, objects in score_many([(t, tr, names, caches, W, H) for t, tr in keys]):
-        if masks is None:
+    for p, (terms, objects) in zip(parsed, score_many([(t, tr, names, caches, W, H) for t, tr in keys]), strict=True):
+        if p.ok:
+            masks = {n: next(geoms).mask for n in names}
+        else:
             masks = {n: np.zeros((H, W), bool) for n in names}
-            objects = {n: score_mask(masks[n], caches[n]) for n in names}
+            empty = empty or {n: score_mask(masks[n], caches[n]) for n in names}
+            objects = empty
         h = hashlib.sha256(bytes([int(terms["format_ok"]), int(terms["legal"])]))
         for n in names:
             h.update(np.packbits(masks[n]).tobytes())
@@ -295,20 +342,26 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
         drawn = masks & legal[:, None, None]  # what is scored: illegal rasters count as empty
         iou = _pairwise_iou(np.concatenate([drawn, c.raters, c.vote[None]]))
         area, comps = masks.sum((1, 2)), np.array([len(t.sig) for t in ot])
+        hit = (drawn & c.vote).sum((1, 2))  # answer pixels inside the majority outline
         a_min, a_max = min(c.rater_areas), max(c.rater_areas)
         o = {"iou_tc": [t.iou_tc for t in ot], "f5": [t.f5 for t in ot], "g_area": [t.g_area for t in ot],
              "iou_vote": iou[:K, -1], "dice_vote": 2 * iou[:K, -1] / (1 + iou[:K, -1]),  # Dice = 2 IoU / (1 + IoU)
              "d_max": iou[:K, K:K + k].max(1),
+             "precision_vote": hit / np.maximum(drawn.sum((1, 2)), 1), "recall_vote": hit / max(int(c.vote.sum()), 1),
              "area": area, "a_amax": area / max(a_max, 1), "a_amin": area / a_min if a_min else np.ones(K),
              "m_e": area / max(int(np.count_nonzero(c.union)), 1),
              "components": comps, "extra_components": comps - max(len(s) for s in c.rater_sigs),
              "nsd": _nsd_best(drawn, c.raters, nsd_tau[n])}
+        biou = _band_iou(np.concatenate([drawn, c.raters, c.vote[None]]), BIOU_D[n])
+        o |= {"boundary_iou": biou[:K, K:K + k].max(1), "boundary_iou_vote": biou[:K, -1]}
         o = {key: np.asarray(v, np.float64) for key, v in o.items()}
         for key in _ZEROED:
             o[key][~legal] = 0.0
         objects[n] = {**{key: _native(v) for key, v in o.items()},
                       "soft_dice": soft_dice(drawn, c.raters), "ged": _ged(iou[:-1, :-1], K),
-                      "hm_iou": hm_iou(iou[:K, K:K + k])}
+                      "hm_iou": hm_iou(iou[:K, K:K + k]), "sample_iou": iou[:K, :K].tolist(),
+                      "pixel_vote_iou_tc": float(score_mask(vote_mask(masks, legal), c).iou_tc),
+                      "vote_area": int(c.vote.sum())}
 
     # topology answers: the joint size-filtered signature, as score_completion's sig_id; failures share FAIL
     answers = rater_answers(caches, names)

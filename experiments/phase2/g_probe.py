@@ -71,8 +71,10 @@ def candidates(sel: dict) -> list[str]:
     return [sel["selected"]] + [n for _, n in earlier[-1:]]
 
 
-def probe(a, ckpt: Path, train, rows, pool) -> dict:
-    """One G-probe run on one checkpoint."""
+def make_trainer(a, ckpt: Path, train, steps: int, **over):
+    """(trainer, processor, lr): FastGRPO (or, with a.plain, TRL's GRPOTrainer) on ckpt with configs.grpo_config,
+    the model's GRPO sampling, the probe LR (LoRA or full FT; a.lr overrides when set), logging every step, then
+    `over` and a.grpo's JSON overrides. Shared by the G-probe and the full run (train_rl)."""
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
@@ -81,17 +83,28 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
     model = AutoModelForImageTextToText.from_pretrained(ckpt)
     proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
     peft = configs.lora(a.model)
-    lr = G_PROBE["lr_lora"] if peft else G_PROBE["lr_full"]
-    over = {"learning_rate": lr, "max_steps": G_PROBE["steps"], "save_strategy": "no"}
+    lr = getattr(a, "lr", None) or (G_PROBE["lr_lora"] if peft else G_PROBE["lr_full"])
+    over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
-    funcs, _ = rewards.TRLReward(serve.loader(a.train), rewards.stop_ids(model, proc), pool=pool).funcs()
-    cls = GRPOTrainer if a.plain else fast.FastGRPO
-    calls = [callbacks.TraceStep(a.trace, wait=1)] if a.trace else []
+    roots = [a.train, *getattr(a, "train_views", [])]  # train_rl --train-views: rows tagged per root
+    funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc)).funcs()
+    cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
+    calls = [callbacks.TraceStep(a.trace, wait=1)] if getattr(a, "trace", None) else []
     trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, processing_class=proc,
                   peft_config=peft, callbacks=calls)  # fmt: skip
-    if a.compile:
+    # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
+    trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
+    if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
+        trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers
+    return trainer, proc, lr
+
+
+def probe(a, ckpt: Path, train, rows, pool) -> dict:
+    """One G-probe run on one checkpoint."""
+    trainer, _, lr = make_trainer(a, ckpt, train, G_PROBE["steps"])
+    cfg = trainer.args
     t0 = time.time()
     s0a, s0b = (score(trainer, rows, a.probe.resolve(), pool, s) for s in SEEDS[:2])
     t1 = time.time()
@@ -127,6 +140,7 @@ def main(argv=None) -> int:
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config (smoke tests)")
     ap.add_argument("--compile", choices=["default", "reduce-overhead"],
                     help="Stage F arm: torch.compile the text decoder layers (measured; off by default)")
+    ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
     ap.add_argument("--plain", action="store_true", help="profile arm: TRL's GRPOTrainer as shipped (no fast.FastGRPO)")
     ap.add_argument("--trace", help="profile arm: torch.profiler trace of optimizer step 3 to this dir")
     a = ap.parse_args(argv)
@@ -167,13 +181,17 @@ def finite(x):
     return None if isinstance(x, float) and not math.isfinite(x) else x
 
 
-def save(out: Path, doc: dict) -> int:
-    out.mkdir(parents=True, exist_ok=True)
+def save_json(path: Path, doc: dict, keys: tuple[str, ...]) -> int:
+    """Strict JSON (numpy scalars as floats, NaN / inf as null) to path; prints doc's `keys` on one line."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     doc = finite(json.loads(json.dumps(doc, default=float)))  # numpy scalars -> floats first
-    (out / "g_probe.json").write_text(json.dumps(doc, indent=1, allow_nan=False) + "\n")
-    keys = ("verdict", "skipped", "h0", "gain", "probed")
+    path.write_text(json.dumps(doc, indent=1, allow_nan=False) + "\n")
     print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False))
     return 0
+
+
+def save(out: Path, doc: dict) -> int:
+    return save_json(out / "g_probe.json", doc, ("verdict", "skipped", "h0", "gain", "probed"))
 
 
 if __name__ == "__main__":

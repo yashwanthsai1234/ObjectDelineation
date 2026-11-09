@@ -1,9 +1,10 @@
-"""Slow, exact validity oracle for objdel.checker.polycore.validate, and the shape generators of its tests.
+"""Slow, exact validity oracle for the checker's defect counts (objdel._gpucheck; written for the archived CPU
+checker, polycore), and the shape generators of its tests.
 
-Pure Python integers, all-pairs loops, no shared code with polycore (tests only). Derived from the Phase 1 lab
-(experiments/phase1/lab/common/oracle.py and lab/t_polycore/tests/helpers.py).
+Pure Python integers, all-pairs loops, no shared code with any checker (tests only). Derived from the Phase 1 lab
+(archive/phase1_lab/common/oracle.py and archive/phase1_lab/t_polycore/tests/helpers.py).
 
-- `ref_validate(rings, roles)`: every polycore defect class, counted pair by pair;
+- `ref_validate(rings, roles)`: every defect class, counted pair by pair; `ref_totals`: the checker's totals;
 - `ring_problems(ring)`: the lab's label spec of one ring (K2 compares against it), the labels of `ref_validate`;
 - generators: the lab's ring families (star, soup, grid, lattice walks, degenerate mutations, ...).
 
@@ -71,7 +72,7 @@ def ring_problems(ring) -> list[str]:
 
 
 def labels(per_ring_row) -> list[str]:
-    """Map one row of polycore's per-ring counts to ring_problems-style labels."""
+    """Map one ring's defect counts (in DEFECTS order) to ring_problems-style labels."""
     c = dict(zip(DEFECTS, per_ring_row, strict=True))
     if c["fewer_than_3_points"]:
         return ["fewer_than_3_points"]
@@ -81,7 +82,7 @@ def labels(per_ring_row) -> list[str]:
     return sorted(out)
 
 
-# ------------------------------------------------------------------ full reference of polycore.validate
+# ------------------------------------------------------------------ full reference of the defect counts
 def _locate2(ring, q) -> int:
     """q in doubled coordinates: -1 outside, 0 on the boundary, 1 inside (even-odd)."""
     n, inside = len(ring), False
@@ -107,7 +108,7 @@ def _witnesses(ring):
 
 
 def ref_validate(rings, roles=None, G=G):
-    """All-pairs reference of polycore.validate -> (per-ring dict of counts, pair_cross, pair_touch)."""
+    """All-pairs reference of the per-ring defect counts -> (per-ring dict of counts, pair_cross, pair_touch)."""
     R = len(rings)
     cnt = [dict.fromkeys(DEFECTS, 0) for _ in range(R)]
     cl = [clean(r) for r in rings]
@@ -185,6 +186,18 @@ def ref_validate(rings, roles=None, G=G):
                 cnt[a][key] += 1
                 cnt[b][key] += 1
     return cnt, pcross, ptouch
+
+
+def ref_totals(rings, roles=None, G=G) -> list[int]:
+    """The shape's defect totals in DEFECTS order: per-ring counts summed, ring-ring pair classes once per pair."""
+    per_ring, pcross, ptouch = ref_validate(rings, roles, G)
+    tot = {d: sum(r[d] for r in per_ring) for d in DEFECTS}
+    pairs = [(a, b) for a in range(len(rings)) for b in range(a + 1, len(rings))]
+    tot["ring_ring_crossing"] = sum(pcross[a][b] for a, b in pairs)
+    tot["ring_ring_touching"] = sum(ptouch[a][b] for a, b in pairs)
+    tot["nested_holes"] //= 2
+    tot["nested_outers"] //= 2
+    return [tot[d] for d in DEFECTS]
 
 
 def _overlap_positive(a, b, c, d) -> bool:

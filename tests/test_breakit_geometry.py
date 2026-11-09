@@ -1,4 +1,4 @@
-"""Break-it B1: geometry wiring (parser, polycore, topology, targets) under adversarial input.
+"""Break-it B1: geometry wiring (parser, checker, topology, targets) under adversarial input.
 
 Tests named `b1_<n>` reproduce confirmed breakdowns, now fixed (experiments/phase1/impl/breakit/B1_geometry.md);
 the others are attacks that held. All are kept as regression tests.
@@ -13,11 +13,11 @@ import pytest
 from oracles import raster_oracle as RO
 from test_geometry_oracle import lab_parse
 
-from objdel.checker import polycore
+from objdel import _gpucheck
 from objdel.checker.bitquad import bitquads
 from objdel.checker.topology import instance_topology, min_area, signature, size_filter
 from objdel.data import Item
-from objdel.geometry import parse, pattern, serialize, to_mask
+from objdel.geometry import parse, pattern, serialize, shape, to_mask, to_masks
 from objdel.reward.cache import ExpertCache
 from objdel.reward.score import score_completion
 from objdel.targets import build_target, frame
@@ -47,7 +47,7 @@ def test_b1_1_only_json_whitespace_is_stripped(ws):
                                   np.zeros((2, 2, 2), np.int64)])
 def test_b1_2_pack_rejects_rings_that_are_not_k_by_2(ring):
     with pytest.raises((ValueError, TypeError)):
-        polycore.pack([ring])
+        shape.pack_rings([ring])
 
 
 def test_b1_3_default_min_area_target_keeps_signature_under_a_larger_union_rule():
@@ -159,28 +159,26 @@ def test_rasterize_exact_on_boundary_biased_shapes():
             return rng.randint(-2, 1002)
 
         rings = [[(coord(W), coord(H)) for _ in range(rng.randint(3, 6))] for _ in range(rng.randint(1, 3))]
-        r = polycore.rasterize([np.array(x) for x in rings], W, H)
-        w, _ = RO.winding_and_parity(rings, W, H)
-        assert np.array_equal(r["evenodd"], w % 2 == 1) and np.array_equal(r["nonzero"], w != 0), (W, H, rings)
+        g, = to_masks([([(np.array(x), []) for x in rings], W, H)])  # every ring an outer
+        _, c = RO.winding_and_parity(rings, W, H)
+        assert np.array_equal(g.mask, c % 2 == 1), (W, H, rings)
 
 
-def test_polycore_concurrent_python_threads_are_deterministic():
+def test_checker_concurrent_python_threads_are_deterministic():
     rng = np.random.default_rng(0)
-    shapes = [[rng.integers(-50, 1051, (int(rng.integers(3, 80)), 2)) for _ in range(int(rng.integers(1, 11)))]
-              for _ in range(60)]
-    dims = [(int(rng.integers(1, 120)), int(rng.integers(1, 120))) for _ in shapes]
-    ref = [(polycore.rasterize(s, w, h)["evenodd"], polycore.validate(s)["total"])
-           for s, (w, h) in zip(shapes, dims, strict=True)]
+    objs = [([(rng.integers(-50, 1051, (int(rng.integers(3, 80)), 2)), []) for _ in range(int(rng.integers(1, 11)))],
+             int(rng.integers(1, 120)), int(rng.integers(1, 120))) for _ in range(60)]
+    ref = to_masks(objs)
     bad = []
 
     def work(k):
-        for i in np.random.default_rng(k).permutation(len(shapes)):
-            (w, h), s = dims[i], shapes[i]
-            if not (np.array_equal(polycore.rasterize(s, w, h)["evenodd"], ref[i][0])
-                    and np.array_equal(polycore.validate(s)["total"], ref[i][1])):
+        for i in np.random.default_rng(k).permutation(len(objs)):
+            g, = to_masks([objs[i]])
+            if not (np.array_equal(g.mask, ref[i].mask) and g.defects == ref[i].defects):
                 bad.append(i)
-        b = polycore.score_batch(shapes, [d[0] for d in dims], [d[1] for d in dims], threads=64)
-        if not np.array_equal(b["defects"], np.stack([r[1] for r in ref])):
+        b = _gpucheck.check_polygons(*shape.pack_objects(objs), 1000)
+        if [{d: int(c) for d, c in zip(_gpucheck.DEFECTS, row, strict=True) if c} for row in b["defects"]] != \
+                [r.defects for r in ref]:
             bad.append(-1)
 
     threads = [threading.Thread(target=work, args=(k,)) for k in range(8)]

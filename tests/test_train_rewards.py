@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from objdel.checker.polycore import DEFECTS
+from objdel._gpucheck import DEFECTS
 from objdel.reward import ExpertCache, advantages_v4, legal_gate, score_batch, topology_reward
 from objdel.train import rewards as R
 
@@ -79,7 +79,7 @@ def test_values_equal_score_batch_and_advantages_v4():
 
 def test_one_computation_per_batch(monkeypatch):
     calls = []
-    monkeypatch.setattr(R, "score_batch", lambda jobs, pool=None: calls.append(1) or score_batch(jobs))
+    monkeypatch.setattr(R, "score_batch", lambda jobs: calls.append(1) or score_batch(jobs))
     rw = reward()
     kw, _, _ = batch()
     call_all(rw, kw)

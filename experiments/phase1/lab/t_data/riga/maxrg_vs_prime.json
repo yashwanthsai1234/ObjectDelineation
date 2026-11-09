@@ -1,0 +1,79 @@
+{
+ "only_a": 300,
+ "only_b": 0,
+ "common": 870,
+ "exact": 0,
+ "disc_iou": {
+  "min": 0.9815037429648653,
+  "p1": 0.9853262672268104,
+  "median": 0.9984867070556135
+ },
+ "cup_iou": {
+  "min": 0.9591946308724832,
+  "p1": 0.9727513116616571,
+  "median": 0.9978644061945516
+ },
+ "worst": [
+  {
+   "file": "BinRushed_BinRushed4_image14-3.png",
+   "exact": false,
+   "disc_iou": 0.9854217404726786,
+   "cup_iou": 0.9591946308724832
+  },
+  {
+   "file": "BinRushed_BinRushed3_image42-1.png",
+   "exact": false,
+   "disc_iou": 0.9865414801465031,
+   "cup_iou": 0.9617059891107078
+  },
+  {
+   "file": "BinRushed_BinRushed2_image18-2.png",
+   "exact": false,
+   "disc_iou": 0.982164659692131,
+   "cup_iou": 0.961808838643371
+  },
+  {
+   "file": "BinRushed_BinRushed2_image20-3.png",
+   "exact": false,
+   "disc_iou": 0.9864612142763072,
+   "cup_iou": 0.9636885540007176
+  },
+  {
+   "file": "BinRushed_BinRushed3_image31-1.png",
+   "exact": false,
+   "disc_iou": 0.985345932094811,
+   "cup_iou": 0.9676498572787822
+  },
+  {
+   "file": "BinRushed_BinRushed3_image3-2.png",
+   "exact": false,
+   "disc_iou": 0.9815037429648653,
+   "cup_iou": 0.9677155700858193
+  },
+  {
+   "file": "BinRushed_BinRushed3_image37-1.png",
+   "exact": false,
+   "disc_iou": 0.9863469751488045,
+   "cup_iou": 0.9711019371228962
+  },
+  {
+   "file": "BinRushed_BinRushed4_image14-1.png",
+   "exact": false,
+   "disc_iou": 0.9872410529636511,
+   "cup_iou": 0.971245507110486
+  }
+ ],
+ "only_b_files": [],
+ "only_a_files_sample": [
+  "BinRushed_BinRushed1_image1-1.png",
+  "BinRushed_BinRushed1_image1-2.png",
+  "BinRushed_BinRushed1_image1-3.png",
+  "BinRushed_BinRushed1_image1-4.png",
+  "BinRushed_BinRushed1_image1-5.png",
+  "BinRushed_BinRushed1_image1-6.png",
+  "BinRushed_BinRushed1_image10-1.png",
+  "BinRushed_BinRushed1_image10-2.png",
+  "BinRushed_BinRushed1_image10-3.png",
+  "BinRushed_BinRushed1_image10-4.png"
+ ]
+}

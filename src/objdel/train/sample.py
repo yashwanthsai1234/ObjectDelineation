@@ -16,7 +16,8 @@
   (e.g. the validation ids) to keep one split.
 - write(rows, path): the JSONL file.
 - export_prompts / import_completions: the JSONL bridge to experiments/phase2/sample_vllm.py, which samples with
-  vLLM 0.32 in its own venv (plan D13, C-BRIDGE; promoted from lab/B5 export_prompts.py and vllm_parity.py). The
+  vLLM 0.32 in its own venv (plan D13, C-BRIDGE; promoted from archive/phase2_lab/B5
+  export_prompts.py and vllm_parity.py). The
   prompt is TRL GRPO's generation prompt as text (prepare_multimodal_messages, then the processor's
   apply_chat_template with add_generation_prompt=True, tokenize=False; B5: vLLM's prompt ids equal the training
   env's in 64 / 64 LFM items and through the renderer for Qwen3.5 and SmolVLM), the image path, the processor
@@ -25,12 +26,13 @@
   sample() (HF generate through TRL) stays the reference and the Qwen3.5 fallback.
 
 References:
-- TRL 1.16 GRPOTrainer: _generate, _generate_and_score_completions (prepare_multimodal_messages, is_truncated),
+- TRL (version pinned in pyproject.toml) GRPOTrainer: _generate, _generate_and_score_completions
+  (prepare_multimodal_messages, is_truncated),
   log (completions table, log_extra columns, deque of generation_batch_size):
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py
 - TRL GRPO docs (log_completions, log_extra): https://huggingface.co/docs/trl/main/en/grpo_trainer
 - TRL vLLM generation (one request with n = num_generations per G-th prompt):
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/generation/vllm_generation.py
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/generation/vllm_generation.py
 """
 import json
 from collections.abc import Iterable
@@ -48,7 +50,8 @@ G = REWARD_V4.group
 
 def sample(trainer, rows: Iterable[dict], k: int, items: int = 16) -> list[dict]:
     """k completions (a multiple of G) per row of objdel.train.dataset.grpo_rows (prompt, image, key), `items` rows
-    per generation call (a 450M model on a 4090 is overhead-bound at one row per call)."""
+    per generation call (a 450M model on a 4090 is overhead-bound at one row per call). Each row: item_id, samples,
+    truncated and tokens (each answer's completion id count, as TRL's completion length)."""
     if k <= 0 or k % G:
         raise ValueError(f"k = {k}: sample whole groups of {G}")
     stop = rewards.stop_ids(trainer.model, trainer.processing_class)  # the reward's rule
@@ -65,7 +68,8 @@ def sample(trainer, rows: Iterable[dict], k: int, items: int = 16) -> list[dict]
             for j, r in enumerate(chunk):
                 part = slice(j * k, (j + 1) * k)
                 out.append({"item_id": r["key"], "samples": [rewards._text(c) for c in completions[part]],
-                            "truncated": [rewards.truncated(x, stop) for x in ids[part]]})
+                            "truncated": [rewards.truncated(x, stop) for x in ids[part]],
+                            "tokens": [len(x) for x in ids[part]]})
     finally:
         trainer.model.train(was_training)
     return out

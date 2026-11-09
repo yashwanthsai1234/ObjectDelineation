@@ -14,6 +14,13 @@ htmlcov/
 
 # Build output
 /build/
+/site/
+/.cache/
+.lycheecache
+docs/implementation2.0/kernels/*/build/
+
+# Papers: licence not confirmed, cite by arXiv id
+docs/research/*.pdf
 
 # Run logs
 *.log
@@ -35,15 +42,16 @@ htmlcov/
 /experiments/phase2/vast/*.launchd.log
 
 # RIGA-derived results stay local: no permission to share RIGA data (repo public, owner 2026-11-06)
-/experiments/phase0/results/medsam_riga.csv
-/experiments/phase0/results/riga/
-/experiments/phase0/results/riga_outlines/
-/experiments/phase0/results/vlm_box/
-/experiments/phase0/results/vlm_polygon/
-/experiments/phase1/lab/t_reward/results/h5_items.csv
-/experiments/phase1/lab/t_data/riga/out_maxrg_check/
-/experiments/phase1/lab/t_data/riga/maxrg_vs_prime.json
-/experiments/phase1/lab/t_data/splits/out/riga_images.csv
-/experiments/phase1/lab/t_reward/results/advantage_groups.json
-/experiments/phase1/lab/t_reward/results/iter3_r5_raw.json
-/experiments/phase1/lab/t_stack/results/t[24]_*.json
+/docs/research/records/phase0/results/medsam_riga.csv
+/docs/research/records/phase0/results/riga/
+/docs/research/records/phase0/results/riga_outlines/
+/docs/research/records/phase0/results/vlm_box/
+/docs/research/records/phase0/results/vlm_polygon/
+/archive/phase1_lab/t_reward/results/h5_items.csv
+/archive/phase1_lab/t_data/riga/out_maxrg_check/
+/archive/phase1_lab/t_data/riga/maxrg_vs_prime.json
+/archive/phase1_lab/t_data/splits/out/riga_images.csv
+/archive/phase1_lab/t_reward/results/advantage_groups.json
+/archive/phase1_lab/t_reward/results/iter3_r5_raw.json
+/archive/phase1_lab/t_stack/results/t[24]_*.json
+/.claude/worktrees/

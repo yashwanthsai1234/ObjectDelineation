@@ -1,17 +1,16 @@
 PY := .venv/bin/python
-FUZZ_N ?= 20000
-# Sources of the objdel._polycore extension: editing them makes `make test` rebuild it first.
-EXT_SRC := CMakeLists.txt cpp/polycore/polycore.hpp src/objdel/_polycore.cpp cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
-EXT_STAMP := build/.polycore-stamp
+# Sources of the objdel._gpucheck extension: editing them makes `make test` rebuild it first.
+EXT_SRC := CMakeLists.txt cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
+EXT_STAMP := build/.gpucheck-stamp
 
-.PHONY: setup build test test-all cov lint fmt fuzz wheels cuda preflight
+.PHONY: setup build test test-all cov lint dead fmt wheels cuda preflight
 
 setup:            ## create .venv and install the package (editable, all extras); builds the C++ extension
 	uv venv --python 3.12
 	uv pip install --python $(PY) -e ".[train,data,dev]"
 	@mkdir -p build && touch $(EXT_STAMP)
 
-build: $(EXT_STAMP) ## rebuild the C++ extension if cpp/ or its binding changed (incremental, build/<wheel tag>)
+build: $(EXT_STAMP) ## rebuild the C++ extension if cuda/ changed (incremental, build/<wheel tag>)
 
 $(EXT_STAMP): $(EXT_SRC)
 	uv pip install --python $(PY) --no-deps --reinstall-package objdel -e .
@@ -26,21 +25,18 @@ test-all: $(EXT_STAMP) ## run every test, including the slow K1/K2 10k-case gate
 cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objdel; fails below 90 % (K13, as CI)
 	$(PY) -m pytest -q -m "not slow" --cov=objdel --cov-report=term-missing:skip-covered --cov-fail-under=90
 
-CONFIG ?= experiments/phase2/configs/r1_lfm.yaml
+CONFIG ?= experiments/phase2/configs/r1_qwen3vl2b.yaml
 preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=...); launch needs its stamp
 	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG)
 
 lint:             ## lint library, tests and experiments
 	$(PY) -m ruff check src tests experiments
 
+dead:             ## list unused code (vulture, [tool.vulture] in pyproject.toml)
+	$(PY) -m vulture
+
 fmt:              ## auto-fix lint issues
 	$(PY) -m ruff check src tests experiments --fix
-
-fuzz:             ## native polycore fuzz under ASan/UBSan (FUZZ_N random shapes)
-	@mkdir -p build
-	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror \
-		-I cpp cpp/polycore/tests/fuzz_main.cpp -o build/polycore_fuzz
-	build/polycore_fuzz $(FUZZ_N)
 
 wheels:           ## build manylinux x86-64 + aarch64 wheels in Docker with cibuildwheel (build/wheelhouse)
 	uvx cibuildwheel==4.3.1 --platform linux --output-dir build/wheelhouse

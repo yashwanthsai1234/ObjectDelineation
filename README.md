@@ -27,7 +27,7 @@ reinforcement learning with TRL and vLLM on one GPU. The checker itself is a cus
 - **Output:** polygon JSON on a 0-1000 grid: rings, holes, nothing else.
 - **Reward:** format gate, ring legality, IoU against the expert set, and topology (b0 parts, b1 holes).
 - **Why sets, not one mask:** LIDC readers disagree on topology for 6.1 % of nodules, and every nodule with a hole
-  is one they disagree on (`experiments/phase0/RESULTS.md`). A shape that any expert drew counts as correct.
+  is one they disagree on (`docs/research/records/phase0/RESULTS.md`). A shape that any expert drew counts as correct.
   Pixels where experts disagree count as neither right nor wrong.
 
 ## ⚙️ How it works
@@ -66,13 +66,20 @@ One RTX 5090 runs three jobs: vLLM generation, the trainer, and the checker. The
   step.
 - vLLM sleep mode frees its share of the card between generations.
 
-**Checker (`cuda/gpucheck.cpp`).** One source file builds for the CPU and for nvcc. Every algorithm is a
-`__host__ __device__` functor.
+**Checker and scorer (`cuda/gpucheck.cpp`).** One source file builds for the CPU and for nvcc. Every algorithm is a
+`__host__ __device__` functor. All checking and scoring runs here: polygon, mask, defects, IoU_tc, F5, g_area and the
+size-filtered topology signature. The experts' tables stay resident on the device, and only per-object numbers come
+back. No mask is copied to the host for scoring (`docs/research/notes/gpu_scoring.md`).
 - A grow-only device arena and two pinned staging buffers per stream lane. Nothing is allocated per call.
 - Two CUDA streams. A large batch splits in two halves, so the copy of one half overlaps the kernels of the other.
 - The raster runs one warp per pixel row, and builds each 32-pixel word with `__ballot_sync`.
-- Bit-exact against the CPU reference on two architectures (sm_120 and sm_86: 0 mismatches), and clean under
-  `compute-sanitizer` memcheck and initcheck (0 errors on 40 GPU tests, `experiments/phase2/perf/k1_results.md`).
+- Bit-exact against the CPU checker it replaced, polycore, on two architectures (sm_120 and sm_86: 0 mismatches).
+  polycore is now archived (`archive/cpu_checker`), and its results are recorded per case in
+  `tests/goldens/polycore.npz`. The checker is also clean under `compute-sanitizer` memcheck and initcheck (0 errors
+  on 40 GPU tests, `experiments/phase2/perf/k1_results.md`).
+- The device scorer is bit-identical to the numpy scorer it replaced (`tests/oracles/score_numpy.py`). Counts are
+  integers, distance sums are exact multiples of 2^-23, and nothing is contracted into FMA.
+- Union-find connected components run on each object's bounding box (Playne and Hawick 2018) and give the signature.
 
 <img src="docs/figures/warp_ballot.svg" alt="A warp votes with __ballot_sync into one 32-bit word" width="900">
 
@@ -88,8 +95,8 @@ LIDC-IDRI is a 3-D CT collection, and a nodule is a stack of slices. The system 
 - **Slice to volume.** The model outlines one slice at a time. The polygons of consecutive slices are rasterized
   and stacked into one voxel mask (`objdel.checker.volume.stack`).
 - **Voxel clusters.** Annotations from different readers are grouped into nodules by shared voxels
-  (`experiments/phase0/lidc_census.py`; the `b0_3d_*` and `cavity_any_*` columns in
-  `experiments/phase0/results/lidc/clusters.csv`).
+  (`archive/phase0/lidc_census.py`; the `b0_3d_*` and `cavity_any_*` columns in
+  `docs/research/records/phase0/results/lidc/clusters.csv`).
 - **Three Betti numbers.** Each voxel is a closed unit cube, so parts are 26-connected and the background is
   6-connected. `betti3d` counts b0 (parts) and b2 (cavities) by labeling, and b1 (tunnels) from the Euler
   characteristic of the cube complex (χ = b0 − b1 + b2). Slice-level b0 and b1 are the 2-D shadows of the same idea.
@@ -103,13 +110,33 @@ contact joins two parts) and on stacked slices of a hollow nodule.
 
 | What | Result | Source |
 |---|---|---|
-| Checker certificates, real masks | 0 failures on 26,820 RIGA masks and 40,189 LIDC slices | `experiments/phase0/RESULTS.md` |
+| Checker certificates, real masks | 0 failures on 26,820 RIGA masks and 40,189 LIDC slices | `docs/research/records/phase0/RESULTS.md` |
 | Raster and legality vs oracle | 0 of 849,802,293 pixels differ on 10,000 shapes; 0 of 10,000 rings | `experiments/phase1/RESULTS.md` (K1, K2) |
 | CUDA checker vs CPU checker | 195,809 of 195,809 cases bit-identical (RTX 4090) | `experiments/cuda_checker/RESULTS.md` |
-| LIDC topology disagreement | 114 of 1,877 nodules (6.1 %) after filtering | `experiments/phase0/RESULTS.md` |
+| LIDC topology disagreement | 114 of 1,877 nodules (6.1 %) after filtering | `docs/research/records/phase0/RESULTS.md` |
 | Rung 1 SFT (LFM2.5-VL-450M) | Failed the entry gates: median IoU 0.495 shifted, 0.092 rescaled; hole recall 0.5 % | `experiments/phase2/RESULTS.md` |
-
 | CUDA checker on an RTX 5090 | 0 mismatches on 8,559 fuzz polygons and all 13 defect classes | `experiments/phase2/perf/p1_results.md` |
+| G-probe, Qwen3-VL-2B SFT (e2), 20 RL steps | PASS: held-out reward 0.694 / 0.679 → 0.769, legal 94.5 % → 98.2 % | `docs/research/notes/issues_solved_2026-11-07.md` |
+| **Full RL, 3 epochs (770 steps) on e2** | **Held-out IoU 0.511 → 0.659** (+0.148, 95 % CI +0.115 to +0.178; better on 112 of 128 images); legal 94.5 % → 98.8 % | `docs/research/notes/full_rl_2026-11-08.md` |
+| **Final model on the whole splits** (shifted crops, 8 samples each) | **Test (2,200): IoU 0.645, boundary F 0.816, precision 0.695, recall 0.748, Dice 0.701, legal 99.4 %**; validation (1,084): IoU 0.618, F 0.806, precision 0.689, recall 0.716 | `docs/research/notes/final_eval_2026-11-08.md` |
+
+### 🧠 The full RL run
+
+One RTX 5090, 5 h 52 min, about $4.56. vLLM wrote 197,120 answers (770 steps x 32 images x 8), and the CUDA checker
+scored every one of them on the device.
+
+<img src="docs/figures/rl_training.svg" alt="Training reward parts over 770 RL steps: IoU, boundary F-score and topology" width="900">
+
+Most of the gain comes in the first 50 steps; IoU then keeps rising slowly through epochs 2 and 3. The test that
+counts is on images the model never trained on: 128 shifted-validation images, 8 answers each.
+
+<img src="docs/figures/rl_heldout.svg" alt="Held-out IoU: e2 0.511, step 250 0.634, final 0.659" width="700">
+
+What the model draws, before and after RL, on held-out crops picked by percentile (not the best ones): green is each
+expert's outline, red is the model's polygon. RL taught it to trace the nodule instead of boxing it or outlining only
+its bright core; the 10th-percentile crop shows the failures that remain (an outline that spills into the chest wall).
+
+<img src="docs/figures/rl_gallery.png" alt="Six held-out LIDC crops: expert outlines in green, the model's polygon in red, before and after RL" width="900">
 
 The first CUDA build (R0 v3) was exact but slower than the CPU checker: 54,710 polygons/s at 16 vertices and batch
 1,024, held back by per-call allocation and managed memory. With the arena, pinned staging and two streams, the same
@@ -125,20 +152,25 @@ shapes run at **7.74 M polygons/s on an RTX 5090 (141x)**, 87x the polycore loop
 | FastGRPO + regional `torch.compile` | 47.9 | recompiles across widths and grad modes; off |
 | FastGRPO + CUDA Graphs (`reduce-overhead`) | crash | per-layer graph replay overwrites outputs; conflicts with vLLM's sleep allocator |
 | FastGRPO, no gradient checkpointing | OOM | over 31.45 GiB beside vLLM |
+| FastGRPO + on-device scoring + image memo (R3) | 36.3 | `docs/research/notes/issues_solved_2026-11-07.md` (R2 on the same settings: 56.6) |
+| **Full RL run** (770 steps, same settings) | **27.5** | mean over the run; answers shortened from 128 to ~100 tokens |
+| + 64-wide chunks and the no-merge vLLM sync (R4) | 29.9 vs 32.7 | steps 3-15 at ~130-token answers: **8 % faster**, identical rewards; keeping vLLM awake gains nothing (handovers 1.6 s) |
+| + **shared-prefix forward**, `--shared-prefix` (R5) | **23.6 vs 31.0** | each prompt runs once per group of 8 answers, not 8 times (0.36 of the tokens): **24 % faster**; step 1 identical (same answers, same gradient norm); `docs/research/notes/shared_prefix_2026-11-08.md` |
 
 One step splits into 7.6 s vLLM generation, 12.3 s old and reference log-probabilities, and 24.4 s update; the reward
-(one checker call for all 256 answers plus CPU scoring) runs in the background during the log-probability passes.
+(at the time: one checker call for all 256 answers plus scoring on a CPU pool) runs in the background during the
+log-probability passes. Scoring now also runs in that one checker call, on the device.
 
 ## 🗂️ Repository layout
 
 ```
-cpp/polycore/      header-only C++17 core: exact polygon rasterizer, legality checks, signed area
-cuda/              the CUDA checker engine (gpucheck.cpp, one source for CPU and GPU), CMake, GoogleTest
+cuda/              the CUDA checker and scorer (gpucheck.cpp, one source for CPU and GPU)
+archive/           retired code, not built: the CPU checker polycore (archive/cpu_checker)
 src/objdel/
   checker/         bit-quads, Betti numbers, instance topology, polygonize, certificates
-  geometry/        output spec: strict parser, serializer, canonical rings, polygon to mask
+  geometry/        output spec: strict parser, serializer, canonical rings, polygon to mask (on the checker)
   targets/         model frame (crop and scale) and certified SFT polygon targets
-  reward/          per-item expert caches, per-rollout terms, group advantages
+  reward/          per-item expert caches (resident on the device), per-rollout terms, group advantages
   data/            RIGA extractor, LIDC parser, group-aware splits, Parquet store
   train/           TRL integration, reward functions, callbacks, configs, fast forwards
   eval/            metrics, hack audit, entry gates
@@ -149,14 +181,14 @@ data/              downloaded datasets (git-ignored, never committed)
 ```
 
 Plan: [ROADMAP.md](ROADMAP.md). Phase results:
-[Phase 0](experiments/phase0/RESULTS.md), [Phase 1](experiments/phase1/RESULTS.md),
+[Phase 0](docs/research/records/phase0/RESULTS.md), [Phase 1](experiments/phase1/RESULTS.md),
 [Phase 2](experiments/phase2/RESULTS.md), [CUDA checker](experiments/cuda_checker/RESULTS.md).
 Speed work: [issues](experiments/phase2/perf/issues.md), [implementation](experiments/phase2/perf/implementation.md).
 
 ## ⚡ Quick start
 
 ```bash
-make setup        # .venv with Python 3.12 (uv), editable install, builds the C++ extension
+make setup        # .venv with Python 3.12 (uv), editable install, builds the checker (its CPU build)
 make test         # fast test suite; make test-all adds the slow gates
 make lint
 make cuda         # build the CUDA checker (needs nvcc)
@@ -198,6 +230,11 @@ All in `docs/research/reports/`:
 - [NVIDIA CUDA performance for VLM training](docs/research/reports/NVIDIA%20CUDA%20performance%20for%20VLM%20training.md): why the GPU waits on the CPU.
 - [RL speed stack on RTX 5090](docs/research/reports/RL%20speed%20stack%20on%20RTX%205090.md): fixing the GRPO stack before renting.
 - [Code performance audit 2026-11-06](docs/research/reports/Code%20performance%20audit%202026-11-06.md): training, evaluation and checker paths.
+
+## Documentation
+
+Engineering documentation is in [docs/README.md](docs/README.md): getting started, architecture and decision records,
+reference pages (package, CUDA engine, reward, output format, data, configs), guides, runbooks, testing, glossary and changelog.
 
 ## 📄 Licence and data
 

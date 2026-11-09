@@ -1,6 +1,6 @@
-"""Slow, exact raster oracle for objdel.checker.polycore.rasterize, and the K1 shape families (tests only).
+"""Slow, exact raster oracle for the checker's masks (objdel._gpucheck), and the K1 shape families (tests only).
 
-Derived from the Phase 1 lab (experiments/phase1/lab/common/oracle.py, lab/t_polycore/tests/helpers.py).
+Derived from the Phase 1 lab (archive/phase1_lab/common/oracle.py, archive/phase1_lab/t_polycore/tests/helpers.py).
 The spec, literally: pixel (c, r) is inside iff its centre is inside; a ray from the centre towards +x counts
 edge (x0,y0)->(x1,y1) iff min(y0,y1) <= py < max(y0,y1) and the crossing x is strictly greater than px; the
 winding adds +1 for edges going down the screen, -1 going up. Even-odd = odd crossings, nonzero = winding != 0.
@@ -84,15 +84,6 @@ def oracle_winding(rings, W, H, G=G, pure=False):
     if pure or not (m * 2 * max(W, H) < 2**30 and 2 * max(W, H) * G < 2**30):
         return winding_and_parity(rings, W, H, G)
     return winding_np(rings, W, H, G)
-
-
-def ring_ranges(rings, W, H, G=G, pure=False):
-    """Per ring (min(0, min winding), max(0, max winding)) of the ring alone."""
-    out = []
-    for ring in rings:
-        w, _ = oracle_winding([ring], W, H, G, pure)
-        out.append((min(0, int(w.min())), max(0, int(w.max()))))
-    return out
 
 
 def on_boundary_centres(rings, W, H, G=G):

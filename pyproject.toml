@@ -29,6 +29,7 @@ dev = [
     "pytest>=8.0", "pytest-cov>=6.0", "hypothesis>=6.100", "ruff==0.17.1",
     "matplotlib>=3.9",  # pylidc-parity oracle
     "pyyaml>=6.0",  # experiments/phase2/vast/policy.py reads run configs (in the training lock via transformers)
+    "vulture==2.16",  # `make dead`
 ]
 
 [build-system]
@@ -54,8 +55,8 @@ build = "cp312-*"
 skip = "*-musllinux_*"
 build-verbosity = 1
 test-requires = ["pytest", "hypothesis"]
-test-sources = ["tests", "pyproject.toml"]
-test-command = "pytest -q -m 'not slow' -p no:cacheprovider tests/test_polycore.py tests/test_polycore_oracle.py tests/test_polycore_props.py"
+test-sources = ["tests", "experiments", "pyproject.toml", "CMakeLists.txt"]
+test-command = "python -m pytest -q -m 'not slow' -p no:cacheprovider tests/test_checker_oracle.py tests/test_cuda_checker.py tests/test_checker_host.py"
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64", "aarch64"]
@@ -68,10 +69,11 @@ testpaths = ["tests"]
 markers = [
     "slow: long-running exhaustive runs (deselect with -m \"not slow\")",
     "data: needs data/fixtures or data/store (skipped when absent)",
+    "gpu: needs the CUDA build on a GPU box (skipped on the CPU build)",
 ]
 
 [tool.coverage.run]
-# Measure code run in multiprocessing.Pool workers (objdel.train.dataset.prepare) and threads (polycore batches).
+# Measure code run in multiprocessing.Pool workers (objdel.train.dataset.prepare) and threads.
 # https://coverage.readthedocs.io/en/latest/config.html#run-concurrency
 concurrency = ["multiprocessing", "thread"]
 parallel = true
@@ -82,8 +84,8 @@ source_pkgs = ["objdel"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-# Lab prototypes are frozen evidence for experiments/phase1/PLAN.md; production code is linted when promoted.
-extend-exclude = ["experiments/phase1/lab"]
+# Archived code is frozen evidence (archive/*/README.md); it is never linted.
+extend-exclude = ["archive"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
@@ -95,3 +97,17 @@ ignore = ["E731", "E741"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["objdel", "experiments"]
+
+[tool.vulture]
+# Dead-code gate (`make dead`, tests/test_repo_hygiene.py). Each group below is used by name from outside the code.
+paths = ["src", "experiments", "tests"]
+min_confidence = 60
+ignore_decorators = ["@pytest.fixture"]  # autouse fixtures (_no_real_secrets, clean_store)
+ignore_names = [
+  "on_*", "should_save", "should_training_stop",  # transformers TrainerCallback hooks and control flags
+  "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes
+  "cmd_*",  # vast/policy.py subcommands, dispatched by name
+  "pytestmark", "pre_tokenizer", "decoder", "projector_hidden_size", "is_main_process",
+  "writeable", "atexit",  # numpy flag (topology.py), atexit hook (cache.py)
+  "rid", "multimodal_fields", "has_tool_images", "return_tensors",  # fake signatures that callers use by keyword
+]

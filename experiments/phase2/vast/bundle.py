@@ -52,6 +52,8 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
     picked = [f for sub in (ds, f"images/{ds}", f"caches/{ds}") for f in walk(data, prep / sub, f"prepared/{sub}")]
     for kind in ("views", "eval_views"):
         names = set(views) if kind == "views" and views else {p.name for p in (data / kind).glob(f"{ds}-*")}
+        if kind == "views" and not views:  # RL train windows (build_eval_views --split train): only when named
+            names = {n for n in names if not n.startswith(f"{ds}-train-")}
         if missing := [n for n in names if not (data / kind / n).is_dir()]:
             die(f"{kind} missing: {missing}")
         if kind == "eval_views" and ds == "lidc":
@@ -61,9 +63,10 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
         if not names:
             die(f"no {ds} {kind} under {data / kind}")
         picked += [f for n in sorted(names) for f in walk(data, data / kind / n, f"{kind}/{n}")]
-    if ds == "lidc":  # the CUDA checker eval set (LIDC only; experiments/cuda_checker/prepare_data.py)
+    if ds == "lidc":  # the CUDA checker eval set (LIDC only; archive/cpu_checker/experiments/prepare_data.py)
         if not (data / "checker_eval" / "manifest.json").is_file():
-            die("data/checker_eval missing: run experiments.cuda_checker.prepare_data")
+            die("data/checker_eval missing: it holds the archived CPU checker's references and cannot be rebuilt; "
+                "copy it from a checkout that has it")
         picked += walk(data, data / "checker_eval", "checker_eval")
     if bad := [p for _, p in picked if is_raw(p) or not p.is_file()]:
         die(f"refusing (data/raw or not a file): {bad[:3]}")

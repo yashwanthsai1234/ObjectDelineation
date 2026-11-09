@@ -14,7 +14,7 @@ Both tests narrow an exact integer cone of feasible directions as j grows (potra
 at most two inequalities and can be updated in constant time"), so all shortcuts cost O(n * longest shortcut).
 They run in the target frame X = 2W·gx, Y = 2H·gy of the rounded grid points, where pixel centres are the odd
 multiples of G: every predicate is an int64 cross product and already includes the grid rounding. Admissibility is a
-heuristic; exactness comes from the builder's polycore certification.
+heuristic; exactness comes from the builder's certification on the checker.
 
 The polygon is the optimal cycle in the shortcut graph, lexicographic in (number of segments, penalty), as in
 potrace §2.2.3, where the penalty is the sum of squared pixel distances of the skipped corners to the segment's line
@@ -29,7 +29,7 @@ References:
     J.-O. Lachaud, A. Vialard, F. de Vieilleville, "Fast, accurate and convergent tangent estimation on digital
         contours" / maximal DSS: https://arxiv.org/abs/0906.2716
     H. Imai, M. Iri, min-# approximation as a shortest path; survey and O(n^2) min-#: https://arxiv.org/abs/cs/0209007
-    experiments/phase1/lab/t_targets/targets/simplify.py (the lab kernel this replaces; same admissibility)
+    archive/phase1_lab/t_targets/targets/simplify.py (the lab kernel this replaces; same admissibility)
 """
 import numpy as np
 from numba import njit

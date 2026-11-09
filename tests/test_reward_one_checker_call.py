@@ -1,18 +1,13 @@
-"""C3 (experiments/phase2/perf/implementation.md; issues RL-5, CK-5): one CUDA checker call per reward call, in the
-main process; pool workers only score masks on the CPU and never touch objdel._gpucheck."""
+"""C3 (experiments/phase2/perf/implementation.md; issues RL-5, CK-5): one CUDA checker call per reward call, which
+checks and scores every answer on the device (objdel._gpucheck.score_polygons); no mask comes back to the host."""
 import json
-import pickle
-import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
 from objdel import _gpucheck
 from objdel.reward import ExpertCache
-from objdel.reward import score as S
 from objdel.train import rewards as R
-from objdel.train import serve
 
 G, W = 8, 50
 EOS, PAD = 7, 0
@@ -73,14 +68,15 @@ def batch(keys=("a", "b", "r"), truncate=(1, 17)):
                 W=[W] * len(texts), H=[W] * len(texts), names=[list(NAMES[k]) for k in ks])
 
 
-def call_all(pool=None, kw=None):
-    rw = R.TRLReward(CACHES.__getitem__, stop_ids={EOS, PAD}, pool=pool)
+def call_all(kw=None):
+    rw = R.TRLReward(CACHES.__getitem__, stop_ids={EOS, PAD})
     funcs, _ = rw.funcs()
     kw = batch() if kw is None else kw
     return {f.__name__: f(**kw) for f in funcs}
 
 
-# Values recorded from the code before C3 (commit e9f23d7: one checker call per pool chunk, in the worker).
+# Values recorded from the code before C3 (commit e9f23d7: one checker call per pool chunk, in the worker), when
+# polycore made the masks and numpy scored them: the device scorer reproduces them exactly.
 EXPECTED = {
     "format_ok": [1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0,
                   1.0, 0.0, 1.0, 1.0],
@@ -109,48 +105,27 @@ EXPECTED = {
 
 def test_rewards_equal_the_previous_path():
     assert call_all() == EXPECTED
-    with ThreadPoolExecutor(3) as pool:
-        assert call_all(pool) == EXPECTED
-    pool = serve.fork_pool(2)
-    try:
-        assert call_all(pool) == EXPECTED
-    finally:
-        pool.shutdown()
+    with ThreadPoolExecutor(3) as pool:  # concurrent reward calls share the checker
+        assert list(pool.map(lambda _: call_all(), range(3))) == [EXPECTED] * 3
 
 
 def test_reward_calls_the_checker_once_per_reward_call(monkeypatch):
-    """256 answers (32 groups), serially and on a thread pool (where a worker's call would be counted too)."""
+    """256 answers (32 groups): one score_polygons call for every object of every parsed answer."""
     calls = []
-    real = _gpucheck.check_polygons
-    monkeypatch.setattr(_gpucheck, "check_polygons", lambda *a: calls.append(len(a[4])) or real(*a))
+    real = _gpucheck.score_polygons
+    monkeypatch.setattr(_gpucheck, "score_polygons", lambda *a: calls.append(len(a[4])) or real(*a))
     kw = batch(keys=("a", "b", "r", "a") * 8)
     assert len(kw["key"]) == 256
-    serial = call_all(kw=kw)
-    assert len(calls) == 1 and calls[0] > 256  # one call for every object of every parsed answer
-    with ThreadPoolExecutor(4) as pool:
-        assert call_all(pool, kw) == serial
-    assert len(calls) == 2
+    call_all(kw=kw)
+    assert len(calls) == 1 and calls[0] > 256
 
 
-CHILD = """
-import json, pickle, sys
-from objdel.reward import score
-rows = score._score_checked(pickle.load(sys.stdin.buffer))
-print(json.dumps({"rows": rows, "gpucheck": "objdel._gpucheck" in sys.modules}))
-"""
+def test_the_reward_never_fetches_masks(monkeypatch):
+    """The reward never asks the checker for pixels: check_polygons and check_masks (the calls that return them) are
+    not used on the scoring path."""
+    def boom(*a):
+        raise AssertionError("a mask left the device")
 
-
-def test_pool_jobs_never_touch_cuda():
-    """A pool job (the main process's checked masks) is scored in a fresh interpreter that never imports
-    objdel._gpucheck, with the same terms as in this process."""
-    kw = batch()
-    jobs = [(c[0]["content"], R.truncated(i, {EOS, PAD}), tuple(n), CACHES[k], w, h)
-            for c, i, k, w, h, n in zip(kw["completions"], kw["completion_ids"], kw["key"], kw["W"], kw["H"],
-                                        kw["names"], strict=True)]
-    work = S._checked(jobs)
-    out = subprocess.run([sys.executable, "-I", "-c", CHILD], input=pickle.dumps(work), capture_output=True,
-                         check=True)
-    child = json.loads(out.stdout)
-    assert child["gpucheck"] is False
-    assert child["rows"] == json.loads(json.dumps(S._score_checked(work)))
-    assert [r["format_ok"] for r in child["rows"]] == EXPECTED["format_ok"]
+    monkeypatch.setattr(_gpucheck, "check_polygons", boom)
+    monkeypatch.setattr(_gpucheck, "check_masks", boom)
+    assert call_all() == EXPECTED

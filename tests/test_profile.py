@@ -126,6 +126,11 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     # torch's caching allocator hides out-of-bounds accesses from memcheck; arena reuse is initcheck's case
     assert "PYTORCH_NO_CUDA_MEMORY_CACHING=1" in mem and "for t in memcheck initcheck" in mem
     assert "timeout 1200 $S --tool $t" in mem  # memcheck instruments torch's kernels too: each pass is bounded
+    # R2 (2026-11-07): the step sanitized only test_cuda_checker_gpu.py (6 tests); K1's 40 are run_box.sh's group,
+    # and the device scorer's kernels run only in test_gpu_scoring.py
+    group = box.split("pytest -q -p no:cacheprovider", 1)[1].split("|| tests=1", 1)[0]
+    files = [*group.replace("\\", " ").split(), "tests/test_gpu_scoring.py"]
+    assert len(files) == 5 and all(f in mem.split() for f in files), (files, mem)
 
 
 def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregistered_g_probe():
@@ -145,6 +150,22 @@ def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregister
     assert not any(f in gp for f in ("--plain", "--grpo", "--items", "--select"))  # the pre-registered G-probe as is
 
 
+def test_full_rl_chain_checks_the_card_and_checker_then_tunes_e2_resumably():
+    """The full RL run: P1's card, checker and sanitizer steps verbatim, then train_rl on R1's e2, saving every 50
+    steps and always with --resume, so rerunning the chain on a new box continues from the last checkpoint."""
+    from experiments.phase2.vast import policy
+
+    cfg = policy.ROOT / "experiments/phase2/configs"
+    p1, rl = (policy.chain(cfg / f, "rl") for f in ("p1_rl.yaml", "rl_full.yaml"))
+    assert rl[:4] == p1[:4] and len(rl) == 5
+    tr = rl[4]
+    assert tr[:2] == ["-m", "experiments.phase2.train_rl"] and tr[-1] == "--resume"
+    args = dict(zip(tr[2:-1:2], tr[3:-1:2], strict=True))
+    data = "/workspace/data/lidc"
+    assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/rl/ckpt", "--train": f"{data}/prepared",
+                    "--out": "/workspace/runs/rl/train_rl", "--steps": "770", "--save-steps": "50"}
+
+
 def test_checker_gpu_chain_builds_then_sanitizes_before_the_long_checks():
     """A checker-only rental (no model, no vLLM, no data bundle): build for the card, memcheck + initcheck first (the
     step P1 never ran), then P1's equivalence and timing step if the cap leaves time."""
@@ -156,3 +177,59 @@ def test_checker_gpu_chain_builds_then_sanitizes_before_the_long_checks():
     assert k[1] == ["bash", "-c", "mkdir -p /workspace/runs/k1/cuda_checker && "
                     "bash experiments/cuda_checker/run_box.sh --build-only"]  # fmt: skip
     assert k[2] == p1[3] and k[3] == ["~", *p1[2]] and len(k) == 4
+
+
+def test_speed_chain_compares_vllm_asleep_and_awake_on_e2():
+    """R4: the full run's card facts and env check, then two short train_rl arms on e2 with today's code: vLLM asleep
+    between steps (the full run's setting), then kept awake. The awake arm may run out of memory: it must not stop the
+    chain, and neither arm saves checkpoints."""
+    import json
+
+    from experiments.phase2.vast import policy
+
+    cfg = policy.ROOT / "experiments/phase2/configs"
+    full, r4 = (policy.chain(cfg / f, "r4") for f in ("rl_full.yaml", "r4_speed.yaml"))
+    assert r4[:2] == full[:2] and len(r4) == 4
+    asleep, awake = r4[2], r4[3]
+    assert asleep[:2] == ["-m", "experiments.phase2.train_rl"]
+    assert awake[:3] == ["~", "-m", "experiments.phase2.train_rl"]
+    a, b = (dict(zip(s[i::2], s[i + 1 :: 2], strict=True)) for s, i in ((asleep, 2), (awake, 3)))
+    assert a["--ckpt"] == b["--ckpt"] == "/workspace/runs/r4/ckpt" and a["--steps"] == b["--steps"] == "15"
+    assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
+    assert "--grpo" not in a and json.loads(b["--grpo"]) == {"vllm_enable_sleep_mode": False}
+
+
+def test_shared_prefix_chain_compares_the_packed_forward_on_e2():
+    """R5: R4's box facts and env check, then two short train_rl arms on e2: today's forward, then --shared-prefix.
+    The packed arm must not stop the chain, and neither arm saves checkpoints."""
+    from experiments.phase2.vast import policy
+
+    cfg = policy.ROOT / "experiments/phase2/configs"
+    r4, r5 = (policy.chain(cfg / f, "r5") for f in ("r4_speed.yaml", "r5_shared.yaml"))
+    assert r5[:2] == r4[:2] and len(r5) == 4
+    out = r5[2].index("--out") + 1
+    assert r5[2][:out] + r5[2][out + 1:] == r4[2][:out] + r4[2][out + 1:]  # R4's base arm, own folder
+    base, packed = r5[2], r5[3]
+    assert packed[:3] == ["~", "-m", "experiments.phase2.train_rl"] and packed[-1] == "--shared-prefix"
+    assert "--shared-prefix" not in base
+    a, b = (dict(zip(s[i::2], s[i + 1 :: 2], strict=False)) for s, i in ((base, 2), (packed[:-1], 3)))
+    assert a["--ckpt"] == b["--ckpt"] == "/workspace/runs/r5/ckpt" and a["--steps"] == b["--steps"] == "15"
+    assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
+
+
+def test_shifted_rl_chain_trains_on_the_windows_and_scores_both_splits():
+    """rl_shifted: train_rl from the full run's model on the centred frames plus the shifted and rescaled train windows
+    (shared-prefix, resumable), then final_eval on the whole val and test splits of the shifted view."""
+    from experiments.phase2.vast import policy
+
+    chain = policy.chain(policy.ROOT / "experiments/phase2/configs/rl_shifted.yaml", "rl2")
+    train = next(s for s in chain if "experiments.phase2.train_rl" in s)
+    i = train.index("--train-views")
+    assert train[i + 1:i + 3] == ["/workspace/data/lidc/views/lidc-train-shifted",
+                                  "/workspace/data/lidc/views/lidc-train-rescaled"]
+    assert {"--resume", "--shared-prefix"} <= set(train)
+    assert train[train.index("--ckpt") + 1] == "/workspace/runs/rl2/ckpt"
+    evals = [s for s in chain if "experiments.phase2.final_eval" in s]
+    assert [s[s.index("--split") + 1] for s in evals] == ["val", "test"]
+    assert all(s[s.index("--ckpt") + 1] == "/workspace/runs/rl2/train_rl/final" for s in evals)
+    assert evals[1][evals[1].index("--view") + 1] == "/workspace/data/lidc/eval_views/lidc-test-shifted"

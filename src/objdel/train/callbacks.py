@@ -42,15 +42,17 @@ References:
 - transformers 5.20 Trainer loop (on_step_end, then _maybe_log_save_evaluate; evaluate logs, then on_evaluate;
   Trainer.log appends to log_history and calls on_log):
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/trainer.py
-- TRL 1.16 GRPOTrainer (reward_weights, beta, ref_model, num_generations_eval; log writes the completions table):
-  https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py
+- TRL (version pinned in pyproject.toml) GRPOTrainer (reward_weights, beta, ref_model, num_generations_eval;
+  log writes the completions table):
+  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py
 - accelerate gather_object / broadcast_object_list (no-ops in one process):
   https://huggingface.co/docs/accelerate/main/en/package_reference/utilities
 - os.replace is atomic on POSIX: https://docs.python.org/3/library/os.html#os.replace
 - J. Yao et al. 2026, Multimodal Reward Hacking in Reinforcement Learning (failures measured against the SFT model,
   monitored during training): https://arxiv.org/abs/2607.09492
-- Lab: experiments/phase1/lab/t_stack/t3_grpo.py (controller callback), lab/t_dynamics/REPORT.md (typed alarm +
-  rollback; the alarm lags, hence rollback to the best held-out checkpoint).
+- Lab: archive/phase1_lab/t_stack/t3_grpo.py (controller callback),
+  archive/phase1_lab/t_dynamics/REPORT.md (typed alarm + rollback; the alarm lags,
+  hence rollback to the best held-out checkpoint).
 """
 import json
 from pathlib import Path

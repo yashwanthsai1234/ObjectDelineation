@@ -3,6 +3,7 @@
 Data-backed gates (K8, K8b, K9, R3, R4, R5, local gradient) are in test_reward_gates.py."""
 import json
 import math
+import multiprocessing
 import pickle
 import subprocess
 import sys
@@ -62,7 +63,8 @@ def test_frozen_constants_match_plan():
     v = REWARD_V4
     assert (v.weights, v.floors, v.c_topo, v.lam, v.eps, v.group, v.drop_spread) == (
         (0.3, 0.3, 0.1, 0.3), (0.05, 0.05, 0.25, 0.05), 2.0, 0.5, 0.1, 8, 1e-2)
-    assert (v.iou_gate, v.expert_score, v.tau_floor, v.tau_quantile) == (0.5, 0.95, 1.0, 95.0)
+    c = R.CACHE_SPEC
+    assert (v.iou_gate, c.expert_score, c.tau_floor, c.tau_quantile) == (0.5, 0.95, 1.0, 95.0)
     assert R.TERMS == ("iou_tc", "f5", "legal", "g_area")
 
 
@@ -292,8 +294,10 @@ def test_area_guard(three):
     a_min, a_max = min(c.rater_areas), max(c.rater_areas)
     assert score_mask(c.union, c).g_area == pytest.approx(a_max / c.union.sum())
     assert score_mask(c.core, c).g_area == pytest.approx(c.core.sum() / a_min)
-    assert R.area_guard(2 * a_max, c) == 0.5 and R.area_guard(a_min // 2, c) == pytest.approx((a_min // 2) / a_min)
-    assert R.area_guard(0, c) == 0.0 and score_mask(np.zeros_like(c.union), c).g_area == 0.0
+    first = lambda n: (np.arange(c.union.size) < n).reshape(c.union.shape)  # noqa: E731  (n pixels)
+    assert score_mask(first(2 * a_max), c).g_area == 0.5
+    assert score_mask(first(a_min // 2), c).g_area == pytest.approx((a_min // 2) / a_min)
+    assert score_mask(np.zeros_like(c.union), c).g_area == 0.0
 
 
 def test_band_is_monotone_in_excursion(three):
@@ -345,10 +349,10 @@ def test_contract_keys_and_failures(riga_like):
     ok = score_completion(text({"disc": discs[0], "cup": cups[0]}), False, names, caches, 50, 50)
     assert set(ok) == set(R.NUMERIC) | {"error", "defects"}
     assert ok["format_ok"] == ok["legal"] == 1.0 and ok["error"] == "" and ok["defects"] == {}
-    row, masks, objs = R.score_objects(text({"disc": discs[0], "cup": cups[0]}), False, names, caches, 50, 50)
-    assert row == ok and np.array_equal(masks["disc"], raster(discs[0]))  # one pass: terms, masks, ObjectTerms
-    assert objs == {n: score_mask(masks[n], caches[n]) for n in names}
-    assert R.score_objects("hello", False, names, caches, 50, 50)[1:] == (None, {})
+    (row, objs), = R.score_many([(text({"disc": discs[0], "cup": cups[0]}), False, names, caches, 50, 50)])
+    assert row == ok  # one pass: terms and ObjectTerms
+    assert objs == {n: score_mask(raster(p[0]), caches[n]) for n, p in (("disc", discs), ("cup", cups))}
+    assert R.score_many([("hello", False, names, caches, 50, 50)])[0][1] == {}
     for bad, trunc, code in ((text({"disc": discs[0], "cup": cups[0]}), True, "truncated"),
                              ('{"disc":[],"cup":[', False, "incomplete"), ("hello", False, "syntax"),
                              (text({"cup": cups[0], "disc": discs[0]}), False, "keys")):
@@ -417,16 +421,16 @@ def test_completion_terms_match_reference(seed, riga_like):
         assert a["f5"] == pytest.approx(b["f5"], rel=1e-5)
 
 
-def test_score_batch_matches_jobs_in_order_on_any_executor(riga_like):
+def test_score_batch_matches_jobs_in_order_and_concurrent_calls(riga_like):
     discs, cups, caches, _ = riga_like
     names = ("disc", "cup")
     jobs = [(text({"disc": discs[i % 3], "cup": cups[(i * 7) % 3]}), i % 5 == 0, names, caches, 50, 50)
             for i in range(24)]
     serial = score_batch(jobs)
     assert [serial["topo_freq"][i] for i in range(24)] == [score_completion(*j)["topo_freq"] for j in jobs]
-    with ThreadPoolExecutor(4) as pool:
-        threaded = score_batch(jobs, pool)
-    assert all(np.array_equal(serial[k], threaded[k]) for k in R.NUMERIC) and serial["error"] == threaded["error"]
+    with ThreadPoolExecutor(4) as pool:  # concurrent calls share the checker
+        for t in pool.map(score_batch, [jobs] * 4):
+            assert all(np.array_equal(serial[k], t[k]) for k in R.NUMERIC) and serial["error"] == t["error"]
 
 
 # ------------------------------------------------------------------ advantages
@@ -569,10 +573,10 @@ def _k10_run(mode):
         t = score_batch(jobs)
     elif mode == "threads":
         with ThreadPoolExecutor(8) as pool:
-            t = score_batch(jobs, pool)
+            t = list(pool.map(score_batch, [jobs] * 8))[-1]
     else:
-        with ProcessPoolExecutor(2) as pool:
-            t = score_batch(jobs, pool)
+        with ProcessPoolExecutor(2, mp_context=multiprocessing.get_context("spawn")) as pool:
+            t = pool.submit(score_batch, jobs).result()
     return ns["digest"](t)
 
 
