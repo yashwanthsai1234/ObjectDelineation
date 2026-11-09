@@ -102,9 +102,9 @@ def test_k2_both_empty_scores_one_not_nan():
 
 def text_of(mask):
     """The repo's target text of a mask (exact for LIDC nodules)."""
-    from objdel.targets.build import build_target
+    from objdel.targets.build import build_target, min_areas
 
-    return build_target({"nodule": mask}, ("nodule",)).text
+    return build_target({"nodule": mask}, ("nodule",), None, min_areas({"nodule": mask[None]})).text
 
 
 def test_identical_doctors_score_one():

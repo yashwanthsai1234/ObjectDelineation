@@ -605,7 +605,9 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
         m.setattr(P, "ROOT", repo)
         assert sorted(P.code_files()) == sorted([*SHIPPED, "tests/oracles/o.py"])
     files = P.code_files()  # (b) the real repo
-    assert set(SHIPPED) <= set(files) and not [f for f in files if f.startswith("docs/") and f not in SHIPPED]
+    kernels = "docs/implementation2.0/kernels/"  # D1: the K1-K3 drafts ship for the R-D1 runbooks
+    assert set(SHIPPED) <= set(files)
+    assert not [f for f in files if f.startswith("docs/") and f not in SHIPPED and not f.startswith(kernels)]
 
     box = tmp_path / "box"  # (c) the box's /workspace/src
     for f in files:
