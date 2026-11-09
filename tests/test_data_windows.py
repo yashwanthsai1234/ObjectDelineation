@@ -1,7 +1,12 @@
 """objdel.data.windows (B1.1 window pool and cells, B1.2 scheduler; plan B.9 U03-U17, U59, U60, P01-P06, I02, F02,
 R03). Synthetic LIDC items are disks on 200 x 200 slices; tests marked `data` read data/store (skipped when absent)."""
+from collections import Counter
+
 import numpy as np
 import pytest
+from hypothesis import event, given, settings
+from hypothesis import strategies as st
+from oracles.largest_remainder import lrr
 
 from objdel.data import windows as Wn
 
@@ -321,9 +326,338 @@ def test_draw0_matches_real_eval_views(store_dir):  # I02: 200 val items against
     assert n >= 300
 
 
+@pytest.fixture(scope="module")
+def train_pool(store_dir):
+    from objdel.data import store
+    return Wn.pool(store.load("lidc", "train", store_dir), draws=1)
+
+
 @pytest.mark.data
 @pytest.mark.slow
-def test_real_train_disagreement_count(store_dir):  # U11: 289 flagged slices (not 1,394, the nodule-level count)
-    from objdel.data import store
-    p = Wn.pool(store.load("lidc", "train", store_dir), draws=0)
-    assert sum(w.disagreement for w in p.windows) == 289 and len(p.windows) == 7341
+def test_real_train_disagreement_count(train_pool):  # U11: 289 flagged slices (not 1,394, the nodule-level count)
+    centred = [w for w in train_pool.windows if w.kind == "centred"]
+    assert sum(w.disagreement for w in centred) == 289 and len(centred) == 7341
+
+
+@pytest.mark.data
+@pytest.mark.slow
+def test_real_train_schedule(train_pool):  # R03: DG7-DG10 against the train shifted law, every block prefix
+    from scipy.stats import ks_2samp
+    law = [w for w in train_pool.windows if w.kind == "shifted" and w.draw == 0]
+    target = Wn.cell_shares(law)
+    rows = Wn.schedule(train_pool.windows, target, 100, per_step=32, seed=0)
+    assert [sum(w.kind == k for w in rows) for k in Wn.KINDS] == [480, 2400, 320]
+    big = target >= 0.01
+    for end in range(640, 3201, 640):
+        off = [w for w in rows[:end] if w.kind != "centred"]
+        got = Wn.cell_shares(off)
+        ratio, tv = (got[big] / target[big]).min(), 0.5 * abs(got - target).sum()
+        ks = ks_2samp([w.offset for w in off], [w.offset for w in law]).statistic
+        s0 = sum(w.side == w.s0 for w in off) / len(off)
+        print(f"steps {end // 32}: DG7 {ratio:.3f} DG8 {tv:.4f} DG9 {ks:.4f} DG10 {s0:.4f}")
+        assert ratio >= 0.8 and tv <= 0.10 and ks <= 0.06 and s0 >= 0.75
+
+
+# --------------------------------------------------------------------------------------------- schedule (B1.2)
+SH = {"centred": 0.15, "shifted": 0.75, "rescaled": 0.10}
+EDGE_SIZE, EDGE_OFF = (5, 15, 30, 60), (0.07, 0.17, 0.25, 0.4)  # one value inside each bin
+
+
+def synth_pool(rng, n_items=400, per_item=6):  # the plan's sketch: random extents and offsets
+    out = []
+    for i in range(n_items):
+        dis = bool(rng.random() < 0.2)
+        for kind in ("shifted", "rescaled"):
+            for d in range(per_item // 2):
+                out.append(Wn.Window(f"lidc/p{i//3}/s{i}", f"p{i//3}", f"n{i}", kind, d, 0, 0, side=100, s0=100,
+                                     offset=rng.random() * 0.5, extent_px=int(rng.integers(3, 80)), disagreement=dis))
+        out.append(Wn.Window(f"lidc/p{i//3}/s{i}", f"p{i//3}", f"n{i}", "centred", 0, 0, 0, side=100, s0=100,
+                             offset=0.0, extent_px=20, disagreement=dis))
+    return tuple(sorted(out, key=lambda w: w.window_id))
+
+
+def cell_pool(n_items=2000, draws=4, dis_share=0.2, seed=0, cells=None):
+    """Windows whose cells are drawn uniformly (or from `cells`): every cell well stocked for both off-centre kinds."""
+    rng, out = np.random.default_rng(seed), []
+    for i in range(n_items):
+        item, dis = f"lidc/p{i // 3}/n{i}/z1", bool(rng.random() < dis_share)
+        out.append(win("centred", item_id=item, extent_px=EDGE_SIZE[i % 4], disagreement=dis))
+        for kind in ("shifted", "rescaled"):
+            for d in range(draws):
+                a, b = cells[i % len(cells)] if cells else rng.integers(0, 4, 2)
+                out.append(win(kind, d, item_id=item, extent_px=EDGE_SIZE[a], offset=EDGE_OFF[b], disagreement=dis))
+    return tuple(sorted(out, key=lambda w: w.window_id))
+
+
+@pytest.fixture(scope="module")
+def big_pool():
+    return Wn.WindowPool(cell_pool(), {})
+
+
+@pytest.fixture
+def uniform_target():
+    return np.full((4, 4), 1 / 16)
+
+
+def slot_set(w):  # the centred slots of a block are one set
+    return (w.kind, None if w.kind == "centred" else w.cell)
+
+
+@settings(max_examples=40, deadline=None)
+@given(blocks=st.integers(1, 3), block_steps=st.sampled_from([1, 2, 4]), per_step=st.integers(1, 32),
+       seed=st.integers(0, 2**16), dw=st.sampled_from([1.0, 4.0, 16.0]))
+def test_schedule_counts_and_rules(blocks, block_steps, per_step, seed, dw):  # P05, P06, P14, DG11
+    rng = np.random.default_rng(seed)
+    ws = synth_pool(rng)
+    target = rng.dirichlet(np.ones(16)).reshape(4, 4)
+    steps = blocks * block_steps
+    try:
+        out = Wn.schedule(ws, target, steps, per_step=per_step, shares=SH, seed=seed,
+                          disagreement_weight=dw, block_steps=block_steps)
+    except ValueError as e:  # unfillable cell: must name kind (and cell)
+        event("raised")
+        assert any(k in str(e) for k in ("shifted", "rescaled", "centred"))
+        return
+    n, nb = steps * per_step, block_steps * per_step
+    assert len(out) == n
+    use = Counter(w.window_id for w in out)  # B1.2 step 4: others once, disagreement <= 4
+    assert all(c == 1 or (c <= 4 and w.disagreement) for w in out for c in [use[w.window_id]])
+    pools = Counter(slot_set(w) for w in ws)
+    pdis = {k: sum(slot_set(w) == k and w.disagreement for w in ws) / pools[k] for k in pools}
+    for b in range(blocks):  # exact counts in every block (so in every prefix of whole blocks)
+        blk = out[b * nb:(b + 1) * nb]
+        want = dict(zip(Wn.KINDS, lrr(np.array([SH[k] for k in Wn.KINDS]) * nb, nb), strict=True))
+        for k in Wn.KINDS:
+            assert sum(w.kind == k for w in blk) == want[k]
+        for k in ("shifted", "rescaled"):
+            rows = [w for w in blk if w.kind == k]
+            got = np.zeros(16, int)
+            for w in rows:
+                got[w.cell[0] * 4 + w.cell[1]] += 1
+            assert got.tolist() == lrr(target.reshape(-1) * len(rows), len(rows)).tolist()
+        for key, slots in Counter(slot_set(w) for w in blk).items():  # B1.2 step 3 quota, every block
+            p_ = pdis[key]
+            q = dw * p_ / (1 + (dw - 1) * p_)
+            got_dis = sum(slot_set(w) == key and w.disagreement for w in blk)
+            assert got_dis == lrr(np.array([q, 1 - q]) * slots, slots)[0]
+    for s in range(steps):  # one item per step
+        ids = [w.item_id for w in out[s * per_step:(s + 1) * per_step]]
+        assert len(set(ids)) == per_step
+    assert out == Wn.schedule(ws, target, steps, per_step=per_step, shares=SH, seed=seed,
+                              disagreement_weight=dw, block_steps=block_steps)  # deterministic
+
+
+def test_feasible_pool_returns_rows(big_pool, uniform_target):  # a schedule that always raises fails here
+    rows = Wn.schedule(big_pool.windows, uniform_target, 20, per_step=32, seed=0)
+    assert len(rows) == 640 and len({w.window_id for w in rows}) == 640
+
+
+def test_steps_must_be_whole_blocks(big_pool, uniform_target):
+    with pytest.raises(ValueError, match="block"):
+        Wn.schedule(big_pool.windows, uniform_target, 30, per_step=32, seed=0, block_steps=20)
+
+
+@pytest.mark.parametrize("steps,per_step", [(20, 32), (40, 32), (20, 5)])
+def test_kind_counts_match_table(steps, per_step, big_pool, uniform_target):
+    rows = Wn.schedule(big_pool.windows, uniform_target, steps, per_step=per_step, seed=0)
+    got = [sum(w.kind == k for w in rows) for k in Wn.KINDS]
+    nb = 20 * per_step
+    assert got == list(steps // 20 * lrr(np.array([.15, .75, .10]) * nb, nb))
+
+
+@pytest.mark.parametrize("steps,per_step,want", [(10, 32, (48, 240, 32)), (7, 32, (34, 168, 22)), (1, 32, (5, 24, 3)),
+                                                 (1, 1, (0, 1, 0)), (3, 5, (2, 11, 2)), (31, 1, (5, 23, 3))])
+def test_kind_rounding_table(steps, per_step, want, big_pool, uniform_target):  # U13 (one block of `steps`)
+    rows = Wn.schedule(big_pool.windows, uniform_target, steps, per_step=per_step, block_steps=steps)
+    assert tuple(sum(w.kind == k for w in rows) for k in Wn.KINDS) == want
+
+
+def test_kind_rounding_ties_and_step_spread(big_pool, uniform_target):  # U13 ties; B1.2 step 1 per-step spread
+    third = dict.fromkeys(Wn.KINDS, 1 / 3)
+    for n, want in ((10, (4, 3, 3)), (32, (11, 11, 10))):  # ties go to the lower index
+        runs = {tuple(sum(w.kind == k for w in Wn.schedule(big_pool.windows, uniform_target, n, per_step=1,
+                                                             shares=third, block_steps=n)) for k in Wn.KINDS)
+                for _ in range(10)}
+        assert runs == {want}
+    rows = Wn.schedule(big_pool.windows, uniform_target, 20, per_step=32)
+    for s in range(20):
+        step = Counter(w.kind for w in rows[32 * s:32 * (s + 1)])
+        assert step["centred"] in (4, 5) and step["rescaled"] in (3, 4)
+
+
+@pytest.mark.parametrize("n,want", [(240, [15] * 16), (241, [16] + [15] * 15), (40, [3] * 8 + [2] * 8)])
+def test_cell_rounding_table(n, want, big_pool, uniform_target):  # U13 cell counts
+    only = {"centred": 0.0, "shifted": 1.0, "rescaled": 0.0}
+    rows = Wn.schedule(big_pool.windows, uniform_target, 1, per_step=n, shares=only, block_steps=1)
+    got = Counter(w.cell for w in rows)
+    assert [got[a, b] for a in range(4) for b in range(4)] == want
+
+
+def test_cell_rounding_matches_oracle(big_pool):  # U13: peaked targets equal lrr
+    rng = np.random.default_rng(1)
+    only = {"centred": 0.0, "shifted": 1.0, "rescaled": 0.0}
+    for _ in range(200):
+        t = rng.dirichlet(np.full(16, 0.3))
+        n = int(rng.integers(1, 200))
+        rows = Wn.schedule(big_pool.windows, t.reshape(4, 4), 1, per_step=n, shares=only, block_steps=1,
+                           seed=int(rng.integers(1000)))
+        got = Counter(w.cell for w in rows)
+        assert [got[a, b] for a in range(4) for b in range(4)] == lrr(t * n, n).tolist()
+
+
+def bad_target(kind):
+    t = np.full((4, 4), 1 / 16)
+    if kind == "shape":
+        return np.full((3, 4), 1 / 12)
+    t[0, 0] = {"neg": -1e-3, "nan": np.nan, "inf": np.inf, "off7": 1 / 16 + 1e-7, "off2e9": 1 / 16 + 2e-9}[kind]
+    return t
+
+
+@pytest.mark.parametrize("kind", ["shape", "neg", "nan", "inf", "off7", "off2e9"])
+def test_target_validation(kind, big_pool):  # U14
+    with pytest.raises(ValueError):
+        Wn.schedule(big_pool.windows, bad_target(kind), 1, per_step=8, block_steps=1)
+
+
+@pytest.mark.parametrize("shares", [{"centred": .15, "shifted": .85}, {**SH, "edge": 0.0},
+                                    {"centred": -.1, "shifted": 1.0, "rescaled": .1},
+                                    {"centred": .14, "shifted": .75, "rescaled": .10},
+                                    {"centred": .16, "shifted": .75, "rescaled": .10}])
+def test_shares_validation(shares, big_pool, uniform_target):  # U14
+    with pytest.raises(ValueError):
+        Wn.schedule(big_pool.windows, uniform_target, 1, per_step=8, shares=shares, block_steps=1)
+
+
+@pytest.mark.parametrize("args", [dict(steps=0), dict(per_step=0), dict(block_steps=0), dict(disagreement_weight=0.0),
+                                  dict(disagreement_weight=float("nan"))])
+def test_size_validation(args, big_pool, uniform_target):  # U14: no hang, no empty list
+    kw = {"steps": 20, "per_step": 8, **args}
+    with pytest.raises(ValueError):
+        Wn.schedule(big_pool.windows, uniform_target, kw.pop("steps"), **kw)
+
+
+def test_target_sum_tolerance(big_pool):  # U14: 5e-10 off is accepted
+    t = np.full((4, 4), 1 / 16)
+    t[0, 0] += 5e-10
+    assert len(Wn.schedule(big_pool.windows, t, 1, per_step=8, block_steps=1)) == 8
+
+
+def test_unfillable_cell_names_kind_and_cell_and_does_not_substitute():  # U15 (the sketch)
+    rng = np.random.default_rng(0)
+    ws = tuple(w for w in synth_pool(rng) if not (w.kind == "shifted" and w.cell == (1, 2)))
+    with pytest.raises(ValueError, match=r"shifted.*\(?1, ?2\)?"):
+        Wn.schedule(ws, np.full((4, 4), 1 / 16), 4, per_step=32, block_steps=4)
+
+
+def test_unfillable_counts_and_step_rule():  # U15, P05: exactly enough succeeds, one short raises
+    only = {"centred": 0.0, "shifted": 1.0, "rescaled": 0.0}
+    t = np.zeros((4, 4))
+    t[2, 3] = 1.0
+    ws = cell_pool(32, draws=1, dis_share=0.0, cells=[(2, 3)])
+    assert len(Wn.schedule(ws, t, 4, per_step=8, shares=only, block_steps=4)) == 32
+    short = tuple(w for w in ws if w.item_id != "lidc/p0/n0/z1")
+    with pytest.raises(ValueError, match=r"shifted.*\(2, 3\).*other"):
+        Wn.schedule(short, t, 4, per_step=8, shares=only, block_steps=4)
+    two = cell_pool(2, draws=8, dis_share=0.0, cells=[(2, 3)])  # 16 windows, but only 2 items for 3 rows a step
+    with pytest.raises(ValueError, match="shifted"):
+        Wn.schedule(two, t, 1, per_step=3, shares=only, block_steps=1)
+
+
+def test_zero_mass_cells_and_centred_cells(big_pool):  # U16
+    t = np.zeros((4, 4))
+    t[1, 1], t[3, 0] = 0.25, 0.75
+    rows = Wn.schedule(big_pool.windows, t, 20, per_step=32)
+    off = Counter(w.cell for w in rows if w.kind != "centred")
+    assert set(off) == {(1, 1), (3, 0)}
+    t1 = np.zeros((4, 4))
+    t1[0, 3] = 1.0
+    assert {w.cell for w in Wn.schedule(big_pool.windows, t1, 20, per_step=32) if w.kind != "centred"} == {(0, 3)}
+    rows = Wn.schedule(big_pool.windows, t1, 20, per_step=32)
+    assert {w.cell for w in rows if w.kind == "centred"} == {(a, 0) for a in range(4)}  # not binned by the target
+
+
+def test_schedule_does_not_mutate(big_pool, uniform_target):  # U17
+    ws, t = list(big_pool.windows), uniform_target.copy()
+    before = (list(ws), t.copy(), dict(Wn.SHARES))
+    Wn.schedule(ws, t, 20, per_step=32)
+    assert (ws, dict(Wn.SHARES)) == before[::2] and np.array_equal(t, before[1])
+
+
+def test_seed_changes_the_rows_not_the_counts(big_pool, uniform_target):  # P05
+    a = Wn.schedule(big_pool.windows, uniform_target, 20, per_step=32, seed=0)
+    b = Wn.schedule(big_pool.windows, uniform_target, 20, per_step=32, seed=1)
+    assert a != b and {w.window_id for w in a} != {w.window_id for w in b}
+    assert Counter(slot_set(w) for w in a) == Counter(slot_set(w) for w in b)
+    assert Wn.schedule(big_pool.windows[::-1], uniform_target, 20, per_step=32, seed=0) == a  # input order
+
+
+def test_same_rows_across_processes(tmp_path):  # P04, P05: no hash() order, no global RNG
+    import subprocess
+    import sys
+    from pathlib import Path
+    code = ("import sys, hashlib; sys.path.insert(0, sys.argv[1]); import numpy as np; import test_data_windows as T;"
+            "from objdel.data import windows as Wn; p = Wn.pool(T.store30(), draws=2);"
+            "rows = Wn.schedule(T.cell_pool(300), np.full((4, 4), 1 / 16), 2, per_step=16, block_steps=2);"
+            "print(hashlib.sha256(repr((p, [w.window_id for w in rows])).encode()).hexdigest())")
+    tests = str(Path(__file__).parent)
+    out = {subprocess.run([sys.executable, "-c", code, tests], capture_output=True, text=True, check=True,
+                          env={"PYTHONHASHSEED": h, "PATH": ""}).stdout for h in ("0", "1")}
+    assert len(out) == 1 and len(out.pop()) == 65
+
+
+def test_disagreement_weight(big_pool, uniform_target):  # P06: quota per slot set, monotone, no front-loading
+    ws = cell_pool(1500, dis_share=0.4, seed=3)
+    by_w = {}
+    for dw in (1.0, 4.0, 16.0, 64.0):
+        rows = Wn.schedule(ws, uniform_target, 40, per_step=32, disagreement_weight=dw)
+        by_w[dw] = rows
+        blocks = [Counter(slot_set(w) for w in rows[i:i + 640] if w.disagreement) for i in (0, 640)]
+        assert all(abs(blocks[0][k] - blocks[1][k]) <= 0 for k in blocks[0] | blocks[1])  # same quota every block
+    counts = [Counter(slot_set(w) for w in r) for r in by_w.values()]
+    assert all(c == counts[0] for c in counts)  # the weight only moves the quota inside a slot set
+    dis = [Counter(slot_set(w) for w in r if w.disagreement) for r in by_w.values()]
+    for lo, hi in zip(dis, dis[1:], strict=False):
+        assert all(lo[k] <= hi[k] for k in lo | hi)
+    share = sum(w.disagreement for w in by_w[1.0]) / 1280
+    pool_share = sum(w.disagreement for w in ws if w.kind != "centred") / sum(w.kind != "centred" for w in ws)
+    assert abs(share - pool_share) < 0.05  # weight 1: the pool's share (q = p per slot set)
+
+
+def test_disagreement_reuse_limit():  # B1.2 step 4: a used-up disagreement cell reuses windows, at most 4 times
+    only = {"centred": 0.0, "shifted": 1.0, "rescaled": 0.0}
+    t = np.zeros((4, 4))
+    t[1, 1] = 1.0
+    ws = cell_pool(40, draws=1, dis_share=0.25, seed=5, cells=[(1, 1)])
+    n_dis = sum(w.disagreement for w in ws if w.kind == "shifted")
+    rows = Wn.schedule(ws, t, 8, per_step=4, shares=only, block_steps=8, disagreement_weight=8.0)
+    use = Counter(w.window_id for w in rows if w.disagreement)
+    assert sum(use.values()) > n_dis and max(use.values()) <= 4
+    assert all(c == 1 for w, c in Counter(w.window_id for w in rows if not w.disagreement).items())
+    with pytest.raises(ValueError, match="disagreement"):
+        Wn.schedule(ws, t, 40, per_step=4, shares=only, block_steps=40, disagreement_weight=64.0)
+
+
+def test_no_nodule_weighting():  # I25: no nodule-weight argument
+    import inspect
+    assert list(inspect.signature(Wn.schedule).parameters) == ["windows", "target", "steps", "per_step", "shares",
+                                                                "seed", "disagreement_weight", "block_steps"]
+
+
+@pytest.mark.slow
+def test_schedule_speed():  # F02: about 58k windows, 260 steps x 32; doubling the pool grows time < 3x
+    import time
+    t = np.full((4, 4), 1 / 16)
+    secs = []
+    for n in (3600, 7200):
+        ws = cell_pool(n, draws=8)
+        s = time.perf_counter()
+        Wn.schedule(ws, t, 260, per_step=32)
+        secs.append(time.perf_counter() - s)
+    assert secs[0] < 5 and secs[1] < 3 * secs[0] + 0.5, secs
+
+
+def test_zero_share_kind_needs_no_windows(big_pool, uniform_target):  # a kind with 0 slots asks the pool for nothing
+    no_centred = tuple(w for w in big_pool.windows if w.kind != "centred")
+    rows = Wn.schedule(no_centred, uniform_target, 1, per_step=8, block_steps=1,
+                       shares={"centred": 0.0, "shifted": 0.9, "rescaled": 0.1})
+    assert len(rows) == 8 and not any(w.kind == "centred" for w in rows)
