@@ -330,7 +330,7 @@ def test_draws_default_key_is_bit_identical_to_legacy():
 
 
 def test_one_item_per_cluster_equals_integers_rows():
-    for n in (1, 2, 10, 17, 401):
+    for n in (2, 10, 17, 401):  # n = 1 is one cluster: refused (BR1-data)
         want = np.random.default_rng(5).integers(0, n, (100, n))
         assert np.array_equal(np.stack(S.draws([f"x{i}" for i in range(n)], 100, 5)), want)
         assert np.array_equal(np.stack(S.draws([f"lidc/s{i}/n000/z1" for i in range(n)], 100, 5)), want)
@@ -371,15 +371,16 @@ def test_draws_with_a_key_keep_whole_clusters_in_first_appearance_order():
             rest = rest[len(block):]
             seen.add(tuple(block))
     assert seen == {(0, 1, 2), (3,)}
-    for d in S.draws(pids, 5, 0, key=lambda s: "one"):
-        assert np.array_equal(d, np.arange(4))
+    with pytest.raises(ValueError, match="at least 2 clusters"):  # BR1-data: one cluster has no spread to resample
+        S.draws(pids, 5, 0, key=lambda s: "one")
 
 
 def test_draws_edges():
     with pytest.raises(ValueError, match="no ids"):
         S.draws([], 3)
-    assert all(np.array_equal(d, [0, 1]) for d in S.draws(["lidc/s/n0/z1", "lidc/s/n0/z2"], 5))
-    assert [d.tolist() for d in S.draws(["a"], 4)] == [[0]] * 4
+    for one in (["lidc/s/n0/z1", "lidc/s/n0/z2"], ["a"]):  # one cluster (BR1-data)
+        with pytest.raises(ValueError, match="at least 2 clusters"):
+            S.draws(one, 5)
     assert S.draws(["a", "b"], 0) == []
 
 

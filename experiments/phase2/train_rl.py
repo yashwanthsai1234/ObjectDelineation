@@ -40,12 +40,21 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
 
 # fp16-seqmask needs fp16 weights and vLLM dtype, lora-seqmask needs LoRA serving: both are FastGRPO plumbing (B2.2)
 NEEDS_FASTGRPO = ("fp16-seqmask", "lora-seqmask")
+
+
+def _finite(lo_open: bool):
+    def check(s: str) -> float:
+        if not (0 < (x := float(s)) if lo_open else 0 <= (x := float(s))) or x == float("inf"):
+            raise argparse.ArgumentTypeError(f"{s!r}: needs a finite number {'> 0' if lo_open else '>= 0'}")
+        return x
+    return check
 
 
 def _hex(n: int):
@@ -80,12 +89,12 @@ def parse(argv=None) -> argparse.Namespace:
                     help="no training: merge the last checkpoint into --ckpt as <out>/final unless it exists")
     ap.add_argument("--rows-revision", type=_hex(40), help="HF commit of the rows root (provenance in rl.json)")
     ap.add_argument("--rows-manifest-sha256", type=_hex(64), help="SHA-256 of the rows root's manifest.json")
-    ap.add_argument("--budget-usd", type=float, help="stop and save when the session spend reaches this")
-    ap.add_argument("--session-start", type=float, default=env("OBJDEL_SESSION_START"),
+    ap.add_argument("--budget-usd", type=_finite(True), help="stop and save when the session spend reaches this")
+    ap.add_argument("--session-start", type=_finite(False), default=env("OBJDEL_SESSION_START"),
                     help="unix time the rental started (default: $OBJDEL_SESSION_START)")
-    ap.add_argument("--rate-usd-per-h", type=float, default=env("OBJDEL_RATE_USD_PER_H"),
+    ap.add_argument("--rate-usd-per-h", type=_finite(True), default=env("OBJDEL_RATE_USD_PER_H"),
                     help="USD per hour, bandwidth included (default: $OBJDEL_RATE_USD_PER_H)")
-    ap.add_argument("--fixed-usd", type=float, default=env("OBJDEL_FIXED_USD", "0"),
+    ap.add_argument("--fixed-usd", type=_finite(False), default=env("OBJDEL_FIXED_USD", "0"),
                     help="one-off USD of the session (default: $OBJDEL_FIXED_USD, else 0)")
     ap.add_argument("--heldout", type=Path, help="eval view for the held-out curve (val-shape items only)")
     ap.add_argument("--heldout-items", type=int, default=64)
@@ -105,6 +114,10 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
                                     "else step 3 (the nsys fallback)")
     ap.add_argument("--count-syncs", action="store_true", help="C0: log perf/host_syncs/<phase> (torch sync warnings)")
+    ap.add_argument("--host-meta", action="store_true",
+                    help="C4: row lengths, image ids and groups from vLLM's host lists in the batch (host_meta)")
+    ap.add_argument("--check-meta-every", type=int, default=50, metavar="N",
+                    help="with --host-meta: compare host_meta with the device masks on steps 1, N+1, ... (0: never)")
     ap.add_argument("--gpu-pixels", choices=("off", "auto"), default="off",
                     help="C1: prepare pixel values on the GPU after a start-up self-check (default off: the CPU path)")
     ap.add_argument("--allow-cpu-pixels", action="store_true",
@@ -112,6 +125,9 @@ def parse(argv=None) -> argparse.Namespace:
     a = ap.parse_args(argv)
     if not a.merge_last and (a.train is None or a.steps is None):
         ap.error("--train and --steps are required (except with --merge-last)")
+    for k in ("steps", "save_steps", "heldout_every"):  # TRL reads max_steps <= 0 as "train num_train_epochs"
+        if getattr(a, k) is not None and getattr(a, k) < 1:
+            ap.error(f"--{k.replace('_', '-')} {getattr(a, k)}: needs >= 1")
     if a.budget_usd is not None and a.session_start is None:
         ap.error("--budget-usd needs a session start: --session-start or OBJDEL_SESSION_START (run.sh exports it)")
     if a.budget_usd is not None and a.rate_usd_per_h is None:
@@ -193,6 +209,8 @@ def check_sampler(cfg, schedule: dict, steps: int) -> None:
                          f"{cfg.gradient_accumulation_steps}: one generation batch must be one optimizer step")
     if cfg.num_iterations != 1:
         raise ValueError(f"num_iterations {cfg.num_iterations}: the schedule gives each step its own prompts")
+    if steps < 1:
+        raise ValueError(f"--steps {steps}: needs >= 1")
     if steps > schedule["steps"]:
         raise ValueError(f"--steps {steps} > the schedule's {schedule['steps']} steps")
     if steps % schedule["block_steps"]:
@@ -226,15 +244,32 @@ def save_final(model, proc, out: Path) -> None:
     proc.save_pretrained(out / "final")
 
 
+def cut_seq_gaps(trainer_dir: Path, step: int) -> None:
+    """seq_gaps.f32 back to the first `step` steps (rows a crashed run logged after its last checkpoint go; a fresh
+    run, step 0, deletes it), so step i of the file stays optimizer step i after --resume."""
+    f, meta = trainer_dir / "seq_gaps.f32", trainer_dir / "seq_gaps.json"
+    if not step or not meta.is_file() or not f.is_file():
+        f.unlink(missing_ok=True)
+        meta.unlink(missing_ok=True)
+        return
+    m = json.loads(meta.read_text())
+    with open(f, "r+b") as fh:
+        fh.truncate(min(f.stat().st_size, step * m["rows_per_step"] * 3 * 4))
+    m["steps"] = f.stat().st_size // (m["rows_per_step"] * 3 * 4)
+    meta.write_text(json.dumps(m) + "\n")
+
+
 def merge_last(a) -> int:
     """--merge-last: <out>/final from the last checkpoint when the run ended before its own save."""
     from transformers.trainer_utils import get_last_checkpoint
 
     from experiments.phase2.g_probe import save_json
 
-    if (a.out / "final").is_dir():
-        print(f"{a.out / 'final'} exists: nothing to merge")
+    final = a.out / "final"
+    if (final / "config.json").is_file() and any(final.glob("*.safetensors")) and (a.out / "rl.json").is_file():
+        print(f"{final} exists: nothing to merge")
         return 0
+    shutil.rmtree(final, ignore_errors=True)  # a half-written final (the box died inside save_final)
     last = get_last_checkpoint(str(a.out / "trainer")) if (a.out / "trainer").is_dir() else None
     if last is None:
         print(f"--merge-last: no checkpoint in {a.out / 'trainer'}", file=sys.stderr)
@@ -274,6 +309,7 @@ def main(argv=None) -> int:
     last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
     if a.resume and last is None:
         print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
+    cut_seq_gaps(a.out / "trainer", int(Path(last).name.split("-")[1]) if last else 0)
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)

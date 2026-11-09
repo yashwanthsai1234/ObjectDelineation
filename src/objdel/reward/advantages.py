@@ -103,7 +103,7 @@ def advantages_v4(terms: dict, group: int = REWARD_V4.group) -> np.ndarray:
     """Reward-v4 advantages (B*G,) from per-rollout terms (keys of score_completion; flat, prompt by prompt)."""
     T = _groups(terms, group)
     R = np.stack([T[k] for k in TERMS], -1)  # (B, G, 4)
-    X = R * legal_gate(T)[..., None]
+    X = np.where(legal_gate(T)[..., None], R, 0.0)  # where, not *: NaN * 0 is NaN
     z = (X - X.mean(1, keepdims=True)) / np.maximum(X.std(1, keepdims=True), REWARD_V4.floors)
     r = _topology(T, group)
     a = (z * REWARD_V4.weights).sum(-1) + REWARD_V4.c_topo * (r - r.mean(1, keepdims=True))
@@ -112,13 +112,19 @@ def advantages_v4(terms: dict, group: int = REWARD_V4.group) -> np.ndarray:
     return a.reshape(-1)
 
 
-def rewards_v5(T: dict, r_topo: np.ndarray, spec=REWARD_V5) -> np.ndarray:
-    """Reward-v5 R of grouped terms T (any shape) and r_topo (module docstring)."""
+def reward_parts_v5(T: dict, r_topo: np.ndarray, spec=REWARD_V5) -> dict[str, np.ndarray]:
+    """The weighted summands of reward-v5 R (module docstring), by term; their sum is R."""
     area = spec.w_area * T["g_area"]
     if spec.area_gate:
         area = area * np.minimum(1.0, T["iou_tc"] / spec.miss_iou)
-    geo = T["iou_tc"] + spec.alpha_loc * T["loc"] + spec.w_f5 * T["f5"] + area
-    return legal_gate(T) * geo + spec.c_topo * r_topo
+    legal = legal_gate(T)
+    return {"iou": legal * T["iou_tc"], "loc": legal * spec.alpha_loc * T["loc"], "f5": legal * spec.w_f5 * T["f5"],
+            "area": legal * area, "topo": spec.c_topo * r_topo}
+
+
+def rewards_v5(T: dict, r_topo: np.ndarray, spec=REWARD_V5) -> np.ndarray:
+    """Reward-v5 R of grouped terms T (any shape) and r_topo (module docstring)."""
+    return sum(reward_parts_v5(T, r_topo, spec).values())
 
 
 def advantages_v5(terms: dict, group: int = REWARD_V5.group, spec=REWARD_V5) -> np.ndarray:

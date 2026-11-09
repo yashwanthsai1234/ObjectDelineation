@@ -69,3 +69,30 @@ def test_ruff_bans_the_private_trl_module_outside_the_allowed_files():
     ok = subprocess.run([*ruff, "src/objdel/train/fast.py", "-"], cwd=ROOT, input=code, capture_output=True, text=True)
     assert bad.returncode == 1 and "TID251" in bad.stdout, bad.stdout
     assert ok.returncode == 0, ok.stdout
+
+
+SCRATCH_PYPROJECT = """
+[tool.importlinter]
+root_package = "pkg"
+
+[[tool.importlinter.contracts]]
+name = "optional and independent"
+type = "layers"
+containers = ["pkg"]
+layers = ["top", "(x) | (y) | (absent)", "base"]
+"""
+
+
+def test_optional_and_independent_layer_syntax_is_accepted(tmp_path):
+    """(c): 2.16 accepts `(x) | (y)` (optional, independent) in one layer; a missing optional module is no error,
+    and the siblings may not import each other. So the target contract can say `(rl) | (sft)` before E5."""
+    pkg = tmp_path / "src/pkg"
+    pkg.mkdir(parents=True)
+    for name in ("__init__", "top", "x", "y", "base"):
+        (pkg / f"{name}.py").write_text("import pkg.base\n" if name in ("x", "y") else "")
+    (tmp_path / "pyproject.toml").write_text(SCRATCH_PYPROJECT)
+    ok = lint_imports(tmp_path)
+    (pkg / "x.py").write_text("import pkg.y\n")
+    bad = lint_imports(tmp_path)
+    assert ok.returncode == 0, ok.stdout[-3000:]
+    assert bad.returncode == 1 and "BROKEN" in bad.stdout, bad.stdout[-3000:]

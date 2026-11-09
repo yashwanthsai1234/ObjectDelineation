@@ -11,6 +11,7 @@ dependencies = [
     "opencv-python-headless==5.0.0.93",  # Spaghetti labeling; pinned because topology results are hashed (plan §6)
     "pyarrow>=20",  # data store (Parquet); imported by objdel.data
     "numba==0.68.0",  # target simplifier kernels; pinned because the target-set hash depends on it
+    "pydantic>=2.11", "pydantic-settings>=2.16,<3", "pyyaml>=6.0",  # objdel.core.spec: the typed run spec (specs/*.yaml)
 ]
 
 [project.optional-dependencies]
@@ -28,11 +29,11 @@ data = ["pydicom>=3.0", "pylidc==0.2.3"]
 dev = [
     "pytest>=8.0", "pytest-cov>=6.0", "pytest-xdist==3.8.0", "hypothesis>=6.100", "ruff==0.17.1",
     "matplotlib>=3.9",  # pylidc-parity oracle
-    "pyyaml>=6.0",  # experiments/phase2/vast/policy.py reads run configs (in the training lock via transformers)
     "vulture==2.16",  # `make dead`
     "import-linter==2.16",  # `make lint`: layer contracts
-    "pydantic>=2.11", "pydantic-settings>=2.16,<3",  # objdel.core.spec (the run spec)
 ]
+# Docs site (DOC3, ADR-0012). Rollback, not installed: mkdocs-material==9.8.1, mkdocs-api-autonav==0.4.0.
+docs = ["zensical==0.1.0", "mkdocstrings-python==2.0.10"]
 
 [build-system]
 # Pinned: the extension's machine code depends on them (plan §6).
@@ -73,6 +74,8 @@ markers = [
     "data: needs data/fixtures or data/store (skipped when absent)",
     "gpu: needs the CUDA build on a GPU box (skipped on the CPU build)",
     "sanitizer: runs under compute-sanitizer in make gpu-check (small fixed corpus)",
+    "docs_build: needs the docs extra and builds the site (make docs)",
+    "post_commit: reads the git index; owner and CI only",
 ]
 
 [tool.coverage.run]
@@ -122,7 +125,7 @@ known-first-party = ["objdel", "experiments"]
 # Dead-code gate (`make dead`, tests/test_repo_hygiene.py). Each group below is used by name from outside the code.
 paths = ["src", "experiments", "tests"]
 min_confidence = 60
-ignore_decorators = ["@pytest.fixture"]  # autouse fixtures (_no_real_secrets, clean_store)
+ignore_decorators = ["@pytest.fixture", "@model_validator"]  # autouse fixtures; pydantic validators (core.spec)
 ignore_names = [
   "on_*", "should_save", "should_training_stop",  # transformers TrainerCallback hooks and control flags
   "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes
@@ -132,6 +135,8 @@ ignore_names = [
   "rid", "multimodal_fields", "has_tool_images", "return_tensors",  # fake signatures that callers use by keyword
   "clean_store", "no_nvtx_calls", "no_load", "mutant", "lora_request",  # fixtures requested by name for their side effect
   "repo_id", "trial", "stream", "num_images", "pixel_attention_mask", "image_sizes", "num_tiles", "spatial_shapes", "token_type_ids", "image_position_ids", "_save_checkpoint",  # fakes of library signatures
+  "schema_version", "compute",  # objdel.core.spec RunSpec fields, read by pydantic and the YAML specs
+  "record_old_names",  # tests/core/test_layers.py: run by hand to re-record a golden (goldens README)
   "current_gradient_accumulation_steps",  # Trainer attribute that the code under test reads
   "TransferSyntaxUID", "MediaStorageSOPInstanceUID", "MediaStorageSOPClassUID",  # pydicom file-meta that save_as reads
 ]

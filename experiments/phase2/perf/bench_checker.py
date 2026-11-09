@@ -43,6 +43,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel import _gpucheck as gc
+from objdel.hashing import file_sha256
 
 SEED = 20261108
 REPLAY_ROWS = 256
@@ -58,20 +59,12 @@ def data_root() -> Path:
     return Path(os.environ.get("OBJDEL_DATA_ROOT") or "data").resolve()
 
 
-def sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while b := f.read(1 << 20):
-            h.update(b)
-    return h.hexdigest()
-
-
 def need(root: Path, rels) -> dict:
     """{rel: {path, sha256}} of every input; exit 1 naming the first missing one, before anything loads."""
     for rel in rels:
         if not (root / rel).exists():
             sys.exit(f"bench_checker: missing input {root / rel} (OBJDEL_DATA_ROOT={root})")
-    return {rel: {"path": str(root / rel), "sha256": sha256(root / rel)} for rel in rels if (root / rel).is_file()}
+    return {rel: {"path": str(root / rel), "sha256": file_sha256(root / rel)} for rel in rels if (root / rel).is_file()}
 
 
 def device_name() -> str:
@@ -186,7 +179,7 @@ def dump_replay(path: Path, synthetic: int | None) -> None:
             caches = {}
             for n, d in r["caches"].items():
                 p = root / CACHES / key / f"{n}.npz"
-                inputs[f"{CACHES}/{key}/{n}.npz"] = {"path": str(p), "sha256": sha256(p)}
+                inputs[f"{CACHES}/{key}/{n}.npz"] = {"path": str(p), "sha256": file_sha256(p)}
                 caches[n] = ExpertCache.load(p, d)
             pairs.append(((r["targets"][0], tuple(r["caches"]), caches), r["item_id"]))
         meta = {"root": str(root), "inputs": inputs}
@@ -210,14 +203,14 @@ def dump_replay(path: Path, synthetic: int | None) -> None:
     with open(path, "wb") as f:
         np.savez(f, **arrays)
     with open(path.with_name(path.name + ".sha256"), "w") as f:
-        f.write(f"{sha256(path)}  {path.name}\n")
+        f.write(f"{file_sha256(path)}  {path.name}\n")
 
 
 def replay(a) -> dict:
     path = Path(a.replay)
     with open(path.with_name(path.name + ".sha256")) as f:
         want = f.read().split()[0]
-    if sha256(path) != want:
+    if file_sha256(path) != want:
         sys.exit(f"bench_checker: {path}: SHA-256 differs from {path.name}.sha256")
     with np.load(path) as z:
         d = {k: z[k] for k in z.files}

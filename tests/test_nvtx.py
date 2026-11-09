@@ -217,7 +217,10 @@ def test_profiler_window_edges(rec, monkeypatch):
         cb.on_step_end(None, st, None)
     assert [e for e in rec.ev if e[0] == "start"] == [("start",)]
     rec.ev.clear()
-    drive(NvtxSteps((4, 6)), 2, first=5)  # resumed past s: no start, no stop
+    drive(NvtxSteps((4, 6)), 2, first=5)  # resumed inside the window (BR1-rl): train begin starts, step 6 stops
+    assert [e[0] for e in rec.ev if e[0] in ("start", "stop")] == ["start", "stop"]
+    rec.ev.clear()
+    drive(NvtxSteps((4, 6)), 2, first=6)  # resumed past the window: no start, no stop
     assert not any(e[0] in ("start", "stop") for e in rec.ev)
     rec.ev.clear()
     drive(NvtxSteps((4, 6)), 4)  # the run ends at step 4, inside the window: on_train_end stops the capture

@@ -12,7 +12,6 @@ answers are the truncated ones. The limit choice stays with the owner.
 """
 
 import argparse
-import hashlib
 import json
 import os
 from collections.abc import Callable, Iterable
@@ -20,6 +19,8 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.hashing import file_sha256
+from objdel.io import read_jsonl
 from objdel.train import configs, dataset
 
 LIMITS = (256, 512, 800, 1000, 1200, 1536)
@@ -88,29 +89,20 @@ def tokens_of(tokenizer) -> Callable[[str], int]:
     return lambda text: dataset.target_tokens(tokenizer, text) + 1
 
 
-def _sha256(path: Path) -> str | None:
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-
-
-def _jsonl(path: Path) -> list[dict]:
-    with open(path) as f:
-        return [json.loads(line) for line in f]
-
-
 def report(train: Path, views: list[Path], datasets: list[str], splits: list[str], tok: Callable[[str], int],
            answer_files: list[Path]) -> dict:
     """{"roots": {root: {"manifest_sha256", dataset: {split: count}}}, "model_answers": {file: answers}}; a
     (dataset, split) with no file under a root is left out."""
     roots = {}
     for root in [train, *views]:
-        row = {"manifest_sha256": _sha256(root / "manifest.json")}
+        row = {"manifest_sha256": ((p := root / "manifest.json").is_file() and file_sha256(p) or None)}
         for ds in datasets:
             got = {sp: count(dataset.records(root, ds, sp), tok, lambda r, ds=ds, root=root: dataset.voting(root, r, ds))
                    for sp in splits if (root / ds / f"{sp}.jsonl").is_file()}
             if got:
                 row[ds] = got
         roots[str(root)] = row
-    return {"roots": roots, "model_answers": {str(f): answers(_jsonl(f), _jsonl(f.parent / "metrics.jsonl"))
+    return {"roots": roots, "model_answers": {str(f): answers(read_jsonl(f), read_jsonl(f.parent / "metrics.jsonl"))
                                               for f in answer_files}}
 
 

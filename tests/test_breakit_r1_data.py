@@ -1,6 +1,4 @@
-"""Break-it round 1 (data and eval): edge-case tests that prove bugs. Each test states the correct behaviour and is
-marked xfail(strict=True) while the code does not give it; when a fix lands the test XPASSes (strict: fails) and the
-marker must go."""
+"""Break-it round 1 (data and eval): edge-case tests; each states the correct behaviour."""
 import json
 
 import numpy as np
@@ -14,10 +12,6 @@ from objdel.eval import ceiling as C
 from objdel.eval import gates as G
 from objdel.eval import select
 from objdel.eval import signal as S
-
-
-def bug(n, why):
-    return pytest.mark.xfail(strict=True, reason=f"BR1-data-{n}: {why}")
 
 
 def _gate_items(n_patients):
@@ -37,7 +31,6 @@ def FE():
 
 
 # --- bootstrap with one cluster -------------------------------------------------------------------------------------
-@bug(1, "a bootstrap over one cluster (one patient) returns a zero-width 'CI' [mean, mean, mean] with no error")
 def test_bootstrap_one_cluster_is_refused_or_not_degenerate():
     ids = ["lidc/a/n1/z1", "lidc/a/n1/z2", "lidc/a/n1/z3"]
     x = np.array([0.1, 0.5, 0.9])
@@ -48,7 +41,6 @@ def test_bootstrap_one_cluster_is_refused_or_not_degenerate():
     assert lo < mean < hi
 
 
-@bug(2, "Gate A promotes the medoid on a one-patient summary: the zero-width patient CI makes ci[0] > 0 pass")
 def test_gate_a_needs_more_than_one_patient():
     items, groups = _gate_items(1)
     try:
@@ -59,8 +51,6 @@ def test_gate_a_needs_more_than_one_patient():
 
 
 # --- medoid ties ----------------------------------------------------------------------------------------------------
-@bug(3, "medoid: two answers with identical masks tie in exact arithmetic but np.mean's summation order differs, so "
-        "the higher index can win; the docstring says ties go to the lowest index")
 def test_medoid_identical_answers_pick_lowest_index():
     rng = np.random.default_rng(0)
     for _ in range(20000):
@@ -83,8 +73,6 @@ def test_medoid_identical_answers_pick_lowest_index():
 
 
 # --- pool and schedule ----------------------------------------------------------------------------------------------
-@bug(4, "pool() on an iterable that holds one item twice emits every window twice (duplicate window_ids), which the "
-        "scheduler then treats as two single-use windows")
 def test_pool_duplicate_items_give_unique_window_ids():
     it = lidc_item("lidc/1.2.3/n000/z001", [(100, 100, 8), (100, 101, 8)])
     p = Wn.pool([it, it], draws=2, seed=0)
@@ -92,14 +80,12 @@ def test_pool_duplicate_items_give_unique_window_ids():
     assert len(ids) == len(set(ids))
 
 
-@bug(5, "Window geometry NaN (apparent size or offset) silently lands in the last bin instead of raising")
 def test_cell_of_nan_raises():
     with pytest.raises(ValueError):
         Wn.cell(float("nan"), 0.0)
 
 
 # --- ceiling --------------------------------------------------------------------------------------------------------
-@bug(7, "signal.ci: a NaN item makes the mean NaN but the CI endpoints come from np.nanquantile and look finite")
 def test_ci_with_nan_item_is_not_half_finite():
     x = np.array([0.2, np.nan, 0.6, 0.4])
     ids = [f"lidc/p{i}/n000/z1" for i in range(4)]
@@ -107,7 +93,6 @@ def test_ci_with_nan_item_is_not_half_finite():
     assert np.isnan(mean) == np.isnan(lo) == np.isnan(hi)
 
 
-@bug(8, "ceiling.summarize: an item whose model_all_k is NaN falls in neither found nor miss and vanishes silently")
 def test_ceiling_found_miss_partition_all_rows():
     def row(i, m):
         return {"item_id": f"lidc/s{i}/n000/z001", "k": 3, "n_voters": 3, "single": False, "doctor": .5,
@@ -121,21 +106,17 @@ def test_ceiling_found_miss_partition_all_rows():
     assert s["found"]["n"] + s["miss"]["n"] == s["all"]["n"]
 
 
-@bug(10, "val_half_table of no records returns a 'balanced' table with empty halves instead of raising")
 def test_val_half_table_of_nothing_raises():
     with pytest.raises(ValueError):
         Sp.val_half_table([])
 
 
 # --- coverage -------------------------------------------------------------------------------------------------------
-@bug(11, "coverage.props of a target with no object key ('{}') raises StopIteration, not None (no outline)")
 def test_props_of_empty_object_is_none():
     assert Cov.props(json.dumps({}), 100, "op") is None
 
 
 # --- gates ----------------------------------------------------------------------------------------------------------
-@bug(12, "phase2_entry: a judged dataset outside MEDIAN_IOU_TC has no median or prior-b gate, so it passes with no "
-         "structure data at all (the module says anything missing fails)")
 def test_unknown_dataset_does_not_pass_geometry_without_structures():
     summ = {"format": 1.0, "legal": 1.0, "iou_tc_pass": 1.0, "group": 8, "signal_share": 1.0, "dup_rate": 0.0,
             "objects": {}}

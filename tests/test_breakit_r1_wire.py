@@ -27,17 +27,12 @@ def cfg(**kw):
 
 # ---------------------------------------------------------------- train_rl
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-1: check_sampler accepts --steps 0 and negative steps "
-                                       "(0 % block_steps == 0 and -20 % 20 == 0), so a run trains nothing and then "
-                                       "merges and saves an untuned 'final'")
 @pytest.mark.parametrize("steps", [0, -20])
 def test_check_sampler_refuses_non_positive_steps(steps):
     with pytest.raises(ValueError):
         TR.check_sampler(cfg(), SCHEDULE, steps)
 
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-2: --budget-usd nan (or a nan rate) parses; BudgetStop then never "
-                                       "trips, so the spend cap is silently off")
 @pytest.mark.parametrize("flag,val", [("--budget-usd", "nan"), ("--rate-usd-per-h", "nan")])
 def test_parse_refuses_nan_budget(flag, val):
     argv = ["--model", "m", "--ckpt", "c", "--out", "o", "--train", "t", "--steps", "20", "--budget-usd", "5",
@@ -53,8 +48,6 @@ def test_parse_refuses_nan_budget(flag, val):
 OFFER = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
 
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-3: launch_refusal compares committed + worst > HARD_STOP, which is "
-                                       "False for a NaN price, so an offer with dph_total NaN launches")
 def test_launch_refusal_refuses_a_nan_price(tmp_path, monkeypatch):
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     assert P.launch_refusal(dict(OFFER, dph_total=math.nan), 2.4)
@@ -81,9 +74,6 @@ def test_code_files_keep_riga_derived_tables_off_the_box(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------- final_eval
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-5: check_view tests view.name, not the resolved name: a symlink "
-                                       "or copy of a frozen view under another name skips the frozen-hash check "
-                                       "(a changed view scores as 'frozen')")
 def test_check_view_frozen_check_survives_an_alias(ev, tmp_path, monkeypatch):  # noqa: F811
     frozen = ev.parent / "lidc-val-frozenfix"
     ev.rename(frozen)
@@ -101,9 +91,6 @@ def test_check_view_frozen_check_survives_an_alias(ev, tmp_path, monkeypatch):  
         FE.check_view(alias, "val")
 
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-6: several --view with one --out use out/<view dir name>: two views "
-                                       "of the same directory name (or one view twice with two splits) write the "
-                                       "same folder and the second silently overwrites the first")
 def test_multi_view_one_out_does_not_collide(ev, tmp_path, monkeypatch):  # noqa: F811
     other = tmp_path / "elsewhere" / ev.name
     shutil.copytree(ev, other)
@@ -118,9 +105,6 @@ def test_multi_view_one_out_does_not_collide(ev, tmp_path, monkeypatch):  # noqa
     assert len([d for d in out.iterdir() if d.is_dir()]) == 2, "two views, one output folder"
 
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-7: --rescore with --out equal to the source folder rewrites the "
-                                       "source's final_eval.json (rescored_from points at itself, the sampled "
-                                       "run's seconds and identity are lost); --resummarize refuses this case")
 def test_rescore_into_its_own_source_is_refused(ev, tmp_path, monkeypatch):  # noqa: F811
     src = tmp_path / "src"
     run_fe(ev, src, monkeypatch)
@@ -146,9 +130,6 @@ def test_summarize_zero_items_is_refused_or_finite():
     json.dumps(s, allow_nan=False)
 
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-8: summarize counts a duplicated item twice (items, bootstrap "
-                                       "weights): resummarize of an items.jsonl with a repeated line gives a "
-                                       "narrower CI with no error")
 def test_summarize_refuses_duplicate_items():
     a = {"item_id": "lidc/1.2.1/n000/z001", "iou_tc": 0.5, "sel_mean_of_k": 0.5}
     b = {"item_id": "lidc/1.2.2/n000/z001", "iou_tc": 0.1, "sel_mean_of_k": 0.1}
@@ -158,9 +139,6 @@ def test_summarize_refuses_duplicate_items():
 
 # ---------------------------------------------------------------- preflight
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-9: refusal() reads stamp['pass'] and stamp['hashes'][k] outside "
-                                       "its try: a stamp that is valid JSON but lacks a key raises KeyError instead "
-                                       "of returning a refusal string")
 def test_refusal_of_a_malformed_stamp_is_a_string(tmp_path, monkeypatch):
     c = tmp_path / "cfg.yaml"
     c.write_text("a: 1\n")

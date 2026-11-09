@@ -1300,7 +1300,9 @@ def test_bundle_imports_standalone(tmp_path):
         shutil.copy2(ROOT / f, tmp_path / f)
     ext = Path(importlib.util.find_spec("objdel._gpucheck").origin)
     shutil.copy2(ext, tmp_path / "src" / "objdel" / ext.name)
-    mods = [m.strip() for m in P.IMPORT_CHECK.removeprefix("import ").split(",")] + ["objdel", *P.LIVE_CLIS]
+    clis = ["train_rl", "g_probe", "select_ckpt", "final_eval"]  # the CLIs the bundle must import
+    mods = [m.strip() for m in P.IMPORT_CHECK.removeprefix("import ").split(",")] + ["objdel"]
+    mods += [f"experiments.phase2.{c}" for c in clis]
     # -S: without it the editable install's .pth files serve objdel and tests from the repo, whatever sys.path says
     code = (
         "import sys, json, importlib\n"

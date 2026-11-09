@@ -13,8 +13,11 @@ import pytest
 from objdel.checker import signature
 from objdel.data import store
 from objdel.geometry import SCHEMAS, parse, to_mask
+from objdel.hashing import pixels_sha256
 from objdel.targets import FRAMES, LUNG_WINDOW, FrameConfig, augment, build_target, frame, min_areas, target_set_hash
 from objdel.targets.frame import CLEARANCE, DIVISORS, union_box, upscale
+
+INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
 ROOT = Path(__file__).resolve().parents[1]
 PREPARED, STORE = ROOT / "data" / "prepared", ROOT / "data" / "store"
@@ -35,10 +38,6 @@ FRAME_SHA = {  # targets.frame before the Phase 2 change (box, masks, image byte
 def _sha(f):
     return hashlib.sha256(repr(f.box).encode() + b"".join(m.tobytes() for m in f.masks.values())
                           + (f.image.tobytes() if f.image is not None else b"")).hexdigest()
-
-
-def _pixels_sha(image):  # objdel.train.dataset._pixels_sha (that module needs the train extra)
-    return hashlib.sha256(repr(image.shape).encode() + image.tobytes()).hexdigest()
 
 
 @pytest.fixture(scope="module")
@@ -120,7 +119,7 @@ def test_ops_are_the_dihedral_group():
     out = {op: augment.apply(a, op) for op in augment.OPS}
     assert len({o.tobytes() + bytes(o.shape) for o in out.values()}) == 8
     for op, o in out.items():
-        assert np.array_equal(augment.apply(o, augment.INVERSE[op]), a) and o.flags.c_contiguous
+        assert np.array_equal(augment.apply(o, INVERSE[op]), a) and o.flags.c_contiguous
     assert np.array_equal(out["fh"], a[..., ::-1]) and np.array_equal(out["tr"], a.swapaxes(1, 2))
     assert augment.DATASET_OPS["riga"] == ("id", "fh")
 
@@ -237,7 +236,7 @@ def test_lidc_variants_are_pixel_exact_and_certified(items):
                 t = build_target(src, ("nodule",), None, ma)
                 assert _certified(t.text, src, ("nodule",), ma) == (True, True)
                 g = to_mask(parse(t.text, ("nodule",)).objs["nodule"], S, S).mask
-                ras[op] = augment.apply(g, augment.INVERSE[op])
+                ras[op] = augment.apply(g, INVERSE[op])
             assert all(np.array_equal(v, ras["id"]) for v in ras.values())
 
 
@@ -379,7 +378,7 @@ def test_eval_views_shift_and_rescale(eval_views, synthetic_items):
             assert a["view"]["side"] == S0 and not a["view"]["fallback"]
             assert b["view"]["side"] != S0 or b["view"]["kept_side"]
             f = frame(it, offset=tuple(b["view"]["offset"]), side=b["view"]["side"])
-            assert list(f.box) == b["box"] and b["image_sha256"] == _pixels_sha(f.image)
+            assert list(f.box) == b["box"] and b["image_sha256"] == pixels_sha256(f.image)
             assert all(b["targets"]) and not b["view"]["fallback"]
         assert any(r["view"]["offset"] != [0, 0] for r in sh)
 
@@ -408,7 +407,7 @@ def test_rotated_eval_view_is_the_shifted_view_turned_r90(eval_views, synthetic_
         cfg = FrameConfig(**{**FRAMES["lidc"].__dict__, "image_side": None})
         f = frame(it, cfg, offset=tuple(b["view"]["offset"]), side=S)
         img = np.moveaxis(augment.apply(np.moveaxis(f.image, -1, 0), "r90"), 0, -1)
-        assert b["image_sha256"] == _pixels_sha(upscale(np.ascontiguousarray(img), FRAMES["lidc"].image_side))
+        assert b["image_sha256"] == pixels_sha256(upscale(np.ascontiguousarray(img), FRAMES["lidc"].image_side))
         for r, t in enumerate(b["targets"]):
             g = to_mask(parse(t, ("nodule",)).objs["nodule"], S, S).mask
             assert np.array_equal(g, augment.apply(f.masks["nodule"][r], "r90"))
@@ -574,7 +573,7 @@ def test_hu_context_reproduces_the_prepared_lidc_png():
     recs = {json.loads(line)["item_id"]: json.loads(line) for line in open(PREPARED / "lidc" / "val.jsonl")}
     for it in _val_items("lidc", every=10):
         rec, f = recs[it.item_id], frame(it)
-        assert _pixels_sha(f.image) == rec["image_sha256"]  # offset (0, 0) = Phase 1 frame and PNG hash
+        assert pixels_sha256(f.image) == rec["image_sha256"]  # offset (0, 0) = Phase 1 frame and PNG hash
         ctx = _context(it)
         assert ctx["pixels"].dtype == np.int16
         x0, y0 = int(ctx["x0"]), int(ctx["y0"])
@@ -582,7 +581,7 @@ def test_hu_context_reproduces_the_prepared_lidc_png():
         img = augment.render({"dataset": "lidc", "side": f.W, "box": list(f.box), "op": "id",
                               "window": list(LUNG_WINDOW), "noise_sigma": 0, "noise_seed": 0}, ctx)
         png = cv2.cvtColor(cv2.imread(str(PREPARED / "images" / (it.item_id + ".png"))), cv2.COLOR_BGR2RGB)
-        assert np.array_equal(img, png) and _pixels_sha(img) == rec["image_sha256"]
+        assert np.array_equal(img, png) and pixels_sha256(img) == rec["image_sha256"]
 
 
 @pytest.mark.data

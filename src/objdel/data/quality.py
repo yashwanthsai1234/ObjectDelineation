@@ -49,6 +49,7 @@ import numpy as np
 import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
+from objdel.hashing import file_sha256, pixels_sha256
 from objdel.targets import frame
 from objdel.targets.frame import CLEARANCE, crowded, hu_window, union_box
 
@@ -58,12 +59,6 @@ from .store import SPLITS
 from .windows import KINDS, Window, cell_shares, offset_of
 
 KNOWN_0396 = ("LIDC-IDRI-0396", 1420.0)  # TCIA known issue 6: patient, contour z of the corrected SOP UID
-
-
-def file_sha256(path) -> str:
-    """SHA-256 hex digest of the file's bytes."""
-    with open(path, "rb") as fh:
-        return hashlib.file_digest(fh, "sha256").hexdigest()
 
 
 def _sidecar_hit(path: Path) -> dict | None:
@@ -170,13 +165,7 @@ class Gate:
     ok: bool
 
 
-def image_sha256(image: np.ndarray) -> str:  # as objdel.train.dataset._pixels_sha (that module needs `datasets`)
-    """SHA-256 hex digest of an image's shape and raw bytes."""
-    return hashlib.sha256(repr(image.shape).encode() + image.tobytes()).hexdigest()
-
-
 def records(rows_root) -> list[dict]:
-    """SHA-256 hex digest of an image's shape and raw bytes."""
     """The rows root's records (lidc/train.jsonl), in schedule order."""
     return [json.loads(x) for x in Path(rows_root, "lidc", "train.jsonl").read_text().splitlines()]
 
@@ -244,8 +233,8 @@ def leakage(store_root, review: Mapping[str, str], exclusions: Mapping, out) -> 
         for it in store.load("lidc", split, store_root):
             c = crop32(it.image, union_box(it))
             meta.append((it.item_id, split, it.group_id))
-            slices.setdefault(image_sha256(it.image), set()).add((split, it.group_id))
-            crops.setdefault(image_sha256(c), set()).add((split, it.group_id))
+            slices.setdefault(pixels_sha256(it.image), set()).add((split, it.group_id))
+            crops.setdefault(pixels_sha256(c), set()).add((split, it.group_id))
             units.append(unit(c))
             raw.append(c)
     keys = {"patients": lambda m: m[2], "series": lambda m: m[0].split("/")[1], "items": lambda m: m[0]}
@@ -330,9 +319,9 @@ def window_checks(rows_root, store_root) -> dict:
                 bad.add(r["item_id"])
                 continue
             png = cv2.imread(str(rows_root / "images" / f"{r['item_id']}.png"), cv2.IMREAD_COLOR)
-            sha = image_sha256(f.image)
+            sha = pixels_sha256(f.image)
             if (list(f.box) != box or f.W != v["side"] or sha != r["image_sha256"] or png is None
-                    or image_sha256(cv2.cvtColor(png, cv2.COLOR_BGR2RGB)) != sha):
+                    or pixels_sha256(cv2.cvtColor(png, cv2.COLOR_BGR2RGB)) != sha):
                 bad.add(r["item_id"])
     bad |= {r["item_id"] for rs in by_src.values() for r in rs}  # rows whose source item is not a train item
     return out | {"mismatch": sorted(bad), "low_contrast": sorted(set(low))}

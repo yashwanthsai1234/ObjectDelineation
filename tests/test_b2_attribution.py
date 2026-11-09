@@ -15,6 +15,8 @@ from peft import LoraConfig, get_peft_model  # noqa: E402
 from experiments.phase2 import b2_attribution as B  # noqa: E402
 from tests.test_train_fast import GRPOTrainer, group_batch, tiny_model  # noqa: E402
 
+WAYS = ("a", "b", "c", "d")
+
 
 def peft_model(dtype=torch.float32, delta=True):
     """tiny_model with base weights in `dtype` and an fp32 LoRA (r 2) on q_proj / v_proj; delta: random lora_B (PEFT
@@ -43,8 +45,8 @@ def test_ways_are_finite_repeatable_and_leave_the_model_as_it_was():
     before = {n: p.detach().clone() for n, p in m.named_parameters()}
     load = lambda: tiny_model().to(torch.bfloat16)  # noqa: E731
     one, two = B.score_ways(m, batches(), load), B.score_ways(m, batches(), load)
-    assert set(one) == set(B.WAYS)
-    for w in B.WAYS:
+    assert set(one) == set(WAYS)
+    for w in WAYS:
         for x, y in zip(one[w], two[w], strict=True):
             assert x.dtype == torch.float32 and torch.isfinite(x).all()
             torch.testing.assert_close(x, y, atol=1e-4, rtol=0)

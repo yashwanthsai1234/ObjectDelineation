@@ -36,6 +36,7 @@ from typing import NamedTuple
 import numpy as np
 
 from objdel.eval import signal
+from objdel.io import read_jsonl
 
 K = 8
 MISS = signal.MISS
@@ -138,9 +139,12 @@ def b1_rules(b1: np.ndarray, base: np.ndarray, far: np.ndarray, near: np.ndarray
     far_point = np.round((b1[:, far] < MISS).mean(1), signal.DIGITS)
     far_hi = _ends(_reps(miss, far, W))[1]
     near_lo = _ends(_reps(d, near, W))[0]
-    did_lo = _ends(_reps(d, far, W) - _reps(d, near, W))[0]
+    did = _reps(d, far, W) - _reps(d, near, W)
+    did_lo = _ends(did)[0]
+    nan = lambda r: np.isnan(r).sum(1)  # noqa: E731  draws with no subset item, dropped by _ends (math-stats s1)
     return {"iou": lo > 0, "far_miss": (far_point <= FAR_MISS_MAX) & (far_hi < 0), "near_iou": near_lo > NEAR_FLOOR,
-            "did": did_lo > 0}
+            "did": did_lo > 0, "far_nan_draws": nan(_reps(miss, far, W)), "near_nan_draws": nan(_reps(d, near, W)),
+            "did_nan_draws": nan(did)}
 
 
 def b3_rules(b3: np.ndarray, b1: np.ndarray, groups: np.ndarray) -> dict:
@@ -150,8 +154,9 @@ def b3_rules(b3: np.ndarray, b1: np.ndarray, groups: np.ndarray) -> dict:
         m3, m1 = x3 < MISS, x1 < MISS
         point = round(m3.mean(), signal.DIGITS) <= round(B3_FALL * m1.mean(), signal.DIGITS)
         out["miss_share"][r] = point and signal.cluster_t(m3.astype(float) - m1, groups)[2] < 0
-        both = ~m3 & ~m1
-        out["both_found_iou"][r] = signal.cluster_t((x3 - x1)[both], groups[both])[1] > B3_BOTH_FLOOR
+        both = ~m3 & ~m1  # under 2 patients there: no interval, the rule fails
+        out["both_found_iou"][r] = (len(np.unique(groups[both])) >= 2
+                                    and signal.cluster_t((x3 - x1)[both], groups[both])[1] > B3_BOTH_FLOOR)
     return out
 
 
@@ -168,8 +173,11 @@ def simulate(items: Items, W: np.ndarray, share: float, c_base: float, c_b1: flo
 
 
 def summary(flags: dict) -> dict:
-    return {"p_pass": {k: float(v.mean()) for k, v in flags.items()},
-            "joint": float(np.all(list(flags.values()), axis=0).mean())}
+    """P(pass) per rule and jointly; the max empty-subset draw count per B1 subset rule (math-stats s1)."""
+    nan = {k: int(v.max()) for k, v in flags.items() if k.endswith("_nan_draws")}
+    flags = {k: v for k, v in flags.items() if k not in nan}
+    return ({"nan_draws_max": nan} if nan else {}) | {
+        "p_pass": {k: float(v.mean()) for k, v in flags.items()}, "joint": float(np.all(list(flags.values()), axis=0).mean())}
 
 
 def c_from_item_sd(item_sd: float, mu: np.ndarray) -> float:
@@ -201,8 +209,7 @@ def load(items_path: Path, view: Path, store_root: Path, halves_path: Path) -> I
     from objdel.data import store
     from objdel.targets.frame import union_box
 
-    with open(items_path) as f:
-        rows = [json.loads(line) for line in f]
+    rows = read_jsonl(items_path)
     with open(view / "lidc" / "val.jsonl") as f:
         recs = {r["item_id"]: r for r in map(json.loads, f)}
     extent = {}
@@ -231,7 +238,7 @@ def table(doc: dict) -> str:
         p = line["p_pass"]
         out.append(f"{name:>10}: " + "  ".join(f"P({r}) {p[r]:.3f}" for r in B1_RULES)
                    + f"  joint P(pass) {line['joint']:.3f}  smallest effect with joint >= {POWER}: "
-                   f"{line['smallest_effect']}")
+                   f"{line['smallest_effect']}  max empty-subset draws {line['nan_draws_max']}")
         out += [f"{'':>10}  Gate B3 report, further {s} of B1 misses: "
                 + "  ".join(f"P({r}) {v:.3f}" for r, v in b3["p_pass"].items()) + f"  both {b3['joint']:.3f}"
                 for s, b3 in line["b3"].items()]

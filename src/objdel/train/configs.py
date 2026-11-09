@@ -234,6 +234,12 @@ def grpo_config(model: str, output_dir: str, reward=REWARD_V4, numerics: str = D
         "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
+    train, spg = cfg.per_device_train_batch_size, cfg.steps_per_generation
+    b = {"per_device_train_batch_size": train, "per_device_eval_batch_size": cfg.per_device_eval_batch_size,
+         "per_device_train_batch_size * steps_per_generation": train * spg}
+    for k, v in b.items():  # TRLReward scores whole groups: refuse here, not at the first held-out eval
+        if v % g:
+            raise ValueError(f"{k}={v}: must be a multiple of the group size {g} ({reward.name}'s group)")
     cfg.vllm_lora = lora
     return cfg
 
