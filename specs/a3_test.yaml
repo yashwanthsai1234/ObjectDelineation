@@ -1,0 +1,16 @@
+schema_version: 1
+name: a3_test
+compute: {gpu: RTX_5090, cap_hours: 1.0}
+bundle_view: views/lidc-bundle-v3
+stages:
+- kind: cmd
+  name: build
+  argv: [bash, -c, bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c 'import objdel._gpucheck
+      as g; assert g.build() == "cuda"']
+- kind: eval
+  name: eval
+  ckpt: '{rd}/ckpt'
+  train: '{data}/prepared'
+  view: ['{data}/eval_views/lidc-test-shifted']
+  split: [test]
+  out: ['{rd}/eval_test']

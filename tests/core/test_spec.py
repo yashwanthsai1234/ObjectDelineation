@@ -1,0 +1,169 @@
+"""E6: the run spec (objdel.core.spec): strict loading, one definition of each flag, and a CLI round trip."""
+from pathlib import Path
+
+import pytest
+import yaml
+from pydantic import ValidationError
+
+from objdel.core import spec as S
+
+ROOT = Path(__file__).resolve().parents[2]
+SPECS = sorted((ROOT / "specs").glob("*.yaml"))
+RD, DATA = "/workspace/runs/x", "/workspace/data/lidc"
+HEX40, HEX64 = "a" * 40, "b" * 64
+
+RL = {"kind": "rl", "name": "train", "model": "qwen3-vl-2b", "ckpt": "{rd}/ckpt", "train": "{data}/rows/r",
+      "out": "{rd}/o", "steps": 10}
+CMD = {"kind": "cmd", "name": "c", "argv": ["echo", "{rd}"]}
+EVAL = {"kind": "eval", "name": "e", "ckpt": "{rd}/c", "view": ["{data}/v"], "out": ["{rd}/o"]}
+
+
+def doc(*stages, **over) -> dict:
+    return {"schema_version": 1, "name": "t", "compute": {"gpu": "RTX_5090", "cap_hours": 1.0},
+            "bundle_view": "views/b", "stages": list(stages)} | over
+
+
+def load(tmp_path, d) -> S.RunSpec:
+    f = tmp_path / "s.yaml"
+    f.write_text(yaml.safe_dump(d))
+    return S.load_spec(f)
+
+
+@pytest.mark.parametrize("path", SPECS, ids=lambda p: p.stem)
+def test_every_shipped_spec_loads(path):
+    assert S.load_spec(path).name == path.stem
+
+
+def test_a_valid_spec_loads_and_is_frozen(tmp_path):
+    s = load(tmp_path, doc(RL, CMD))
+    assert [x.kind for x in s.stages] == ["rl", "cmd"] and isinstance(s.stages[0].steps, int)
+    with pytest.raises(ValidationError):
+        s.stages[0].steps = 3
+
+
+@pytest.mark.parametrize("bad", [
+    doc(RL | {"typo": 1}),  # unknown key in a stage
+    doc(RL | {"kind": "nope"}),  # unknown kind
+    doc(RL, extra=1),  # unknown top-level key
+    doc(RL, data_revision="x"),  # the rows pin lives on the rl stage
+    doc(RL, compute={"gpu": "RTX_5090", "cap_hours": 1.0, "regions": ["EU"]}),  # the region is a fixed rule
+    doc(schema_version=2) | {"stages": [RL]},
+    doc(RL, schema_version="1"),  # no coercion
+    doc(RL | {"steps": "10"}),  # no coercion
+    doc(RL | {"steps": 10.0}),
+    doc(RL | {"lr": "5e-5"}),  # YAML reads 5e-5 as a string: write 5.0e-5
+    doc(),  # stages: []
+    doc(RL, RL),  # names are unique
+    doc(RL | {"name": ""}),
+    doc(RL, bundle_view=None),  # an rl stage without an sft stage needs bundle_view
+    doc(RL | {"rows_revision": HEX40}),  # both pins or none
+    doc(RL | {"rows_revision": "z" * 40, "rows_manifest_sha256": HEX64}),
+    doc(RL | {"rows_revision": HEX40, "rows_manifest_sha256": "b" * 63}),
+    doc(RL | {"train": None}),  # train and steps are required unless merge_last
+    doc({"kind": "probe", "name": "p", "model": "m", "train": "t", "probe": "p", "out": "o"}),  # ckpt or select
+    doc({"kind": "probe", "name": "p", "model": "m", "ckpt": "c", "select": "s", "train": "t", "probe": "p",
+         "out": "o"}),
+    doc(EVAL | {"ckpt": None}),  # ckpt or rescore
+    doc(EVAL | {"split": ["val", "val"]}),  # one split per view or none
+    doc(EVAL | {"view": ["a,b"]}),  # a comma splits a repeated flag
+    doc(CMD | {"argv": ["echo", "{x}"]}),  # unknown placeholder
+    doc({"kind": "select", "name": "s", "run": "r", "prepared": "p", "probes": "q", "shifted": "x"}),  # no vision
+])
+def test_a_bad_spec_fails_before_any_rental(tmp_path, bad):
+    with pytest.raises((ValidationError, ValueError)):
+        load(tmp_path, bad)
+
+
+def test_both_row_pins_pass_and_none_passes(tmp_path):
+    load(tmp_path, doc(RL | {"rows_revision": HEX40, "rows_manifest_sha256": HEX64}))
+    load(tmp_path, doc(RL))
+
+
+def test_a_duplicate_yaml_key_fails(tmp_path):
+    f = tmp_path / "s.yaml"
+    f.write_text("schema_version: 1\nname: a\nname: b\n")
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key 'name'"):
+        S.load_spec(f)
+
+
+def test_to_argv_fills_placeholders_and_keeps_literal_braces():
+    cmd = S.CmdStage(name="c", argv=("bash", "-c", "{{ echo {rd}; }}", "{data}"))
+    assert S.to_argv(cmd, RD, DATA) == ["bash", "-c", "{ echo /workspace/runs/x; }", DATA]
+    assert S.to_argv(cmd.model_copy(update={"soft": True}), RD, DATA)[0] == "~"
+    with pytest.raises(ValueError, match="unknown placeholder"):
+        S.to_argv(S.CmdStage(name="c", argv=("{x}",)), RD, DATA)
+
+
+def test_to_argv_writes_only_the_flags_the_spec_sets_in_plan_order():
+    st = S.RlStage(name="t", model="m", ckpt="{rd}/c", train="{data}/t", out="{rd}/o", steps=260, save_steps=50,
+                   shared_prefix=True, lr=5.0e-5, budget_usd=2.05, resume=False)
+    assert S.to_argv(st, RD, DATA) == [
+        "-m", "experiments.phase2.train_rl", "--model", "m", "--ckpt", f"{RD}/c", "--train", f"{DATA}/t", "--out",
+        f"{RD}/o", "--steps", "260", "--save-steps", "50", "--shared-prefix", "--lr", "5e-5", "--budget-usd", "2.05"]
+
+
+def test_floats_are_written_as_plans_write_them():
+    got = [S.num(v) for v in (5.0e-5, 5.0e-6, 2.05, 1.0, 1e-3, 1e22)]
+    assert got == ["5e-5", "5e-6", "2.05", "1.0", "0.001", "1e22"]
+
+
+def test_eval_views_interleave_with_their_split_and_out():
+    st = S.EvalStage(name="e", ckpt="c", view=("v1", "v2"), split=("val", "test"), out=("o1", "o2"))
+    assert S.to_argv(st, RD, DATA)[2:] == ["--ckpt", "c", "--view", "v1", "--split", "val", "--out", "o1", "--view",
+                                           "v2", "--split", "test", "--out", "o2"]
+    one = st.model_copy(update={"out": ("o",), "split": ()})
+    assert S.to_argv(one, RD, DATA)[2:] == ["--ckpt", "c", "--view", "v1", "--view", "v2", "--out", "o"]
+
+
+def test_flag_order_names_every_field_of_its_stage_once():
+    base = set(S.StageBase.model_fields) | {"kind"}
+    for kind, order in S.FLAG_ORDER.items():
+        fields = set(S.STAGE_CLASSES[kind].model_fields) - base
+        names = [f for n in order for f in ({"view", "split", "out"} if n == "views" else {n})]
+        assert sorted(names) == sorted(fields), kind
+
+
+def filled(v):
+    """The same value with {rd} and {data} filled in strings, lists and dicts."""
+    if isinstance(v, str):
+        return v.format(rd=RD, data=DATA)
+    if isinstance(v, list):
+        return [filled(i) for i in v]
+    if isinstance(v, dict):
+        return {k: filled(i) if k not in ("sft", "grpo") else i for k, i in v.items()}
+    return v
+
+
+def round_trips(stage) -> bool:
+    """to_argv of the stage (without its `~`, which is no CLI token), parsed by its CLI, equals the stage with its
+    placeholders filled."""
+    argv = S.to_argv(stage.model_copy(update={"soft": False}), RD, DATA)
+    assert argv[:2] == ["-m", f"experiments.phase2.{S.MODULE[stage.kind]}"]
+    want = type(stage).model_validate(filled(stage.model_dump(mode="json")))
+    return S.same_stage(S.cli_parse(type(stage), argv[2:]), want)
+
+
+@pytest.mark.parametrize("path", SPECS, ids=lambda p: p.stem)
+def test_every_typed_stage_round_trips_through_its_cli_parser(path):
+    assert all(round_trips(st) for st in S.load_spec(path).stages if st.kind != "cmd")
+
+
+def test_sft_select_probe_stages_round_trip():
+    sft = S.SftStage(name="t", model="qwen3-vl-2b", view="views/v", output_dir="r1", seed=1,
+                     branches=(0.5, 1.0, 2.0, 3.0), vision={"prepared": "prepared", "reference": "vision_ref/m.json"},
+                     sft={"gradient_accumulation_steps": 8})
+    sel = S.SelectStage(name="s", run="{rd}/r1", prepared="p", probes="q", shifted="s", sampler="vllm", k=4,
+                        vision=S.VisionRef(prepared="{data}/prepared", reference="{rd}/vision_ref/m.json"))
+    top = S.SelectStage(name="o", run="r", prepared="p", probes="q", only="topology")
+    prb = S.ProbeStage(name="p", model="m", select="s", train="t", probe="q", out="o", shared_prefix=True,
+                       grpo={"max_steps": 2})
+    off = sft.model_copy(update={"vision": False})
+    assert all(round_trips(st) for st in (sft, sel, top, prb, off))
+    argv = S.to_argv(off, RD, DATA)
+    assert argv[argv.index("--vision") + 1] == "off"
+
+
+def test_same_stage_ignores_only_name_and_soft():
+    a = S.RlStage(name="a", soft=True, model="m", ckpt="c", train="t", out="o", steps=1)
+    assert S.same_stage(a, a.model_copy(update={"name": "", "soft": False}))
+    assert not S.same_stage(a, a.model_copy(update={"steps": 2}))
