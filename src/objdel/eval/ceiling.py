@@ -67,6 +67,7 @@ def item(cache: ExpertCache, texts: Sequence[str] | None, truncated: Sequence[bo
            "legacy_dmax": dmax, "legacy_loo_dmax_item": float(np.mean(dmax))}
     if texts is None:
         return row | dict.fromkeys(MODEL)
+    truncated = [False] * len(texts) if truncated is None else list(truncated)
     if len(texts) != len(truncated):
         raise ValueError(f"{len(texts)} texts but {len(truncated)} truncated flags")
     refs = [lo.cache for lo in loos] + [cache]  # the LOO caches, then all k doctors (model_all_k)

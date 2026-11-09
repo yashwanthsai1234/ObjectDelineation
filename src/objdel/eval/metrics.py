@@ -333,7 +333,7 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
     rows = [distinct[x] for x in keys]
     T = {t: np.array([r["terms"][t] for r in rows]) for t in NUMERIC}  # failed samples: every term 0 (reward rule)
     legal = legal_gate(T)  # the reward's legality gate; legal implies parsed
-    gated = {t: T[t] * legal for t, _ in _GEOMETRIC}  # illegal: 0, as advantages_v4 sees the terms
+    gated = {t: np.where(legal, T[t], 0.0) for t, _ in _GEOMETRIC}  # illegal: 0, as advantages_v4 sees the terms
     passed = topology_valid(T)
     objects = {}
     for n in names:

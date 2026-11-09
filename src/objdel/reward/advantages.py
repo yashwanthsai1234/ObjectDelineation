@@ -103,7 +103,7 @@ def advantages_v4(terms: dict, group: int = REWARD_V4.group) -> np.ndarray:
     """Reward-v4 advantages (B*G,) from per-rollout terms (keys of score_completion; flat, prompt by prompt)."""
     T = _groups(terms, group)
     R = np.stack([T[k] for k in TERMS], -1)  # (B, G, 4)
-    X = R * legal_gate(T)[..., None]
+    X = np.where(legal_gate(T)[..., None], R, 0.0)  # where, not *: NaN * 0 is NaN
     z = (X - X.mean(1, keepdims=True)) / np.maximum(X.std(1, keepdims=True), REWARD_V4.floors)
     r = _topology(T, group)
     a = (z * REWARD_V4.weights).sum(-1) + REWARD_V4.c_topo * (r - r.mean(1, keepdims=True))
