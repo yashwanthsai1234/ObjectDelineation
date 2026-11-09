@@ -500,6 +500,16 @@ def test_sync_up_checks_the_gpu_before_the_bundle(E):
     assert "image_check.sh" not in E.sh("sync_up.sh", "r1", "--code-only").stdout  # mid-session the GPU is busy
 
 
+def test_sync_up_writes_code_sha_also_with_code_only(E):
+    """A3 U49: after the code rsync, the box gets /workspace/src/CODE_SHA (final_eval.code_sha reads it)."""
+    E.launched()
+    for args in ((), ("--code-only",)):
+        out = E.sh("sync_up.sh", "r1", *args).stdout.splitlines()
+        code = next(i for i, ln in enumerate(out) if ln.startswith("DRY_RUN: rsync") and "--files-from" in ln)
+        sha = next(i for i, ln in enumerate(out) if "/workspace/src/CODE_SHA" in ln)
+        assert code < sha and P.code_sha_text() in out[sha]
+
+
 def test_offers_search_and_launch_keep_to_north_america(E):
     E.state(offers=[offer(1, dph_total=0.3, geolocation="Thailand, TH"), offer(3, dph_total=0.35, geolocation=None),
                     offer(2, dph_total=0.4, geolocation="Quebec, CA")])  # fmt: skip

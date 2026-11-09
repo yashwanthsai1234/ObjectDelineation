@@ -32,6 +32,7 @@ import argparse
 import base64
 import csv
 import gzip
+import hashlib
 import json
 import operator
 import os
@@ -398,6 +399,21 @@ def code_files() -> list[str]:
     return files
 
 
+def code_sha_text(root: Path = ROOT) -> str:
+    """The box's CODE_SHA (final_eval.code_sha): git rev-parse HEAD, plus -dirty-<first 12 hex of sha256(D)> when git
+    status --porcelain is not empty; D = git diff HEAD, then the sorted untracked, not-ignored paths, one per line
+    (a new module marks the tree dirty). A git failure raises: never an empty or wrong CODE_SHA."""
+    def git(*args: str) -> bytes:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, check=True).stdout
+
+    head = git("rev-parse", "HEAD").decode().strip()
+    if not git("status", "--porcelain"):
+        return head
+    new = sorted(git("ls-files", "-z", "--others", "--exclude-standard").split(b"\0")[:-1])
+    d = git("diff", "HEAD") + b"".join(p + b"\n" for p in new)
+    return f"{head}-dirty-{hashlib.sha256(d).hexdigest()[:12]}"
+
+
 def cmd_sync_up(a) -> None:
     run = get_run(a.run_id)
     o, allow = json.loads((home() / "offers" / f"{run['offer']}.json").read_text()), load(".vast-allowlist")
@@ -407,10 +423,11 @@ def cmd_sync_up(a) -> None:
     files = [a.bundle_dir / name, a.bundle_dir / f"{name}.sha256"]
     if any(map(is_raw, [a.bundle_dir, *files])):
         die("refusing to send anything under data/raw")
-    lst = home() / "code_files.txt"
+    lst, sha = home() / "code_files.txt", code_sha_text()
     lst.write_text("\n".join(code_files()) + "\n")
     host = f"root@{run['ip']}:"
     rsync(run, f"{ROOT}/", f"{host}/workspace/src/", opts=(f"--files-from={lst}",))
+    remote(run, f"printf '%s\\n' {shlex.quote(sha)} > /workspace/src/CODE_SHA")  # the box has no .git (A3)
     remote(run, "cd /workspace/src && uv pip install --python /opt/venv/bin/python --no-deps --no-build-isolation -e ."
                 f" && cd / && /opt/venv/bin/python -I -c {shlex.quote(IMPORT_CHECK)}")  # fmt: skip
     if a.code_only:  # a code fix mid-session: the bundle is already on the box
