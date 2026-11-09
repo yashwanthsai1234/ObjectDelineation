@@ -93,6 +93,9 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
                                     "else step 3 (the nsys fallback)")
     a = ap.parse_args(argv)
+    for flag in ("steps", "save_steps", "heldout_every", "heldout_items"):
+        if getattr(a, flag) is not None and getattr(a, flag) < 1:
+            ap.error(f"--{flag.replace('_', '-')} must be >= 1")
     if not a.merge_last and (a.train is None or a.steps is None):
         ap.error("--train and --steps are required (except with --merge-last)")
     if a.budget_usd is not None and a.session_start is None:
@@ -122,6 +125,9 @@ def rows_schedule(root: Path, manifest_sha256: str | None) -> dict | None:
     pinned value; a schedule root needs it."""
     raw = (Path(root) / "manifest.json").read_bytes()
     schedule = json.loads(raw).get("schedule")
+    if schedule is not None and not (isinstance(schedule, dict) and all(
+            k in schedule for k in ("steps", "per_step", "block_steps", "ids_sha256"))):
+        raise ValueError(f"{root}/manifest.json: `schedule` needs steps, per_step, block_steps and ids_sha256")
     if schedule is not None and manifest_sha256 is None:
         raise ValueError(f"{root}: a rows root with a schedule needs --rows-manifest-sha256")
     if manifest_sha256 is not None and _sha(raw) != manifest_sha256:
@@ -223,20 +229,22 @@ def main(argv=None) -> int:
 
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
     stop = budget_stop(a)
-    train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule else dataset.DISAGREEMENT_OVERSAMPLE)
-    if schedule:
+    train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule is not None else dataset.DISAGREEMENT_OVERSAMPLE)
+    if schedule is not None:
         check_rows(train["key"], schedule)
     heldout = heldout_rows(a.heldout, a.heldout_items) if a.heldout else None
     last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
+    if last and int(Path(last).name.split("-")[1]) > a.steps:
+        raise ValueError(f"--resume: {last} is past --steps {a.steps}")
     if a.resume and last is None:
         print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
     over = {"save_strategy": "steps", "save_steps": a.save_steps}
-    over |= {"shuffle_dataset": False} if schedule else {}
+    over |= {"shuffle_dataset": False} if schedule is not None else {}
     over |= {"eval_strategy": "steps", "eval_steps": a.heldout_every, "num_generations_eval": 8} if a.heldout else {}
-    check = (lambda cfg: check_sampler(cfg, schedule, a.steps)) if schedule else None
+    check = (lambda cfg: check_sampler(cfg, schedule, a.steps)) if schedule is not None else None
     trainer, proc, lr = make_trainer(a, a.ckpt, train, a.steps, eval_dataset=heldout, check=check,
                                      calls=[stop] if stop else [], **over)
     t0 = time.time()
@@ -245,7 +253,7 @@ def main(argv=None) -> int:
     save_final(trainer.accelerator.unwrap_model(trainer.model), proc, a.out)
     done, start = trainer.state.global_step, int(Path(last).name.split("-")[1]) if last else 0
     log, cfg = trainer.state.log_history, trainer.args
-    rows = schedule and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
+    rows = schedule is not None and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
                          "ids_sha256": schedule["ids_sha256"]}
     return save_json(a.out / "rl.json", {
         "model": a.model, "steps": done, "lr": lr, "ckpt": str(a.ckpt), "resumed_from": last,

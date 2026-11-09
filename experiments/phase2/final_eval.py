@@ -201,6 +201,8 @@ def noise_floor(results: list[dict], groups: dict[str, str], draws: int = 2000, 
     prints mean_sd beside a gain; no gate passes or fails on it."""
     ids = [r["item_id"] for r in results]
     iou = np.array([r["samples"]["iou_tc"] for r in results], float)
+    if iou.shape[1] < 2:
+        raise ValueError(f"noise_floor needs K >= 2 answers per item, got {iou.shape[1]}")
     h = iou.shape[1] // 2
     d = iou[:, :h].mean(1) - iou[:, h:].mean(1)
     D = signal.draws(ids, draws, seed, key=groups.__getitem__)
@@ -387,7 +389,7 @@ def score(pool, view: Path, split: str, out: Path, rows: list[dict], answers: li
     doc["seconds"] = run["seconds"] | {"total": time.time() - t0}
     _write(out / "metrics.jsonl", _lines(results))
     _write(out / "items.jsonl", _lines(items))
-    _write(out / "final_eval.json", json.dumps(doc, indent=1))
+    _write(out / "final_eval.json", json.dumps(doc, indent=1, allow_nan=False))
     print("FINAL_EVAL", split, json.dumps({m: round(doc[m]["mean"], 4) for m in METRICS if m in doc}),
           "items", doc["items"], f"s {doc['seconds']['total']:.0f}")  # fmt: skip
 
@@ -449,6 +451,8 @@ def main(argv=None) -> None:
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--per-call", type=int, default=64, help="items per vLLM generation call")
     a = ap.parse_args(argv)
+    if a.k < 2:
+        ap.error("--k must be >= 2")
     if a.resummarize:
         if a.out[0].resolve() == a.resummarize.resolve():
             ap.error("--out must not be the --resummarize folder")
@@ -460,7 +464,7 @@ def main(argv=None) -> None:
         ap.error("give --view and exactly one of --ckpt (with --train) and --rescore")
     if len(splits) != len(views) or len(a.out) not in (1, len(views)):
         ap.error("give one --split per --view, and one --out or one per --view")
-    outs = a.out if len(a.out) == len(views) else [a.out[0] / v.name for v in views]
+    outs = a.out if len(a.out) == len(views) else [a.out[0] / v.resolve().name for v in views]
     for view, split in zip(views, splits, strict=True):
         check_view(view, split)
     if len({o.resolve() for o in outs}) != len(outs):

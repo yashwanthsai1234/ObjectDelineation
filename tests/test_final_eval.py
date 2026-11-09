@@ -629,10 +629,10 @@ def test_cli_modes_need_exactly_one_source(capsys):
 
 
 def test_k_follows_the_flag(ev, tmp_path, monkeypatch):
-    """I17 (A3 part): K = 2 gives lists of 2; K = 1 is refused by metrics."""
+    """I17 (A3 part): K = 2 gives lists of 2; K = 1 is refused before any sampling."""
     run_fe(ev, tmp_path / "k2", monkeypatch, K=2)
     assert all(len(r["samples"]["iou_tc"]) == 2 for r in jsonl(tmp_path / "k2" / "metrics.jsonl"))
-    with pytest.raises(ValueError, match=">= 2 samples"):
+    with pytest.raises(SystemExit):
         run_fe(ev, tmp_path / "k1", monkeypatch, K=1)
 
 

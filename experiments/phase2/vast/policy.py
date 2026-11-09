@@ -34,6 +34,7 @@ import csv
 import gzip
 import hashlib
 import json
+import math
 import operator
 import os
 import re
@@ -311,6 +312,9 @@ def cmd_offers(a) -> None:
 
 def launch_refusal(offer: dict, cap_hours: float) -> str:
     """Why this offer may not launch (empty when it may): committed spend + the worst case to the deadline > HARD_STOP."""
+    money = [offer["dph_total"], offer["inet_up_cost"], offer["inet_down_cost"]]
+    if not all(math.isfinite(x) and x >= 0 for x in money) or not (math.isfinite(cap_hours) and cap_hours > 0):
+        return f"refused: price {money} and --cap-hours {cap_hours} must be finite, non-negative and the cap positive"
     now = time.time()
     bw = {k: offer[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"dph": offer["dph_total"], **bw, "started": now, "deadline": now + int(cap_hours * 3600) + PULL_S}
@@ -333,11 +337,11 @@ def cmd_launch(a) -> None:
         die(f"offer {a.offer} was not picked with offers.sh --pick")
     if why := reasons(o, o["_gpu"], o["_dataset"], o["_disk"]):
         die("; ".join(why))
+    if why := launch_refusal(o, a.cap_hours):
+        die(why)
     cap_s, now = int(a.cap_hours * 3600) + PULL_S, time.time()
     bw = {k: o[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"instance": None, "offer": a.offer, "dph": o["dph_total"], **bw, "started": now, "deadline": now + cap_s}
-    if why := launch_refusal(o, a.cap_hours):
-        die(why)
     committed, worst = spend(committed=True), accrued(run, run["deadline"])
     if committed + worst >= ALARM and not a.owner_approved:
         die(f"alarm: ${committed:.2f} committed + ${worst:.2f} worst case >= ${ALARM}; pass --owner-approved only "
@@ -394,10 +398,11 @@ def code_files() -> list[str]:
     kernel drafts K1-K3 without their build/ and results/ folders (the R-D1 runbooks run them on the box)."""
     git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole (V1)
     files = subprocess.run(git, cwd=ROOT, capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
-    drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/|riga[^/]*\.(csv|jsonl?)$", re.I)
+    riga = re.compile(r"riga[^/]*\.(csv|jsonl?)$", re.I)
+    drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/", re.I)
     keep = re.compile(r"^docs/reference/(frozen_views|val_halves)\.json$"
                       r"|^docs/implementation2\.0/kernels/K[123]/(?!build/|results/)")
-    files = [f for f in dict.fromkeys(files) if (keep.match(f) or not drop.search(f)) and (ROOT / f).is_file()]
+    files = [f for f in dict.fromkeys(files) if not riga.search(f) and (keep.match(f) or not drop.search(f)) and (ROOT / f).is_file()]
     if not any(f.startswith("tests/oracles/") for f in files):
         die("tests/oracles missing from the code snapshot")
     return files

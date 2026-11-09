@@ -94,8 +94,12 @@ def refusal(cfg: Path) -> str | None:
         stamp, now = json.loads(path.read_text()), hashes(cfg)
     except (OSError, ValueError, KeyError) as e:
         return f"cannot check {path} against the current code, data and config: {e}"
+    if not isinstance(stamp, dict) or not isinstance(stamp.get("hashes", {}), dict):
+        return f"{path} is not a preflight stamp (wrong shape): run `make preflight` again"
     if not stamp.get("pass"):
-        return f"{path} records a FAILED preflight (failed: {[k for k, v in stamp.get('checks', {}).items() if not v['pass']]})"
+        checks = stamp.get("checks")
+        checks = checks if isinstance(checks, dict) else {}
+        return f"{path} records a FAILED preflight (failed: {[k for k, v in checks.items() if not (isinstance(v, dict) and v.get('pass'))]})"
     if stale := [k for k in now if now[k] != stamp.get("hashes", {}).get(k)]:
         return f"{path} is stale ({', '.join(stale)} changed since it passed): run `make preflight` again"
     return None
