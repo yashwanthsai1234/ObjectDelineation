@@ -86,15 +86,6 @@ def oracle_winding(rings, W, H, G=G, pure=False):
     return winding_np(rings, W, H, G)
 
 
-def ring_ranges(rings, W, H, G=G, pure=False):
-    """Per ring (min(0, min winding), max(0, max winding)) of the ring alone."""
-    out = []
-    for ring in rings:
-        w, _ = oracle_winding([ring], W, H, G, pure)
-        out.append((min(0, int(w.min())), max(0, int(w.max()))))
-    return out
-
-
 def on_boundary_centres(rings, W, H, G=G):
     """Bool (H, W): the pixel centre lies exactly on some edge (exact integer test)."""
     B = np.zeros((H, W), bool)

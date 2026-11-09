@@ -1,6 +1,6 @@
 """Preflight: everything that can be proven on the Mac, before any GPU is rented (the launch gate reads its stamp).
 
-    python -I -m experiments.phase2.preflight --config experiments/phase2/configs/r1_lfm.yaml     (make preflight CONFIG=...)
+    python -I -m experiments.phase2.preflight --config experiments/phase2/configs/r1_qwen3vl2b.yaml     (make preflight CONFIG=...)
 
 Checks, in order; the stage (DATA / CHECKER / CODE) with a failure is finished, the later stages are not run:
   DATA     bundle integrity (rows.jsonl and context hashes, eval-view file hashes), patients shared between training and

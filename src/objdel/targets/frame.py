@@ -56,6 +56,7 @@ from PIL import Image
 
 from objdel.checker import as_mask
 from objdel.data import Item
+from objdel.geometry.box import boxes_meet
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
 LUNG_WINDOW = (-1000, 400)
@@ -123,8 +124,7 @@ def centred(item: Item, side: int, box=None) -> tuple[int, int]:
 
 def crowded(item: Item, box) -> bool:
     """Does the half-open window box meet another outlined nodule (objdel.data.lidc.crowded, B3-2)?"""
-    x0, y0, x1, y1 = box
-    return any(a < x1 and x0 < c and b < y1 and y0 < d for a, b, c, d in item.meta.get("other_nodules", ()))
+    return boxes_meet(box, item.meta.get("other_nodules", ()))
 
 
 def pixels(image: np.ndarray, x0: int, y0: int, side: int, window=None, noise=None) -> np.ndarray:

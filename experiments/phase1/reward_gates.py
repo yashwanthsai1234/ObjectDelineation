@@ -135,7 +135,8 @@ def k9_gate(pool, item_args, label, rng):
         a[order] = H.in_steps(V.SCHEMES[name], T[order])
         ok = a[:, 0] > a[:, 1]
         lo, up = H.cluster_ci(ok, keys, rng)
-        hlo, hup = H.cluster_ci(ok[hi], [k for k, h in zip(keys, hi, strict=True) if h], rng)
+        # the result is unused, but the call draws from rng: deleting it would move every later bootstrap number
+        _ = H.cluster_ci(ok[hi], [k for k, h in zip(keys, hi, strict=True) if h], rng)
         res.append(f"{pct(ok.mean())} {ci_str(lo, up)}; IoU ≥ 0.5: {pct(ok[hi].mean())}")
     emit(f"| {label} | {len(T)} pairs, {len(set(keys))} items | " + " | ".join(res) + " |")
 
