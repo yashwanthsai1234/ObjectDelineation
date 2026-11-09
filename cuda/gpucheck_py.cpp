@@ -34,6 +34,12 @@ nb::ndarray<nb::numpy, T> to_numpy(std::vector<T>&& v, std::initializer_list<siz
   return nb::ndarray<nb::numpy, T>(p->data(), shape, owner);
 }
 
+nb::ndarray<nb::numpy, bool> to_bool(std::vector<u8>&& v) {  // 0 / 1 bytes as a numpy bool array
+  auto* p = new std::vector<u8>(std::move(v));
+  nb::capsule owner(p, [](void* q) noexcept { delete static_cast<std::vector<u8>*>(q); });
+  return nb::ndarray<nb::numpy, bool>(reinterpret_cast<bool*>(p->data()), {p->size()}, owner);
+}
+
 // start[0] == 0, non-decreasing, start[k] == total, every segment at most `cap` long.
 void check_offsets(const In<i64, 1>& start, i64 total, i64 cap, const char* what) {
   const i64 k = i64(start.shape(0)) - 1;
@@ -267,4 +273,65 @@ NB_MODULE(_gpucheck, m) {
       },
       nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert(),
       nb::arg("tables").noconvert(), nb::kw_only(), nb::arg("timing") = false);
+
+  // The target builder's ladder: every rung of one name against its reference mask in one call (gpucheck.h).
+  m.def(
+      "certify_polygons",
+      [](const XY& xy, const In<i64, 1>& ring_start, const In<i64, 1>& shape_start, std::optional<In<i32, 1>> roles,
+         const In<i32, 1>& W, const In<i32, 1>& H, i64 G, const In<u8, 1>& ref_bits, const XY& ref_hw,
+         const In<i64, 1>& ref_start, const In<i32, 1>& ref_of, const In<i64, 1>& min_area,
+         std::optional<XY> pairs, std::optional<XY> ref_pairs, std::optional<In<i64, 1>> pair_min_area) {
+        const PolygonsIn p(xy, ring_start, shape_start, roles, W, H, G);
+        const MasksIn r(ref_bits, ref_hw, ref_start);
+        const i64 n = p.in.n, nr = r.in.n;
+        if (i64(ref_of.shape(0)) != n || i64(min_area.shape(0)) != n)
+          throw std::invalid_argument("ref_of and min_area must have one entry per shape");
+        for (i64 s = 0; s < n; ++s) {
+          if (ref_of(s) < 0 || ref_of(s) >= nr) throw std::invalid_argument("ref_of must name a reference plane");
+          if (r.H[size_t(ref_of(s))] != H(s) || r.W[size_t(ref_of(s))] != W(s))
+            throw std::invalid_argument("a shape's reference must have the shape's frame (H, W)");
+          if (min_area(s) < 0) throw std::invalid_argument("min_area must be >= 0");
+        }
+        gpucheck::Pairs q;
+        if (pairs || ref_pairs || pair_min_area) {
+          if (!pairs || !ref_pairs || !pair_min_area)
+            throw std::invalid_argument("pairs, ref_pairs and pair_min_area go together");
+          q = {i64(pairs->shape(0)), pairs->data(), ref_pairs->data(), pair_min_area->data()};
+          if (i64(ref_pairs->shape(0)) != q.n || i64(pair_min_area->shape(0)) != q.n)
+            throw std::invalid_argument("pairs, ref_pairs and pair_min_area must have one entry per pair");
+          for (i64 k = 0; k < q.n; ++k) {
+            const i32 a = q.shapes[2 * k], b = q.shapes[2 * k + 1], ra = q.refs[2 * k], rb = q.refs[2 * k + 1];
+            if (a < 0 || b < 0 || a >= n || b >= n || ra < 0 || rb < 0 || ra >= nr || rb >= nr)
+              throw std::invalid_argument("pairs must name shapes and ref_pairs reference planes of this call");
+            if (W(a) != W(b) || H(a) != H(b) || r.W[size_t(ra)] != r.W[size_t(rb)] || r.H[size_t(ra)] != r.H[size_t(rb)])
+              throw std::invalid_argument("the two planes of a pair must share one frame");
+            if (q.min_area[k] < 0) throw std::invalid_argument("pair_min_area must be >= 0");
+          }
+        }
+        gpucheck::Certified c;
+        {
+          nb::gil_scoped_release release;
+          c = gpucheck::certify_polygons(p.in, r.in, ref_of.data(), min_area.data(), q);
+        }
+        nb::dict d;
+        const size_t S = c.sig.size(), S2 = c.ref_sig.size(), Q = c.pair_sig.size(), Q2 = c.pair_ref_sig.size();
+        d["legal"] = to_bool(std::move(c.legal));
+        d["inter"] = to_numpy(std::move(c.inter), {size_t(n)});
+        d["union"] = to_numpy(std::move(c.uni), {size_t(n)});
+        d["equal"] = to_bool(std::move(c.equal));
+        d["sig_start"] = to_numpy(std::move(c.sig_start), {size_t(n + 1)});
+        d["sig"] = to_numpy(std::move(c.sig), {S});
+        d["ref_sig_start"] = to_numpy(std::move(c.ref_sig_start), {size_t(n + 1)});
+        d["ref_sig"] = to_numpy(std::move(c.ref_sig), {S2});
+        d["pair_sig_start"] = to_numpy(std::move(c.pair_sig_start), {size_t(q.n + 1)});
+        d["pair_sig"] = to_numpy(std::move(c.pair_sig), {Q});
+        d["pair_ref_sig_start"] = to_numpy(std::move(c.pair_ref_sig_start), {size_t(q.n + 1)});
+        d["pair_ref_sig"] = to_numpy(std::move(c.pair_ref_sig), {Q2});
+        return d;
+      },
+      nb::arg("xy").noconvert(), nb::arg("ring_start").noconvert(), nb::arg("shape_start").noconvert(),
+      nb::arg("roles").noconvert().none(), nb::arg("W").noconvert(), nb::arg("H").noconvert(), nb::arg("G"),
+      nb::arg("ref_bits").noconvert(), nb::arg("ref_hw").noconvert(), nb::arg("ref_start").noconvert(),
+      nb::arg("ref_of").noconvert(), nb::arg("min_area").noconvert(), nb::arg("pairs").noconvert().none() = nb::none(),
+      nb::arg("ref_pairs").noconvert().none() = nb::none(), nb::arg("pair_min_area").noconvert().none() = nb::none());
 }

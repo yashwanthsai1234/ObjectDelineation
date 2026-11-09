@@ -151,6 +151,23 @@ struct Scores {                // per object (objdel.reward.score: ObjectTerms),
   std::vector<i32> sig;        // holes per component of the size-filtered mask, descending
 };
 
+// The ladder certificate of objdel.targets (certify_polygons): shape s of a polygon call against reference plane
+// ref_of[s] of `refs` (same frame), both size-filtered at min_area[s]. Pair p (the RIGA rim) is shapes
+// (shapes[2p], shapes[2p + 1]) and reference planes (refs[2p], refs[2p + 1]): the signatures of a & ~b at min_area[p].
+struct Pairs {
+  i64 n = 0;
+  const i32* shapes = nullptr;
+  const i32* refs = nullptr;
+  const i64* min_area = nullptr;
+};
+
+struct Certified {                 // an illegal shape draws nothing (empty raster)
+  std::vector<u8> legal, equal;    // per shape: no defect; raster == reference
+  std::vector<i64> inter, uni;     // per shape: popcounts of raster & reference, raster | reference
+  std::vector<i64> sig_start, ref_sig_start, pair_sig_start, pair_ref_sig_start;  // (n + 1) or (P + 1)
+  std::vector<i32> sig, ref_sig, pair_sig, pair_ref_sig;  // holes per component, descending
+};
+
 // Per-stage device time of one call in milliseconds, stages in the order they first ran (timing=True in the binding).
 // Read after the call's last wait: asking for it adds no host wait.
 using Times = std::vector<std::pair<std::string, double>>;
@@ -184,5 +201,9 @@ i64 resident();                    // tables on the device
 // Object s is scored against the tables tables[s]; its frame must be theirs (std::invalid_argument otherwise).
 Scores score_polygons(const Polygons& in, const i64* tables, Times* times = nullptr);
 Scores score_masks(const Masks& in, const i64* tables, Times* times = nullptr);
+// Inputs checked by the binding: ref_of[s] < refs.n with the shape's frame, min_area >= 0, pair indices in range
+// and each pair's two planes of one frame.
+Certified certify_polygons(const Polygons& in, const Masks& refs, const i32* ref_of, const i64* min_area,
+                           const Pairs& pairs = {});
 
 }  // namespace gpucheck

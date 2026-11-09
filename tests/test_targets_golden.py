@@ -1,8 +1,10 @@
 """D-R02 (gate D-G4): build_target's text on 300 synthetic fixtures equals the golden written by the code before D3
 (commit 7eaa9d8: rings from the engine, components from cv2.connectedComponents). Fixtures: LIDC-like nodules (discs
-with holes, specks, several components; min_area unknown, the union's rule, or above every component), RIGA-like
-disc and cup pairs made in code (no real RIGA item), and sparse noise. A ValueError is part of the behaviour, so the
-golden keeps its message. Regenerate (only on purpose): python -I -m tests.test_targets_golden --write"""
+with holes, specks, several components; min_area 5, the mask's own rule, or above every component), RIGA-like disc
+and cup pairs made in code (no real RIGA item; the rule of the rater's own masks or of the union), and sparse noise.
+D4 made min_area required: the 100 fixtures that had none now pass the rules above, and the code before D4 (bb8a3f7)
+gives the same 300 rows. A ValueError is part of the behaviour, so the golden keeps its message. Regenerate (only on
+purpose): python -I -m tests.test_targets_golden --write"""
 import hashlib
 import json
 import sys
@@ -35,7 +37,7 @@ def fixtures(seed=20261109):
                 m &= ~_disc(h, w, *rng.integers(0, (h, w)), int(rng.integers(1, 5)))
             if kind == 2 and i % 3 != 2:
                 m |= rng.random((h, w)) < 0.004
-            ma = [None, min_areas({"nodule": m[None]}), {"nodule": int(m.sum()) + 1}][i % 3]
+            ma = [{"nodule": 5}, min_areas({"nodule": m[None]}), {"nodule": int(m.sum()) + 1}][i % 3]
             out.append(({"nodule": m}, ("nodule",), ma))
         elif kind < 5:  # disc and cup of k raters; kind 4 puts the cup near the disc edge
             k = int(rng.integers(1, 4))
@@ -44,7 +46,7 @@ def fixtures(seed=20261109):
             cups = np.stack([_disc(h, w, cy, cx + int(rng.integers(-1, 2)), max(1, r // 2 - j)) for j in range(k)])
             if kind == 4:
                 cups = np.stack([_disc(h, w, cy, cx + r // 3, max(1, r // 2)) for _ in range(k)])
-            ma = None if i % 2 else min_areas({"disc": discs, "cup": cups})
+            ma = min_areas({"disc": discs[:1], "cup": cups[:1]} if i % 2 else {"disc": discs, "cup": cups})
             out.append(({"disc": discs[0], "cup": cups[0]}, ("disc", "cup"), ma))
         else:  # sparse noise
             m = rng.random((h, w)) < rng.uniform(0.01, 0.08)

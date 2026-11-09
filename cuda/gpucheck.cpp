@@ -1654,11 +1654,17 @@ void pack(const Polygons& in, const std::vector<i64>& word_start, const PolyChun
 
 // Queues the chunk on its lane: copy in, zero the counters, the kernels, copy out (the defects, and the masks when
 // `masks`; else they stay in the lane's arena for the scorer). Nothing waits.
+Shapes shapes(const PolyChunk& c, u8* d, i64 G) {  // the chunk's shapes in the arena at d
+  return Shapes{ptr<i32>(d, c.xy),         ptr<i64>(d, c.ring_start), ptr<i64>(d, c.shape_start),
+                ptr<i64>(d, c.row_start),  ptr<i64>(d, c.word_start), ptr<i32>(d, c.roles),
+                ptr<i32>(d, c.W),          ptr<i32>(d, c.H),          c.n,
+                G};
+}
+
 void launch(const PolyChunk& c, i64 G, Lane& L, bool masks, Timer& t) {
   u8* d = L.dev.p;
   const Stream st = L.stream;
-  const Shapes s{ptr<i32>(d, c.xy), ptr<i64>(d, c.ring_start), ptr<i64>(d, c.shape_start), ptr<i64>(d, c.row_start),
-                 ptr<i64>(d, c.word_start), ptr<i32>(d, c.roles), ptr<i32>(d, c.W), ptr<i32>(d, c.H), c.n, G};
+  const Shapes s = shapes(c, d, G);
   const Rings r{ptr<i32>(d, c.cxy), ptr<i32>(d, c.len), ptr<u8>(d, c.fewer), ptr<i64>(d, c.area2), ptr<i32>(d, c.box),
                 ptr<i32>(d, c.counts), ptr<i32>(d, c.pairs)};
   u8 *raster_wide = ptr<u8>(d, c.raster_wide), *validate_wide = ptr<u8>(d, c.validate_wide);
@@ -1736,34 +1742,25 @@ std::vector<TableView> views(const i64* handles, i64 n, const i32* W, const i32*
   return v;
 }
 
-constexpr int kPart = 5;  // row partials after the k rater intersections: vote intersection, spill count and sum, miss
-                          // count and sum (sums in units of 2^-23)
-
-struct Obj {  // one object of a scoring call
-  TableView t;
-  i64 words;           // its mask: t.H rows of words_per_row(t.W) words
-  i64 part;            // its row partials: t.H rows of t.k + kPart
-  i64 crop;            // its crop pixels: bh + 2 rows of bw + 2 (none for an empty mask)
-  i64 area;
-  i32 bx, by, bw, bh;  // the mask's bounding box
-};
-
-struct ObjOut {  // copied back per object
-  i64 area, ncomp;
-  double iou_tc, f5, g_area, topo_freq;
+// ---------------------------------------------------------------- the pixel label chain (scorer, certify_polygons)
+// A bit-plane mask of one call: H rows of words_per_row(W) words from word `words` of the call's word buffer, size-
+// filtered at min_area. The box step fills its foreground box (bx, by, bw, bh), its area and its crop's offset.
+struct Plane {
+  i64 words, min_area, area, crop;
+  i32 W, H, bx, by, bw, bh;
 };
 
 // Per frame row: first and last foreground column, foreground pixels.
 struct RowBox {
-  const Obj* obj;
+  const Plane* pl;
   const i64* row_start;
   i64 n;
   const u32* words;
   i32* rbox;
   HD void operator()(i64 i) const {
     const i64 o = segment(row_start, n, i);
-    const i32 wpr = words_per_row(obj[o].t.W);
-    const u32* w = words + obj[o].words + (i - row_start[o]) * wpr;
+    const i32 wpr = words_per_row(pl[o].W);
+    const u32* w = words + pl[o].words + (i - row_start[o]) * wpr;
     i32 first = -1, last = -1, count = 0;
     for (i32 j = 0; j < wpr; ++j) {
       if (!w[j]) continue;
@@ -1775,7 +1772,7 @@ struct RowBox {
   }
 };
 
-// Per object: box (x, y, w, h) and area.
+// Per plane: box (x, y, w, h) and area.
 struct ObjBox {
   const i64* row_start;
   const i32* rbox;
@@ -1796,14 +1793,15 @@ struct ObjBox {
   }
 };
 
-// ---------------------------------------------------------------- signature: union-find labeling on the crops
+// Union-find labeling on each plane's crop: its box padded by one pixel (8-connected foreground, 4-connected
+// background; the outside is the background component of pixel 0).
 struct Crops {  // the call's crops, one item per crop row; pixel p of a crop = y (bw + 2) + x, local to it
-  const Obj* obj;
+  const Plane* pl;
   const i64* crow_start;
   i64 n;
   u8* img;             // 1 = foreground
   i32 *fg, *bg, *aux;  // labels (root = the component's first raster pixel), per-root counts
-  i32* ncomp;          // per object: components after the filter
+  i32* ncomp;          // per plane: components after the filter
   HD i64 row(i64 r, i32& y) const {
     const i64 o = segment(crow_start, n, r);
     y = i32(r - crow_start[o]);
@@ -1816,8 +1814,8 @@ struct CropFill {
   const u32* words;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Obj& b = c.obj[c.row(r, y)];
-    const i32 cw = b.bw + 2, wpr = words_per_row(b.t.W);
+    const Plane& b = c.pl[c.row(r, y)];
+    const i32 cw = b.bw + 2, wpr = words_per_row(b.W);
     u8* img = c.img + b.crop + i64(y) * cw;
     const bool inside = y >= 1 && y <= b.bh;
     const u32* row = words + b.words + i64(b.by + (inside ? y - 1 : 0)) * wpr;
@@ -1834,7 +1832,7 @@ struct LabelInit {
   int which;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Obj& b = c.obj[c.row(r, y)];
+    const Plane& b = c.pl[c.row(r, y)];
     const i32 cw = b.bw + 2;
     i32* par = (which ? c.fg : c.bg) + b.crop;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p) par[p] = c.img[b.crop + p] == which ? p : -1;
@@ -1846,7 +1844,7 @@ struct LabelMerge {
   int which;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Obj& b = c.obj[c.row(r, y)];
+    const Plane& b = c.pl[c.row(r, y)];
     const i32 cw = b.bw + 2;
     const u8* img = c.img + b.crop;
     i32* par = (which ? c.fg : c.bg) + b.crop;
@@ -1868,7 +1866,7 @@ struct LabelFlatten {
   int which;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Obj& b = c.obj[c.row(r, y)];
+    const Plane& b = c.pl[c.row(r, y)];
     const i32 cw = b.bw + 2;
     i32* par = (which ? c.fg : c.bg) + b.crop;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p)
@@ -1881,7 +1879,7 @@ struct Count {  // aux[root] = pixels of the class's component (aux zeroed)
   int which;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Obj& b = c.obj[c.row(r, y)];
+    const Plane& b = c.pl[c.row(r, y)];
     const i32 cw = b.bw + 2;
     const i32* par = (which ? c.fg : c.bg) + b.crop;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p)
@@ -1896,12 +1894,12 @@ struct Filter {
   int which;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Obj& b = c.obj[c.row(r, y)];
+    const Plane& b = c.pl[c.row(r, y)];
     const i32 cw = b.bw + 2;
     const i32* par = (which ? c.fg : c.bg) + b.crop;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p) {
       if (c.img[b.crop + p] != which || (!which && par[p] == 0)) continue;
-      if (c.aux[b.crop + par[p]] < b.t.min_area) c.img[b.crop + p] = u8(1 - which);
+      if (c.aux[b.crop + par[p]] < b.min_area) c.img[b.crop + p] = u8(1 - which);
     }
   }
 };
@@ -1912,7 +1910,7 @@ struct Holes {
   Crops c;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Obj& b = c.obj[c.row(r, y)];
+    const Plane& b = c.pl[c.row(r, y)];
     const i32 cw = b.bw + 2;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p)
       if (p != 0 && c.img[b.crop + p] == 0 && c.bg[b.crop + p] == p)
@@ -1920,54 +1918,16 @@ struct Holes {
   }
 };
 
-// Every component's hole count into the object's list: the first ncomp entries of its crop in bg (no longer needed).
+// Every component's hole count into the plane's list: the first ncomp entries of its crop in bg (no longer needed).
 struct Gather {
   Crops c;
   HD void operator()(i64 r) const {
     i32 y = 0;
     const i64 o = c.row(r, y);
-    const Obj& b = c.obj[o];
+    const Plane& b = c.pl[o];
     const i32 cw = b.bw + 2;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p)
       if (c.img[b.crop + p] == 1 && c.fg[b.crop + p] == p) c.bg[b.crop + atomic_inc(c.ncomp + o)] = c.aux[b.crop + p];
-  }
-};
-
-// ---------------------------------------------------------------- terms
-HD inline i64 units(float d) { return i64(double(d) * 8388608.0); }  // d in units of 2^-23: exact for 0 and d >= 1
-
-// Per frame row: intersections with each rater and the vote, spill (mask outside the union) and core miss (core outside
-// the mask) pixel counts and distance sums. The bits past W are 0 in every plane and mask.
-struct ScoreRows {
-  const Obj* obj;
-  const i64* row_start;
-  i64 n;
-  const u32* words;
-  i64* parts;
-  HD void operator()(i64 i) const {
-    const i64 o = segment(row_start, n, i);
-    const Obj& b = obj[o];
-    const TableView& t = b.t;
-    const i64 y = i - row_start[o], wpr = words_per_row(t.W);
-    const u32* m = words + b.words + y * wpr;
-    i64* out = parts + b.part + y * (t.k + kPart);
-    for (i32 j = 0; j < t.k; ++j) {
-      const u32* r = t.raters + (j * i64(t.H) + y) * wpr;
-      i64 s = 0;
-      for (i64 w = 0; w < wpr; ++w) s += popc(m[w] & r[w]);
-      out[j] = s;
-    }
-    i64 vote = 0, spill_n = 0, spill = 0, miss_n = 0, miss = 0;
-    const float* d = t.dist + y * t.W;
-    for (i64 w = 0; w < wpr; ++w) {
-      vote += popc(m[w] & t.vote[y * wpr + w]);
-      u32 s = m[w] & ~t.uni[y * wpr + w], c = t.core[y * wpr + w] & ~m[w];
-      spill_n += popc(s), miss_n += popc(c);
-      for (; s; s &= s - 1) spill += units(d[32 * w + ctz(s)]);
-      for (; c; c &= c - 1) miss += units(d[32 * w + ctz(c)]);
-    }
-    i64* f = out + t.k;
-    f[0] = vote, f[1] = spill_n, f[2] = spill, f[3] = miss_n, f[4] = miss;
   }
 };
 
@@ -1991,6 +1951,184 @@ HD inline void sort_descending(i32* a, i32 n) {  // heapsort on a min-heap: each
   }
 }
 
+struct SortList {  // per plane: its list, descending (the signature)
+  Crops c;
+  HD void operator()(i64 o) const { sort_descending(c.bg + c.pl[o].crop, c.ncomp[o]); }
+};
+
+struct SigScan {  // one item
+  const i32* ncomp;
+  i64 n;
+  i64* sig_start;
+  HD void operator()(i64) const {
+    sig_start[0] = 0;
+    for (i64 o = 0; o < n; ++o) sig_start[o + 1] = sig_start[o] + ncomp[o];
+  }
+};
+
+struct SigCompact {  // the lists, one after the other, into aux (no longer needed)
+  Crops c;
+  const i64* sig_start;
+  HD void operator()(i64 o) const {
+    for (i32 j = 0; j < c.ncomp[o]; ++j) c.aux[sig_start[o] + j] = c.bg[c.pl[o].crop + j];
+  }
+};
+
+// The label chain's arrays in a call's layout: the planes and their crop rows (copied in, at the front), then per
+// crop pixel the image, the labels and the counts.
+struct CropLayout {
+  i64 n, crop;
+  size_t pl = 0, crows = 0, img = 0, fg = 0, bg = 0, aux = 0, nc = 0;
+  void front(Layout& l) { pl = l.put<Plane>(n), crows = l.put<i64>(n + 1); }
+  void back(Layout& l) {
+    img = l.put<u8>(crop), fg = l.put<i32>(crop), bg = l.put<i32>(crop), aux = l.put<i32>(crop), nc = l.put<i32>(n);
+  }
+  void stage(u8* h, const std::vector<Plane>& p, const std::vector<i64>& crow_start) const {
+    std::copy_n(p.data(), n, ptr<Plane>(h, pl));
+    std::copy_n(crow_start.data(), n + 1, ptr<i64>(h, crows));
+  }
+  Crops at(u8* d) const {
+    return Crops{ptr<Plane>(d, pl), ptr<i64>(d, crows), n,        ptr<u8>(d, img),
+                 ptr<i32>(d, fg),   ptr<i32>(d, bg),    ptr<i32>(d, aux), ptr<i32>(d, nc)};
+  }
+};
+
+// Round trip 1 of a label-chain call: every plane's foreground box and area (one host wait), then its crop offset
+// and crop rows. Returns the crop layout of the call (crop rows in crow_start). Uses the head of the scorer arena.
+CropLayout boxes(Lane& L, std::vector<Plane>& pl, const u32* words, std::vector<i64>& crow_start, Timer& t) {
+  const i64 n = i64(pl.size());
+  const Stream st = L.stream;
+  std::vector<i64> row_start(size_t(n + 1), 0);
+  for (i64 o = 0; o < n; ++o) row_start[size_t(o + 1)] = row_start[size_t(o)] + pl[size_t(o)].H;
+  const i64 rows = row_start[size_t(n)];
+  Layout a;
+  const size_t a_pl = a.put<Plane>(n), a_rows = a.put<i64>(n + 1), a_rbox = a.put<i32>(3 * rows),
+               a_box = a.put<i64>(5 * n);
+  u8* d = L.score.get(a.size);
+  u8* h = L.in.get(a_rbox);
+  std::copy_n(pl.data(), n, ptr<Plane>(h, a_pl));
+  std::copy_n(row_start.data(), n + 1, ptr<i64>(h, a_rows));
+  to_device(d, h, a_rbox, st);
+  t.stage("label", st, [&] {  // the crop boxes, which the labeling works on
+    for_each(st, rows, RowBox{ptr<Plane>(d, a_pl), ptr<i64>(d, a_rows), n, words, ptr<i32>(d, a_rbox)});
+    for_each(st, n, ObjBox{ptr<i64>(d, a_rows), ptr<i32>(d, a_rbox), ptr<i64>(d, a_box)});
+  });
+  const i64* box = ptr<i64>(L.out.get(sizeof(i64) * size_t(5 * n)), 0);
+  to_host(L.out.p, d + a_box, sizeof(i64) * size_t(5 * n), st);
+  wait(st);
+  crow_start.assign(size_t(n + 1), 0);
+  i64 crop = 0;
+  for (i64 o = 0; o < n; ++o) {
+    Plane& b = pl[size_t(o)];
+    const i64* x = box + 5 * o;
+    b.bx = i32(x[0]), b.by = i32(x[1]), b.bw = i32(x[2]), b.bh = i32(x[3]), b.area = x[4], b.crop = crop;
+    if (b.area) crop += i64(b.bw + 2) * (b.bh + 2);
+    crow_start[size_t(o + 1)] = crow_start[size_t(o)] + (b.area ? b.bh + 2 : 0);
+  }
+  return CropLayout{n, crop};
+}
+
+// Queues the chain on the crops: fill them from the words, label, size-filter the foreground then the background
+// (topology.size_filter), label again; then each plane's signature: hole counts per component, sorted descending, at
+// the head of its crop in bg (ncomp of them). Stages "label", "count", "filter" and "score" (the signature).
+void label_chain(Stream st, const Crops& c, i64 crows, i64 crop, const u32* words, Timer& t) {
+  auto label = [&](int which) {
+    t.stage("label", st, [&] {
+      for_each(st, crows, LabelInit{c, which});
+      for_each(st, crows, LabelMerge{c, which});
+      for_each(st, crows, LabelFlatten{c, which});
+    });
+  };
+  auto count = [&](int which) {
+    t.stage("count", st, [&] {
+      zero(c.aux, sizeof(i32) * size_t(crop), st);
+      for_each(st, crows, Count{c, which});
+    });
+  };
+  auto filter = [&](int which) { t.stage("filter", st, [&] { for_each(st, crows, Filter{c, which}); }); };
+  zero(c.ncomp, sizeof(i32) * size_t(c.n), st);
+  t.stage("label", st, [&] { for_each(st, crows, CropFill{c, words}); });
+  label(1), count(1), filter(1);
+  label(0), count(0), filter(0);
+  label(1), label(0);
+  t.stage("score", st, [&] {
+    zero(c.aux, sizeof(i32) * size_t(crop), st);
+    for_each(st, crows, Holes{c});
+    for_each(st, crows, Gather{c});
+    for_each(st, c.n, SortList{c});
+  });
+}
+
+// The signatures of all planes, after label_chain: sig_start into `ss` (device, n + 1) and the lists one after the
+// other into aux. Nothing waits.
+void compact_sigs(Stream st, const Crops& c, i64* ss, Timer& t) {
+  t.stage("score", st, [&] {
+    for_each(st, 1, SigScan{c.ncomp, c.n, ss});
+    for_each(st, c.n, SigCompact{c, ss});
+  });
+}
+
+// The last round trip of a label-chain call: the `total` signature entries that compact_sigs left in aux.
+std::vector<i32> read_sigs(Lane& L, const Crops& c, i64 total) {
+  std::vector<i32> sig(static_cast<size_t>(total));
+  to_host(L.out.get(sizeof(i32) * size_t(total)), c.aux, sizeof(i32) * size_t(total), L.stream);
+  wait(L.stream);
+  std::copy_n(ptr<i32>(L.out.p, 0), total, sig.data());
+  return sig;
+}
+
+// ---------------------------------------------------------------- terms
+constexpr int kPart = 5;  // row partials after the k rater intersections: vote intersection, spill count and sum, miss
+                          // count and sum (sums in units of 2^-23)
+
+struct Obj {  // one object of a scoring call: its tables and its row partials (t.H rows of t.k + kPart)
+  TableView t;
+  i64 part;
+};
+
+struct ObjOut {  // copied back per object
+  i64 area, ncomp;
+  double iou_tc, f5, g_area, topo_freq;
+};
+
+HD inline i64 units(float d) { return i64(double(d) * 8388608.0); }  // d in units of 2^-23: exact for 0 and d >= 1
+
+// Per frame row: intersections with each rater and the vote, spill (mask outside the union) and core miss (core outside
+// the mask) pixel counts and distance sums. The bits past W are 0 in every plane and mask.
+struct ScoreRows {
+  const Obj* obj;
+  const Plane* pl;
+  const i64* row_start;
+  i64 n;
+  const u32* words;
+  i64* parts;
+  HD void operator()(i64 i) const {
+    const i64 o = segment(row_start, n, i);
+    const Obj& b = obj[o];
+    const TableView& t = b.t;
+    const i64 y = i - row_start[o], wpr = words_per_row(t.W);
+    const u32* m = words + pl[o].words + y * wpr;
+    i64* out = parts + b.part + y * (t.k + kPart);
+    for (i32 j = 0; j < t.k; ++j) {
+      const u32* r = t.raters + (j * i64(t.H) + y) * wpr;
+      i64 s = 0;
+      for (i64 w = 0; w < wpr; ++w) s += popc(m[w] & r[w]);
+      out[j] = s;
+    }
+    i64 vote = 0, spill_n = 0, spill = 0, miss_n = 0, miss = 0;
+    const float* d = t.dist + y * t.W;
+    for (i64 w = 0; w < wpr; ++w) {
+      vote += popc(m[w] & t.vote[y * wpr + w]);
+      u32 s = m[w] & ~t.uni[y * wpr + w], c = t.core[y * wpr + w] & ~m[w];
+      spill_n += popc(s), miss_n += popc(c);
+      for (; s; s &= s - 1) spill += units(d[32 * w + ctz(s)]);
+      for (; c; c &= c - 1) miss += units(d[32 * w + ctz(c)]);
+    }
+    i64* f = out + t.k;
+    f[0] = vote, f[1] = spill_n, f[2] = spill, f[3] = miss_n, f[4] = miss;
+  }
+};
+
 HD inline double iou(i64 inter, i64 a, i64 b) {
   const i64 uni = a + b - inter;
   return uni ? double(inter) / double(uni) : 1.0;
@@ -2002,12 +2140,11 @@ HD inline double sum_value(i128 units) {  // exact below 2^53 units (2^30 px of 
   return (double(i64(units >> 32)) * 4294967296.0 + double(u32(units & 0xFFFFFFFF))) / 8388608.0;
 }
 
-// Per object: its signature sorted, then the terms (score_mask's formulas, operation by operation).
+// Per object: the terms from its sorted signature and row partials (score_mask's formulas, operation by operation).
 struct ObjTerms {
   const Obj* obj;
+  Crops c;
   const i64* parts;
-  const i32* ncomp;
-  i32* lists;
   ObjOut* out;
   HD static bool same_sig(const TableView& t, i32 r, const i32* s, i32 m) {
     if (t.sig_start[r + 1] - t.sig_start[r] != m) return false;
@@ -2017,10 +2154,10 @@ struct ObjTerms {
   }
   HD void operator()(i64 o) const {
     const Obj& b = obj[o];
+    const Plane& p = c.pl[o];
     const TableView& t = b.t;
-    const i32 m = ncomp[o], F = t.k + kPart;
-    i32* s = lists + b.crop;
-    sort_descending(s, m);
+    const i32 m = c.ncomp[o], F = t.k + kPart;
+    const i32* s = c.bg + p.crop;
     const i64* rows = parts + b.part;
     i64 vote = 0, spill_n = 0, miss_n = 0;
     i128 spill = 0, miss = 0;
@@ -2036,41 +2173,20 @@ struct ObjTerms {
       if (!same_sig(t, r, s, m)) continue;
       i64 inter = 0;
       for (i32 y = 0; y < t.H; ++y) inter += rows[i64(y) * F + r];
-      const double v = iou(inter, b.area, t.rater_area[r]);
+      const double v = iou(inter, p.area, t.rater_area[r]);
       if (!same || v > best) best = v;  // Python's max: the first of equal values
       ++same;
     }
     const double d = (sum_value(spill) - 0.5 * double(spill_n)) + (sum_value(miss) - 0.5 * double(miss_n));
     double g = 0.0;
-    if (b.area > 0) {
+    if (p.area > 0) {
       i64 lo = t.rater_area[0], hi = t.rater_area[0];
       for (i32 r = 1; r < t.k; ++r) lo = mn(lo, t.rater_area[r]), hi = mx(hi, t.rater_area[r]);
-      const double up = double(hi) / double(b.area), down = lo > 0 ? double(b.area) / double(lo) : 1.0;
+      const double up = double(hi) / double(p.area), down = lo > 0 ? double(p.area) / double(lo) : 1.0;
       g = (up < 1.0 ? up : 1.0) * (down < 1.0 ? down : 1.0);
     }
-    out[o] = ObjOut{b.area, m, same ? best : iou(vote, b.area, t.n_vote),
+    out[o] = ObjOut{p.area, m, same ? best : iou(vote, p.area, t.n_vote),
                     1.0 / (1.0 + (2.0 * d / double(t.perimeter)) / (t.t5 * t.t5)), g, double(same) / double(voters)};
-  }
-};
-
-struct SigScan {  // one item
-  const i32* ncomp;
-  i64 n;
-  i64* sig_start;
-  HD void operator()(i64) const {
-    sig_start[0] = 0;
-    for (i64 o = 0; o < n; ++o) sig_start[o + 1] = sig_start[o] + ncomp[o];
-  }
-};
-
-struct SigCompact {
-  const Obj* obj;
-  const i32* ncomp;
-  const i64* sig_start;
-  const i32* lists;
-  i32* sig;
-  HD void operator()(i64 o) const {
-    for (i32 j = 0; j < ncomp[o]; ++j) sig[sig_start[o] + j] = lists[obj[o].crop + j];
   }
 };
 
@@ -2080,85 +2196,41 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
                  Scores& out, Timer& t) {
   const i64 n = i64(tv.size());
   const Stream st = L.stream;
-  std::vector<Obj> obj(size_t(n), Obj{});
-  std::vector<i64> row_start(size_t(n + 1), 0), crow_start(size_t(n + 1), 0);
+  std::vector<Plane> pl(static_cast<size_t>(n));
+  std::vector<Obj> obj(static_cast<size_t>(n));
+  std::vector<i64> row_start(size_t(n + 1), 0), crow_start;
+  i64 parts = 0;
   for (i64 o = 0; o < n; ++o) {
-    obj[size_t(o)].t = tv[size_t(o)], obj[size_t(o)].words = word_start[size_t(o)];
-    row_start[size_t(o + 1)] = row_start[size_t(o)] + tv[size_t(o)].H;
+    const TableView& v = tv[size_t(o)];
+    pl[size_t(o)] = Plane{word_start[size_t(o)], v.min_area, 0, 0, v.W, v.H, 0, 0, 0, 0};
+    obj[size_t(o)] = Obj{v, parts};
+    parts += i64(v.H) * (v.k + kPart);
+    row_start[size_t(o + 1)] = row_start[size_t(o)] + v.H;
   }
   const i64 rows = row_start[size_t(n)];
-
-  // Boxes: the crop layout.
-  Layout a;
-  const size_t a_obj = a.put<Obj>(n), a_rows = a.put<i64>(n + 1), a_rbox = a.put<i32>(3 * rows),
-               a_box = a.put<i64>(5 * n);
-  u8* d = L.score.get(a.size);
-  u8* h = L.in.get(a_rbox);
-  std::copy_n(obj.data(), n, ptr<Obj>(h, a_obj));
-  std::copy_n(row_start.data(), n + 1, ptr<i64>(h, a_rows));
-  to_device(d, h, a_rbox, st);
-  t.stage("label", st, [&] {  // the crop boxes, which the labeling works on
-    for_each(st, rows, RowBox{ptr<Obj>(d, a_obj), ptr<i64>(d, a_rows), n, words, ptr<i32>(d, a_rbox)});
-    for_each(st, n, ObjBox{ptr<i64>(d, a_rows), ptr<i32>(d, a_rbox), ptr<i64>(d, a_box)});
-  });
-  const i64* box = ptr<i64>(L.out.get(sizeof(i64) * size_t(5 * n)), 0);
-  to_host(L.out.p, d + a_box, sizeof(i64) * size_t(5 * n), st);
-  wait(st);
-  i64 parts = 0, crop = 0;
-  for (i64 o = 0; o < n; ++o) {
-    Obj& b = obj[size_t(o)];
-    const i64* x = box + 5 * o;
-    b.bx = i32(x[0]), b.by = i32(x[1]), b.bw = i32(x[2]), b.bh = i32(x[3]), b.area = x[4];
-    b.part = parts, b.crop = crop;
-    parts += i64(b.t.H) * (b.t.k + kPart);
-    if (b.area) crop += i64(b.bw + 2) * (b.bh + 2);
-    crow_start[size_t(o + 1)] = crow_start[size_t(o)] + (b.area ? b.bh + 2 : 0);
-  }
+  CropLayout cl = boxes(L, pl, words, crow_start, t);
   const i64 crows = crow_start[size_t(n)];
   counters().label_pairs += crows;  // the second label pair relabels every crop row
 
   // Labeling, row partials, terms.
   Layout l;
-  const size_t o_obj = l.put<Obj>(n), o_rows = l.put<i64>(n + 1), o_crows = l.put<i64>(n + 1),
-               o_parts = l.put<i64>(parts), o_img = l.put<u8>(crop), o_fg = l.put<i32>(crop), o_bg = l.put<i32>(crop),
-               o_aux = l.put<i32>(crop), o_nc = l.put<i32>(n), o_out = l.put<ObjOut>(n), o_ss = l.put<i64>(n + 1);
-  d = L.score.get(l.size);
-  h = L.in.get(o_parts);
+  cl.front(l);
+  const size_t o_obj = l.put<Obj>(n), o_rows = l.put<i64>(n + 1), up = l.size, o_parts = l.put<i64>(parts);
+  cl.back(l);
+  const size_t o_out = l.put<ObjOut>(n), o_ss = l.put<i64>(n + 1);
+  u8* d = L.score.get(l.size);
+  u8* h = L.in.get(up);
+  cl.stage(h, pl, crow_start);
   std::copy_n(obj.data(), n, ptr<Obj>(h, o_obj));
   std::copy_n(row_start.data(), n + 1, ptr<i64>(h, o_rows));
-  std::copy_n(crow_start.data(), n + 1, ptr<i64>(h, o_crows));
-  to_device(d, h, o_parts, st);
-  zero(d + o_nc, sizeof(i32) * size_t(n), st);
-  const Obj* dobj = ptr<Obj>(d, o_obj);
-  const Crops c{dobj, ptr<i64>(d, o_crows), n, ptr<u8>(d, o_img), ptr<i32>(d, o_fg), ptr<i32>(d, o_bg),
-                ptr<i32>(d, o_aux), ptr<i32>(d, o_nc)};
-  auto label = [&](int which) {
-    t.stage("label", st, [&] {
-      for_each(st, crows, LabelInit{c, which});
-      for_each(st, crows, LabelMerge{c, which});
-      for_each(st, crows, LabelFlatten{c, which});
-    });
-  };
-  auto count = [&](int which) {
-    t.stage("count", st, [&] {
-      zero(c.aux, sizeof(i32) * size_t(crop), st);
-      for_each(st, crows, Count{c, which});
-    });
-  };
-  auto filter = [&](int which) { t.stage("filter", st, [&] { for_each(st, crows, Filter{c, which}); }); };
-  t.stage("label", st, [&] { for_each(st, crows, CropFill{c, words}); });
-  label(1), count(1), filter(1);
-  label(0), count(0), filter(0);
-  label(1), label(0);
-  t.stage("score", st, [&] {  // holes per component, row partials, the terms and the signatures
-    zero(c.aux, sizeof(i32) * size_t(crop), st);
-    for_each(st, crows, Holes{c});
-    for_each(st, crows, Gather{c});
-    for_each(st, rows, ScoreRows{dobj, ptr<i64>(d, o_rows), n, words, ptr<i64>(d, o_parts)});
-    for_each(st, n, ObjTerms{dobj, ptr<i64>(d, o_parts), c.ncomp, c.bg, ptr<ObjOut>(d, o_out)});
-    for_each(st, 1, SigScan{c.ncomp, n, ptr<i64>(d, o_ss)});
-    for_each(st, n, SigCompact{dobj, c.ncomp, ptr<i64>(d, o_ss), c.bg, c.aux});
+  to_device(d, h, up, st);
+  const Crops c = cl.at(d);
+  label_chain(st, c, crows, cl.crop, words, t);
+  t.stage("score", st, [&] {  // row partials and the terms
+    for_each(st, rows, ScoreRows{ptr<Obj>(d, o_obj), c.pl, ptr<i64>(d, o_rows), n, words, ptr<i64>(d, o_parts)});
+    for_each(st, n, ObjTerms{ptr<Obj>(d, o_obj), c, ptr<i64>(d, o_parts), ptr<ObjOut>(d, o_out)});
   });
+  compact_sigs(st, c, ptr<i64>(d, o_ss), t);
   const size_t res = sizeof(ObjOut) * size_t(n), res_pad = (res + 255) / 256 * 256;
   u8* ho = L.out.get(res_pad + sizeof(i64) * size_t(n + 1));
   to_host(ho, d + o_out, res, st);
@@ -2171,14 +2243,56 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
     out.topo_freq.push_back(r[o].topo_freq);
   }
   out.sig_start.assign(ptr<i64>(ho + res_pad, 0), ptr<i64>(ho + res_pad, 0) + n + 1);
-
-  // The signatures.
-  const i64 total = out.sig_start.back();
-  out.sig.resize(size_t(total));
-  to_host(L.out.get(sizeof(i32) * size_t(total)), c.aux, sizeof(i32) * size_t(total), st);
-  wait(st);
-  std::copy_n(ptr<i32>(L.out.p, 0), total, out.sig.data());
+  out.sig = read_sigs(L, c, out.sig_start.back());
 }
+
+// ===================================================================== ladder certificate
+// certify_polygons: candidate polygons rasterized as score_polygons does, compared with resident reference planes
+// word by word, and every raster's size-filtered signature from the label chain; only counts and signatures leave.
+
+// Per candidate frame row: an illegal shape's row is cleared (it draws nothing), then the popcounts of (c & r),
+// (c | r) and (c ^ r) against its reference row are added to the shape's three counters (zeroed).
+struct Overlap {
+  Shapes s;
+  const i64* defects;  // (n, kNumDefects)
+  const i64* refw;     // per shape: the first word of its reference plane in `words`
+  u32* cand;           // the candidates' rasters, at s.word_start
+  const u32* words;
+  i64* ov;
+  HD void operator()(i64 i) const {
+    i64 sh = 0;
+    i32 row = 0;
+    u32* m = cand + row_of(s, i, sh, row);
+    const i32 wpr = words_per_row(s.W[sh]);
+    bool bad = false;
+    for (int k = 0; k < kNumDefects; ++k) bad = bad || defects[sh * kNumDefects + k] != 0;
+    const u32* r = words + refw[sh] + i64(row) * wpr;
+    i64 a = 0, b = 0, x = 0;
+    for (i32 w = 0; w < wpr; ++w) {
+      if (bad) m[w] = 0;
+      a += popc(m[w] & r[w]), b += popc(m[w] | r[w]), x += popc(m[w] ^ r[w]);
+    }
+    atomic_add(ov + 3 * sh, a), atomic_add(ov + 3 * sh + 1, b), atomic_add(ov + 3 * sh + 2, x);
+  }
+};
+
+struct Diff {  // one plane a & ~b of a pair query: first words of the result and of a and b, words per row
+  i64 out, a, b;
+  i32 wpr;
+};
+
+struct AndNot {  // per row of a pair plane
+  const Diff* q;
+  const i64* row_start;
+  i64 n;
+  u32* words;
+  HD void operator()(i64 i) const {
+    const i64 k = segment(row_start, n, i);
+    const Diff& f = q[k];
+    const i64 y = (i - row_start[k]) * f.wpr;
+    for (i32 w = 0; w < f.wpr; ++w) words[f.out + y + w] = words[f.a + y + w] & ~words[f.b + y + w];
+  }
+};
 
 }  // namespace
 
@@ -2419,6 +2533,121 @@ Scores score_masks(const Masks& in, const i64* tables, Times* times) {
   out.defects.assign(size_t(n * kNumDefects), 0);
   score_words(L, tv, ptr<u32>(d, 0), word_start, out, t);
   if (times) t.read();
+  return out;
+}
+
+Certified certify_polygons(const Polygons& in, const Masks& ref, const i32* ref_of, const i64* min_area,
+                           const Pairs& pr) {
+  GC_RANGE("certify_polygons");
+  const i64 n = in.n, P = pr.n;
+  Certified out;
+  out.sig_start = out.ref_sig_start = out.pair_sig_start = out.pair_ref_sig_start = {0};
+  if (n == 0) return out;
+  std::vector<i64> word_start(size_t(n + 1), 0), rws(size_t(ref.n + 1), 0), pws(size_t(2 * P + 1), 0);
+  for (i64 k = 0; k < n; ++k) word_start[size_t(k + 1)] = word_start[size_t(k)] + i64(in.H[k]) * words_per_row(in.W[k]);
+  for (i64 j = 0; j < ref.n; ++j) rws[size_t(j + 1)] = rws[size_t(j)] + i64(ref.H[j]) * words_per_row(ref.W[j]);
+  std::vector<i32> qW(size_t(2 * P)), qH(size_t(2 * P));  // pair planes: P candidate pairs, then P reference pairs
+  for (i64 q = 0; q < 2 * P; ++q) {
+    const i64 a = q < P ? pr.shapes[2 * q] : pr.refs[2 * (q - P)];
+    qW[size_t(q)] = q < P ? in.W[a] : ref.W[a], qH[size_t(q)] = q < P ? in.H[a] : ref.H[a];
+    pws[size_t(q + 1)] = pws[size_t(q)] + i64(qH[size_t(q)]) * words_per_row(qW[size_t(q)]);
+  }
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  clear_error();
+  Drain drain{e};
+  Timer t{nullptr, {}};
+  e.start();
+  Lane& L = e.lanes[0];
+  const Stream st = L.stream;
+  const PolyChunk c = plan(in, word_start, 0, n);
+  // After the chunk in the checker arena: the reference planes, per shape its reference's first word, the pair
+  // queries (copied in), the pair planes and the overlap counters. Words are indexed from the arena's start.
+  Layout x;
+  const size_t x_rw = x.put<u32>(rws.back()), x_refw = x.put<i64>(n), x_diff = x.put<Diff>(2 * P),
+               x_drows = x.put<i64>(2 * P + 1), x_up = x.size, x_pw = x.put<u32>(pws.back()), x_ov = x.put<i64>(3 * n);
+  const size_t base = (c.size + 255) / 256 * 256, xin = (c.in_bytes + 255) / 256 * 256;
+  u8* d = L.dev.get(base + x.size);
+  u8* h = L.in.get(xin + x_up);
+  L.out.get(c.words - c.defects);
+  pack(in, word_start, c, h);
+  u8* hx = h + xin;
+  const i64 rw0 = i64(base + x_rw) / 4, pw0 = i64(base + x_pw) / 4, cw0 = i64(c.words) / 4;
+  std::fill_n(hx + x_rw, sizeof(u32) * size_t(rws.back()), u8(0));
+  for (i64 j = 0; j < ref.n; ++j)
+    pack_plane(ref.bits + ref.start[j], ref.H[j], ref.W[j], ptr<u32>(hx, x_rw) + rws[size_t(j)]);
+  for (i64 s = 0; s < n; ++s) ptr<i64>(hx, x_refw)[s] = rw0 + rws[size_t(ref_of[s])];
+  i64* drows = ptr<i64>(hx, x_drows);
+  drows[0] = 0;
+  for (i64 q = 0; q < 2 * P; ++q) {
+    const i64 p = q % P;
+    const i64 a = q < P ? cw0 + word_start[size_t(pr.shapes[2 * p])] : rw0 + rws[size_t(pr.refs[2 * p])];
+    const i64 b = q < P ? cw0 + word_start[size_t(pr.shapes[2 * p + 1])] : rw0 + rws[size_t(pr.refs[2 * p + 1])];
+    ptr<Diff>(hx, x_diff)[q] = Diff{pw0 + pws[size_t(q)], a, b, words_per_row(qW[size_t(q)])};
+    drows[q + 1] = drows[q] + qH[size_t(q)];
+  }
+  launch(c, in.G, L, false, t);
+  to_device(d + base, hx, x_up, st);
+  zero(d + base + x_ov, sizeof(i64) * size_t(3 * n), st);
+  u32* words = ptr<u32>(d, 0);
+  t.stage("certify", st, [&] {
+    for_each(st, c.rows, Overlap{shapes(c, d, in.G), ptr<i64>(d, c.defects), ptr<i64>(d, base + x_refw),
+                                 ptr<u32>(d, c.words), words, ptr<i64>(d, base + x_ov)});
+    for_each(st, drows[2 * P], AndNot{ptr<Diff>(d, base + x_diff), ptr<i64>(d, base + x_drows), 2 * P, words});
+  });
+  wait(st);
+  for (i64 s = 0; s < n; ++s) {
+    const i64* df = ptr<i64>(L.out.p, 0) + s * kNumDefects;
+    out.legal.push_back(std::all_of(df, df + kNumDefects, [](i64 v) { return v == 0; }));
+  }
+
+  // The planes of the label chain: the candidates, each (reference, min_area) once, the pair planes.
+  std::vector<Plane> pl;
+  for (i64 s = 0; s < n; ++s) pl.push_back(Plane{cw0 + word_start[size_t(s)], min_area[s], 0, 0, in.W[s], in.H[s]});
+  std::vector<i64> ref_plane(static_cast<size_t>(n));
+  for (i64 s = 0; s < n; ++s) {
+    i64 k = n;
+    while (k < i64(pl.size()) && !(pl[size_t(k)].words == rw0 + rws[size_t(ref_of[s])] &&
+                                   pl[size_t(k)].min_area == min_area[s]))
+      ++k;
+    if (k == i64(pl.size()))
+      pl.push_back(Plane{rw0 + rws[size_t(ref_of[s])], min_area[s], 0, 0, ref.W[ref_of[s]], ref.H[ref_of[s]]});
+    ref_plane[size_t(s)] = k;
+  }
+  const i64 q0 = i64(pl.size());
+  for (i64 q = 0; q < 2 * P; ++q)
+    pl.push_back(Plane{pw0 + pws[size_t(q)], pr.min_area[q % P], 0, 0, qW[size_t(q)], qH[size_t(q)]});
+  const i64 np = i64(pl.size());
+  std::vector<i64> crow_start;
+  CropLayout cl = boxes(L, pl, words, crow_start, t);
+  Layout l;
+  cl.front(l);
+  const size_t up = l.size;
+  cl.back(l);
+  const size_t o_ss = l.put<i64>(np + 1);
+  u8* ds = L.score.get(l.size);
+  cl.stage(L.in.get(up), pl, crow_start);
+  to_device(ds, L.in.p, up, st);
+  const Crops cr = cl.at(ds);
+  label_chain(st, cr, crow_start.back(), cl.crop, words, t);
+  compact_sigs(st, cr, ptr<i64>(ds, o_ss), t);
+  const size_t ov = sizeof(i64) * size_t(3 * n), ov_pad = (ov + 255) / 256 * 256;
+  u8* ho = L.out.get(ov_pad + sizeof(i64) * size_t(np + 1));
+  to_host(ho, d + base + x_ov, ov, st);
+  to_host(ho + ov_pad, ds + o_ss, sizeof(i64) * size_t(np + 1), st);
+  wait(st);
+  const i64* cnt = ptr<i64>(ho, 0);
+  for (i64 s = 0; s < n; ++s)
+    out.inter.push_back(cnt[3 * s]), out.uni.push_back(cnt[3 * s + 1]), out.equal.push_back(cnt[3 * s + 2] == 0);
+  const std::vector<i64> ss(ptr<i64>(ho + ov_pad, 0), ptr<i64>(ho + ov_pad, 0) + np + 1);
+  const std::vector<i32> sig = read_sigs(L, cr, ss.back());
+  auto put = [&](i64 k, std::vector<i64>& start, std::vector<i32>& v) {
+    v.insert(v.end(), sig.begin() + ss[size_t(k)], sig.begin() + ss[size_t(k + 1)]);
+    start.push_back(i64(v.size()));
+  };
+  for (i64 s = 0; s < n; ++s) put(s, out.sig_start, out.sig), put(ref_plane[size_t(s)], out.ref_sig_start, out.ref_sig);
+  for (i64 p = 0; p < P; ++p)
+    put(q0 + p, out.pair_sig_start, out.pair_sig), put(q0 + P + p, out.pair_ref_sig_start, out.pair_ref_sig);
   return out;
 }
 

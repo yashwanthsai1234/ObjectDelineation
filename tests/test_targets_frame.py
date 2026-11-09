@@ -64,7 +64,7 @@ def test_grid_maps_to_integer_pixels():
     s = np.stack([blob((300, 300), 120, 130, 141, 171)])
     f = frame(item({"nodule": s}, dataset="lidc"), FRAMES["lidc"])
     assert 1000 % f.W == 0
-    t = build_target({"nodule": f.masks["nodule"][0]}, ("nodule",))
+    t = build_target({"nodule": f.masks["nodule"][0]}, ("nodule",), None, {"nodule": 5})
     xy = t.objs["nodule"][0][0]
     assert np.all(xy * f.W % 1000 == 0)
     src = xy * f.W // 1000 * f.scale + np.array(f.box[:2])

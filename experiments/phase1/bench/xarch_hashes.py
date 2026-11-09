@@ -219,7 +219,7 @@ def run() -> dict:
     rng = np.random.default_rng(SEED + 1)
     items = corpus()
     sec: dict[str, list[str]] = {k: [] for k in (
-        "corpus", "frame.masks", "frame.image", "png", "checker", "topology", "polygonize", "targets", "targets.all_rules",
+        "corpus", "frame.masks", "frame.image", "png", "checker", "topology", "polygonize", "targets",
         "target_set_hash", "caches", "fingerprint", "reward.terms", "reward.advantages", "eval",
         "splits.lidc", "splits.riga", "splits.descriptor", "splits.ncc_values", "splits.ncc_pairs",
         "splits.keypoints", "splits.keypoint_pairs", "splits.keypoint_dups")}
@@ -257,18 +257,15 @@ def run() -> dict:
         texts = []
         for r, rater in enumerate(it.raters):
             src = {n: f.masks[n][r] for n in names}
-            for key, kw in (("targets", ma), ("targets.all_rules", None)):
-                try:
-                    tg = build_target(src, names, BuildConfig(), kw)
-                    info = {k: v for k, v in tg.info.items() if k != "time"}
-                    sec[key].append(_h(it.item_id, rater, tg.text, json.dumps(_exact(info), sort_keys=True)))
-                    if kw is ma:
-                        texts.append(tg.text)
-                        rows.append((it.item_id, rater, tg.text))
-                except ValueError as e:
-                    sec[key].append(_h(it.item_id, rater, "error", str(e)))
-                    if kw is ma:
-                        texts.append(None)
+            try:
+                tg = build_target(src, names, BuildConfig(), ma)
+                info = {k: v for k, v in tg.info.items() if k != "time"}
+                sec["targets"].append(_h(it.item_id, rater, tg.text, json.dumps(_exact(info), sort_keys=True)))
+                texts.append(tg.text)
+                rows.append((it.item_id, rater, tg.text))
+            except ValueError as e:
+                sec["targets"].append(_h(it.item_id, rater, "error", str(e)))
+                texts.append(None)
         caches = {n: ExpertCache.build(f.masks[n]) for n in names}
         for n, c in caches.items():
             sec["caches"].append(_h(it.item_id, n, c.tau, c.t5, c.min_area, c.rater_sigs, c.voters, c.box,
