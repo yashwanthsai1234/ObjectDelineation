@@ -133,12 +133,12 @@ def test_the_test_view_needs_the_explicit_split_flag(frozen, tmp_path):
 
 def test_no_phase_b_script_but_final_eval_scores_the_test_view():
     """I28 (grep): the scoring code (experiments/phase2/*.py, objdel.eval, objdel.train) names the test view only in
-    final_eval, and every config line that names it is a final_eval step."""
+    final_eval (freeze_views hashes it, never scores it), and every config line that names it is a final_eval step."""
     hits = [p.relative_to(ROOT).as_posix() for p in [*(ROOT / "experiments/phase2").glob("*.py"),
                                                        *(ROOT / "src/objdel/eval").glob("*.py"),
                                                        *(ROOT / "src/objdel/train").glob("*.py")]
             if re.search(r"lidc-test|--split\W+test", p.read_text())]
-    assert hits == ["experiments/phase2/final_eval.py"]
+    assert sorted(hits) == ["experiments/phase2/final_eval.py", "experiments/phase2/freeze_views.py"]
     for y in (ROOT / "experiments/phase2/configs").glob("*.yaml"):
         for line in y.read_text().splitlines():
             if "lidc-test" in line and not line.lstrip().startswith("#"):
