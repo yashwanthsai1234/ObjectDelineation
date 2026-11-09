@@ -4,6 +4,9 @@
         [--fp16 RD/b2-fp16] --out RD/decision.json
     python -I -m experiments.phase2.b2_summary summary --fp16 RD/b2-fp16 --b1 RD/b1-rows
 
+The fp16 arm's bootstrap needs the per-prompt `rewards/iou_tc/by_prompt` (32 values per step) in each rl.json log
+entry; TRL's own log holds only the step mean (see impl-log/B2.md).
+
 The functions are pure over the B1 run's records: `<run>/rl.json` (the `cf/*` stats of B2.1 per step),
 `<run>/trainer/seq_gaps.f32` (steps x rows x 3 float32: seq_kl, advantage, valid_tokens) and B2.0's table.
 Preset names are configs.NUMERICS keys. `start_preset` is the choice before the run, `restart_preset` the choice
@@ -27,6 +30,10 @@ START_DELTA = 0.5  # TRL's docstring example value of off_policy_mask_threshold
 CF_STEPS = (50, 260)  # B1 steps whose counterfactual stats rules 2-3 read (the adapter has drifted)
 CF_KEYS = ("cf/opsm_share@0.5", "cf/tok_clamp2_share", "cf/ess_E@0.1")
 FP16_STEPS = (41, 60)
+FP16_BOUND = -0.02  # Gate B2: the 95 % lower bound of (fp16 - B1) rewards/iou_tc must exceed it
+BY_PROMPT = "rewards/iou_tc/by_prompt"
+WINDOW_KEYS = ("sampling/importance_sampling_ratio/mean", "sampling/sampling_logp_difference/mean",
+               "rewards/iou_tc/mean")  # plus every cf/ and opsm_ key B2.1 logs
 
 
 @dataclass(frozen=True)
@@ -130,6 +137,75 @@ def _mean(rows: list[dict], key: str) -> float:
     return float(np.mean([h[key] for h in rows]))
 
 
+def window_means(rl: dict) -> dict:
+    """Mean over steps 41-60 of the B2.1 metrics (cf/*, opsm_*) and of WINDOW_KEYS present in the log."""
+    rows = _window(rl["log"], *FP16_STEPS)
+    keys = [k for k in rows[0] if k in WINDOW_KEYS or k.startswith(("cf/", "sampling/opsm_"))]
+    return {k: _mean(rows, k) for k in keys}
+
+
+def nan_inf_count(rl: dict) -> int:
+    """Non-finite numbers in the whole log (logging_nan_inf_filter is off, so a NaN shows up there)."""
+    return sum(1 for h in rl["log"] for v in h.values() if isinstance(v, float) and not np.isfinite(v))
+
+
+def paired_bootstrap_lower(a: np.ndarray, b: np.ndarray, seed: int = 0, n: int = 10_000) -> float:
+    """95 % lower bound (2.5th percentile) of mean(a - b), resampling the paired prompts."""
+    if a.shape != b.shape or a.ndim != 1:
+        raise ValueError(f"the arms need the same prompts in the same order (640 over steps 41-60): {a.shape} vs {b.shape}")
+    d = a - b
+    idx = np.random.default_rng(seed).integers(0, d.size, (n, d.size))
+    return float(np.quantile(d[idx].mean(axis=1), 0.025))
+
+
+def t_lower(d: np.ndarray) -> float:
+    """One-sided 95 % t lower bound of the mean of the per-step differences (a second line: autocorrelated)."""
+    from scipy import stats
+
+    return float(d.mean() - stats.t.ppf(0.95, d.size - 1) * d.std(ddof=1) / np.sqrt(d.size))
+
+
+def _read(run: Path) -> dict:
+    path = Path(run) / "rl.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"{path}: no rl.json (is the run finished?)")
+    return json.loads(path.read_text())
+
+
+def _by_prompt(rl: dict, name: str) -> np.ndarray:
+    rows = _window(rl["log"], *FP16_STEPS)
+    if any(BY_PROMPT not in h for h in rows):
+        raise ValueError(f"{name}: steps {FP16_STEPS[0]}-{FP16_STEPS[1]} lack {BY_PROMPT}")
+    return np.array([h[BY_PROMPT] for h in rows], dtype=float).ravel()
+
+
+def summary(fp16_run: Path, b1_run: Path) -> dict:
+    """B2.3: the fp16 arm against the B1 run over steps 41-60; prints it and returns it."""
+    fp, ref = _read(fp16_run), _read(b1_run)
+    a, b = _by_prompt(fp, "fp16 run"), _by_prompt(ref, "B1 run")
+    steps = FP16_STEPS[1] - FP16_STEPS[0] + 1
+    per_step = (a - b).reshape(steps, -1).mean(axis=1)
+    out = {"means": {"fp16": window_means(fp), "b1": window_means(ref)},
+           "nan_inf": nan_inf_count(fp), "s_per_step": {"fp16": fp["timing_s"]["per_step"],
+                                                        "b1": ref["timing_s"]["per_step"]},
+           "prompts": int(a.size), "bootstrap_lower": paired_bootstrap_lower(a, b),
+           "t_lower": t_lower(per_step)}  # fmt: skip
+    print(json.dumps(out, indent=1))
+    print(f"paired prompt bootstrap 95 % lower bound of (fp16 - B1) rewards/iou_tc: {out['bootstrap_lower']:.4f}"
+          f" (Gate B2 needs > {FP16_BOUND}); one-sided t bound over steps: {out['t_lower']:.4f} (second line only)")
+    return out
+
+
+def fp16_record(fp16_run: Path, b1_run: Path) -> dict:
+    """The `fp16` argument of the decision functions: Gate B2's fp16 rules (the run's f_check.json `passed`, which
+    holds NaN/inf = 0 and the engine dtype, and the bootstrap bound) and the logp difference over steps 41-60."""
+    out = summary(fp16_run, b1_run)
+    f_check = json.loads((Path(fp16_run) / "f_check.json").read_text())
+    return {"passed_gate": bool(f_check["passed"] and out["bootstrap_lower"] > FP16_BOUND),
+            "logp_diff_41_60": out["means"]["fp16"]["sampling/sampling_logp_difference/mean"],
+            "s_per_step": out["s_per_step"]["fp16"]}
+
+
 def decide(b1_run: Path, merge_rounding: Path, fp16: dict | None = None) -> dict:
     """Both presets (ADR-0013), computed before the run: the start preset, and the one a failed F check restarts
     under (the F check can only fail under lora-seqmask or fp16-seqmask)."""
@@ -150,9 +226,16 @@ def main(argv=None) -> int:
     d = sub.add_parser("decide", help="ADR-0013 rules 0-4 on the B1 run's records")
     d.add_argument("--b1", type=Path, required=True, help="the B1 run folder (rl.json, trainer/seq_gaps.f32)")
     d.add_argument("--merge-rounding", type=Path, required=True)
+    d.add_argument("--fp16", type=Path, help="the fp16 arm's run folder (rl.json, f_check.json); absent: rule 1 skipped")
     d.add_argument("--out", type=Path, required=True)
+    s = sub.add_parser("summary", help="B2.3: the fp16 arm against the B1 run over steps 41-60")
+    s.add_argument("--fp16", type=Path, required=True)
+    s.add_argument("--b1", type=Path, required=True)
     a = ap.parse_args(argv)
-    out = decide(a.b1, a.merge_rounding)
+    if a.cmd == "summary":
+        summary(a.fp16, a.b1)
+        return 0
+    out = decide(a.b1, a.merge_rounding, fp16_record(a.fp16, a.b1) if a.fp16 else None)
     a.out.write_text(json.dumps(out, indent=1) + "\n")
     print(json.dumps(out, indent=1))
     return 0
