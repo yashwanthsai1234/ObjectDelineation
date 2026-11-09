@@ -65,6 +65,8 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
     ap.add_argument("--fast-sync", action="store_true",
                     help="C5: the vLLM weight push in one load_weights call (vllm_sync), not TRL's per-parameter loop")
+    ap.add_argument("--lora-sync", type=Path, metavar="DIR",
+                    help="C5 option F: vLLM serves the adapter, written to DIR (a tmpfs folder) at each sync")
     ap.add_argument("--group-requests", action="store_true",
                     help="C6: vLLM gets one request with n = num_generations per prompt, not n = 1 per row")
     ap.add_argument("--no-ckpt-layers", type=int, metavar="K",

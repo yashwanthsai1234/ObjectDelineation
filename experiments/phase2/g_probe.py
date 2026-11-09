@@ -100,12 +100,17 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
         calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
     if getattr(a, "no_ckpt_layers", None):  # C9 arm (a)
         calls.append(callbacks.NoCkptLayers(a.no_ckpt_layers))
-    trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, eval_dataset=eval_dataset,
-                  processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
+    lora_dir = getattr(a, "lora_sync", None)  # option F: vLLM serves the adapter (the engine needs enable_lora)
+    with vllm_sync.engine_kwargs(**({"enable_lora": True, "max_lora_rank": 16} if lora_dir else {})):
+        trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, eval_dataset=eval_dataset,
+                      processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
     trainer.group_requests = bool(getattr(a, "group_requests", False))  # C6: one n = G vLLM request per prompt
-    if getattr(a, "fast_sync", False) and not vllm_sync.install(trainer):  # C5: one load_weights call per sync
+    if lora_dir:  # C5, option F: the adapter folder written and loaded each sync
+        if not vllm_sync.install(trainer, "lora-seqmask", lora_dir):
+            raise ValueError("--lora-sync needs a colocate vLLM on one process with a LoRA model")
+    elif getattr(a, "fast_sync", False) and not vllm_sync.install(trainer):  # C5: one load_weights call per sync
         raise ValueError("--fast-sync needs a colocate vLLM on one process with a LoRA model")
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)

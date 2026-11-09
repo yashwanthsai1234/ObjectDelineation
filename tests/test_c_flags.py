@@ -15,7 +15,7 @@ def test_train_rl_flags_default_off():
     from experiments.phase2 import train_rl
 
     a = train_rl.parse(BASE)
-    assert (a.fast_sync, a.group_requests, a.no_ckpt_layers) == (False, False, None)
+    assert (a.fast_sync, a.group_requests, a.no_ckpt_layers, a.lora_sync) == (False, False, None, None)
     a = train_rl.parse([*BASE, "--fast-sync", "--group-requests", "--no-ckpt-layers", "4"])
     assert (a.fast_sync, a.group_requests, a.no_ckpt_layers) == (True, True, 4)
 
@@ -32,6 +32,24 @@ def test_make_trainer_fast_sync_refuses_a_trainer_without_colocate_vllm(built): 
     built(fast_sync=False)
     with pytest.raises(ValueError, match="--fast-sync"):
         built(fast_sync=True)  # the stub trainer has no vllm_generation
+
+
+def test_make_trainer_lora_sync_refuses_a_trainer_without_colocate_vllm(built, monkeypatch):  # noqa: F811
+    from pathlib import Path
+
+    import trl.generation.vllm_generation as vgen
+
+    monkeypatch.setattr(vgen, "LLM", lambda **kw: None, raising=False)  # vLLM is not installed on the Mac
+
+    assert train_rl_lora_dir("--lora-sync", "d") == Path("d")
+    with pytest.raises(ValueError, match="--lora-sync"):
+        built(lora_sync=Path("d"))
+
+
+def train_rl_lora_dir(*extra):
+    from experiments.phase2 import train_rl
+
+    return train_rl.parse([*BASE, *extra]).lora_sync
 
 
 def test_no_ckpt_layers_turns_off_the_last_k_after_trainer_enables_all():
