@@ -115,10 +115,10 @@ The watchdog on the box destroys it in three cases. The cap passes. The GPU idle
 | Alarm | A launch whose committed money plus its worst case reaches $10.00 needs `--owner-approved` | `ALARM = 10.0` |
 | Hard stop | A launch is refused when committed money plus its worst case passes $17.50 | `HARD_STOP = 17.5` |
 | Committed money | Closed sessions in the ledger plus every active run to its deadline | `spend(committed=True)` |
-| Sweeper | Destroys unknown or overdue instances. At $17.50 spent it destroys all. At $10 it alerts | `cmd_sweep_orphans` |
+| Sweeper | Destroys unknown or overdue instances. At `HARD_STOP` spent it destroys all. At `ALARM` it alerts | `cmd_sweep_orphans` |
 | One box | A second instance is refused without `--allow-parallel` | `cmd_launch` |
 
-The hard stop rose with owner decisions: $15, then $16.60, $17.00 and $17.50 (commits `cf2f507`, `74a0135`, `edf3129`). The text in the `policy.py` docstring still says $15. The constants decide.
+The hard stop rose with owner decisions: $15, then $16.60, $17.00 and $17.50 (commits `cf2f507`, `74a0135`, `edf3129`). The constants decide.
 
 Recorded costs. The ledger value is the estimate at teardown (`experiments/phase2/vast/ledger.csv`). Vast bills late, so the invoice differs. Billed values come from the result notes where they exist:
 

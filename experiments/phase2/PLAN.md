@@ -1,3 +1,5 @@
+> Frozen record (written 2026-11-06). Versions, budgets and paths were true then. Current facts: docs/README.md.
+
 # Phase 2 plan: SFT of a small polygon VLM on Vast AI
 
 Part of [ROADMAP.md](../../ROADMAP.md). Results: [RESULTS.md](RESULTS.md). Build log: [V0_V1.md](V0_V1.md). Issues:

@@ -12,7 +12,7 @@
 # 10 min) and the deadline is launch + cap + 10 min, so the launch cap is the one that binds. A timeout kills g_probe
 # before it writes g_probe.json: launch with --cap-hours 1.7 (worst case ~$1.18) and run the Mac commands back to
 # back. Expect ~$0.85-0.95. The post-P1 trainer changes (C5, C10, by_length, no LoRA input cast) are CPU-tested and
-# traced against TRL 1.17.1 but first run on a GPU here; a crash shows at step 1, after ~10-15 paid minutes.
+# traced against TRL 1.17.1 but first GPU run: r2 (see docs/results/runs.md); a crash shows at step 1, after ~10-15 paid minutes.
 # Commands (Mac), preflight LAST (any later edit makes its stamp stale and launch.sh refuses):
 #   make preflight CONFIG=experiments/phase2/configs/r1_qwen3vl2b.yaml
 #   offers.sh RTX_5090 --pick top

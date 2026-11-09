@@ -1,3 +1,5 @@
+> Frozen record (written 2026-10-18). Versions, budgets and paths were true then. Current facts: docs/README.md.
+
 # Phase 0b — do models make topology errors that IoU misses?
 
 Phase 0a measured experts (`experiments/phase0/RESULTS.md`). Phase 0b measures models, still with no training.

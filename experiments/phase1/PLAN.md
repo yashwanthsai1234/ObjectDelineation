@@ -1,3 +1,5 @@
+> Frozen record (written 2026-10-19). Versions, budgets and paths were true then. Current facts: docs/README.md.
+
 # Phase 1 plan: build and freeze the exact reward, the data and the training integration
 
 Written 2026-10-19. Part of [ROADMAP.md](../../ROADMAP.md).

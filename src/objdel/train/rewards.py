@@ -1,4 +1,5 @@
-"""Reward v4 as TRL 1.16 GRPOTrainer reward functions: weight-0 per-term loggers plus one aggregator (plan D7, §4.6).
+"""Reward v4 as TRL (version pinned in pyproject.toml) GRPOTrainer reward functions: weight-0 per-term loggers
+plus one aggregator (plan D7, §4.6).
 
 TRL calls every reward function once per generation batch with the same arguments (prompts, completions,
 completion_ids, every dataset column, trainer_state, log_metric, log_extra) and gathers their outputs into
@@ -44,10 +45,11 @@ Held-out audit: when `recorded` is a list (callbacks.Controller sets it), every 
 References:
 - TRL GRPOTrainer docs (reward function kwargs, log_metric / log_extra, multi_objective_aggregation,
   scale_rewards, mask_truncated_completions): https://huggingface.co/docs/trl/main/en/grpo_trainer
-- TRL 1.16 source, trl/trainer/grpo_trainer.py: `_calculate_rewards` (local call, then gather),
+- TRL (version pinned in pyproject.toml) source, trl/trainer/grpo_trainer.py: `_calculate_rewards` (local call,
+  then gather),
   `_generate_and_score_completions` (sum_then_normalize, process_slice), `_generate_single_turn` (mask after the
   first EOS), eos_token_ids (generation_config.eos_token_id + tokenizer.eos_token_id); trl/trainer/utils.py
-  RepeatSampler: https://github.com/huggingface/trl/blob/v1.16.0/trl/trainer/grpo_trainer.py
+  RepeatSampler: https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py
 - accelerate DataLoaderShard / BatchSamplerShard (process p takes batch p of every num_processes batches):
   https://huggingface.co/docs/accelerate/main/en/package_reference/torch_wrappers
 - Dr. GRPO (no std scaling): https://arxiv.org/abs/2503.20783 ; GDPO (per-term normalization, the arm TRL's

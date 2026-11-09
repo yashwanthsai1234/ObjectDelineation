@@ -78,4 +78,4 @@ Recorded costs: the full 770-step run billed about $4.56. Phase 2 committed spen
 
 1. [x] `terms`, `reasons`, `governance` and `refusal`.
 2. [x] Watchdog, teardown and orphan sweep.
-3. [ ] Update the docstring of `policy.py` to the current hard stop.
+3. [x] Update the docstring of `policy.py` to the current hard stop.

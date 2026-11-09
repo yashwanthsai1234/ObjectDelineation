@@ -1,4 +1,5 @@
-"""TRL 1.16 integration on a tiny offline model: R2 (TRL advantages = advantages_v4), group contiguity per process
+"""TRL (version pinned in pyproject.toml) integration on a tiny offline model: R2 (TRL advantages = advantages_v4),
+group contiguity per process
 (world size 2 simulated with TRL's RepeatSampler and accelerate's sharding), callbacks (live guard switches,
 best-checkpoint rollback, held-out evaluation, the hack audit on held-out completions with rollback, control-file
 robustness), the completions table -> eval JSONL exporter and the checkpoint sampler (objdel.train.sample)."""

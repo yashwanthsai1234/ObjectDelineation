@@ -1,3 +1,5 @@
+> Frozen record (written 2026-10-20). Versions, budgets and paths were true then. Current facts: docs/README.md.
+
 # Phase 2 plan: judge round 4
 
 Confirmation review of `experiments/phase2/PLAN.md` revision 7 against `JUDGE_R3.md`, read in full (lines 1–911), with the working-tree `ROADMAP.md` diff. Read-only; no file changed, no git action.

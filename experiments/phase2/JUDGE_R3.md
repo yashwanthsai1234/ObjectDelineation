@@ -1,3 +1,5 @@
+> Frozen record (written 2026-10-20). Versions, budgets and paths were true then. Current facts: docs/README.md.
+
 # Phase 2 plan: judge round 3
 
 Independent review of `experiments/phase2/PLAN.md` revision 6 against `JUDGE_R1.md`, `JUDGE_R2.md`, `RESEARCH.md`, `lab/B1/REPORT.md`, `lab/B2/REPORT.md` (and their `prereg.py`, plus `analysis.json` / `posthoc.json` in this session's scratchpad), `lab/B3/REPORT.md` Addendum A, `lab/B4`, `lab/B5`, notes A1–A6 (spot checks), `ROADMAP.md` (working-tree diff), `experiments/phase1/RESULTS.md` §8, and the source the thresholds rest on (`src/objdel/train/configs.py`, `src/objdel/eval/gates.py`, `src/objdel/reward/spec.py`, `lab/B1/common.py`). Read-only; no file changed.

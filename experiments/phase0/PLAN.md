@@ -1,3 +1,5 @@
+> Frozen record (written 2026-10-18). Versions, budgets and paths were true then. Current facts: docs/README.md.
+
 # Phase 0 — topology and disagreement census
 
 Phase 0 trains nothing. It runs an exact geometry checker over expert annotations

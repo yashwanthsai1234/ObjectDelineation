@@ -3,7 +3,7 @@
 # rsynced per session and installed editable):
 #   /opt/vllm  offline K-sampler only: the vllm==0.32.0 lock (torch 2.13.0, transformers 5.19.0); objdel never here
 #   /opt/venv  training env = locks/train.txt: pyproject base + [train] + build backend, pinned to the Mac's versions
-#              (torch 2.14.1 cu130, transformers 5.20.1, TRL 1.16.0, numpy 2.5.4, numba 0.68.0)
+#              (torch 2.14.1 cu130, transformers 5.20.1, TRL (version pinned in pyproject.toml), numpy 2.5.4, numba 0.68.0)
 # Layers (2026-11-03): no layer above ~2 GB. The earlier image built both venvs in one RUN and hardlinked their shared
 # CUDA wheels: one 5.61 GB layer of 5.88 that kept restarting on weak hosts (6 of 9 launches past the 15 min timeout).
 # Each venv now installs in four layers (cuBLAS + cuDNN, the other CUDA wheels, torch, the rest); the shared CUDA

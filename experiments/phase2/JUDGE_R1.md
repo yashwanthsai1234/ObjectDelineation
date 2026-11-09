@@ -1,3 +1,5 @@
+> Frozen record (written 2026-10-20). Versions, budgets and paths were true then. Current facts: docs/README.md.
+
 # Judge verdict, round 1: Phase 2 plan (draft C, 2026-10-20)
 
 Independent review of `experiments/phase2/PLAN.md` against `RESEARCH.md`, notes A1–A6, lab reports B3/B4/B5 (and
