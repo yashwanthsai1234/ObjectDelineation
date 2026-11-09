@@ -26,7 +26,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
-from objdel.train import nvtx, trl_adapter
+from objdel.train import nvtx, trl_adapter, vllm_requests
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -642,6 +642,7 @@ class FastGRPO(FastForward, GRPOTrainer):
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
+    group_requests = False  # C6, train_rl --group-requests: vLLM gets one n = G request per prompt (vllm_requests)
 
     def __init__(self, *args, **kwargs):
         trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
@@ -887,16 +888,25 @@ class FastGRPO(FastForward, GRPOTrainer):
 
         one_pad.one_pad = True
         llm.generate = one_pad
+        if self.group_requests:  # C6: outside one_pad, so its check compares the 32 sent prompts
+
+            def by_group(prompts, *args, **kwargs):
+                G = self.num_generations if self.model.training else self.num_generations_eval
+                return vllm_requests.grouped(one_pad, G)(prompts, *args, **kwargs)
+
+            by_group.one_pad = True
+            llm.generate = by_group
 
     def floating_point_ops(self, inputs):
         return 0  # perf F3: the Trainer default walks ~2.5k PEFT modules per micro-batch
 
 
-def lora_merged_params(model):
+def lora_merged_params(model, with_delta: bool = True):
     """(vLLM name, tensor) for every weight of a PEFT model, as TRL 1.17's VLLMGeneration._iter_named_params names
     them, with each LoRA layer's delta added into a new tensor. TRL instead runs merge_adapter / unmerge_adapter on the
     bf16 base weights in place, and W + d - d != W in bf16, so the frozen base drifts at every sync (trl #6688,
-    #7423). Same values pushed (W + delta in W's dtype, as PEFT's merge computes it); no parameter is written."""
+    #7423). Same values pushed (W + delta in W's dtype, as PEFT's merge computes it); no parameter is written.
+    with_delta=False: the same names with the base W alone (vllm_sync's option-F base push)."""
     from peft.tuners.lora import LoraLayer
 
     deltas = {}
@@ -905,7 +915,7 @@ def lora_merged_params(model):
             ads = [a for a in m.active_adapters if a in m.lora_A]
             if ads and (getattr(m, "use_dora", {}).get(ads[0]) or getattr(m, "lora_bias", {}).get(ads[0])):
                 raise NotImplementedError(f"{name}: DoRA / LoRA bias are not merged here")
-            if ads:
+            if ads and with_delta:
                 deltas[f"{name}.base_layer.weight"] = sum(m.get_delta_weight(a) for a in ads)
     for name, p in model.named_parameters():
         out = name.removeprefix("base_model.model.").replace(".base_layer", "")

@@ -80,7 +80,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
-    from objdel.train import callbacks, configs, fast, rewards, serve
+    from objdel.train import callbacks, configs, fast, rewards, serve, vllm_sync
 
     peft = configs.lora(a.model)
     lr = getattr(a, "lr", None) or (G_PROBE["lr_lora"] if peft else G_PROBE["lr_full"])
@@ -98,10 +98,15 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])  # raises on S < 2 (TraceStep's wait < 0)
     if getattr(a, "trace", None):  # torch.profiler on step S (the nsys fallback), else on step 3
         calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
+    if getattr(a, "no_ckpt_layers", None):  # C9 arm (a)
+        calls.append(callbacks.NoCkptLayers(a.no_ckpt_layers))
     trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, eval_dataset=eval_dataset,
                   processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
+    trainer.group_requests = bool(getattr(a, "group_requests", False))  # C6: one n = G vLLM request per prompt
+    if getattr(a, "fast_sync", False) and not vllm_sync.install(trainer):  # C5: one load_weights call per sync
+        raise ValueError("--fast-sync needs a colocate vLLM on one process with a LoRA model")
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
         trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers
