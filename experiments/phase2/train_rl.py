@@ -80,6 +80,9 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--heldout-items", type=int, default=64)
     ap.add_argument("--heldout-every", type=int, default=50)
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config")
+    ap.add_argument("--runaway-cap", type=float, default=0, metavar="FACTOR",
+                    help="C11: cap each answer at min(L, ceil(FACTOR x its doctor outline) + 64) tokens "
+                         "(0 = off); needs mask_truncated_completions false in --grpo")
     ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
                     help="NVTX step ranges and a cudaProfilerApi capture of steps S..E (nsys_capture.sh; S >= 2)")
     ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
@@ -94,6 +97,20 @@ def parse(argv=None) -> argparse.Namespace:
     if a.profile_window and not 2 <= a.profile_window[0] <= a.profile_window[1]:
         ap.error(f"--profile-window {a.profile_window}: needs 2 <= S <= E")
     return a
+
+
+def check_flags(a) -> None:
+    """Refusals that need no model: the completion limit (C7: set from the outline count, never above the model's
+    budget) and the runaway cap (C11: a capped answer is cut mid-text, so masking it would bias the update toward
+    more capping)."""
+    from objdel.train import configs
+
+    over = json.loads(a.grpo)
+    budget = configs.MAX_COMPLETION[a.model]
+    if over.get("max_completion_length", budget) > budget:
+        raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
+    if a.runaway_cap and over.get("mask_truncated_completions", True):
+        raise ValueError("--runaway-cap needs --grpo '{\"mask_truncated_completions\": false}'")
 
 
 def budget_stop(a):
@@ -209,8 +226,11 @@ def main(argv=None) -> int:
     from transformers.trainer_utils import get_last_checkpoint
 
     from experiments.phase2.g_probe import make_trainer, save_json
-    from objdel.train import dataset, serve
+    from objdel.train import configs, dataset, serve
 
+    check_flags(a)
+    if a.runaway_cap:
+        raise SystemExit("--runaway-cap: FastGRPO does not read the `cap` column yet (C11 fast.py step; handoff)")
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
     stop = budget_stop(a)
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule else dataset.DISAGREEMENT_OVERSAMPLE)
@@ -241,6 +261,8 @@ def main(argv=None) -> int:
         "model": a.model, "steps": done, "lr": lr, "ckpt": str(a.ckpt), "resumed_from": last,
         "final": str(a.out / "final"),
         "numerics": NUMERICS, "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
+        "max_completion_length": cfg.max_completion_length,
+        "loss_scale": configs.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L (C7)
         "rows": rows, "train_rows": len(train), "budget_stopped": bool(stop and stop.tripped),
         "eval": [{"step": h["step"], "eval/iou_tc": h["eval_rewards/iou_tc/mean"],
                   "eval/allmiss_share": h["eval_allmiss_share"]} for h in log if "eval_rewards/iou_tc/mean" in h],
