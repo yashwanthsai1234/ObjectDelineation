@@ -7,7 +7,7 @@ the answers are. The next reports use these facts:
 
 - `Direction.md` tells what to do next.
 - `Architecture.md` tells how to build the new system.
-- `previous vs new.md` compares the old system with the new system.
+- `previous-vs-new.md` compares the old system with the new system.
 
 ---
 
@@ -193,7 +193,7 @@ measured both on the validation split (1,084 images).
 
 | Group of images (validation split) | Share of images | IoU | Ceiling |
 |---|---|---|---|
-| All images | 100 % | 0.618 | 0.734 |
+| All images | 100 % | 0.618 | 0.723 |
 | Images where the model finds the nodule | 87.4 % | 0.706 | 0.734 |
 | Misses | 12.6 % | below 0.1 | - |
 

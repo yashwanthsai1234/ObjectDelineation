@@ -177,7 +177,7 @@ defects, not only slow parts.
 Order: C0 first (measure), then C1-C5 on the Mac with equivalence tests, one GPU session (§8), then C6-C9 as arms.
 Every task runs behind a temporary `train_rl`/`g_probe` flag until its gate passes; then the old path is deleted
 (C10) and the flag removed. Library code in `src/objdel/train/` (E1 later moves it to `rl/caches.py`, `rl/sync.py`,
-`rl/forward.py` [SP/impl/notes/E1.md R1]); tests in `REPO/tests/`. Run Python that reads `data/` with `-I`.
+`rl/forward.py` [notes/E1.md R1]); tests in `REPO/tests/`. Run Python that reads `data/` with `-I`.
 
 Pinned stack (no change in Phase C): torch 2.14.1, torchvision 0.29.1, transformers 5.20.1, trl 1.17.1, peft 0.21.2,
 accelerate 1.15.0 (Mac and box); vllm 0.32.0 (box image `vllm_native`). New dependency: none. Box tool: Nsight

@@ -30,7 +30,7 @@
 - rl-3: B.md "B2.4 Decide" rule 0: "generate the same 32 x 8 batch twice, with the comparator's `lora_request` and
   with `lora_request=None` ... pass if the median LoRA / base generate-time ratio is <= 1.15"; B2.2 4b.4 claims
   kernel cost only. Arm A samples W + d_B1, arm B samples W, so answers and their maximum length differ. Measured
-  slope: generate = 5.61 s + 4.3 ms x longest answer, r = 0.92 [SP/B_gpu_audit.md:40, 84]. A 736-token gap in the
+  slope: generate = 5.61 s + 4.3 ms x longest answer, r = 0.92 [notes/B_gpu_audit.md:40, 84]. A 736-token gap in the
   longest answer moves the ratio by about 0.29 on an 11 s generate, twice the 0.15 margin. Seeded ABAB repeats the
   same answers, so the median does not cancel it. Major (the gate outcome depends on a variable the doc does not fix).
 

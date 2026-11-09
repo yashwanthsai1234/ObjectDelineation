@@ -99,7 +99,7 @@ consistent (see item 12 for the scope error).
 5. **major - §3.1, §3.3: vLLM's own CPU image processing, H2D copy and duplicate vision encode are missing.**
    Problem: In colocate mode, vLLM receives 256 PIL images per step (`multi_modal_data`, vllm_generation.py:723-730).
    Its input processor hashes each one, runs the HF image processor on the CPU for the distinct ones, copies their
-   fp32 patches H2D, and runs its own vision tower [SP/B_gpu_audit.md row 1d: "vLLM multimodal processing of 256 PIL
+   fp32 patches H2D, and runs its own vision tower [notes/B_gpu_audit.md row 1d: "vLLM multimodal processing of 256 PIL
    images"]. After C3, the trainer encodes the same 32 images again with the same frozen weights. The placement table
    has no row for this, so it violates "every CPU item justified". It also breaks G-SP5 (item 7).
    Fix: Add §3.3 rows "vLLM image hashing + preprocessing (CPU)" and "vLLM vision encode (GPU, duplicate)", with the
@@ -134,7 +134,7 @@ consistent (see item 12 for the scope error).
    vs awake 1.01) [measured: r4 note]. Yet the step fell only 0.05 s. Generate minus handovers rose from 8.83 s to
    9.22 s (+0.39 s) [estimate: from r4 table]. C.md blames all of R4's small gain on the 700-call push. But part of the
    handover saving vanished elsewhere (longest-answer noise, or slower awake decode under memory pressure); the cause is
-   unknown. Also, `time/wake_s` 0.106 is the mean of two calls, and one is nested inside `sync_s` [SP/B_gpu_audit.md
+   unknown. Also, `time/wake_s` 0.106 is the mean of two calls, and one is nested inside `sync_s` [notes/B_gpu_audit.md
    row 1c]. So "sync + wake + sleep" double-counts about 0.1 s.
    Fix: In §8.1, set mode A to "sync 1.27 + kv-wake 0.11 + sleep 0.29 - new sync; R4 shows an unexplained +0.39 s
    residual-decode rise when awake, so the low end is about 1.0 s". Re-derive the G-SP1 bound from that. In the C5 A/B,

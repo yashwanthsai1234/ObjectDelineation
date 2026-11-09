@@ -360,4 +360,4 @@ grid entry counts.
 | `k2bench.cpp` | The micro-benchmark |
 | `run_cpu.sh` | The CPU build, tests, sanitizers and benchmark |
 | `GPU_RUN.md` | The GPU runbook |
-| `build/` | Logs: `run_cpu_mac.txt`, `docker/ptxas.txt`, `docker/nvcc.log` |
+| `results/` | Logs: `run_cpu_mac.txt`, `ptxas.txt`, `nvcc.log.txt` |

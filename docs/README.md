@@ -40,10 +40,10 @@ The other documents use those words only.
 | [contributing.md](contributing.md) | Process | Workflow rules for code, commits and data |
 | [glossary.md](glossary.md) | Glossary | One definition for each domain term |
 | [changelog.md](changelog.md) | History | Milestones from the git log, newest first |
-| [research/research2.0/Research2.0.md](research/research2.0/Research2.0.md) | Research | What the Research 2.0 study asked, how, and what it found |
-| [research/research2.0/Direction.md](research/research2.0/Direction.md) | Plan | The phased plan with gates, costs and owner decisions |
-| [research/research2.0/Architecture.md](research/research2.0/Architecture.md) | Architecture | The proposed target system (not yet built) |
-| [research/research2.0/previous vs new.md](<research/research2.0/previous vs new.md>) | Comparison | The present system against the proposed system |
+| [plan/Research2.0.md](plan/Research2.0.md) | Research | What the Research 2.0 study asked, how, and what it found |
+| [plan/Direction.md](plan/Direction.md) | Plan | The phased plan with gates, costs and owner decisions |
+| [plan/Architecture.md](plan/Architecture.md) | Architecture | The proposed target system (not yet built) |
+| [plan/previous-vs-new.md](plan/previous-vs-new.md) | Comparison | The present system against the proposed system |
 | [implementation2.0/Architecture-explained.md](implementation2.0/Architecture-explained.md) | Plan | The implementation architecture in plain English, with diagrams (read first) |
 | [implementation2.0/Implementation.md](implementation2.0/Implementation.md) | Plan | The implementation plan for phases A-E, DOC and CLEAN: tasks, gates, costs, tests |
 

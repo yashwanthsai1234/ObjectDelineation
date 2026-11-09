@@ -282,4 +282,4 @@ Citations:
 | `k3_torch.cpp`, `test_torch_gpu.py` | torch binding; GPU vs HF/TRL/objdel + library alternatives + timings → JSON |
 | `docker_nvcc_check.sh` | nvcc 13.0 sm_120 build check on the Mac (linux/amd64 container) |
 | `Makefile`, `GPU_RUN.md` | build; the rented-GPU runbook |
-| `build/*.log` | logs of the runs above |
+| `results/*.log.txt` | logs of the runs above |

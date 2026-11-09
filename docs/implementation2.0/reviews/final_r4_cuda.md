@@ -64,7 +64,7 @@ Counts: **blocking 2, major 2, minor 6.**
   `tests/test_gpu_scoring.py`. `make test` also refreshes `build/.gpucheck-stamp` after any `cuda/` edit
   [code: Makefile:14-16].
 - So at the end of Wave 2, CT-72 fails on a correct tree, and at Wave 3, CT-55 and CT-72 both fail. The spec text is
-  the cause: CLEAN.spec C1 says "No change to ... any file under `cuda/`" [SP/impl/phases/CLEAN.spec.md:167-168],
+  the cause: CLEAN.spec C1 says "No change to ... any file under `cuda/`" [specs/CLEAN.spec.md:167-168],
   which is right for CLEAN's own commits but wrong as a diff against a tag that predates D. Two parts that both claim
   to be the rule; the engineer cannot close the wave gate.
 - The same applies to CT-72's "`uv pip freeze` hash before and after": DOC adds the docs-site packages and D/C may add
