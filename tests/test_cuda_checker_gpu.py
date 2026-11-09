@@ -190,3 +190,19 @@ def test_validity_warp_totals_on_adversarial_families():
     """D6: ShapeTotalsWarp with 32 lanes (the CPU build runs one) on the I17 families and the straggler batch."""
     from tests.test_cuda_checker import test_validity_adversarial_families
     test_validity_adversarial_families()
+
+
+def test_device_tables_equal_host_tables_and_repeat():
+    """D7b on the GPU (I04, G6): the 28 synthetic caches of tests/test_tables_device.py in one call equal the host
+    build (scalars and scored terms), and 20 calls return byte-identical scalars."""
+    from tests.test_tables_device import FAMILIES, _build, _check_equal
+    first = None
+    for _ in range(20):
+        dev = _build(FAMILIES)
+        got = [dev[k].tobytes() for k in sorted(dev) if k != "handles"]
+        if first is None:
+            first = got
+            _check_equal(FAMILIES, dev, np.random.default_rng(1))
+        assert got == first
+        for h in dev["handles"]:
+            gc.drop_tables(int(h))

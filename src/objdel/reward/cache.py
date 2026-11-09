@@ -77,7 +77,7 @@ import hashlib
 import os
 import weakref
 from collections import defaultdict
-from functools import cache
+from functools import cache, cached_property
 from itertools import combinations
 from pathlib import Path
 
@@ -86,7 +86,7 @@ import numpy as np
 from scipy import integrate, ndimage, stats
 
 from objdel import _gpucheck
-from objdel.checker.topology import min_area, signatures
+from objdel.checker.topology import min_area
 
 from .spec import REWARD_V4, fingerprint
 
@@ -114,6 +114,25 @@ def voters(sigs) -> tuple[int, ...]:
 def _drop_tables(pid: int, handle: int) -> None:
     if os.getpid() == pid:  # a forked child never frees its parent's tables
         _gpucheck.drop_tables(handle)
+
+
+def device_many(caches) -> None:
+    """Builds the device tables of every cache that has none in this process, in one engine call
+    (objdel._gpucheck.add_tables_from_raters: one upload, one host wait), and stores each one's handle and returned
+    scalars. The reward scores a step's answers after one such call for the step's cold caches (score_many)."""
+    pid = os.getpid()
+    cold = list({id(c): c for c in caches if c._device is None or c._device[0] != pid}.values())
+    if not cold:
+        return
+    r = _gpucheck.add_tables_from_raters([c.raters.view(np.uint8) for c in cold],
+                                         np.array([c.t5 for c in cold], np.float64),
+                                         np.array([c.min_area for c in cold], np.int64))
+    ss, sig, a = r["sig_start"], r["sig"].tolist(), r["rater_area_start"]
+    for i, c in enumerate(cold):
+        h = int(r["handles"][i])
+        weakref.finalize(c, _drop_tables, pid, h).atexit = False  # the process's exit frees the device
+        c._device = (pid, h)
+        c._built = (int(r["perimeter"][i]), tuple(tuple(sig[ss[j]:ss[j + 1]]) for j in range(a[i], a[i + 1])))
 
 
 class StaleCacheError(ValueError):
@@ -217,43 +236,68 @@ def _digest(raters: np.ndarray, tau: float, t5: float, fp: str) -> str:
 
 class ExpertCache:
     """Rater-only part of reward v4 for one object of one item (module docstring). Rater order must be the
-    same in every object's cache of an item (score_completion's joint topology uses it)."""
+    same in every object's cache of an item (score_completion's joint topology uses it).
+
+    Construction and `load` are host-only (numpy counts, no engine call: a parent must not open a CUDA context before
+    it forks). The device tables, and the scalars that come back with them (perimeter, rater signatures, voters), are
+    built by the first `device()` (or `device_many`) in the process; the distance maps on the host only when read."""
 
     def __init__(self, raters: np.ndarray, tau: float, t5: float):
         raters = _rater_stack(raters)
         self.raters, self.tau, self.t5, self.k = raters, float(tau), float(t5), len(raters)
-        self.union, self.core, self.perimeter, self.dist_out_union, self.dist_in_core = _band(raters)
-        self.vote = 2 * raters.sum(0, dtype=np.int16) > self.k
+        s = raters.sum(0, dtype=np.int16)
+        self.union, self.core, self.vote = s > 0, s == self.k, 2 * s > self.k
         self.n_vote = int(np.count_nonzero(self.vote))
         self.rater_areas = tuple(int(np.count_nonzero(m)) for m in raters)
         self.min_area = min_area(int(np.count_nonzero(self.union)))
-        self.rater_sigs = tuple(signatures(raters, self.min_area))  # one engine call
-        self.voters = voters(self.rater_sigs)
-        same = defaultdict(list)
-        for i in self.voters:
-            same[self.rater_sigs[i]].append(i)
-        self.same_sig = dict(same)  # signature -> voting raters who drew it (the rater topology histogram)
         x, y, w, h = cv2.boundingRect(self.union.view(np.uint8))
         self.box = (y, y + h, x, x + w)  # union bounding box (empty if the union is empty)
         self.digest = _digest(raters, self.tau, self.t5, fingerprint())
         self._device = None  # (pid, handle) of the tables on the checker's device
+        self._built = None   # (perimeter, rater_sigs) returned with the tables
 
     def device(self) -> int:
-        """Handle of this cache's tables on the checker's device (objdel._gpucheck.add_tables), which the reward
-        scores against: uploaded at the first call in this process (a forked child uploads its own), resident until
-        the cache is garbage-collected. The device gets the rater masks, union, core, vote, one distance map (the
-        distance to the complement of the core inside the union, to the union outside it), the rater areas, voters
-        and signatures, and the scalars."""
-        pid = os.getpid()
-        if self._device is None or self._device[0] != pid:
-            h = _gpucheck.add_tables(*self.table_args())
-            weakref.finalize(self, _drop_tables, pid, h).atexit = False  # the process's exit frees the device
-            self._device = (pid, h)
+        """Handle of this cache's tables on the checker's device, which the reward scores against: built there from
+        the rater masks at the first call in this process (device_many; a forked child builds its own), resident until
+        the cache is garbage-collected."""
+        device_many([self])
         return self._device[1]
 
+    @property
+    def perimeter(self) -> int:
+        """Contour length of the union: max(1, its 4-adjacent boundary pixels) (from the device tables)."""
+        self.device()
+        return self._built[0]
+
+    @property
+    def rater_sigs(self) -> tuple[tuple[int, ...], ...]:
+        """Per rater, the size-filtered topology signature at min_area (from the device tables)."""
+        self.device()
+        return self._built[1]
+
+    @property
+    def voters(self) -> tuple[int, ...]:
+        return voters(self.rater_sigs)
+
+    @property
+    def same_sig(self) -> dict[tuple[int, ...], list[int]]:
+        """Signature -> voting raters who drew it (the rater topology histogram)."""
+        same = defaultdict(list)
+        for i in self.voters:
+            same[self.rater_sigs[i]].append(i)
+        return dict(same)
+
+    @cached_property
+    def dist_out_union(self) -> np.ndarray:
+        return edt(~self.union)
+
+    @cached_property
+    def dist_in_core(self) -> np.ndarray:
+        return edt(self.core)
+
     def table_args(self) -> tuple:
-        """The 13 arguments of objdel._gpucheck.add_tables for this cache (device(); the checker benchmark's replay
-        dumps them, experiments/phase2/perf/bench_checker.py)."""
+        """The 13 arguments of objdel._gpucheck.add_tables for this cache (the checker benchmark's replay dumps them,
+        experiments/phase2/perf/bench_checker.py)."""
         sigs = self.rater_sigs
         return (self.raters.view(np.uint8), self.union.view(np.uint8), self.core.view(np.uint8),
                 self.vote.view(np.uint8), np.where(self.union, self.dist_in_core, self.dist_out_union),

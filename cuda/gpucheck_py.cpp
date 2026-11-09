@@ -283,6 +283,44 @@ NB_MODULE(_gpucheck, m) {
         return to_numpy(std::move(h), {m});
       },
       nb::arg("items"));
+  // Many caches' tables built on the device from their rater planes (objdel.reward.cache.device_many): one upload and
+  // one host wait per batch. Every item is checked before anything is uploaded.
+  m.def(
+      "add_tables_from_raters",
+      [](const nb::list& raters, const In<double, 1>& t5, const In<i64, 1>& min_area) {
+        const i64 m = i64(raters.size());
+        if (i64(t5.shape(0)) != m || i64(min_area.shape(0)) != m)
+          throw std::invalid_argument("t5 and min_area must have one entry per cache");
+        std::vector<In<u8, 3>> keep;  // the arrays stay referenced during the call
+        std::vector<gpucheck::Raters> in;
+        for (i64 c = 0; c < m; ++c) {
+          keep.push_back(nb::cast<In<u8, 3>>(raters[size_t(c)], false));
+          const In<u8, 3>& a = keep.back();
+          const i64 k = i64(a.shape(0)), H = i64(a.shape(1)), W = i64(a.shape(2));
+          gpucheck::check_dims(W, H);
+          if (k < 2 || k > 32) throw std::invalid_argument("tables need 2 to 32 raters");
+          if (!(t5(c) > 0) || !std::isfinite(t5(c)) || min_area(c) < 0 || min_area(c) > INT32_MAX)
+            throw std::invalid_argument("t5 > 0 and 0 <= min_area < 2^31 are required");
+          in.push_back(gpucheck::Raters{i32(H), i32(W), i32(k), a.data(), t5(c), i32(min_area(c))});
+        }
+        gpucheck::BuiltTables r;
+        {
+          nb::gil_scoped_release release;
+          r = gpucheck::add_tables_from_raters(in);
+        }
+        const size_t K = r.voter.size(), S = r.sig.size();
+        nb::dict d;
+        d["handles"] = to_numpy(std::move(r.handles), {size_t(m)});
+        d["perimeter"] = to_numpy(std::move(r.perimeter), {size_t(m)});
+        d["rater_area_start"] = to_numpy(std::move(r.rater_area_start), {size_t(m + 1)});
+        d["rater_area"] = to_numpy(std::move(r.rater_area), {K});
+        d["sig_start"] = to_numpy(std::move(r.sig_start), {K + 1});
+        d["sig"] = to_numpy(std::move(r.sig), {S});
+        d["voter"] = to_numpy(std::move(r.voter), {K});
+        d["n_vote"] = to_numpy(std::move(r.n_vote), {size_t(m)});
+        return d;
+      },
+      nb::arg("raters"), nb::arg("t5").noconvert(), nb::arg("min_area").noconvert());
   m.def("drop_tables", &gpucheck::drop_tables, nb::arg("handle"));
   m.def("resident", &gpucheck::resident);
 

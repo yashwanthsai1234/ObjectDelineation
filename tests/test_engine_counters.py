@@ -311,8 +311,11 @@ def answers(handles):  # 256 answers over the handles
     a = list(_square_args(256, 40, 0))
     a[-1] = hs
     return a
+def cold(size):  # D7b: a step's cold caches are built from their rater planes in one call
+    st = [(rng.random((3, 40, 40)) < 0.3).astype(np.uint8) for _ in range(size)]
+    return list(gc.add_tables_from_raters(st, np.full(size, 2.0), np.full(size, 5, np.int64))["handles"])
 def first_tables():
-    return list(gc.add_tables_many([_tables(rng) for _ in range(32)]))
+    return cold(32)
 if FIRST == "tables":
     hs = first_tables()
     gc.score_polygons(*answers(hs))
@@ -322,7 +325,7 @@ else:
     hs = first_tables()
 base = gc.stats()
 for size in (0, 1, 7, 32, 7):
-    hs += list(gc.add_tables_many([_tables(rng) for _ in range(size)]))
+    hs += cold(size)
     gc.score_polygons(*answers(hs))
 st = gc.stats()
 assert st["pinned_grows"] == 0, st

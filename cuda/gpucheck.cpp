@@ -176,6 +176,16 @@ void zero(void* p, size_t bytes, Stream st) {
   if (bytes) cuda_check(cudaMemsetAsync(p, 0, bytes, st));
 }
 
+void copy_device(void* dst, const void* src, size_t bytes, Stream st) {
+  if (bytes) cuda_check(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToDevice, st));
+}
+
+// Device -> pageable host memory after a wait (the device is idle): cudaMemcpy returns when the copy is done, which
+// cudaMemcpyAsync to pageable memory only "might" (runtime API, API synchronization behavior). Not a counted wait.
+void read_back(void* dst, const void* src, size_t bytes) {
+  if (bytes) cuda_check(cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToHost));
+}
+
 void wait(Stream st) {
   ++counters().waits;
   cuda_check(cudaStreamSynchronize(st));
@@ -233,6 +243,8 @@ void release(bool device, void* p, size_t bytes, Stream) {
 void to_device(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
 void to_host(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
 void zero(void* p, size_t bytes, Stream) { if (bytes) std::memset(p, 0, bytes); }
+void copy_device(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
+void read_back(void* dst, const void* src, size_t bytes) { if (bytes) std::memcpy(dst, src, bytes); }
 void wait(Stream) { ++counters().waits; }
 void drain_sync(Stream) { ++counters().drain_syncs; }
 void clear_error() {}
@@ -2436,6 +2448,251 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
   out.sig = read_sigs(L, c, out.sig_start.back());
 }
 
+// ===================================================================== expert tables built on the device
+// add_tables_from_raters (D7b): each cache's tables from its k rater planes, on the device, in one call for many
+// caches: union, core and strict-majority vote word by word; the distance map from two exact EDTs (outside the union
+// the distance to the union, inside the core the distance to the nearest non-core pixel, 0 in between; _BIG = 1e6
+// when the EDT has no source, as objdel.reward.cache.edt); the perimeter max(1, 4-adjacent boundary pixels of the
+// union); rater areas; the rater signatures from the pixel label chain on full-frame crops (so the crop layout needs
+// no host round trip); voters (non-empty signature, or every rater when all are empty). Each cache's table image is
+// built in the call's arena in its block layout (place) and copied into its own pool block after the call's one
+// wait, when the signature lengths are known.
+
+// One table set in one block: planes, map, per-rater arrays, the signatures last (their length is known last).
+struct Placed {
+  size_t size, r, u, c, v, d, a, ss, vt, s;
+};
+
+Placed place(i32 k, i32 H, i32 W, i64 nsig) {
+  const i64 plane = i64(H) * words_per_row(W), px = i64(H) * W;
+  Layout l;
+  Placed q{};
+  q.r = l.put<u32>(k * plane), q.u = l.put<u32>(plane), q.c = l.put<u32>(plane), q.v = l.put<u32>(plane);
+  q.d = l.put<float>(px), q.a = l.put<i64>(k), q.ss = l.put<i64>(k + 1), q.vt = l.put<u8>(k), q.s = l.put<i32>(nsig);
+  q.size = l.size;
+  return q;
+}
+
+// Registers a filled block (called with the mutex held) -> its handle.
+i64 register_tables(u8* b, const Placed& q, i32 H, i32 W, i32 k, i64 n_vote, i64 perimeter, double t5, i32 min_area) {
+  Registry& r = registry();
+  const TableView v{ptr<u32>(b, q.r), ptr<u32>(b, q.u), ptr<u32>(b, q.c),  ptr<u32>(b, q.v), ptr<float>(b, q.d),
+                    ptr<i64>(b, q.a), ptr<i64>(b, q.ss), ptr<i32>(b, q.s), ptr<u8>(b, q.vt), n_vote, perimeter,
+                    t5,               H,                W,                k,                min_area};
+  i64 handle = i64(r.block.size());
+  if (r.free.empty()) {
+    r.block.push_back(b), r.bytes.push_back(q.size), r.view.push_back(v);
+  } else {
+    handle = r.free.back();
+    r.free.pop_back();
+    r.block[size_t(handle)] = b, r.bytes[size_t(handle)] = q.size, r.view[size_t(handle)] = v;
+  }
+  ++r.live;
+  counters().table_bytes += i64(q.size);
+  return handle;
+}
+
+struct Build {  // one cache of the call: its uploaded rater planes, its table image and its scratch (device pointers)
+  const u32* in;                       // k planes
+  u32 *raters, *uni, *core, *vote;     // the image's planes
+  float* dist;
+  i64 *area, *ss;
+  u8* voter;
+  u32* notcore;                        // ~core inside the frame: the second EDT's sources
+  const i32 *d_out, *d_in;             // the two squared EDTs (kNoSource: no source)
+  i64* part;                           // H rows of k + 2 partials: rater areas, vote area, union boundary pixels
+  i64 a0;                              // its first rater among the call's raters (= its first label-chain plane)
+  i32 H, W, k;
+};
+
+HD inline u32 row_word(const u32* plane, i32 H, i32 wpr, i32 y, i32 j) {  // 0 outside the frame
+  return y < 0 || y >= H || j < 0 || j >= wpr ? 0u : plane[i64(y) * wpr + j];
+}
+
+// Per call row: the image's rater, union, core and vote words, the non-core sources and the row partials. Vote bit:
+// 2 x (raters with the bit) > k. Boundary: a union pixel with a 4-neighbour outside the union (outside the frame
+// counts as outside), by word shifts.
+struct TableRows {
+  const Build* b;
+  const i64* row_start;
+  i64 n;
+  HD u32 uni(const Build& t, i32 wpr, i32 y, i32 j) const {
+    u32 u = 0;
+    for (i32 r = 0; r < t.k; ++r) u |= row_word(t.in + r * i64(t.H) * wpr, t.H, wpr, y, j);
+    return u;
+  }
+  HD void operator()(i64 i) const {
+    const i64 o = segment(row_start, n, i);
+    const Build& t = b[o];
+    const i32 y = i32(i - row_start[o]), wpr = words_per_row(t.W);
+    const i64 plane = i64(t.H) * wpr, at = i64(y) * wpr;
+    i64* p = t.part + i64(y) * (t.k + 2);
+    for (i32 r = 0; r < t.k + 2; ++r) p[r] = 0;
+    u32 w[32];
+    for (i32 j = 0; j < wpr; ++j) {
+      u32 u = 0, c = ~0u, v = 0;
+      for (i32 r = 0; r < t.k; ++r) {
+        w[r] = t.in[r * plane + at + j];
+        t.raters[r * plane + at + j] = w[r];
+        u |= w[r], c &= w[r], p[r] += popc(w[r]);
+      }
+      for (u32 m = u; m; m &= m - 1) {
+        const i32 bit = ctz(m);
+        i32 cnt = 0;
+        for (i32 r = 0; r < t.k; ++r) cnt += i32(w[r] >> bit & 1u);
+        if (2 * cnt > t.k) v |= 1u << bit;
+      }
+      const i32 tail = t.W - 32 * j;
+      const u32 valid = tail >= 32 ? ~0u : (1u << tail) - 1u;
+      t.uni[at + j] = u, t.core[at + j] = c, t.vote[at + j] = v, t.notcore[at + j] = ~c & valid;
+      const u32 left = (u << 1) | (uni(t, wpr, y, j - 1) >> 31), right = (u >> 1) | (uni(t, wpr, y, j + 1) << 31);
+      p[t.k] += popc(v), p[t.k + 1] += popc(u & ~(uni(t, wpr, y - 1, j) & uni(t, wpr, y + 1, j) & left & right));
+    }
+  }
+};
+
+// The exact squared EDT of a frame's source bits (K2-draft EdtRowsH / EdtColsV): pass 1 along rows, pass 2 the lower
+// envelope of parabolas down columns (Felzenszwalb and Huttenlocher 2012, Algorithm 1) in Meijster et al.'s integer
+// form, floor division. Integers only, so any schedule gives the same values.
+constexpr i32 kNoSource = 0x7FFFFFFF;  // squared distance when the frame has no source pixel
+
+struct EdtFrame {
+  const u32* src;    // H rows of words_per_row(W) words, bits past W are 0
+  i32 *g, *s, *t;    // H x W scratch: row distances, parabola rows, their first rows
+  i32* d;            // H x W squared distances
+  i32 H, W;
+};
+
+// Pass 1, one warp per row: g = distance along the row to the nearest source, H + W when the row has none. Lane b
+// takes pixel 32 j + b; the nearest source at or left of it is the highest set bit at or below b (clz), else the last
+// source of the earlier words; the right side likewise (ctz). Each lane rewrites only its own pixels.
+struct EdtRows {
+  const EdtFrame* f;
+  const i64* row_start;
+  i64 n;
+  HD void operator()(i64 i, Warp w) const {
+    const i64 m = segment(row_start, n, i);
+    const EdtFrame& e = f[m];
+    const i32 y = i32(i - row_start[m]), W = e.W, wpr = words_per_row(W), inf = e.H + W;
+    const u32* row = e.src + i64(y) * wpr;
+    i32* o = e.g + i64(y) * W;
+    i64 last = -1;  // column of the last source in the words before j
+    for (i32 j = 0; j < wpr; ++j) {
+      const u32 bits = row[j];
+      for (i32 b = w.lane; b < 32; b += w.size) {
+        const i32 x = 32 * j + b;
+        if (x >= W) continue;
+        const u32 low = bits & ((2u << b) - 1u);  // bits 0..b (2u << 31 wraps to 0: all bits)
+        const i64 src = low ? i64(32 * j + 31 - clz(low)) : last;
+        o[x] = src >= 0 ? i32(x - src) : inf;
+      }
+      if (bits) last = 32 * j + 31 - clz(bits);
+    }
+    i64 next = -1;  // column of the first source in the words after j
+    for (i32 j = wpr - 1; j >= 0; --j) {
+      const u32 bits = row[j];
+      for (i32 b = w.lane; b < 32; b += w.size) {
+        const i32 x = 32 * j + b;
+        if (x >= W) continue;
+        const u32 high = bits & ~((1u << b) - 1u);  // bits b..31
+        const i64 src = high ? i64(32 * j + ctz(high)) : next;
+        if (src >= 0 && src - x < o[x]) o[x] = i32(src - x);
+      }
+      if (bits) next = 32 * j + ctz(bits);
+    }
+  }
+};
+
+// Pass 2, one thread per column: d(y) = min over rows i of (y - i)^2 + g(i)^2. Sep(a, u) = floor((u^2 - a^2 + g(u)^2 -
+// g(a)^2) / (2 (u - a))) is the last row where parabola a is at least as low as parabola u (the numerator can be
+// negative: floor, not truncation). A column of only H + W rows belongs to a frame with no source: kNoSource.
+struct EdtCols {
+  const EdtFrame* f;
+  const i64* col_start;
+  i64 n;
+  HD void operator()(i64 c) const {
+    const i64 m = segment(col_start, n, c);
+    const EdtFrame& e = f[m];
+    const i32 x = i32(c - col_start[m]), H = e.H, W = e.W;
+    const i64 inf = H + W;
+    auto G = [&](i64 r) -> i64 { return e.g[r * W + x]; };
+    auto S = [&](i64 q) -> i32& { return e.s[q * W + x]; };
+    auto T = [&](i64 q) -> i32& { return e.t[q * W + x]; };
+    bool any = false;
+    for (i32 r = 0; r < H && !any; ++r) any = G(r) < inf;
+    if (!any) {
+      for (i32 r = 0; r < H; ++r) e.d[i64(r) * W + x] = kNoSource;
+      return;
+    }
+    auto F = [&](i64 r, i64 i) { const i64 gi = G(i); return (r - i) * (r - i) + gi * gi; };
+    auto sep = [&](i64 a, i64 u) {
+      const i64 ga = G(a), gu = G(u);
+      return floordiv<i64>(u * u - a * a + gu * gu - ga * ga, 2 * (u - a));
+    };
+    i32 q = 0;
+    S(0) = 0, T(0) = 0;
+    for (i32 u = 1; u < H; ++u) {
+      while (q >= 0 && F(T(q), S(q)) > F(T(q), u)) --q;
+      if (q < 0) {
+        q = 0, S(0) = u;
+      } else {
+        const i64 v = 1 + sep(S(q), u);
+        if (v < H) ++q, S(q) = u, T(q) = i32(v);
+      }
+    }
+    for (i32 u = H - 1; u >= 0; --u) {
+      e.d[i64(u) * W + x] = i32(F(u, S(q)));
+      if (u == T(q)) --q;
+    }
+  }
+};
+
+// float32(sqrt(float64(d2))): scipy's sqrt of the exact integer, rounded once more to float32 (cache.edt).
+HD inline float edt_value(i32 d2) { return d2 == kNoSource ? 1e6f : float(sqrt(double(d2))); }
+
+// Per call row: the map where(union, dist_in_core, dist_out_union).
+struct TableMap {
+  const Build* b;
+  const i64* row_start;
+  i64 n;
+  HD void operator()(i64 i) const {
+    const i64 o = segment(row_start, n, i);
+    const Build& t = b[o];
+    const i32 y = i32(i - row_start[o]), wpr = words_per_row(t.W);
+    for (i32 x = 0; x < t.W; ++x) {
+      const i64 p = i64(y) * t.W + x, w = i64(y) * wpr + x / 32;
+      const bool in_u = t.uni[w] >> (x % 32) & 1u, in_c = t.core[w] >> (x % 32) & 1u;
+      t.dist[p] = in_u ? (in_c ? edt_value(t.d_in[p]) : 0.0f) : edt_value(t.d_out[p]);
+    }
+  }
+};
+
+// Per cache, after the label chain and compact_sigs (signatures one after the other, starts in ss): the rater areas,
+// voters and signature starts into the image, and its scalars (rater areas, n_vote, perimeter, voters) into res.
+struct TableTail {
+  const Build* b;
+  const i64* ss;
+  i64 m, K;
+  i64* res;    // K rater areas, then m vote areas, then m perimeters
+  u8* voter;   // K
+  HD void operator()(i64 o) const {
+    const Build& t = b[o];
+    i64 nv = 0, per = 0;
+    bool any = false;
+    for (i32 r = 0; r < t.k; ++r) {
+      i64 a = 0;
+      for (i32 y = 0; y < t.H; ++y) a += t.part[i64(y) * (t.k + 2) + r];
+      t.area[r] = res[t.a0 + r] = a;
+      t.ss[r] = ss[t.a0 + r] - ss[t.a0];
+      any = any || ss[t.a0 + r + 1] > ss[t.a0 + r];
+    }
+    t.ss[t.k] = ss[t.a0 + t.k] - ss[t.a0];
+    for (i32 y = 0; y < t.H; ++y) nv += t.part[i64(y) * (t.k + 2) + t.k], per += t.part[i64(y) * (t.k + 2) + t.k + 1];
+    for (i32 r = 0; r < t.k; ++r) t.voter[r] = voter[t.a0 + r] = u8(!any || ss[t.a0 + r + 1] > ss[t.a0 + r]);
+    res[K + o] = nv, res[K + m + o] = per > 1 ? per : 1;
+  }
+};
+
 // ===================================================================== ladder certificate
 // certify_polygons: candidate polygons rasterized as score_polygons does, compared with resident reference planes
 // word by word, and every raster's size-filtered signature from the label chain; only counts and signatures leave.
@@ -2679,26 +2936,17 @@ std::vector<i64> add_tables_many(const std::vector<Tables>& ts) {
   GC_RANGE("add_tables");
   const size_t m = ts.size();
   if (m == 0) return {};
-  struct Placed {
-    size_t at, size, r, u, c, v, d, a, ss, s, vt;
-  };
   std::vector<Placed> pl(m);
-  size_t total = 0;
+  std::vector<size_t> at(m + 1, 0);
   for (size_t k = 0; k < m; ++k) {
-    const Tables& t = ts[k];
-    const i64 plane = i64(t.H) * words_per_row(t.W), px = i64(t.H) * t.W;
-    Layout l;
-    Placed& q = pl[k];
-    q.r = l.put<u32>(t.k * plane), q.u = l.put<u32>(plane), q.c = l.put<u32>(plane), q.v = l.put<u32>(plane);
-    q.d = l.put<float>(px), q.a = l.put<i64>(t.k), q.ss = l.put<i64>(t.k + 1), q.s = l.put<i32>(t.sig_start[t.k]);
-    q.vt = l.put<u8>(t.k);
-    q.at = total, q.size = l.size, total += (l.size + 255) / 256 * 256;
+    pl[k] = place(ts[k].k, ts[k].H, ts[k].W, ts[k].sig_start[ts[k].k]);
+    at[k + 1] = at[k] + (pl[k].size + 255) / 256 * 256;
   }
-  std::vector<u8> host(total, 0);
+  std::vector<u8> host(at[m], 0);
   for (size_t k = 0; k < m; ++k) {
     const Tables& t = ts[k];
     const Placed& q = pl[k];
-    u8* h = host.data() + q.at;
+    u8* h = host.data() + at[k];
     const i64 plane = i64(t.H) * words_per_row(t.W), px = i64(t.H) * t.W;
     for (i32 r = 0; r < t.k; ++r) pack_plane(t.raters + r * px, t.H, t.W, ptr<u32>(h, q.r) + r * plane);
     pack_plane(t.uni, t.H, t.W, ptr<u32>(h, q.u));
@@ -2707,8 +2955,8 @@ std::vector<i64> add_tables_many(const std::vector<Tables>& ts) {
     std::copy_n(t.dist, px, ptr<float>(h, q.d));
     std::copy_n(t.rater_area, t.k, ptr<i64>(h, q.a));
     std::copy_n(t.sig_start, t.k + 1, ptr<i64>(h, q.ss));
-    std::copy_n(t.sig, t.sig_start[t.k], ptr<i32>(h, q.s));
     std::copy_n(t.voter, t.k, ptr<u8>(h, q.vt));
+    std::copy_n(t.sig, t.sig_start[t.k], ptr<i32>(h, q.s));
   }
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
@@ -2720,7 +2968,7 @@ std::vector<i64> add_tables_many(const std::vector<Tables>& ts) {
   try {
     for (size_t k = 0; k < m; ++k) {
       d[k] = static_cast<u8*>(alloc(true, pl[k].size, st));
-      to_device(d[k], host.data() + pl[k].at, pl[k].size, st);
+      to_device(d[k], host.data() + at[k], pl[k].size, st);
     }
     wait(st);
   } catch (...) {
@@ -2728,28 +2976,152 @@ std::vector<i64> add_tables_many(const std::vector<Tables>& ts) {
       if (d[k]) release(true, d[k], pl[k].size, st);
     throw;
   }
-  Registry& r = registry();
   std::vector<i64> handles(m);
   for (size_t k = 0; k < m; ++k) {
     const Tables& t = ts[k];
-    const Placed& q = pl[k];
-    u8* b = d[k];
-    const TableView v{ptr<u32>(b, q.r), ptr<u32>(b, q.u), ptr<u32>(b, q.c),  ptr<u32>(b, q.v), ptr<float>(b, q.d),
-                      ptr<i64>(b, q.a), ptr<i64>(b, q.ss), ptr<i32>(b, q.s), ptr<u8>(b, q.vt), t.n_vote, t.perimeter,
-                      t.t5, t.H, t.W, t.k, t.min_area};
-    i64 handle = i64(r.block.size());
-    if (r.free.empty()) {
-      r.block.push_back(b), r.bytes.push_back(q.size), r.view.push_back(v);
-    } else {
-      handle = r.free.back();
-      r.free.pop_back();
-      r.block[size_t(handle)] = b, r.bytes[size_t(handle)] = q.size, r.view[size_t(handle)] = v;
-    }
-    ++r.live;
-    counters().table_bytes += i64(q.size);
-    handles[k] = handle;
+    handles[k] = register_tables(d[k], pl[k], t.H, t.W, t.k, t.n_vote, t.perimeter, t.t5, t.min_area);
   }
   return handles;
+}
+
+// One upload (the rater planes and the call's descriptors, from pageable memory), the kernels on lane 0 in its score
+// arena, one wait; then the scalars to pageable memory (the device is idle) and each image into its own pool block in
+// stream order. Pinned staging is never used (D5c: the cold-cache count changes per step).
+BuiltTables add_tables_from_raters(const std::vector<Raters>& in) {
+  GC_RANGE("add_tables_from_raters");
+  const i64 m = i64(in.size());
+  BuiltTables out;
+  out.rater_area_start = out.sig_start = {0};
+  if (m == 0) return out;
+  i64 K = 0, rows = 0, cols = 0, words = 0, px = 0;
+  for (const Raters& c : in) {
+    const i64 plane = i64(c.H) * words_per_row(c.W);
+    K += c.k, rows += c.H, cols += c.W, words += c.k * plane, px += i64(c.H) * c.W;
+    out.rater_area_start.push_back(K);
+  }
+  // Layout: the uploaded part first (label-chain planes and crop rows, builds, row starts, EDT frames and their row
+  // and column starts, rater words), then the images, scratch and results.
+  std::vector<Plane> pl;
+  std::vector<i64> crow_start{0};
+  i64 crop = 0;
+  for (const Raters& c : in)
+    for (i32 r = 0; r < c.k; ++r) {
+      pl.push_back(Plane{0, c.min_area, 0, crop, c.W, c.H, 0, 0, c.W, c.H});
+      crop += i64(c.W + 2) * (c.H + 2);
+      crow_start.push_back(crow_start.back() + c.H + 2);
+    }
+  CropLayout cl{K, crop};
+  Layout l;
+  cl.front(l);
+  const size_t o_b = l.put<Build>(m), o_rs = l.put<i64>(m + 1), o_f = l.put<EdtFrame>(2 * m),
+               o_frs = l.put<i64>(2 * m + 1), o_fcs = l.put<i64>(2 * m + 1), o_in = l.put<u32>(words), up = l.size;
+  std::vector<Placed> img(size_t(m), Placed{});
+  std::vector<size_t> o_img(static_cast<size_t>(m)), o_nc(o_img), o_part(o_img);
+  for (i64 o = 0; o < m; ++o) {
+    const Raters& c = in[size_t(o)];
+    img[size_t(o)] = place(c.k, c.H, c.W, 0);
+    o_img[size_t(o)] = l.put<u8>(i64(img[size_t(o)].s));
+  }
+  const size_t img_end = l.size;
+  for (i64 o = 0; o < m; ++o) {
+    const Raters& c = in[size_t(o)];
+    o_nc[size_t(o)] = l.put<u32>(i64(c.H) * words_per_row(c.W));
+    o_part[size_t(o)] = l.put<i64>(i64(c.H) * (c.k + 2));
+  }
+  const size_t o_g = l.put<i32>(2 * px), o_s = l.put<i32>(2 * px), o_t = l.put<i32>(2 * px), o_d = l.put<i32>(2 * px);
+  cl.back(l);
+  const size_t o_ss = l.put<i64>(K + 1), o_res = l.put<i64>(K + 2 * m), o_vt = l.put<u8>(K);
+
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  clear_error();
+  Drain drain{e};
+  Timer t{nullptr, {}};
+  e.start("add_tables_from_raters", m);
+  Lane& L = e.lanes[0];
+  const Stream st = L.stream;
+  u8* d = L.score.get(l.size);
+  std::vector<u8> host(up, 0);
+  Build* bs = ptr<Build>(host.data(), o_b);
+  i64* rs = ptr<i64>(host.data(), o_rs);
+  EdtFrame* fs = ptr<EdtFrame>(host.data(), o_f);
+  i64 *frs = ptr<i64>(host.data(), o_frs), *fcs = ptr<i64>(host.data(), o_fcs);
+  rs[0] = frs[0] = fcs[0] = 0;
+  i64 w = 0, pix = 0, a0 = 0;
+  for (i64 o = 0; o < m; ++o) {
+    const Raters& c = in[size_t(o)];
+    const Placed& q = img[size_t(o)];
+    const i64 plane = i64(c.H) * words_per_row(c.W), n = i64(c.H) * c.W;
+    for (i32 r = 0; r < c.k; ++r) {
+      pack_plane(c.px + r * n, c.H, c.W, ptr<u32>(host.data(), o_in) + w + r * plane);
+      pl[size_t(a0 + r)].words = i64(o_in / sizeof(u32)) + w + r * plane;
+    }
+    u8* im = d + o_img[size_t(o)];
+    const i32* d_out = ptr<i32>(d, o_d) + 2 * pix;
+    bs[o] = Build{ptr<u32>(d, o_in) + w, ptr<u32>(im, q.r), ptr<u32>(im, q.u), ptr<u32>(im, q.c), ptr<u32>(im, q.v),
+                  ptr<float>(im, q.d), ptr<i64>(im, q.a), ptr<i64>(im, q.ss), ptr<u8>(im, q.vt), ptr<u32>(d, o_nc[size_t(o)]),
+                  d_out, d_out + n, ptr<i64>(d, o_part[size_t(o)]), a0, c.H, c.W, c.k};
+    for (int f = 0; f < 2; ++f) {  // frame 2o: sources = the union (distance to it); 2o + 1: the non-core pixels
+      const i64 at = 2 * pix + f * n;
+      fs[2 * o + f] = EdtFrame{f ? bs[o].notcore : bs[o].uni, ptr<i32>(d, o_g) + at, ptr<i32>(d, o_s) + at,
+                               ptr<i32>(d, o_t) + at, ptr<i32>(d, o_d) + at, c.H, c.W};
+      frs[2 * o + f + 1] = frs[2 * o + f] + c.H, fcs[2 * o + f + 1] = fcs[2 * o + f] + c.W;
+    }
+    rs[o + 1] = rs[o] + c.H;
+    w += c.k * plane, pix += n, a0 += c.k;
+  }
+  cl.stage(host.data(), pl, crow_start);
+  to_device(d, host.data(), up, st);
+  zero(d + o_img[0], img_end - o_img[0], st);  // the images' padding is copied into the blocks
+  const Build* db = ptr<Build>(d, o_b);
+  const i64* drs = ptr<i64>(d, o_rs);
+  const EdtFrame* df = ptr<EdtFrame>(d, o_f);
+  t.stage("tables", st, [&] {
+    for_each(st, rows, TableRows{db, drs, m});
+    for_each_warp(st, 2 * rows, EdtRows{df, ptr<i64>(d, o_frs), 2 * m});
+    for_each(st, 2 * cols, EdtCols{df, ptr<i64>(d, o_fcs), 2 * m});
+    for_each(st, rows, TableMap{db, drs, m});
+  });
+  const Crops c = cl.at(d);
+  label_chain(st, c, crow_start.back(), crop, ptr<u32>(d, 0), cl.end - cl.nc, t);
+  sig_lists(st, c, crow_start.back(), crop, t);
+  compact_sigs(st, c, ptr<i64>(d, o_ss), t);
+  t.stage("tables", st, [&] { for_each(st, m, TableTail{db, ptr<i64>(d, o_ss), m, K, ptr<i64>(d, o_res), ptr<u8>(d, o_vt)}); });
+  wait(st);
+  std::vector<i64> res(size_t(K + 2 * m));
+  out.sig_start.resize(size_t(K + 1));
+  out.voter.resize(size_t(K));
+  read_back(res.data(), d + o_res, sizeof(i64) * res.size());
+  read_back(out.sig_start.data(), d + o_ss, sizeof(i64) * size_t(K + 1));
+  read_back(out.voter.data(), d + o_vt, size_t(K));
+  out.sig.resize(size_t(out.sig_start.back()));
+  read_back(out.sig.data(), c.aux, sizeof(i32) * out.sig.size());
+  out.rater_area.assign(res.begin(), res.begin() + K);
+  out.n_vote.assign(res.begin() + K, res.begin() + K + m);
+  out.perimeter.assign(res.begin() + K + m, res.end());
+  std::vector<u8*> blk(size_t(m), nullptr);
+  std::vector<Placed> q(img);
+  try {
+    for (i64 o = 0; o < m; ++o) {
+      const Raters& r = in[size_t(o)];
+      const i64 s0 = out.sig_start[size_t(out.rater_area_start[size_t(o)])];
+      const i64 ns = out.sig_start[size_t(out.rater_area_start[size_t(o + 1)])] - s0;
+      q[size_t(o)] = place(r.k, r.H, r.W, ns);
+      blk[size_t(o)] = static_cast<u8*>(alloc(true, q[size_t(o)].size, st));
+      copy_device(blk[size_t(o)], d + o_img[size_t(o)], q[size_t(o)].s, st);
+      copy_device(blk[size_t(o)] + q[size_t(o)].s, c.aux + s0, sizeof(i32) * size_t(ns), st);
+    }
+  } catch (...) {
+    for (i64 o = 0; o < m; ++o)
+      if (blk[size_t(o)]) release(true, blk[size_t(o)], q[size_t(o)].size, st);
+    throw;
+  }
+  for (i64 o = 0; o < m; ++o) {
+    const Raters& r = in[size_t(o)];
+    out.handles.push_back(register_tables(blk[size_t(o)], q[size_t(o)], r.H, r.W, r.k, out.n_vote[size_t(o)],
+                                          out.perimeter[size_t(o)], r.t5, r.min_area));
+  }
+  return out;
 }
 
 i64 add_tables(const Tables& t) { return add_tables_many({t})[0]; }

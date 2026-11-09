@@ -143,6 +143,24 @@ struct Tables {
   i32 min_area = 0;                 // the signature's size filter
 };
 
+// The rater planes of one cache (objdel.reward.ExpertCache) for add_tables_from_raters, which builds its Tables on
+// the device. The binding checks the caps (1 <= W, H <= 4096, 2 <= k <= 32, t5 > 0, min_area >= 0).
+struct Raters {
+  i32 H = 0, W = 0, k = 0;
+  const u8* px = nullptr;  // (k, H, W), nonzero = inside
+  double t5 = 1;
+  i32 min_area = 0;
+};
+
+struct BuiltTables {                     // per cache of an add_tables_from_raters call
+  std::vector<i64> handles, perimeter, n_vote;
+  std::vector<i64> rater_area_start;     // (m + 1): cache c's raters = [rater_area_start[c], rater_area_start[c + 1])
+  std::vector<i64> rater_area;           // per rater of all caches
+  std::vector<u8> voter;                 // per rater: 1 = votes on topology
+  std::vector<i64> sig_start;            // (raters + 1): rater r's signature = sig[sig_start[r], sig_start[r + 1])
+  std::vector<i32> sig;                  // holes per component, descending
+};
+
 struct Scores {                // per object (objdel.reward.score: ObjectTerms), nothing per pixel
   std::vector<i64> defects;    // (n, 13) validate totals (score_polygons; zero for score_masks)
   std::vector<i64> area;       // pixels of the mask
@@ -211,6 +229,9 @@ MaskResult check_masks(const Masks& in, Times* times = nullptr, const MaskOption
 std::vector<std::string> test_hooks();  // the test-only compile definitions of this build (none in a shipped one)
 i64 add_tables(const Tables& t);  // -> handle
 std::vector<i64> add_tables_many(const std::vector<Tables>& ts);  // one host wait per batch (none when empty)
+// Tables built on the device from rater planes (one upload, one host wait per batch; none when empty): the same
+// tables add_tables stores from the host-built arrays, and the scalars the host needs.
+BuiltTables add_tables_from_raters(const std::vector<Raters>& in);
 void drop_tables(i64 handle);     // no host wait
 void trim(i64 bytes);             // the engine's pool keeps <= `bytes` unused (cudaMemPoolTrimTo); CPU build: no-op
 i64 resident();                    // tables on the device

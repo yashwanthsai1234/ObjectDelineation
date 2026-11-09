@@ -82,6 +82,24 @@ def cache(stack) -> dict:
                 sigs=[signature(m, a) for m in stack], areas=[int(m.sum()) for m in stack])
 
 
+def host_tables(raters, t5: float, min_area: int) -> tuple:
+    """The 13 objdel._gpucheck.add_tables arguments of one cache, from the definition on the host (the oracle of
+    add_tables_from_raters, D7b): union, core, strict-majority vote, the distance map (inside the union the distance
+    to the complement of the core, outside it the distance to the union; 1e6 when no such pixel exists), the
+    perimeter max(1, |boundary(U)|), rater areas, voters (non-empty signature, all if none) and signatures."""
+    st = np.asarray(raters, bool)
+    k = len(st)
+    union, core = st.any(0), st.all(0)
+    vote = 2 * st.sum(0) > k
+    dist = np.where(union, edt(core), edt(~union)).astype(np.float32)
+    sigs = [signature(m, min_area) for m in st]
+    voter = np.array([len(s) > 0 for s in sigs]) if any(sigs) else np.ones(k, bool)
+    return (st.view(np.uint8), union.view(np.uint8), core.view(np.uint8), vote.view(np.uint8), dist,
+            st.reshape(k, -1).sum(1).astype(np.int64), voter.view(np.uint8),
+            np.cumsum([0, *map(len, sigs)], dtype=np.int64), np.array([v for s in sigs for v in s], np.int32),
+            int(vote.sum()), max(1, int(boundary(union).sum())), float(t5), int(min_area))
+
+
 def votes(c) -> list[int]:
     """Raters with a topology vote: non-empty filtered signature (all-sub-filter raters abstain), all if none."""
     v = [i for i in range(c["k"]) if len(c["sigs"][i]) > 0]
