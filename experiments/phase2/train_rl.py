@@ -30,7 +30,8 @@ OBJDEL_FIXED_USD from the active run, the flags' defaults.
 Held-out curve (off by default): --heldout VIEW evaluates --heldout-items val-shape items (splits.val_half) of that
 eval view every --heldout-every steps, 8 answers each; rl.json "eval" holds eval/iou_tc and eval/allmiss_share.
 
-<out>/rl.json: steps, LR, numerics, beta, rows provenance, timing and TRL's log.
+<out>/rl.json: steps, LR, numerics, beta, reward (name, fingerprint, c_topo, loc_width, area_gate), rows provenance,
+timing and TRL's log. --reward v5 trains on reward v5 and adds callbacks.LocGuard (stop and save; loc_guard_stopped).
 """
 import argparse
 import gc
@@ -89,6 +90,8 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--runaway-cap", type=float, default=0, metavar="FACTOR",
                     help="C11: cap each answer at min(L, ceil(FACTOR x its doctor outline) + 64) tokens "
                          "(0 = off); needs mask_truncated_completions false in --grpo")
+    ap.add_argument("--reward", choices=("v4", "v5"), default="v4",
+                    help="reward spec (objdel.reward.REWARDS); v5 adds callbacks.LocGuard (default v4)")
     ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
                     help="NVTX step ranges and a cudaProfilerApi capture of steps S..E (nsys_capture.sh; S >= 2)")
     ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
@@ -258,8 +261,13 @@ def main(argv=None) -> int:
     over |= {"shuffle_dataset": False} if schedule else {}
     over |= {"eval_strategy": "steps", "eval_steps": a.heldout_every, "num_generations_eval": 8} if a.heldout else {}
     check = (lambda cfg: check_sampler(cfg, schedule, a.steps)) if schedule else None
+    from objdel.reward import REWARDS, reward_fingerprint
+    from objdel.train.callbacks import LocGuard
+
+    spec = REWARDS[a.reward]
+    guard = LocGuard() if a.reward == "v5" else None
     trainer, proc, lr = make_trainer(a, a.ckpt, train, a.steps, eval_dataset=heldout, check=check,
-                                     calls=[stop] if stop else [], **over)
+                                     calls=[c for c in (stop, guard) if c], reward=spec, **over)
     t0 = time.time()
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
@@ -274,7 +282,10 @@ def main(argv=None) -> int:
         "numerics": NUMERICS, "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
         "max_completion_length": cfg.max_completion_length,
         "loss_scale": configs.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L (C7)
+        "reward": {"name": spec.name, "fingerprint": reward_fingerprint(spec), "c_topo": spec.c_topo,
+                   "loc_width": getattr(spec, "loc_width", None), "area_gate": getattr(spec, "area_gate", None)},
         "rows": rows, "train_rows": len(train), "budget_stopped": bool(stop and stop.tripped),
+        "loc_guard_stopped": bool(guard and guard.tripped),
         "eval": [{"step": h["step"], "eval/iou_tc": h["eval_rewards/iou_tc/mean"],
                   "eval/allmiss_share": h["eval_allmiss_share"]} for h in log if "eval_rewards/iou_tc/mean" in h],
         "timing_s": {"train": t1 - t0, "per_step": (t1 - t0) / max(1, done - start)},

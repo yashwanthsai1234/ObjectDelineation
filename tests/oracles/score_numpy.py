@@ -2,6 +2,9 @@
 band_depth as they were before scoring moved onto the device (git ed74aca), unchanged, so the tests can demand
 bit-identical results from the device on any mask. Masks and the per-completion combination come from the caller.
 
+Reward v5 (B3.2) adds the centroid sums, from np.nonzero of the full-frame mask, and the location terms, with the
+same float64 arithmetic as objdel.reward.score (location, gated_loc).
+
 Numpy and OpenCV: bounding-box crop, Spaghetti-labeled size-filtered signature (objdel.checker.topology), float64
 sums of the float32 band distances.
 """
@@ -31,9 +34,27 @@ def band_depth(mask, union, core, dist_out_union, dist_in_core) -> float:
             + float(np.sum(dm, dtype=np.float64) - 0.5 * dm.size))
 
 
+def loc_raw(sum_x, sum_y, area, cache, width=1.0) -> float:
+    ref = cache.vote if cache.n_vote > 0 else cache.union
+    ys, xs = np.nonzero(ref)
+    if area == 0 or xs.size == 0:
+        return 0.0
+    d2 = (sum_x / area - int(xs.sum()) / xs.size) ** 2 + (sum_y / area - int(ys.sum()) / xs.size) ** 2
+    return float(np.exp(-d2 / (2 * width**2 * (int(np.count_nonzero(cache.union)) / np.pi))))
+
+
+def gated_loc(t: dict, miss_iou=0.1) -> float:
+    if t["iou_tc"] >= miss_iou or t["topo_freq"] == 0:
+        return 0.0
+    return (1 - t["iou_tc"] / miss_iou) * t["g_area"] * t["loc_raw"]
+
+
 def score_mask(mask, cache) -> dict:
-    """{iou_tc, f5, g_area, sig, topo_freq, area} of one object's mask against its ExpertCache."""
+    """{iou_tc, f5, g_area, sig, topo_freq, area, sum_x, sum_y, loc_raw} of one object's mask against its
+    ExpertCache."""
     m = np.ascontiguousarray(mask, dtype=bool)
+    ys, xs = np.nonzero(m)
+    sx, sy = int(xs.sum()), int(ys.sum())
     x, y, w, h = cv2.boundingRect(m.view(np.uint8))
     boxes = [b for b in (cache.box, (y, y + h, x, x + w)) if b[1] > b[0]]
     roi = (slice(min(b[0] for b in boxes), max(b[1] for b in boxes)),
@@ -49,7 +70,8 @@ def score_mask(mask, cache) -> dict:
     d = band_depth(m, cache.union[roi], cache.core[roi], cache.dist_out_union[roi], cache.dist_in_core[roi])
     f5 = 1.0 / (1.0 + (2.0 * d / cache.perimeter) / (cache.t5 * cache.t5))
     return {"iou_tc": iou_tc, "f5": f5, "g_area": area_guard(area, cache), "sig": sig,
-            "topo_freq": len(same) / len(cache.voters), "area": area}
+            "topo_freq": len(same) / len(cache.voters), "area": area, "sum_x": sx, "sum_y": sy,
+            "loc_raw": loc_raw(sx, sy, area, cache)}
 
 
 def score_completion(text, truncated, names, caches, W, H) -> dict:
@@ -74,4 +96,5 @@ def score_completion(text, truncated, names, caches, W, H) -> dict:
     return {"format_ok": 1.0, "legal": float(legal), "iou_tc": float(np.mean([t["iou_tc"] for t in ts])),
             "iou_min": float(min(t["iou_tc"] for t in ts)), "f5": float(np.mean([t["f5"] for t in ts])),
             "g_area": float(np.mean([t["g_area"] for t in ts])), "topo_any": float(joint > 0), "topo_freq": joint,
-            "sig_id": sig_id(sigs), "error": "", "defects": defects}
+            "sig_id": sig_id(sigs), "loc": float(np.mean([gated_loc(t) for t in ts])), "error": "",
+            "defects": defects}

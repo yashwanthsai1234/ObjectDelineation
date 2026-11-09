@@ -1,6 +1,7 @@
 """TrainerCallbacks of the live runs: TraceStep (one torch.profiler step), NvtxSteps (NVTX step ranges and the
-nsys capture window), BudgetStop (stop and save at a session spend) and NoCkptLayers (C9: no checkpointing on K
-layers).
+nsys capture window), BudgetStop (stop and save at a session spend), NoCkptLayers (C9: no checkpointing on K
+layers) and LocGuard (stop and save when reward v5's location term rises while IoU_tc falls on the off-centre rows;
+Implementation.md B3.5b).
 
 The Phase 2 hack-audit callback (audit of held-out evaluation, best-checkpoint rollback, live guard switches) is
 archived in archive/controller/ (CLEAN6): no live run attached it. The held-out curve is train_rl --heldout (TRL's own
@@ -8,10 +9,12 @@ evaluation, logged to rl.json).
 
 References:
 - transformers TrainerCallback / TrainerControl: https://huggingface.co/docs/transformers/main_classes/callback
+- Newey-West HAC standard error (Bartlett weights): Newey & West 1987, https://doi.org/10.2307/1913610
 """
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 from transformers import TrainerCallback
 
@@ -137,3 +140,53 @@ class NoCkptLayers(TrainerCallback):
             raise ValueError(f"--no-ckpt-layers {self.k}: needs 1..{len(layers)} checkpointable decoder layers")
         for layer in list(layers)[-self.k:]:
             layer.gradient_checkpointing = False
+
+
+def slope_nw(y, lag: int = 5) -> tuple[float, float]:
+    """(least-squares slope of y over its index, its Newey-West standard error with Bartlett weights up to lag)."""
+    y = np.asarray(y, np.float64)
+    x = np.arange(y.size) - (y.size - 1) / 2
+    sxx = float(x @ x)
+    b = float(x @ (y - y.mean())) / sxx
+    u = x * (y - y.mean() - b * x)
+    s = float(u @ u) + 2 * sum((1 - k / (lag + 1)) * float(u[k:] @ u[:-k]) for k in range(1, lag + 1))
+    return b, float(np.sqrt(max(s, 0.0))) / sxx
+
+
+class LocGuard(TrainerCallback):
+    """Reward v5 run guard (train_rl --reward v5): the model learns to move outlines toward the nodule without
+    hitting it. Per logged training step it takes the mean over the off-centre kinds (shifted, rescaled) of
+    kind/<k>/loc and kind/<k>/iou_tc. At the end of every block of `window` such steps it tests the block: (a) the
+    location slope has t > 3, (b) the upper one-sided 95 % bound of the IoU_tc slope is < 0, both with Newey-West
+    standard errors (lag 5; per-step means are autocorrelated). It stops and saves when two consecutive blocks
+    pass, so never before 2 x window steps. Once tripped it stays tripped."""
+
+    KINDS = ("shifted", "rescaled")
+
+    def __init__(self, window: int = 50, lag: int = 5):
+        self.window, self.lag = window, lag
+        self.loc: list[float] = []
+        self.iou: list[float] = []
+        self.passed: list[bool] = []
+        self.tripped = False
+
+    def block(self, loc, iou) -> bool:
+        b, se = slope_nw(loc, self.lag)
+        c, se_c = slope_nw(iou, self.lag)
+        return bool(se > 0 and b / se > 3 and c + 1.645 * se_c < 0)
+
+    def add(self, loc: float, iou: float) -> bool:
+        """Record one step's off-centre means; True once the guard has tripped."""
+        self.loc.append(loc)
+        self.iou.append(iou)
+        if len(self.loc) % self.window == 0:
+            w = slice(-self.window, None)
+            self.passed.append(self.block(self.loc[w], self.iou[w]))
+            self.tripped = self.tripped or self.passed[-2:] == [True, True]
+        return self.tripped
+
+    def on_log(self, args, state, control, logs=None, **kw):
+        keys = [k for k in self.KINDS if f"kind/{k}/loc" in (logs or {})]
+        if keys and self.add(float(np.mean([logs[f"kind/{k}/loc"] for k in keys])),
+                             float(np.mean([logs[f"kind/{k}/iou_tc"] for k in keys]))):
+            control.should_training_stop = control.should_save = True

@@ -45,9 +45,44 @@ class RewardV4:
     group: int = 8  # G, rollouts per prompt
     drop_spread: float = 1e-2  # groups whose terms all span less than this (and one topology answer) get 0
     iou_gate: float = 0.5  # a rater topology counts only with IoU_tc >= this
+    name: str = "reward_v4"
 
 
 REWARD_V4 = RewardV4()
+
+
+@dataclass(frozen=True)
+class RewardV5:
+    """Reward v5 (Implementation.md B3.3): R = legal (IoU_tc + alpha_loc loc + w_f5 F5 + w_area g_area) + c_topo
+    r_topo, RLOO advantages (advantages_v5). alpha_loc < miss_iou keeps a hit strictly above a miss with full
+    location for equal F5 and g_area (math-stats notes s11 item 2: at alpha_loc = miss_iou they tie)."""
+    c_topo: float  # weight of r_topo (reward units); B3.7 rule 8 sets it
+    name: str = "reward_v5"
+    alpha_loc: float = 0.09  # weight of the gated location term; < miss_iou
+    miss_iou: float = 0.1  # a missed answer: IoU_tc below this; the location ramp ends here
+    w_f5: float = 0.1
+    w_area: float = 0.1
+    loc_width: float = 1.0  # Gaussian kernel width in units of the union's radius (B3.7 rule 5)
+    area_gate: bool = False  # True scales the area term by min(1, IoU_tc / miss_iou) (B3.7 rule 4)
+    lam: float = 0.5
+    eps: float = 0.1
+    group: int = 8
+    drop_spread: float = 1e-2
+    iou_gate: float = 0.5
+
+    def __post_init__(self):
+        if self.alpha_loc >= self.miss_iou:
+            raise ValueError(f"alpha_loc {self.alpha_loc} must be < miss_iou {self.miss_iou}: a miss with full "
+                             f"location would tie or beat a hit at IoU_tc = miss_iou")
+
+
+REWARD_V5 = RewardV5(c_topo=1.0)  # provisional c_topo (c * eps >= a 0.1 margin) until the B3.7 lab round
+REWARDS = {"v4": REWARD_V4, "v5": REWARD_V5}  # train_rl --reward
+
+
+def reward_fingerprint(spec) -> str:
+    """SHA-256 of a reward spec's constants (rl.json provenance)."""
+    return hashlib.sha256(repr(astuple(spec)).encode()).hexdigest()
 
 
 def fingerprint() -> str:

@@ -71,28 +71,30 @@ def candidates(sel: dict) -> list[str]:
     return [sel["selected"]] + [n for _, n in earlier[-1:]]
 
 
-def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None, calls=(), **over):
+def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None, calls=(), reward=None, **over):
     """(trainer, processor, lr): FastGRPO (or, with a.plain, TRL's GRPOTrainer) on ckpt with configs.grpo_config,
     the model's GRPO sampling, the probe LR (LoRA or full FT; a.lr overrides when set), logging every step, then
     `over` and a.grpo's JSON overrides. check(config) runs before the model loads (train_rl's sampler guards); calls:
-    more callbacks; eval_dataset: rows of the view a.heldout (its caches resolve first). Shared by the G-probe and
-    the full run (train_rl)."""
+    more callbacks; reward: the reward spec (objdel.reward.REWARDS; None: reward v4); eval_dataset: rows of the view
+    a.heldout (its caches resolve first). Shared by the G-probe and the full run (train_rl)."""
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
+    from objdel.reward import REWARD_V4
     from objdel.train import callbacks, configs, fast, rewards, serve, vllm_sync
 
     peft = configs.lora(a.model)
     lr = getattr(a, "lr", None) or configs.rl_lr(a.model)
     over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
-    cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
+    reward = reward or REWARD_V4
+    cfg = configs.grpo_config(a.model, str(a.out / "trainer"), reward=reward, **over)
     if check:
         check(cfg)
     model = AutoModelForImageTextToText.from_pretrained(ckpt)
     proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
     roots = [a.train] if eval_dataset is None else [a.heldout, a.train]
-    funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc)).funcs()
+    funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc), spec=reward).funcs()
     cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
     win = getattr(a, "profile_window", None)  # train_rl --profile-window S E: NVTX steps and the nsys capture window
     calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])  # raises on S < 2 (TraceStep's wait < 0)
