@@ -262,3 +262,42 @@ def test_vastai_pinned_in_runbook_and_not_a_project_dependency():
     assert "uv tool install vastai==1.11.0" in (ROOT / "docs/runbooks/gpu-run.md").read_text()
     deps = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     assert not any("vastai" in d for d in deps["dependencies"] + sum(deps["optional-dependencies"].values(), []))
+
+
+# --- CLEAN14: the library keep-list ADR ------------------------------------------------------------------------------
+
+ADR_DIR = ROOT / "docs/architecture/decisions"
+ADR_HEADINGS = ["Context", "Decision", "Options considered", "Trade-off analysis", "Consequences", "Action items"]
+
+
+def _norm(name: str) -> str:  # PEP 503
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _adr_sections(text: str) -> dict[str, str]:
+    parts = re.split(r"^### (KEEP|DEFERRED|NOT ADOPTED)\s*$", text, flags=re.M)
+    return {parts[i]: re.split(r"^#{1,2} ", parts[i + 1], flags=re.M)[0] for i in range(1, len(parts), 2)}
+
+
+def _first_names(section: str) -> list[str]:  # first backticked token of each bullet
+    return [_norm(m) for m in re.findall(r"^- `([^`]+)`", section, flags=re.M)]
+
+
+def test_library_keep_list_adr_matches_pyproject():
+    (path,) = ADR_DIR.glob("0021-*.md")
+    text = path.read_text()
+    assert text.startswith("# ADR-0021:")
+    for h in ["Status", "Date", "Deciders"]:
+        assert f"**{h}:**" in text
+    for h in ADR_HEADINGS:
+        assert re.search(rf"^## {h}$", text, flags=re.M), h
+    sec = _adr_sections(text)
+    assert set(sec) == {"KEEP", "DEFERRED", "NOT ADOPTED"}
+    names = {k: _first_names(v) for k, v in sec.items()}
+    flat = sum(names.values(), [])
+    assert len(flat) == len(set(flat)) and all(names.values())  # one section per library
+    deps = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    declared = {_norm(re.split(r"[<>=!~\[ ;]", d)[0]) for d in deps["dependencies"] + sum(deps["optional-dependencies"].values(), [])}
+    assert not declared & set(names["NOT ADOPTED"])
+    assert all(("Trigger:" in b or re.search(r"phase [A-Z]", b)) for b in re.split(r"^- ", sec["DEFERRED"], flags=re.M)[1:])
+    assert path.name in (ADR_DIR / "README.md").read_text()

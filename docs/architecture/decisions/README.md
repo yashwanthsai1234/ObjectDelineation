@@ -21,6 +21,7 @@ Record a decision only if it is hard to reverse, surprising without context, and
 | [0009](0009-vast-ai-north-america-and-preflight.md) | Rent from North American Vast AI hosts only. Preflight first | 2026-11-01 | Accepted |
 | [0010](0010-compact-json-grammar-and-strict-parser.md) | Compact JSON on a 0-1000 grid with a strict parser | 2026-10-19 | Accepted |
 | [0011](0011-lora-weight-sync-without-merging.md) | Push LoRA weights to vLLM as W + delta, never merged in place | 2026-11-08 | Accepted |
+| [0021](0021-library-keep-list.md) | Keep our own parser, store, frame, metrics and Vast policy. Adopt no new framework | 2026-11-09 | Accepted |
 
 ## How the decisions fit together
 
