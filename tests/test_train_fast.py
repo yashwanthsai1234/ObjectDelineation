@@ -4,6 +4,7 @@ The reference for every equality test is TRL 1.17's own `_get_per_token_logps_an
 run on a tiny random Qwen3-VL (CPU, fp32) with TRL's fused LM head.
 """
 
+import collections
 import contextlib
 import json
 import math
@@ -1308,3 +1309,56 @@ def test_log_by_prompt_adds_the_per_prompt_rewards_to_train_logs_only(monkeypatc
     t.model.training = False
     t.log({})
     assert seen == [{}, {"rewards/iou_tc/by_prompt": [0.5, 0.25]}, {}]
+
+
+def capped_trainer(caps):
+    """vllm_trainer with the runaway cap on (train_rl --runaway-cap), its engine recording the sampling params."""
+    t, _ = vllm_trainer(expand=1)
+    t.runaway_cap = True
+    t.rows = [{"cap": c} for c in caps] if caps is not None else [{}] * 2
+    seen, llm = [], t.vllm_generation.llm
+    generate = llm.generate
+    llm.generate = lambda prompts, sampling_params=None, **kw: seen.append(sampling_params) or generate(prompts, **kw)
+    fast.FastGRPO.patch_vllm_prompts(t)
+    return t, seen
+
+
+def test_runaway_cap_gives_each_prompt_its_own_max_tokens():
+    class Params:
+        def __init__(self, max_tokens):
+            self.max_tokens = max_tokens
+
+        def clone(self):
+            return Params(self.max_tokens)
+
+    t, seen = capped_trainer([5, 9])
+    prompts = [{"prompt_token_ids": [START, END]}] * 2
+    base = Params(1536)
+    t.vllm_generation.llm.generate(prompts, sampling_params=base)
+    assert [p.max_tokens for p in seen[0]] == [5, 9] and base.max_tokens == 1536
+    t.rows = [{"cap": 1}]
+    with pytest.raises(ValueError, match="1 caps for 2 prompts"):
+        t.vllm_generation.llm.generate(prompts, sampling_params=base)
+    t.rows = None  # g_probe samples outside a generation batch: the global limit stays
+    t.vllm_generation.llm.generate(prompts, sampling_params=base)
+    assert seen[1] is base
+
+
+def test_capped_share_counts_answers_that_reached_their_cap():
+    t = object.__new__(fast.FastGRPO)
+    t.runaway_cap, t._metrics = True, {"train": collections.defaultdict(list)}
+    t.model = type("M", (), {"training": True})()
+    t.rows = [{"cap": 3}, {"cap": 3}, {"cap": 4}, {"cap": 2}]
+    t.log_capped([[1, 2, 3], [1], [1, 2, 3, 4], [1, 2]])
+    assert t._metrics["train"]["completions/capped_share"] == [0.75]
+
+
+def test_beta_zero_runs_only_the_update_forward(monkeypatch, tmp_path):
+    """C8: beta 0 loads no reference adapter and runs no reference pass; with one generation per step the old-logprob
+    pass is skipped too (C10): one forward per update micro-batch (8 rows, micro-batch 8: one) and nothing else."""
+    calls = []
+    real = fast.FastGRPO._get_per_token_logps_and_entropies
+    monkeypatch.setattr(fast.FastGRPO, "_get_per_token_logps_and_entropies",
+                        lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
+    t = tiny_loop_vllm_fake(monkeypatch, tmp_path, steps=2)
+    assert t.args.beta == 0.0 and len(calls) == 2

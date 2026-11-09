@@ -5,10 +5,18 @@ token counted (the sft_rows rule). A capped answer is cut mid-text: it is unpars
 advantage, so `--runaway-cap` needs mask_truncated_completions=False (train_rl.check_flags)."""
 import math
 
+MARGIN = 64  # tokens added to factor x T_i (the first value to test, runaway_cut step 1)
+
 
 def outline_tokens(tokens_of, texts) -> int:
     """T_i: the longest target in tokens, end token counted; tokens_of(text) counts none (None targets are skipped)."""
     return max(tokens_of(t) + 1 for t in texts if t is not None)
+
+
+def row_caps(keys, records, tokens_of, limit: int, factor: float, margin: int) -> list[int]:
+    """The cap of each RL row (by its key = the record's item_id; a view has its own record and targets)."""
+    outline = {r["item_id"]: outline_tokens(tokens_of, r["targets"]) for r in records}
+    return runaway_caps([outline[k] for k in keys], limit, factor, margin)
 
 
 def runaway_caps(target_tokens, limit: int, factor: float, margin: int) -> list[int]:

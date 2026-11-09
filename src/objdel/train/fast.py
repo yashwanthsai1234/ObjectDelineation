@@ -29,7 +29,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
-from objdel.train import nvtx, trl_adapter, vllm_requests
+from objdel.train import nvtx, runaway, trl_adapter, vllm_requests
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -839,6 +839,7 @@ class FastGRPO(FastForward, GRPOTrainer):
     group_requests = False  # C6, train_rl --group-requests: vLLM gets one n = G request per prompt (vllm_requests)
     opsm_watch = None  # B2.4 rule 4: callbacks.OpsmDelta, fed the train-mode per-sequence (seq_kl, advantage) rows
     log_by_prompt = False  # B2.3: train logs also hold rewards/iou_tc/by_prompt (one mean per prompt of the step)
+    runaway_cap = False  # C11, train_rl --runaway-cap: max_tokens per prompt from the rows' `cap` (runaway)
 
     def __init__(self, *args, **kwargs):
         trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
@@ -1050,7 +1051,15 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.meta = row_meta(out[0], out[1], image_ids(self.rows), self.num_generations,
                                  self.mask_truncated_completions, eos_and_pad)  # fmt: skip
         self.prefetch_rewards(out[3], out[1])
+        self.log_capped(out[1])
         return out
+
+    def log_capped(self, completion_ids):
+        """C11: completions/capped_share, the share of this batch's answers that reached their row's cap."""
+        if self.runaway_cap and self.rows is not None:
+            hit = [len(ids) >= r["cap"] for ids, r in zip(completion_ids, self.rows, strict=True)]
+            self._metrics["train" if self.model.training else "eval"]["completions/capped_share"].append(
+                sum(hit) / len(hit))
 
     def prefetch_rewards(self, completions, completion_ids):
         """Start scoring (objdel.train.rewards.TRLReward.prefetch) on the answers vLLM just returned, with the
@@ -1148,6 +1157,17 @@ class FastGRPO(FastForward, GRPOTrainer):
 
         one_pad.one_pad = True
         llm.generate = one_pad
+        if self.runaway_cap:  # C11: the generation batch's rows hold the caps; outside one (g_probe) the limit stays
+
+            def capped(prompts, *args, sampling_params=None, **kwargs):
+                if self.rows is not None:
+                    if len(self.rows) != len(prompts):
+                        raise ValueError(f"{len(self.rows)} caps for {len(prompts)} prompts")
+                    sampling_params = runaway.per_row_params(sampling_params, [r["cap"] for r in self.rows])
+                return one_pad(prompts, *args, sampling_params=sampling_params, **kwargs)
+
+            capped.one_pad = True
+            llm.generate = capped
         if self.group_requests:  # C6: outside one_pad, so its check compares the 32 sent prompts
 
             def by_group(prompts, *args, **kwargs):
