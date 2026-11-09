@@ -3725,15 +3725,16 @@ order: data (B1), numbers (B2), reward (B3).
    | Split | patients / items | all images IoU | misses | offset < 0.15: n, IoU | offset > 0.3: n, IoU, misses |
    |---|---|---|---|---|---|
    | val (all) | 78 / 1,084 | 0.618 | 12.6 % | 206, 0.751 | 406, 0.503, 27.3 % |
-   | val-shape (parity rule) | 40 / 449 | 0.645 | 11.6 % | 70, 0.789 | 189, 0.543, 22.2 % |
-   | val-select (parity rule) | 38 / 635 | 0.599 | 13.4 % | 136, 0.732 | 217, 0.469, 31.8 % |
+   | val-shape (B1.0 rule, s = 78) | 40 / 533 | 0.561 | 15.0 % | 87, 0.697 | 202, 0.443, 31.2 % |
+   | val-select (B1.0 rule, s = 78) | 38 / 551 | 0.673 | 10.3 % | 119, 0.791 | 204, 0.563, 23.5 % |
    | test | 158 / 2,200 | 0.645 | 10.8 % | 375, 0.751 | 807, 0.552, 22.2 % |
 
    [measured: runs/r5/eval/eval_{val,test}/final_eval.json and items.jsonl joined with
    docs/implementation2.0/notes/b1_out/geom.json (not kept in the repo: 9.1 MB; DOC1 copies only `neardup.json` and
-   `shacheck.json` from that folder); val halves: docs/implementation2.0/notes/b_rev/valsplit.json, script
-   valsplit.py beside it.] The val halves will be re-dealt by a stratified rule (B1.0); B1.0 re-measures the two half
-   rows. The test row is kept as the record of the diagnosis. From 2026-11-08 every design number uses train or val
+   `shacheck.json` from that folder); val halves: `docs/reference/val_halves.json` (B1.0), offsets recomputed with
+   b1_geometry.py's rule on the val shifted windows (all 1,084 windows equal the view's offset and side; the val (all)
+   row reproduces exactly) [measured: B1.0 re-measure, 2026-11-09].] The parity rule of revision 2 gave val-shape
+   40 / 449, 0.645 and val-select 38 / 635, 0.599 [measured: notes/b_rev/valsplit.json]. The test row is kept as the record of the diagnosis. From 2026-11-08 every design number uses train or val
    only (B.6.2, Limitations).
 3. Today's fix (`--train-views`, 24,624 rows) still misses the target law. The 3-view mix has offset median 0.181
    against 0.257 on val (all). Only 47.2 % of its rows have offset above 0.2 (val 68.4 %). Total variation distance
