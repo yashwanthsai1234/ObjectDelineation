@@ -55,7 +55,7 @@ CARDS = {
     "A100_SXM4": {"ram": (79, 82), "ceiling": 1.80},
 }
 CPU_RAM = {"lidc": 32, "riga": 48}  # GB; RIGA caches ~4.5 GB RSS per scoring process (B4 §1)
-ALARM, HARD_STOP = 10.0, 17.5  # G10, USD spent in Phase 2 (owner 2026-11-07: full RL with a 10 h cap)
+ALARM, HARD_STOP = 10.0, 19.9  # G10, USD spent in Phase 2: $16.90 at plan start + the approved $3.00 (2026-11-09)
 # BK4-18: $/GB ceiling, up and down (> 2x the A3 snapshot medians of the five cards, $4-13.65/TB; unit UNVERIFIED until
 # V0). Estimate: image 7.5 GB + bundle 2 GB + model downloads once; checkpoint pulls of 3-5 GB per 20 min (§4.4).
 INET_CEIL, DOWN_GB, UP_GB_PER_H = 0.03, 15, 6
@@ -67,6 +67,9 @@ SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
 IMPORT_CHECK = "import objdel._gpucheck, experiments.phase1.reward_gates, tests.oracles.reward_harness"
+# the CLIs the bundle must import (test_bundle_imports_standalone)
+LIVE_CLIS = ("experiments.phase2.train_rl", "experiments.phase2.g_probe", "experiments.phase2.select_ckpt",
+             "experiments.phase2.final_eval")  # fmt: skip
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
 # never closes a run younger than this as vanished (it may not be listed yet). PULL_S: added to --cap-hours, as the
 # watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min.
@@ -305,6 +308,17 @@ def cmd_offers(a) -> None:
     print(f"picked {o['id']}")
 
 
+def launch_refusal(offer: dict, cap_hours: float) -> str:
+    """Why this offer may not launch (empty when it may): committed spend + the worst case to the deadline > HARD_STOP."""
+    now = time.time()
+    bw = {k: offer[k] for k in ("inet_up_cost", "inet_down_cost")}
+    run = {"dph": offer["dph_total"], **bw, "started": now, "deadline": now + int(cap_hours * 3600) + PULL_S}
+    committed, worst = spend(committed=True), accrued(run, run["deadline"])
+    if committed + worst > HARD_STOP:
+        return f"hard stop: ${committed:.2f} committed + ${worst:.2f} worst case > ${HARD_STOP} (G10)"
+    return ""
+
+
 def cmd_launch(a) -> None:
     if not RUN_ID_RE.fullmatch(a.run_id):
         die(f"run_id must match {RUN_ID_RE.pattern}")
@@ -321,9 +335,9 @@ def cmd_launch(a) -> None:
     cap_s, now = int(a.cap_hours * 3600) + PULL_S, time.time()
     bw = {k: o[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"instance": None, "offer": a.offer, "dph": o["dph_total"], **bw, "started": now, "deadline": now + cap_s}
+    if why := launch_refusal(o, a.cap_hours):
+        die(why)
     committed, worst = spend(committed=True), accrued(run, run["deadline"])
-    if committed + worst > HARD_STOP:
-        die(f"hard stop: ${committed:.2f} committed + ${worst:.2f} worst case > ${HARD_STOP} (G10)")
     if committed + worst >= ALARM and not a.owner_approved:
         die(f"alarm: ${committed:.2f} committed + ${worst:.2f} worst case >= ${ALARM}; pass --owner-approved only "
             "with the owner's written approval (G10, §4.6)")  # fmt: skip
@@ -372,12 +386,13 @@ def get_run(run_id: str) -> dict:
 
 
 def code_files() -> list[str]:
-    """The tracked code snapshot, without data, docs, lab or results dirs, or RIGA-derived tables (D16, BK4-13).
+    """The code snapshot (tracked and new files), without the roots data/, docs/, archive/ and .claude/, lab or results
+    dirs, or RIGA-derived tables (D16, BK4-13); only files on disk (rsync --files-from aborts on a missing one).
     tests/ ships: k3_harness -> phase1.reward_gates -> tests.oracles."""
     git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole (V1)
     files = subprocess.run(git, cwd=ROOT, capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
-    drop = re.compile(r"^(data|docs)/|^experiments/[^/]+/(lab|results)/|riga[^/]*\.(csv|jsonl?)$", re.I)
-    files = [f for f in files if not drop.search(f)]
+    drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/|riga[^/]*\.(csv|jsonl?)$", re.I)
+    files = [f for f in dict.fromkeys(files) if not drop.search(f) and (ROOT / f).is_file()]
     if not any(f.startswith("tests/oracles/") for f in files):
         die("tests/oracles missing from the code snapshot")
     return files
