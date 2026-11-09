@@ -231,6 +231,11 @@ All in `docs/research/reports/`:
 - [RL speed stack on RTX 5090](docs/research/reports/RL%20speed%20stack%20on%20RTX%205090.md): fixing the GRPO stack before renting.
 - [Code performance audit 2026-11-06](docs/research/reports/Code%20performance%20audit%202026-11-06.md): training, evaluation and checker paths.
 
+## Documentation
+
+Engineering documentation is in [docs/README.md](docs/README.md): getting started, architecture and decision records,
+reference pages (package, CUDA engine, reward, output format, data, configs), guides, runbooks, testing, glossary and changelog.
+
 ## 📄 Licence and data
 
 The code is under the [MIT licence](LICENSE). The licence covers the code only, not the datasets.
