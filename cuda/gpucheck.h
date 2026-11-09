@@ -164,6 +164,7 @@ struct BuiltTables {                     // per cache of an add_tables_from_rate
 struct Scores {                // per object (objdel.reward.score: ObjectTerms), nothing per pixel
   std::vector<i64> defects;    // (n, 13) validate totals (score_polygons; zero for score_masks)
   std::vector<i64> area;       // pixels of the mask
+  std::vector<i64> sum_x, sum_y;  // sums of the column and row indices of its pixels (the centroid times the area)
   std::vector<double> iou_tc, f5, g_area, topo_freq;
   std::vector<i64> sig_start;  // (n + 1): object s's signature = sig[sig_start[s], sig_start[s + 1])
   std::vector<i32> sig;        // holes per component of the size-filtered mask, descending

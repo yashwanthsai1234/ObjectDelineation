@@ -2273,8 +2273,8 @@ std::vector<i32> read_sigs(Lane& L, const Crops& c, i64 total) {
 }
 
 // ---------------------------------------------------------------- terms
-constexpr int kPart = 5;  // row partials after the k rater intersections: vote intersection, spill count and sum, miss
-                          // count and sum (sums in units of 2^-23)
+constexpr int kPart = 7;  // row partials after the k rater intersections: vote intersection, spill count and sum, miss
+                          // count and sum (sums in units of 2^-23), column and row index sums of the mask's pixels
 
 struct Obj {  // one object of a scoring call: its tables and its row partials (t.H rows of t.k + kPart)
   TableView t;
@@ -2282,7 +2282,7 @@ struct Obj {  // one object of a scoring call: its tables and its row partials (
 };
 
 struct ObjOut {  // copied back per object (8-byte fields only: no padding for initcheck to flag)
-  i64 area, ncomp, relabelled;
+  i64 area, ncomp, relabelled, sum_x, sum_y;
   double iou_tc, f5, g_area, topo_freq;
 };
 
@@ -2295,7 +2295,9 @@ size_t stage_out_bound() {
 HD inline i64 units(float d) { return i64(double(d) * 8388608.0); }  // d in units of 2^-23: exact for 0 and d >= 1
 
 // Per frame row: intersections with each rater and the vote, spill (mask outside the union) and core miss (core outside
-// the mask) pixel counts and distance sums. The bits past W are 0 in every plane and mask.
+// the mask) pixel counts and distance sums, and the centroid sums: sx = column indices of the mask's pixels, per word w
+// in closed form (bit b = column 32 w + b, the sum of b over set bits is sum_k 2^k popc(m & bit k of the index set)),
+// sy = y x pixels. The bits past W are 0 in every plane and mask.
 struct ScoreRows {
   const Obj* obj;
   const Plane* pl;
@@ -2316,9 +2318,13 @@ struct ScoreRows {
       for (i64 w = 0; w < wpr; ++w) s += popc(m[w] & r[w]);
       out[j] = s;
     }
-    i64 vote = 0, spill_n = 0, spill = 0, miss_n = 0, miss = 0;
+    i64 vote = 0, spill_n = 0, spill = 0, miss_n = 0, miss = 0, sx = 0, px = 0;
     const float* d = t.dist + y * t.W;
     for (i64 w = 0; w < wpr; ++w) {
+      const i64 n = popc(m[w]);
+      sx += 32 * w * n + popc(m[w] & 0xAAAAAAAAu) + 2 * popc(m[w] & 0xCCCCCCCCu) + 4 * popc(m[w] & 0xF0F0F0F0u) +
+            8 * popc(m[w] & 0xFF00FF00u) + 16 * popc(m[w] & 0xFFFF0000u);
+      px += n;
       vote += popc(m[w] & t.vote[y * wpr + w]);
       u32 s = m[w] & ~t.uni[y * wpr + w], c = t.core[y * wpr + w] & ~m[w];
       spill_n += popc(s), miss_n += popc(c);
@@ -2326,7 +2332,7 @@ struct ScoreRows {
       for (; c; c &= c - 1) miss += units(d[32 * w + ctz(c)]);
     }
     i64* f = out + t.k;
-    f[0] = vote, f[1] = spill_n, f[2] = spill, f[3] = miss_n, f[4] = miss;
+    f[0] = vote, f[1] = spill_n, f[2] = spill, f[3] = miss_n, f[4] = miss, f[5] = sx, f[6] = y * px;
   }
 };
 
@@ -2360,11 +2366,11 @@ struct ObjTerms {
     const i32 m = c.ncomp[o], F = t.k + kPart;
     const i32* s = c.bg + p.crop;
     const i64* rows = parts + b.part;
-    i64 vote = 0, spill_n = 0, miss_n = 0;
+    i64 vote = 0, spill_n = 0, miss_n = 0, sx = 0, sy = 0;
     i128 spill = 0, miss = 0;
     for (i32 y = 0; y < t.H; ++y) {
       const i64* f = rows + i64(y) * F + t.k;
-      vote += f[0], spill_n += f[1], spill += f[2], miss_n += f[3], miss += f[4];
+      vote += f[0], spill_n += f[1], spill += f[2], miss_n += f[3], miss += f[4], sx += f[5], sy += f[6];
     }
     i32 same = 0, voters = 0;
     double best = 0;
@@ -2386,7 +2392,7 @@ struct ObjTerms {
       const double up = double(hi) / double(p.area), down = lo > 0 ? double(p.area) / double(lo) : 1.0;
       g = (up < 1.0 ? up : 1.0) * (down < 1.0 ? down : 1.0);
     }
-    out[o] = ObjOut{p.area, m, c.relabelled[o], same ? best : iou(vote, p.area, t.n_vote),
+    out[o] = ObjOut{p.area, m, c.relabelled[o], sx, sy, same ? best : iou(vote, p.area, t.n_vote),
                     1.0 / (1.0 + (2.0 * d / double(t.perimeter)) / (t.t5 * t.t5)), g, double(same) / double(voters)};
   }
 };
@@ -2440,7 +2446,7 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
   const ObjOut* r = ptr<ObjOut>(ho, 0);
   for (i64 o = 0; o < n; ++o) {
     counters().label_pairs += r[o].relabelled;
-    out.area.push_back(r[o].area);
+    out.area.push_back(r[o].area), out.sum_x.push_back(r[o].sum_x), out.sum_y.push_back(r[o].sum_y);
     out.iou_tc.push_back(r[o].iou_tc), out.f5.push_back(r[o].f5), out.g_area.push_back(r[o].g_area);
     out.topo_freq.push_back(r[o].topo_freq);
   }

@@ -99,6 +99,8 @@ nb::dict scores_dict(gpucheck::Scores&& r, i64 n) {
   const size_t S = r.sig.size();
   d["defects"] = to_numpy(std::move(r.defects), {size_t(n), size_t(gpucheck::kNumDefects)});
   d["area"] = to_numpy(std::move(r.area), {size_t(n)});
+  d["sum_x"] = to_numpy(std::move(r.sum_x), {size_t(n)});
+  d["sum_y"] = to_numpy(std::move(r.sum_y), {size_t(n)});
   d["iou_tc"] = to_numpy(std::move(r.iou_tc), {size_t(n)});
   d["f5"] = to_numpy(std::move(r.f5), {size_t(n)});
   d["g_area"] = to_numpy(std::move(r.g_area), {size_t(n)});

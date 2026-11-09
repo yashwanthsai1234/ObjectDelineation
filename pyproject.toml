@@ -69,6 +69,7 @@ markers = [
     "slow: long-running exhaustive runs (deselect with -m \"not slow\")",
     "data: needs data/fixtures or data/store (skipped when absent)",
     "gpu: needs the CUDA build on a GPU box (skipped on the CPU build)",
+    "sanitizer: runs under compute-sanitizer in make gpu-check (small fixed corpus)",
 ]
 
 [tool.coverage.run]
