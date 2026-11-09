@@ -1260,3 +1260,54 @@ def test_tokenize_prompts_with_prompt_memo_gives_trls_prompt_ids_tokenizing_each
     assert [list(x) for x in ids] == [list(x) for x in want_ids] and fields == {}
     assert all(a[0] is b[0] for a, b in zip(images, want_images, strict=True))
     assert calls == [1] * 4  # 2 texts x 2 image sizes
+
+
+def meta_for(mask, T, G):
+    """The RowMeta host lists of a test batch: real prompt and answer tokens, image and group per G rows."""
+    n, P = mask.size(0), mask.size(1) - T
+    grp = np.arange(n, dtype=np.int32) // G
+    return fast.RowMeta(mask[:, :P].sum(1).numpy().astype(np.int32), mask[:, P:].sum(1).numpy().astype(np.int32),
+                        grp, grp)  # fmt: skip
+
+
+def no_device_reads(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("device read under host_meta")
+
+    monkeypatch.setattr(fast, "window", boom)
+    monkeypatch.setattr(fast, "prompt_groups", boom)
+
+
+@pytest.mark.parametrize("batch_size", [8, 4, 3])
+def test_host_meta_forward_takes_windows_runs_and_lengths_from_the_host(monkeypatch, batch_size):
+    """C4 step 3: with host_meta the chunk windows, packed runs and lengths come from RowMeta, same logprobs."""
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=batch_size, **kw)
+    no_device_reads(monkeypatch)
+    for t in (trainer(Fast, buckets=(4, 8, 12, 16)), shared(m)):
+        lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=batch_size,
+                                                        host_meta=meta_for(mask, T, 4), **kw)  # fmt: skip
+        real = mask[:, -T:].bool()
+        torch.testing.assert_close(lp[real], ref[real], atol=1e-5, rtol=1e-5)
+        assert (lp[~real] == 0).all()
+
+
+def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch):
+    """C4: _compute_loss reads the micro-batch's host_meta rows (moved by TRL's split and shuffle) for its forward;
+    without them under --host-meta it raises; the old and reference passes get none."""
+    seen = []
+    monkeypatch.setattr(fast.FastForward, "_get_per_token_logps_and_entropies",
+                        lambda self, *a, **k: seen.append(k.get("host_meta")) or (None, None, None))
+    monkeypatch.setattr(GRPOTrainer, "_compute_loss",
+                        lambda self, model, inputs: self._get_per_token_logps_and_entropies(model, None, None, 1))
+    t = trainer(fast.FastGRPO, host_meta=True, use_vllm=False)
+    rows = [fast.MetaRow(5, 3, 0, 0), fast.MetaRow(4, 0, 1, 1)]
+    t._compute_loss(None, {"host_meta": rows})
+    t._get_per_token_logps_and_entropies(None, None, None, 1)
+    assert fast.host_rows(seen[0]) == rows and seen[1] is None
+    with pytest.raises(KeyError, match="host_meta"):
+        t._compute_loss(None, {})
+    t.host_meta = False
+    t._compute_loss(None, {"host_meta": rows})
+    assert seen[-1] is None

@@ -122,6 +122,15 @@ def window_from_meta(meta: RowMeta, rows, P: int, logits_to_keep: int, buckets=B
     return P + keep - width, keep
 
 
+def meta_runs(meta: RowMeta, rows: slice) -> list[tuple[int, int]] | None:
+    """prompt_groups() of the chunk `rows` from the host: runs of consecutive rows of one group (one prompt and
+    image), or None when no run has two rows."""
+    g = meta.group[rows]
+    cut = [0, *(np.flatnonzero(g[1:] != g[:-1]) + 1).tolist(), len(g)]
+    runs = list(zip(cut[:-1], cut[1:], strict=True))
+    return runs if any(b - a > 1 for a, b in runs) else None
+
+
 def length_order(meta: RowMeta) -> np.ndarray:
     """by_length's order: real prompt + answer tokens, longest first, stable."""
     return np.argsort(-(meta.prompt_len.astype(np.int64) + meta.completion_len), kind="stable")
@@ -186,6 +195,7 @@ class FastForward:
 
     def _get_per_token_logps_and_entropies(self, model, input_ids, attention_mask, logits_to_keep, batch_size=None,
                                            compute_entropy=False, compute_aux_loss=False, **kw):  # fmt: skip
+        meta = kw.pop("host_meta", None)  # C4: the micro-batch's RowMeta (FastGRPO._compute_loss), None elsewhere
         if any(kw.get(k) is not None for k in OTHER_VISION) or (
                 kw.get("pixel_values") is not None and kw.get("image_grid_thw") is None):
             return super()._get_per_token_logps_and_entropies(  # not a grid (Qwen-VL style) model: TRL's path
@@ -206,9 +216,13 @@ class FastForward:
                 k = sum(nimg[s:e])
                 r = sum(rows[img:img + k])
                 pix = per_row(pv[row:row + r], rows[img:img + k], nimg[s:e])
-                runs = prompt_groups(input_ids[s:e, :P], attention_mask[s:e, :P], pix)
-                lengths = torch.cat([attention_mask[s:e, :P].sum(1), attention_mask[s:e, P:].sum(1)]).tolist()
-                plen, lens = lengths[:e - s], lengths[e - s:]
+                if meta is None:
+                    runs = prompt_groups(input_ids[s:e, :P], attention_mask[s:e, :P], pix)
+                    lengths = torch.cat([attention_mask[s:e, :P].sum(1), attention_mask[s:e, P:].sum(1)]).tolist()
+                    plen, lens = lengths[:e - s], lengths[e - s:]
+                else:
+                    runs = meta_runs(meta, slice(s, e))
+                    plen, lens = meta.prompt_len[s:e].tolist(), meta.completion_len[s:e].tolist()
                 if runs is not None and packing_wins(sum(plen) / len(plen), lens, len(runs)):
                     smask = kw["sampling_mask"][s:e] if kw.get("sampling_mask") is not None else None
                     lp, ent = self.packed_chunk(model, input_ids[s:e], P, plen, lens, pos[:, s:e],
@@ -219,7 +233,8 @@ class FastForward:
                     if compute_entropy:
                         ents.append(ent)
                     continue
-            start, keep = window(attention_mask[s:e], logits_to_keep, self.buckets)
+            start, keep = (window(attention_mask[s:e], logits_to_keep, self.buckets) if meta is None
+                           else window_from_meta(meta, slice(s, e), P, logits_to_keep, self.buckets))
             cols = slice(start, P + keep)
             sub = {k: kw[k][s:e, cols] for k in ROW_KEYS if kw.get(k) is not None}
             if kw.get("sampling_mask") is not None:
@@ -808,6 +823,7 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     rows = None  # the generation batch's dataset rows; None outside one (g_probe's step-0 sampling calls _generate)
     loss_inputs = None  # the micro-batch inside _compute_loss (C10: its forward sets the IS ratio)
+    loss_meta = None  # the micro-batch's RowMeta inside _compute_loss under host_meta (C4: its forward reads it)
     is_stats = None  # C10, B2.1: the generation batch's merged is_summary, on the device until `log`
     seq_gaps = []  # B2.1: the step's per-sequence (seq_kl, advantage, valid tokens) rows (train mode), on the device
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
@@ -932,13 +948,17 @@ class FastGRPO(FastForward, GRPOTrainer):
     def _compute_loss(self, model, inputs):
         if "importance_sampling_ratio" not in inputs and self.use_vllm and self.vllm_importance_sampling_correction:
             self.loss_inputs = inputs
+        if self.host_meta:
+            self.loss_meta = meta_of({"host_meta": inputs["host_meta"]})  # KeyError: rows lost their host_meta
         try:
             with nvtx.range("forward"):
                 return super()._compute_loss(model, inputs)
         finally:
-            self.loss_inputs = None
+            self.loss_inputs = self.loss_meta = None
 
     def _get_per_token_logps_and_entropies(self, *args, **kwargs):
+        if self.loss_meta is not None:
+            kwargs["host_meta"] = self.loss_meta
         with nvtx.range("logps"):
             out = super()._get_per_token_logps_and_entropies(*args, **kwargs)
         if self.loss_inputs is not None:
