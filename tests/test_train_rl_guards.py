@@ -313,16 +313,13 @@ SMOKE = {"per_device_train_batch_size": 8, "gradient_accumulation_steps": 1, "pe
 
 @pytest.fixture
 def no_load(monkeypatch):
-    """Model, processor and the fork pool all raise: a refusal must come before each of them (TRL creates the vLLM
-    engine inside the trainer, after the model; the Mac has no vllm)."""
+    """Model and processor both raise: a refusal must come before each of them (TRL creates the vLLM engine inside
+    the trainer, after the model; the Mac has no vllm)."""
     def boom(*a, **k):
         raise AssertionError("loaded before the guards ran")
 
-    from objdel.train import serve
-
     monkeypatch.setattr("transformers.AutoModelForImageTextToText.from_pretrained", boom)
     monkeypatch.setattr("transformers.AutoProcessor.from_pretrained", boom)
-    monkeypatch.setattr(serve, "fork_pool", lambda n, *a: type("P", (), {"shutdown": lambda self: None})())
 
 
 @pytest.mark.parametrize("case,match", [
@@ -342,7 +339,7 @@ def test_refusals_come_before_any_load(prepared, tmp_path, no_load, case, match)
     grpo = SMOKE | ({"num_iterations": 2} if case == "iterations" else {})
     grpo |= {"per_device_train_batch_size": 16} if case == "per_step" else {}
     argv = ["--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "none"), "--train", str(root), "--out",
-            str(tmp_path / "out"), "--steps", "3" if case == "block" else "4", "--procs", "1",
+            str(tmp_path / "out"), "--steps", "3" if case == "block" else "4",
             "--grpo", json.dumps(grpo)]
     argv += [] if case == "noflag" else ["--rows-manifest-sha256", "0" * 64 if case == "sha" else sha]
     with pytest.raises(ValueError, match=match):

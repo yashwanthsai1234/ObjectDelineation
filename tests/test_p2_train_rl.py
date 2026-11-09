@@ -28,7 +28,7 @@ def test_full_rl_saves_resumes_and_leaves_a_merged_tuned_model(tmp_path, synthet
     def run(steps, *extra):
         r = _module("experiments.phase2.train_rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
                     str(tmp_path / "prepared"), "--out", str(out), "--steps", str(steps), "--save-steps", "1",
-                    "--procs", "1", "--grpo", json.dumps(GRPO_SMOKE), *extra, env=env)
+                    "--grpo", json.dumps(GRPO_SMOKE), *extra, env=env)
         assert r.returncode == 0, r.stderr[-4000:]
         return json.loads((out / "rl.json").read_text())
 
@@ -66,7 +66,7 @@ def test_full_rl_runs_with_the_shared_prefix_forward(tmp_path, synthetic_items):
     dataset.prepare(tmp_path / "store", tmp_path / "prepared", procs=1)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
     r = _module("experiments.phase2.train_rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
-                str(tmp_path / "prepared"), "--out", str(out), "--steps", "2", "--save-steps", "100", "--procs", "1",
+                str(tmp_path / "prepared"), "--out", str(out), "--steps", "2", "--save-steps", "100",
                 "--grpo", json.dumps(GRPO_SMOKE), "--shared-prefix", env=env)  # fmt: skip
     assert r.returncode == 0, r.stderr[-4000:]
     doc = json.loads((out / "rl.json").read_text())
@@ -114,7 +114,7 @@ def rows_run(tmp_path, synthetic_items):
 
     def run(out, *flags, train=True):
         log = out.parent / f"{out.name}.{next(n)}.keys"  # one file per call
-        args = ["--model", "qwen3-vl-2b", "--ckpt", str(model), "--out", str(out), "--procs", "1",
+        args = ["--model", "qwen3-vl-2b", "--ckpt", str(model), "--out", str(out),
                 "--grpo", json.dumps(SMOKE), *flags]
         if train:
             args += ["--train", str(root), "--rows-revision", "a" * 40, "--rows-manifest-sha256", sha]
@@ -196,3 +196,127 @@ def test_heldout_curve_logs_eval_iou_and_allmiss(tmp_path, rows_run):
     assert 0 <= doc["eval"][0]["eval/iou_tc"] <= 1 and 0 <= doc["eval"][0]["eval/allmiss_share"] <= 1
     val = ["lidc/1.2.2/n000/z001", "lidc/1.2.2/n000/z004"]
     assert sorted({k for c in calls for k in c if k in val}) == val  # both val RL items were scored
+
+
+# --- CLEAN2: no scoring pool in train_rl; gc.freeze once after the last preload (CT-33 to CT-36) -------------------
+
+OPTIONS = ["-h", "--help", "--model", "--ckpt", "--train", "--out", "--steps", "--save-steps", "--shared-prefix",
+           "--lr", "--resume", "--merge-last", "--rows-revision", "--rows-manifest-sha256", "--budget-usd",
+           "--session-start", "--rate-usd-per-h", "--fixed-usd", "--heldout", "--heldout-items", "--heldout-every",
+           "--procs", "--grpo", "--profile-window", "--trace"]  # pre-CLEAN literal (ap._actions at 08e6455)
+RL_KEYS = ["beta", "budget_stopped", "ckpt", "eval", "final", "log", "lr", "mask_truncated_completions", "model",
+           "numerics", "resumed_from", "rows", "steps", "timing_s", "train_rows"]  # pre-CLEAN literal, same stub
+
+
+@pytest.fixture
+def stub(tmp_path, monkeypatch):
+    """train_rl.main in process with the preload, the trainer and every way to start a process pool stubbed:
+    run(*extra) -> exit code; calls records preload / freeze / train in order."""
+    import concurrent.futures
+    import gc
+    import multiprocessing
+    import multiprocessing.pool
+
+    import experiments.phase2.g_probe as g_probe
+    from experiments.phase2 import train_rl
+    from objdel.train import dataset, serve
+
+    calls = []
+
+    def boom(*a, **k):
+        raise AssertionError("train_rl started a process pool")
+
+    for owner, name in [(multiprocessing, "Pool"), (multiprocessing.pool, "Pool"), (multiprocessing, "get_context"),
+                        (concurrent.futures, "ProcessPoolExecutor"), (os, "fork"), (serve, "fork_pool")]:
+        monkeypatch.setattr(owner, name, boom)
+    monkeypatch.setattr(serve, "preload", lambda root, ds: calls.append("preload"))
+    monkeypatch.setattr(gc, "freeze", lambda: calls.append("freeze"))
+    monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: ["k1", "k2"])
+    monkeypatch.setattr(train_rl, "heldout_rows", lambda view, n: ["h1"])  # val_half lands with L2 (B1.3)
+    saver = SimpleNamespace(save_pretrained=lambda p: None)
+    trainer = SimpleNamespace(train=lambda resume_from_checkpoint=None: calls.append("train"), model=saver,
+                              accelerator=SimpleNamespace(unwrap_model=lambda m: m),
+                              state=SimpleNamespace(global_step=2, log_history=[{"step": 1, "reward": 0.5}]),
+                              args=SimpleNamespace(beta=0.0, mask_truncated_completions=True))
+    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: (trainer, saver, 5e-5))
+    (tmp_path / "root").mkdir()
+    (tmp_path / "root/manifest.json").write_text("{}")
+    base = ["--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "c"), "--out", str(tmp_path / "out")]
+    train = ["--train", str(tmp_path / "root"), "--steps", "2"]
+    return SimpleNamespace(run=lambda *extra: train_rl.main([*base, *extra]), calls=calls, base=base, train=train,
+                           out=tmp_path / "out", main=train_rl.main)
+
+
+@pytest.mark.parametrize("extra", [["--procs", "2"], ["--procs=2"], ["--proc", "2"], ["--pro", "2"], ["--procs"],
+                                   ["-procs", "2"]])
+def test_procs_is_an_argparse_error_before_any_preload(stub, capsys, extra):
+    """CT-33: every spelling of the old pool flag (an abbreviation included) exits 2 before a preload or a freeze."""
+    with pytest.raises(SystemExit) as e:
+        stub.run(*stub.train, *extra)
+    assert e.value.code == 2 and "unrecognized arguments" in capsys.readouterr().err
+    assert stub.calls == []
+
+
+def test_help_has_no_procs_and_keeps_the_other_options(stub, capsys, monkeypatch):
+    """CT-33: --help names no pool; the option list is the pre-CLEAN one minus --procs."""
+    import argparse
+
+    seen, orig = [], argparse.ArgumentParser.parse_args
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args",
+                        lambda self, *a, **k: seen.append(self) or orig(self, *a, **k))
+    with pytest.raises(SystemExit) as e:
+        stub.main(["--help"])
+    out = capsys.readouterr().out
+    assert e.value.code == 0 and "procs" not in out and "scoring workers" not in out
+    assert [s for act in seen[0]._actions for s in act.option_strings] == [o for o in OPTIONS if o != "--procs"]
+
+
+def test_no_pool_and_one_freeze_after_the_last_preload(stub):
+    """CT-34, CT-35, CT-36: no process pool; gc.freeze runs once, after the last preload and before training; rl.json
+    keeps its pre-CLEAN keys."""
+    import gc
+
+    frozen = gc.get_freeze_count()
+    assert stub.run(*stub.train) == 0
+    assert stub.calls == ["preload", "freeze", "train"]
+    with_heldout = stub.calls.clear() or stub.run(*stub.train, "--heldout", str(stub.out.parent / "root"))
+    assert with_heldout == 0 and stub.calls == ["preload", "preload", "freeze", "train"]
+    assert sorted(json.loads((stub.out / "rl.json").read_text())) == RL_KEYS
+    stub.calls.clear()
+    assert stub.run(*stub.train) == 0 and stub.calls.count("freeze") == 1  # each main call freezes once
+    assert gc.get_freeze_count() == frozen
+
+
+def test_no_freeze_on_a_failed_start(stub, monkeypatch):
+    """CT-35 failure paths: a parse error or a failed preload freezes nothing."""
+    from objdel.train import serve
+
+    with pytest.raises(SystemExit):
+        stub.run("--train", "t")  # no --steps
+    def missing(root, ds):
+        raise FileNotFoundError(root)
+    monkeypatch.setattr(serve, "preload", missing)
+    with pytest.raises(FileNotFoundError):
+        stub.run(*stub.train)
+    assert "freeze" not in stub.calls
+
+
+def test_train_rl_source_names_no_pool():
+    """CT-34 static part and the CLEAN-G17 source gate."""
+    import ast
+
+    src = (ROOT / "experiments/phase2/train_rl.py").read_text()
+    names = {n.id for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Name)}
+    names |= {n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute)}
+    assert not names & {"fork_pool", "pool_size", "Pool", "pool"}
+    assert '"--procs"' not in src and src.count("gc.freeze()") == 1
+
+
+def test_no_stale_procs_for_train_rl():
+    """CT-84: no RL plan passes --procs to train_rl; the runbook names the three pool users."""
+    for f in sorted((ROOT / "experiments/phase2/configs").glob("*.yaml")):
+        for line in f.read_text().splitlines():
+            assert not ("train_rl" in line and "--procs" in line), (f.name, line)
+    text = (ROOT / "docs/runbooks/troubleshooting.md").read_text()
+    row = next(x for x in text.splitlines() if "BrokenProcessPool" in x)
+    assert all(m in row for m in ("select_ckpt", "g_probe", "final_eval")) and "train_rl" not in row

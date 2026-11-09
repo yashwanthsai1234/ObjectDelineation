@@ -33,6 +33,7 @@ eval view every --heldout-every steps, 8 answers each; rl.json "eval" holds eval
 <out>/rl.json: steps, LR, numerics, beta, rows provenance, timing and TRL's log.
 """
 import argparse
+import gc
 import hashlib
 import json
 import os
@@ -53,10 +54,8 @@ def _hex(n: int):
 
 
 def parse(argv=None) -> argparse.Namespace:
-    from objdel.train import serve
-
     env = os.environ.get
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     ap.add_argument("--model", required=True, help="configs.MODELS key")
     ap.add_argument("--ckpt", type=Path, required=True, help="the checkpoint to tune (a plain model folder)")
     ap.add_argument("--train", type=Path, help="prepared or rows root with lidc/train.jsonl and caches")
@@ -80,7 +79,6 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--heldout", type=Path, help="eval view for the held-out curve (val-shape items only)")
     ap.add_argument("--heldout-items", type=int, default=64)
     ap.add_argument("--heldout-every", type=int, default=50)
-    ap.add_argument("--procs", type=int, default=serve.pool_size(), help="scoring workers (default: usable CPUs - 1)")
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config")
     ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
                     help="NVTX step ranges and a cudaProfilerApi capture of steps S..E (nsys_capture.sh; S >= 2)")
@@ -224,7 +222,7 @@ def main(argv=None) -> int:
         print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
-    pool = serve.fork_pool(a.procs)  # before the model and CUDA (D14)
+    gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
     over = {"save_strategy": "steps", "save_steps": a.save_steps}
     over |= {"shuffle_dataset": False} if schedule else {}
     over |= {"eval_strategy": "steps", "eval_steps": a.heldout_every, "num_generations_eval": 8} if a.heldout else {}
@@ -235,7 +233,6 @@ def main(argv=None) -> int:
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
     save_final(trainer.accelerator.unwrap_model(trainer.model), proc, a.out)
-    pool.shutdown()
     done, start = trainer.state.global_step, int(Path(last).name.split("-")[1]) if last else 0
     log, cfg = trainer.state.log_history, trainer.args
     rows = schedule and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
