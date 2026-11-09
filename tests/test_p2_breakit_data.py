@@ -410,24 +410,6 @@ def test_view_rows_on_a_riga_view(tmp_path, synthetic_items, D):
         assert img.shape == (spec["side"], spec["side"], 3) and np.array_equal(img, _reference(it, spec))
 
 
-def test_trl_vision_collator_batches_the_lazy_images(bk_views, D):
-    pytest.importorskip("torch")
-    pytest.importorskip("trl")
-    transformers = pytest.importorskip("transformers")
-    try:
-        proc = transformers.AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct",
-                                                          local_files_only=True)
-    except OSError:
-        pytest.skip("SmolVLM-256M processor not in the local HF cache")
-    from trl.trainer.sft_trainer import DataCollatorForVisionLanguageModeling
-    ds = D.view_rows(bk_views[0] / "e1/lidc-train", proc.tokenizer, 1024)
-    assert "image" in next(iter(ds))
-    batch = ds.__getitems__([0, 1, 2])  # the DataLoader path
-    out = DataCollatorForVisionLanguageModeling(proc)(batch)
-    assert out["input_ids"].shape[0] == 3 and out["pixel_values"].shape[0] == 3
-    assert (out["labels"] != -100).any()
-
-
 # ------------------------------------------------------------------------------------------------ bundle
 @pytest.fixture(scope="module")
 def bundled(tmp_path_factory, synthetic_items):

@@ -62,7 +62,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 
     train, val = rows("train"), rows("val")
     funcs, _ = R.TRLReward(D.cache_loader(work / "prep"), R.stop_ids(model, tok)).funcs()
-    args = configs.grpo_config("smolvlm-256m", str(work / "run"), max_steps=2,
+    args = configs.grpo_config("qwen3-vl-2b", str(work / "run"), use_vllm=False, learning_rate=1e-6, max_steps=2,
                                per_device_train_batch_size=G * len(train), gradient_accumulation_steps=1,
                                per_device_eval_batch_size=G * len(val), use_cpu=True, bf16=False,
                                logging_steps=1, save_strategy="no", eval_strategy="steps", eval_steps=1)

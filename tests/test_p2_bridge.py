@@ -37,7 +37,7 @@ def rows(tmp_path):
             for i in (1, 3)]
 
 
-def export(rows, tmp_path, model="smolvlm-256m", **kw):
+def export(rows, tmp_path, model="qwen3-vl-2b", **kw):
     pytest.importorskip("trl")
     from objdel.train import sample
     path = tmp_path / "prompts.jsonl"
@@ -53,9 +53,9 @@ def test_export_schema_kwargs_and_sampling(rows, tmp_path):
     x = lines[0]
     assert (x["id"], x["image"], x["n"]) == (rows[0]["key"], rows[0]["image"], 8)
     assert x["prompt"] == f"<user><image>{PROMPTS['lidc']}<assistant>"
-    assert x["processor_kwargs"] == {"size": {"longest_edge": 512}}  # configs.processor_kwargs minus padding_side
-    assert configs.processor_kwargs("smolvlm-256m", "lidc")["padding_side"] == "left"
-    assert x["sampling"] == configs.sampling("smolvlm-256m") | {"seed": 3, "stop_token_ids": [1, 2]}
+    assert x["processor_kwargs"] == {}  # configs.processor_kwargs minus padding_side
+    assert configs.processor_kwargs("qwen3-vl-2b", "lidc")["padding_side"] == "left"
+    assert x["sampling"] == configs.sampling("qwen3-vl-2b") | {"seed": 3, "stop_token_ids": [1, 2]}
 
 
 def test_export_takes_image_paths_from_a_dataset(rows, tmp_path):
@@ -87,15 +87,12 @@ def test_requests_echo_the_exported_sampling(rows, tmp_path):
     opened = []
     reqs, params = V.requests(lines, SamplingParams, lambda p: opened.append(p) or f"image:{p}")
     assert opened == [r["image"] for r in rows]
-    assert reqs[0] == {"prompt": lines[0]["prompt"], "multi_modal_data": {"image": f"image:{rows[0]['image']}"},
-                       "mm_processor_kwargs": {"size": {"longest_edge": 512}}}
+    assert reqs[0] == {"prompt": lines[0]["prompt"], "multi_modal_data": {"image": f"image:{rows[0]['image']}"}}
     seeds = [V.request_seed(x["sampling"]["seed"], x["id"]) for x in lines]
     assert [p.kw for p in params] == [{"n": 8, **x["sampling"], "seed": s} for x, s in zip(lines, seeds, strict=True)]
     assert seeds[0] != seeds[1] and seeds == [V.request_seed(0, x["id"]) for x in lines]  # per item, reproducible
     assert V.request_seed(1, lines[0]["id"]) != seeds[0] and all(0 <= s < 2**31 for s in seeds)
     assert V.requests(lines, SamplingParams, str, logprobs=True)[1][0].kw["logprobs"] == 0
-    _, lines = export(rows, tmp_path, model="lfm2.5-vl-450m")
-    assert "mm_processor_kwargs" not in V.requests(lines, SamplingParams, str)[0][0]  # LFM: processor defaults
 
 
 def test_round_trip_and_truncation_is_the_rewards_rule(rows, tmp_path):

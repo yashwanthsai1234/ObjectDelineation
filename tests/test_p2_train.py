@@ -239,16 +239,6 @@ LINEAR = {
         "model.visual.blocks.0.mlp.linear_fc2",
         "model.visual.deepstack_merger_list.0.linear_fc1", "model.visual.deepstack_merger_list.0.linear_fc2",
         "model.visual.merger.linear_fc1", "model.visual.merger.linear_fc2"],
-    "smolvlm-256m": [
-        "lm_head", "model.connector.modality_projection.proj", "model.text_model.layers.0.mlp.down_proj",
-        "model.text_model.layers.0.mlp.gate_proj", "model.text_model.layers.0.mlp.up_proj",
-        "model.text_model.layers.0.self_attn.k_proj", "model.text_model.layers.0.self_attn.o_proj",
-        "model.text_model.layers.0.self_attn.q_proj", "model.text_model.layers.0.self_attn.v_proj",
-        "model.vision_model.encoder.layers.0.mlp.fc1", "model.vision_model.encoder.layers.0.mlp.fc2",
-        "model.vision_model.encoder.layers.0.self_attn.k_proj",
-        "model.vision_model.encoder.layers.0.self_attn.out_proj",
-        "model.vision_model.encoder.layers.0.self_attn.q_proj",
-        "model.vision_model.encoder.layers.0.self_attn.v_proj"],
 }
 VISION_PREFIX = ("model.visual", "model.vision_tower", "model.multi_modal_projector", "model.vision_model",
                  "model.connector")
@@ -329,7 +319,7 @@ def test_lora_targets_the_language_model_only(model):
 
 def test_lora_only_where_the_plan_needs_it():
     assert configs.lora("qwen3-vl-2b") is not None and configs.lora("qwen3-vl-2b").target_modules == "all-linear"
-    assert all(configs.lora(m) is None for m in ("lfm2.5-vl-450m", "smolvlm-256m"))  # full FT
+    assert configs.lora("lfm2.5-vl-450m") is None  # full FT
 
 
 @pytest.mark.parametrize("model", list(LINEAR))

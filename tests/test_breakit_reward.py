@@ -116,7 +116,7 @@ def test_b2_5_group_size_other_than_eight_is_refused(tmp_path, nod):
     T = score_batch([(t, False, NOD, caches, W, W) for t in texts])
     assert not np.allclose(adv, advantages_v4(T, 16))  # what TRL's group of 16 would need: not what it gets
     with pytest.raises(ValueError):
-        configs.grpo_config("smolvlm-256m", str(tmp_path), num_generations=16, bf16=False, use_cpu=True)
+        configs.grpo_config("qwen3-vl-2b", str(tmp_path), num_generations=16, bf16=False, use_cpu=True)
 
 
 def prepared(tmp_path, n=3):

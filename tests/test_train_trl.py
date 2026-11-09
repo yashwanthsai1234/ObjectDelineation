@@ -197,7 +197,7 @@ def scripted_trainer(char_model, out, policy, steps=2, **kw):
     val = Dataset.from_list([row(k) for k in ("lidc/v1", "lidc/v2")])
     model = LlamaForCausalLM.from_pretrained(path)
     funcs, _ = R.TRLReward(caches.__getitem__, R.stop_ids(model, tok)).funcs()
-    args = configs.grpo_config("smolvlm-256m", str(out), **{
+    args = configs.grpo_config("qwen3-vl-2b", str(out), use_vllm=False, **{  # HF generate on the tiny model
         "max_steps": steps, "per_device_train_batch_size": 2 * G, "gradient_accumulation_steps": 1,
         "per_device_eval_batch_size": 2 * G, "use_cpu": True, "bf16": False, "logging_steps": 1,
         "save_strategy": "no", "eval_strategy": "steps", "eval_steps": 1, "learning_rate": 1e-2} | kw)

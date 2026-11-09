@@ -5,5 +5,5 @@ rewards:   TRLReward: reward v4 as weight-0 per-term loggers plus one aggregator
 callbacks: TraceStep (torch.profiler step), NvtxSteps (NVTX ranges, nsys window), BudgetStop (session spend).
 serve:     preloaded expert caches, CacheRef (pickles as its key) and the warmed fork pool for reward scoring.
 sample:    checkpoint -> K samples per item, completions table -> eval_run JSONL.
-configs:   sft_config / grpo_config / lora / processor_kwargs for the three screened models (plan D8, D12).
+configs:   sft_config / grpo_config / lora / processor_kwargs for the screened models (plan D8, D12).
 """
