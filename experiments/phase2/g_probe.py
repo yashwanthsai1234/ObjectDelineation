@@ -102,6 +102,10 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
                   processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
+    trainer.count_syncs = bool(getattr(a, "count_syncs", False))  # C0
+    if getattr(a, "gpu_pixels", "off") == "auto":  # C1: 8 training images for the start-up self-check
+        imgs = [train[i]["image"] for i in range(min(8, len(train)))]
+        print(f"gpu_pixels/backend={trainer.use_gpu_pixels(imgs, getattr(a, 'allow_cpu_pixels', False))}")
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
         trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers

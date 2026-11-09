@@ -58,3 +58,32 @@ def range(name: str):  # noqa: A001 (the plan's name; torch.cuda.nvtx has `range
     """A context manager: range_push(name) on entry and range_pop() on exit (also on an exception) when enabled,
     else a no-op."""
     return _range(name) if enabled() else contextlib.nullcontext()
+
+
+class SyncCount:
+    syncs = 0  # synchronizing CUDA operations torch reported inside the block
+
+
+@contextlib.contextmanager
+def count_syncs():
+    """Counts torch's synchronizing CUDA operations inside the block (C0 step 1): torch.cuda.set_sync_debug_mode("warn")
+    and every warning recorded (simplefilter "always": Python would record one code line's warning once), counting
+    the messages that say "synchroniz"; the previous mode comes back on exit, also on an exception. A nested block
+    keeps its own count. Without CUDA a no-op (0). torch's mode is experimental: not every sync warns."""
+    import warnings
+
+    import torch
+
+    out = SyncCount()
+    if not torch.cuda.is_available():
+        yield out
+        return
+    prev = torch.cuda.get_sync_debug_mode()
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        torch.cuda.set_sync_debug_mode("warn")
+        try:
+            yield out
+        finally:
+            torch.cuda.set_sync_debug_mode(prev)
+            out.syncs = sum("synchroniz" in str(w.message) for w in seen)

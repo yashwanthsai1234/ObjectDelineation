@@ -100,3 +100,37 @@ def test_a_saved_processor_holds_the_plain_image_processor_not_the_memo(tmp_path
     for f in sorted(os.listdir(tmp_path / "plain")):
         assert (tmp_path / "memo" / f).read_bytes() == (tmp_path / "plain" / f).read_bytes(), f
     assert proc.image_processor is memo  # saving left the memo installed
+
+
+def test_gpu_memo_equals_the_processor_and_counts_one_miss_per_distinct_image(counted):  # C1
+    ip, seen = counted
+    imgs = [image(i) for i in range(32)]
+    rows = [x for x in imgs for _ in range(8)]  # 256 rows, 8 per image
+    want = Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)(rows, return_tensors="pt")
+    memo = fast.ImageMemo(ip, gpu=("torch", "cpu"))
+    got = memo(rows, return_tensors="pt")
+    assert all(torch.equal(got[k], want[k]) for k in want) and seen == []  # never the CPU processor
+    assert (memo.misses, memo.hits) == (32, 224)
+    memo.clear()
+    memo.prefill(imgs, return_tensors="pt")
+    memo(rows, return_tensors="pt")
+    assert (memo.misses, memo.hits) == (32, 256)
+
+
+def test_per_image_memo_returns_each_distinct_images_patches_once_with_the_row_grid(counted):  # C1 --encoder-once
+    ip, _ = counted
+    imgs = [image(i) for i in range(4)]
+    rows = [x for x in imgs for _ in range(8)]
+    plain = Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)
+    got = fast.ImageMemo(ip, gpu=("torch", "cpu"), per_image=True)(rows, return_tensors="pt")
+    assert torch.equal(got["pixel_values"], plain(imgs, return_tensors="pt")["pixel_values"])
+    assert torch.equal(got["image_grid_thw"], plain(rows, return_tensors="pt")["image_grid_thw"])
+
+
+def test_an_unsupported_image_falls_back_to_the_processor_and_is_counted(counted):
+    ip, seen = counted
+    rows = [image(0, 50, 50)] * 2  # 50 x 50: the processor resizes it
+    want = Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)(rows, return_tensors="pt")
+    memo = fast.ImageMemo(ip, gpu=("torch", "cpu"))
+    got = memo(rows, return_tensors="pt")
+    assert all(torch.equal(got[k], want[k]) for k in want) and memo.fallback_calls == 1 and seen == [1]
