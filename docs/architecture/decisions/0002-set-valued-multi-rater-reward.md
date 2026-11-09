@@ -7,7 +7,7 @@
 ## Context
 
 LIDC-IDRI has up to four raters per nodule. RIGA has six per photograph. The raters disagree.
-The Phase 0 census measured how often they disagree on topology (`experiments/phase0/RESULTS.md`):
+The Phase 0 census measured how often they disagree on topology (`docs/research/records/phase0/RESULTS.md`):
 
 - 114 of 1,877 nodules (6.1 %) have a topology disagreement after the size filter.
 - 65 nodules have a hole in at least one rater's outline. In all 65, at least one other rater drew no hole.
@@ -47,8 +47,8 @@ Full formulas are in the [reward reference](../../reference/reward.md).
 
 ### Option C: Mean IoU against each rater
 
-The lab tested this as a variant. Its result files carry the label "meanIoU" (`experiments/phase1/lab/t_reward/results/iter4_adversaries_meaniou.txt`).
-The frozen reward uses IoU_tc instead. The lab's own reasons are in `experiments/phase1/lab/t_reward/results/ITERATION4.md`. This record does not restate them.
+The lab tested this as a variant. Its result files carry the label "meanIoU" (`archive/phase1_lab/t_reward/results/iter4_adversaries_meaniou.txt`).
+The frozen reward uses IoU_tc instead. The lab's own reasons are in `archive/phase1_lab/t_reward/results/ITERATION4.md`. This record does not restate them.
 
 ## Trade-off analysis
 

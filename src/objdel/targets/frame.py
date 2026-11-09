@@ -38,7 +38,7 @@ union with >= CLEARANCE background pixels on every side and meet no other outlin
 B3-2), else ValueError; the defaults reproduce the policy frame byte for byte and skip those checks.
 
 References:
-    experiments/phase1/lab/t_targets/REPORT.md (crop policy H6) and targets/crops.py (pad_div, block reduce)
+    archive/phase1_lab/t_targets/REPORT.md (crop policy H6) and targets/crops.py (pad_div, block reduce)
     M. Chen, Y. Peng, "Topology-preserving downsampling of binary images", ECCV 2024: https://arxiv.org/abs/2407.17786
     Pillow resampling (bicubic a = -0.5, centre = (xx + 0.5) * scale, PRECISION_BITS = 22 fixed point for 8-bit):
         https://github.com/python-pillow/Pillow/blob/main/src/libImaging/Resample.c ,
@@ -46,7 +46,7 @@ References:
     OpenCV INTER_CUBIC (A = -0.75, same half-pixel centres), replaced:
         https://github.com/opencv/opencv/blob/4.x/modules/imgproc/src/resize.cpp
     experiments/phase1/impl/M9_x86.md (finding 3: cv2 vs Pillow pixels on x86 and arm64)
-    experiments/phase0/baseline_medsam.py (LUNG_WINDOW = (-1000, 400))
+    archive/phase0/baseline_medsam.py (LUNG_WINDOW = (-1000, 400))
 """
 from dataclasses import dataclass
 from typing import NamedTuple

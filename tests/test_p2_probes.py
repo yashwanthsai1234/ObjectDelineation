@@ -14,7 +14,7 @@ import pytest
 from objdel.eval import probes as P
 
 ROOT = Path(__file__).resolve().parents[1]
-B3 = ROOT / "experiments" / "phase2" / "lab" / "B3"
+FIXTURES = ROOT / "tests" / "fixtures"
 
 
 def _patches(n=6, side=125, seed=0):
@@ -172,10 +172,9 @@ def test_topology_noise_between(topology_dir):
 
 
 def test_stratified_bootstrap_equals_power_c2():
-    power_c2 = pytest.importorskip("experiments.phase2.lab.B3.power_c2")
+    ref = json.loads((ROOT / "tests" / "goldens" / "p2_lab_refs.json").read_text())["probes_pooled"]
     rng = np.random.default_rng(1)
     per_bin = [rng.random(120), rng.random(120) * 0.5, (rng.random(120) > 0.3).astype(float)]
-    ref = power_c2.pooled(per_bin, np.random.default_rng(5))
     got = P.stratified_ci(per_bin, P.BIN_WEIGHTS, np.random.default_rng(5))
     assert np.allclose(got, ref, rtol=0, atol=1e-12)
 
@@ -235,7 +234,7 @@ def test_real_v3e_fidelity_reproduces_b3(store_dir):
     shares = np.bincount([P.bin_of(h["area"]) for h in stats["holes"]], minlength=3) / 285
     assert np.allclose(shares, P.BIN_WEIGHTS, atol=1e-4)
     for seed, ok in ((7, False), (8, True)):
-        ref = json.loads((B3 / f"topo_probe_v3e_seed{seed}.json").read_text())["fidelity"]
+        ref = json.loads((FIXTURES / f"topo_probe_v3e_seed{seed}.json").read_text())["fidelity"]
         got = P.fidelity(stats["holes"], stats["multis"], seed)
         assert got["ks_p"] == ref["ks_p"] and got["gen_bin_shares"] == ref["gen_bin_shares"]
         assert got["pass"] is ok

@@ -1,7 +1,7 @@
 """Gate harness for reward v4 (tests and experiments/phase1/reward_gates.py): fixture loaders, controlled mask
 perturbations, realistic honest GRPO rollouts, the adversary suite, K9 pairs and cluster-bootstrap CIs.
 
-Ported from the lab (experiments/phase1/lab/t_reward: rewardcore/perturb.py, scripts/honest.py,
+Ported from the lab (archive/phase1_lab/t_reward: rewardcore/perturb.py, scripts/honest.py,
 scripts/adversaries.py, scripts/iter4_adversaries.py, scripts/k9_discrimination.py, scripts/k9_v3.py) onto the
 production objdel.reward. Self-contained (numpy, scipy, OpenCV, objdel) so it can be imported both as
 `oracles.reward_harness` (pytest) and `tests.oracles.reward_harness` (experiments: one harness for the pytest gates

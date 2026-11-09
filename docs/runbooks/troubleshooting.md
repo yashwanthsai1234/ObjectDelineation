@@ -83,4 +83,4 @@ Method for a new failure: reproduce, isolate the component, form a hypothesis an
 | Wheel test cannot import `experiments` | The test runs outside the repository | `test-sources` copies `tests`, `experiments`, `pyproject.toml` and `CMakeLists.txt`. The test command is `python -m pytest` | `pyproject.toml`, commits `8f51441`, `610a17c` |
 | CPU dry run with `use_vllm` refused | TRL 1.17 refuses `use_vllm` without vLLM installed | The CPU dry run runs without vLLM | commit `421eac3` |
 | `tests/test_readme.py` fails | The README quick start no longer prints what its comment says, or `make` targets changed | Fix the README or the target. The test executes the Python block | `tests/test_readme.py` |
-| `make lint` fails on `experiments/phase1/lab` | It is excluded on purpose (frozen evidence) | Do not lint lab files. They are not in the ruff scope | `pyproject.toml` |
+| `make lint` fails on `archive/phase1_lab` | It is excluded on purpose (frozen evidence) | Do not lint lab files. They are not in the ruff scope | `pyproject.toml` |

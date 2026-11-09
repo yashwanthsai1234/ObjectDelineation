@@ -54,7 +54,7 @@ References:
   https://huggingface.co/docs/accelerate/main/en/package_reference/torch_wrappers
 - Dr. GRPO (no std scaling): https://arxiv.org/abs/2503.20783 ; GDPO (per-term normalization, the arm TRL's
   normalize_then_sum implements and v4 replaces): https://arxiv.org/abs/2601.05242
-- Lab: experiments/phase1/lab/t_stack/prod.py (TRLReward), r2_trl_equiv.py, results/INTEGRATION.md.
+- Lab: archive/phase1_lab/t_stack/prod.py (TRLReward), r2_trl_equiv.py, results/INTEGRATION.md.
 """
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor

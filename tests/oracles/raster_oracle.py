@@ -1,6 +1,6 @@
 """Slow, exact raster oracle for the checker's masks (objdel._gpucheck), and the K1 shape families (tests only).
 
-Derived from the Phase 1 lab (experiments/phase1/lab/common/oracle.py, lab/t_polycore/tests/helpers.py).
+Derived from the Phase 1 lab (archive/phase1_lab/common/oracle.py, archive/phase1_lab/t_polycore/tests/helpers.py).
 The spec, literally: pixel (c, r) is inside iff its centre is inside; a ray from the centre towards +x counts
 edge (x0,y0)->(x1,y1) iff min(y0,y1) <= py < max(y0,y1) and the crossing x is strictly greater than px; the
 winding adds +1 for edges going down the screen, -1 going up. Even-odd = odd crossings, nonzero = winding != 0.

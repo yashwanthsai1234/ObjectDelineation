@@ -56,7 +56,7 @@ References:
   sandbox measurement in experiments/phase1/impl/M7_train.md
 - transformers 5.20 TrainingArguments.__post_init__ (bf16 check) and utils.is_torch_bf16_gpu_available:
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/training_args.py
-- Lab: experiments/phase1/lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
+- Lab: archive/phase1_lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
 """
 import re
 
@@ -76,7 +76,8 @@ MODELS = {
 MAX_COMPLETION = {"smolvlm-256m": 1536, "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
 _LORA = {"qwen3-vl-2b"}
 _GRAD_CKPT = {"qwen3-vl-2b"}
-# vision tower + projector of every model (recorded module names in tests/test_p2_train.py; lab/B1/common.VISION)
+# vision tower + projector of every model (recorded module names in tests/test_p2_train.py;
+# archive/phase2_lab/B1/common.VISION)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
 WARMUP, DECAY = 0.03, 0.15  # D5: of the stable run's steps; of the branch point's steps
 

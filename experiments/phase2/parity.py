@@ -1,4 +1,4 @@
-"""H-A5-2(a) logprob parity on a sampled checkpoint (from lab/B5/hf_teacher.py, S1-16; R0 calls compare via r0_parity).
+"""H-A5-2(a) logprob parity on a sampled checkpoint (from archive/phase2_lab/B5/hf_teacher.py, S1-16; R0 calls compare via r0_parity).
 
     .venv/bin/python -I -m experiments.phase2.parity --prompts P.jsonl --completions C.jsonl --model DIR --out R.json
 
@@ -7,7 +7,7 @@ logprob of every sampled token). Each completion is teacher-forced through HF: t
 text and image (TRL GRPO's prompt ids, B5: equal to vLLM's), the sampled ids appended, one forward in --dtype,
 float32 log_softmax. Δ = vLLM - HF per token and its per-sequence sum. Pass: median |Δ| <= 1e-3 in float32 (0.02
 in bfloat16) and (H-A5-1) every item's prompt ids as vLLM echoed them equal the processor's. The p99 per-sequence
-|ΣΔ| (pre-registered limit 0.5 nats, lab/B5/REPORT.md) is report-only since the owner's decision of 2026-11-05
+|ΣΔ| (pre-registered limit 0.5 nats, archive/phase2_lab/B5/REPORT.md) is report-only since the owner's decision of 2026-11-05
 (PLAN D13): bf16 rounding adds up over ~500-token answers (Qwen3-VL-2B R0: token median 4.6e-6, sequence p99 1.79),
 and the question it stood for, whether vLLM's answers score like HF's, is measured directly on the trained model
 (select_ckpt's HF check, D13).

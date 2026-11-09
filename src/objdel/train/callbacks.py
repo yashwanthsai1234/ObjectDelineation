@@ -50,8 +50,9 @@ References:
 - os.replace is atomic on POSIX: https://docs.python.org/3/library/os.html#os.replace
 - J. Yao et al. 2026, Multimodal Reward Hacking in Reinforcement Learning (failures measured against the SFT model,
   monitored during training): https://arxiv.org/abs/2607.09492
-- Lab: experiments/phase1/lab/t_stack/t3_grpo.py (controller callback), lab/t_dynamics/REPORT.md (typed alarm +
-  rollback; the alarm lags, hence rollback to the best held-out checkpoint).
+- Lab: archive/phase1_lab/t_stack/t3_grpo.py (controller callback),
+  archive/phase1_lab/t_dynamics/REPORT.md (typed alarm + rollback; the alarm lags,
+  hence rollback to the best held-out checkpoint).
 """
 import json
 from pathlib import Path

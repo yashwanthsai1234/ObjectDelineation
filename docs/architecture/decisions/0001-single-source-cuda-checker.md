@@ -54,7 +54,7 @@ The raster has one extra GPU-only step, the warp ballot.
 
 ### Option C: Python with numba CUDA
 
-The lab prototyped numba in `experiments/phase1/lab/t_polycore/tests/numba_proto.py`.
+The lab prototyped numba in `archive/phase1_lab/t_polycore/tests/numba_proto.py`.
 It was not promoted. The lab file is the only record. This record does not rank it further.
 
 ## Trade-off analysis

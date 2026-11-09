@@ -5,7 +5,7 @@ Written 2026-10-18, after Phase 0. Revised the same day to match the two researc
 **Sources**
 - `docs/research/reports/GPU delineation use case map.md`: the domain tree, and why the pitch is correctness and topology, not speed.
 - `docs/research/reports/GPU delineation RL mix and match.md`: the reward design, prior art, safe claims, the experiment program, and the secondary ideas.
-- `experiments/phase0/RESULTS.md`, `experiments/phase0/RESULTS_0b.md`: what Phase 0 measured.
+- `docs/research/records/phase0/RESULTS.md`, `docs/research/records/phase0/RESULTS_0b.md`: what Phase 0 measured.
 
 ## How this roadmap relates to the research
 
@@ -107,7 +107,7 @@ Access details are from the research notes and must be re-checked before downloa
 
 | # | Phase | What it does | Where | GPU-hours | Done when |
 |---|---|---|---|---|---|
-| 0 ✅ | Census and baselines | checker built; experts disagree; MedSAM makes structure errors IoU misses | Mac | 0 | done (`experiments/phase0/RESULTS*.md`) |
+| 0 ✅ | Census and baselines | checker built; experts disagree; MedSAM makes structure errors IoU misses | Mac | 0 | done (`docs/research/records/phase0/RESULTS*.md`) |
 | 1 ✅ | Reward and data | **Done: [experiments/phase1/RESULTS.md](experiments/phase1/RESULTS.md)** (plan: [PLAN.md](experiments/phase1/PLAN.md)). C++ polygon core, exact reward v4 (topology-conditional IoU, self-calibrated band, rater-frequency topology term, area guard), SFT target builder, full RIGA/LIDC data and splits, TRL integration, eval harness | Mac | 0 | Phase 1 exit gates in the plan, §7: all pass on the Mac (exactness and determinism also on x86-64 in Docker) or are re-registered / accepted with reasons (RESULTS §2); native x86 reward timing and the first CI run are Phase 2 entry steps |
 | 1c | Natural-image census | share of objects with holes or several parts in SA-1B / refCOCO | Mac | 0 | numbers for Track B's enriched split |
 | 2 | **SFT** (in progress) | rung 1 LFM2.5-VL-450M failed the entry gates; next rung Qwen3-VL-2B with LoRA; then outer rings with all parts (A0) vs hole-aware polygons (A0′) | Vast | rung 2 about 3–5 (plan §4.9) | ≥ 90 % valid; A0′ recovers holes that A0 cannot (parts are already expressible in A0; experiments/phase2/PLAN.md C2) |

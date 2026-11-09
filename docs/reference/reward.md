@@ -2,7 +2,7 @@
 
 This page defines every term of the reward as it is implemented, the gates, and the way terms combine into one advantage.
 Sources: `src/objdel/reward/{spec,cache,score,advantages}.py`, `cuda/gpucheck.cpp` (`ObjTerms`), `src/objdel/train/rewards.py`.
-The design reasoning is in [ADR-0002](../architecture/decisions/0002-set-valued-multi-rater-reward.md). The lab evidence is in `experiments/phase1/lab/t_reward/results/ITERATION4.md`.
+The design reasoning is in [ADR-0002](../architecture/decisions/0002-set-valued-multi-rater-reward.md). The lab evidence is in `archive/phase1_lab/t_reward/results/ITERATION4.md`.
 
 ## 1. Pipeline
 

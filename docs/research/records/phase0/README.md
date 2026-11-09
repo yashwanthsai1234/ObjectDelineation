@@ -1,7 +1,9 @@
 # Phase 0: frozen record
 
 Phase 0 is done. Its results are committed in this folder ([RESULTS.md](RESULTS.md), [RESULTS_0b.md](RESULTS_0b.md),
-`results/`). The scripts are kept unchanged as the record of what produced those numbers.
+`results/`). The scripts are kept unchanged in `archive/phase0/` as the record of what produced those numbers.
+
+The RIGA-derived results of this folder stay on the owner's disk only and are git-ignored (RIGA terms; `.gitignore` RIGA block).
 
 ## Run the scripts against commit `faaacc4`
 

@@ -34,7 +34,7 @@ References:
 - Bias of plug-in log-frequency estimators at finite group size (Jensen): Mohri, Schneider, Zhong 2026,
   https://arxiv.org/abs/2605.02435 ; b(f, G) here is the exact correction at pi = f for the LOO estimator.
 - "The Dark Room in the Reward Channel" (z-scored dense rewards amplify noise): https://arxiv.org/abs/2607.21273
-- Lab evidence: experiments/phase1/lab/t_reward/results/ITERATION3.md (debias, clip, no batch z),
+- Lab evidence: archive/phase1_lab/t_reward/results/ITERATION3.md (debias, clip, no batch z),
   ITERATION4.md (area guard as a term).
 """
 from functools import cache
