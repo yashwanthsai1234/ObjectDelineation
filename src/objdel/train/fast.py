@@ -21,6 +21,7 @@ import functools
 import math
 import sys
 import time
+import typing
 
 import numpy as np
 import torch
@@ -75,6 +76,41 @@ def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_trunc
     i32 = functools.partial(np.asarray, dtype=np.int32)
     return RowMeta(i32([len(p) for p in prompt_ids_list]), i32(clen), i32(image_ids),
                    i32([i // G for i in range(len(clen))]))  # fmt: skip
+
+
+class MetaRow(typing.NamedTuple):
+    """One row of a RowMeta: the batch's host_meta list field, which TRL's split and shuffle move with the row."""
+
+    prompt_len: int
+    completion_len: int
+    image_id: int
+    group: int
+
+
+def host_rows(meta: RowMeta) -> list[MetaRow]:
+    """meta as one MetaRow per row (Python ints)."""
+    return [MetaRow(*r) for r in np.stack(dataclasses.astuple(meta), 1).tolist()]
+
+
+def meta_of(batch: dict) -> RowMeta | None:
+    """The RowMeta of a batch's host_meta rows (in their current order), or None without host_meta."""
+    rows = batch.get("host_meta")
+    return None if rows is None else RowMeta(*(np.asarray(c, dtype=np.int32) for c in zip(*rows, strict=True)))
+
+
+def image_ids(rows) -> list[int]:
+    """Each dataset row's image as a dense id in first-appearance order, by object (OpenOnce shares one object per
+    distinct image)."""
+    seen: dict[int, int] = {}
+    return [seen.setdefault(id(r.get("image")), len(seen)) for r in rows]
+
+
+def check_meta(batch: dict) -> None:
+    """C4 step 5 (--check-meta-every): host_meta's lengths equal the device mask sums; raises naming field and row."""
+    for field, mask in (("prompt_len", "prompt_mask"), ("completion_len", "completion_mask")):
+        for i, (r, d) in enumerate(zip(batch["host_meta"], batch[mask].sum(1).tolist(), strict=True)):
+            if getattr(r, field) != d:
+                raise AssertionError(f"host_meta row {i}: {field} {getattr(r, field)} != device {d}")
 
 
 def window_from_meta(meta: RowMeta, rows, P: int, logits_to_keep: int, buckets=BUCKETS) -> tuple[int, int]:
@@ -576,9 +612,13 @@ def no_lora_input_cast(model) -> int:
 def by_length(batch: dict) -> dict:
     """The generation batch's rows longest first (prompt + answer real tokens; stable), every per-row field moved
     with them, in place of TRL's shuffle_sequence_dict (same field rules: None and 0-d tensors stay, tensors are
-    indexed, lists reordered). One host read for the order."""
-    n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
-    order = torch.sort(n, descending=True, stable=True).indices
+    indexed, lists reordered). One host read for the order (none with host_meta, C4)."""
+    meta = meta_of(batch)
+    if meta is not None:
+        order = torch.from_numpy(length_order(meta))
+    else:
+        n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
+        order = torch.sort(n, descending=True, stable=True).indices
     idx = order.tolist()
 
     def move(v):
@@ -592,9 +632,13 @@ def by_length(batch: dict) -> dict:
 def by_group_length(batch: dict, G: int) -> dict:
     """by_length with each group of G consecutive rows (one prompt's answers) kept together: groups longest member
     first (stable), so update micro-batches of whole groups can share their prompt (FastForward.shared_prefix)."""
-    n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
-    groups = torch.sort(n.view(-1, G).max(1).values, descending=True, stable=True).indices
-    order = (groups[:, None] * G + torch.arange(G, device=groups.device)).flatten()
+    meta = meta_of(batch)
+    if meta is not None:  # C4: no device read
+        order = torch.from_numpy(group_order(meta, G))
+    else:
+        n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
+        groups = torch.sort(n.view(-1, G).max(1).values, descending=True, stable=True).indices
+        order = (groups[:, None] * G + torch.arange(G, device=groups.device)).flatten()
     idx = order.tolist()
 
     def move(v):
@@ -717,6 +761,9 @@ class FastGRPO(FastForward, GRPOTrainer):
     seq_gaps = []  # B2.1: the step's per-sequence (seq_kl, advantage, valid tokens) rows (train mode), on the device
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
+    host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
+    check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
+    meta = None  # the generation batch's RowMeta, from _generate to the batch
     count_syncs = False  # C0, train_rl --count-syncs: perf/host_syncs/<phase> per timed phase
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
@@ -783,9 +830,15 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.vllm_importance_sampling_correction = False
         try:
             with self.timed("batch"):
-                return super()._generate_and_score_completions(inputs)
+                batch = super()._generate_and_score_completions(inputs)
+            if self.meta is not None:
+                batch["host_meta"] = host_rows(self.meta)
+                n = self.check_meta_every
+                if n and self.state.global_step % n == 0:  # steps 1, N + 1, 2N + 1, ...
+                    check_meta(batch)
+            return batch
         finally:
-            self.rows = None
+            self.rows, self.meta = None, None
             if skip:
                 self.vllm_importance_sampling_correction = True
 
@@ -900,6 +953,10 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.time_vllm_phases()
         with self.timed("generate"):
             out = super()._generate(prompts)
+        if self.host_meta and self.rows is not None and len(self.rows) == len(out[1]):
+            eos_and_pad = [*self.eos_token_ids, self._tokenizer.pad_token_id]  # TRL's truncation list
+            self.meta = row_meta(out[0], out[1], image_ids(self.rows), self.num_generations,
+                                 self.mask_truncated_completions, eos_and_pad)  # fmt: skip
         self.prefetch_rewards(out[3], out[1])
         return out
 
