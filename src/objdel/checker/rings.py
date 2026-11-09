@@ -22,17 +22,20 @@ from .topology import as_mask
 
 @dataclass(frozen=True)
 class Ring:
+    """One rectilinear ring of a mask: corner vertices in pixel coordinates, signed area and part rank."""
     pts: np.ndarray  # (k, 2) int64 corner vertices (x, y), canonical start first, offset applied
     area: int  # signed: > 0 outer, < 0 hole
     part: int  # raster rank of the bounded 8-component within its mask
 
     @property
     def hole(self):
+        """True for a hole ring (negative signed area)."""
         return self.area < 0
 
 
 @dataclass(frozen=True)
 class MaskRings:
+    """Rings, bit-quad counts and Betti numbers of one mask, as returned by `trace`."""
     rings: list[Ring]
     quads: tuple[int, int, int, int, int]  # bit-quad counts n1, n2, nD, n3, n4
     b0: int  # 8-connected foreground components

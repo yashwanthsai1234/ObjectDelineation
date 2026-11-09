@@ -68,6 +68,7 @@ UID_MAX = 64
 
 @dataclass(frozen=True)
 class Roi:
+    """One reader's outline on one slice: z position, inclusion flag and (x, y) pixel vertices."""
     z: float
     inclusion: bool
     points: tuple[tuple[int, int], ...]  # (x, y) pixel coordinates
@@ -75,6 +76,7 @@ class Roi:
 
 @dataclass(frozen=True)
 class Scan:
+    """Series geometry: patient id, ascending slice z positions (mm), pixel spacing and slice thickness."""
     patient: str
     zvals: np.ndarray  # slice z positions, ascending (mm)
     pixel_spacing: float
@@ -97,6 +99,9 @@ class Slice:
     others: list[tuple[int, int, int, int]]  # P6: (x0, y0, x1, y1) half-open box of each other nodule on the slice
 
     def full(self) -> np.ndarray:
+        """The reader masks as a bool (readers, GRID, GRID) stack: the cropped stack placed at (y0, x0) on an all-False
+        512 x 512 grid.
+        """
         out = np.zeros((len(self.readers), GRID, GRID), bool)
         out[:, self.y0:self.y0 + self.stack.shape[1], self.x0:self.x0 + self.stack.shape[2]] = self.stack
         return out
@@ -314,6 +319,9 @@ def ct_slices(npz_path, zvals) -> dict[int, np.ndarray]:
 
 
 def item(series: str, scan: Scan, s: Slice, split: str, image, sessions: int, xml: str) -> Item:
+    """The store `Item` of one multi-reader slice: the pixels, one "nodule" mask per reader on the 512 x 512 grid and
+    metadata.
+    """
     return Item(item_id=f"lidc/{series}/n{s.cluster:03d}/z{s.k:03d}", dataset="lidc", group_id=scan.patient,
                 split=split, image=image, masks={"nodule": s.full()}, raters=[str(r) for r in s.readers],
                 meta={"series": series, "patient": scan.patient, "cluster": s.cluster, "slice": s.k,

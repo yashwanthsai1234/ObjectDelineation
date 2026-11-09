@@ -91,17 +91,24 @@ target-version = "py312"
 extend-exclude = ["archive"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "TID"]
+select = ["E", "F", "I", "B", "UP", "TID", "D100", "D101", "D102", "D103", "D104", "D106"]
 ignore = ["E731", "E741"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 # Phase scripts are frozen records of what produced the published numbers: lint lightly.
-"experiments/**" = ["E501", "B023", "B905"]
+"experiments/**" = ["E501", "B023", "B905", "D"]
+"tests/**" = ["D"]
 "src/objdel/train/fast.py" = ["TID251"]          # removed in E5 (file split)
 "src/objdel/train/trl_adapter.py" = ["TID251"]   # becomes rl/trl_adapter.py in E5
 "src/objdel/train/sample.py" = ["TID251"]        # removed in E5 (sample -> rl/trl_adapter.py)
 "tests/test_trl_adapter.py" = ["TID251"]         # becomes tests/rl/test_trl_adapter.py in E5
 "tests/test_train_fast.py" = ["TID251"]          # removed in E5
+"src/objdel/train/vllm_sync.py" = ["TID251"]    # moves into rl/ in E5
+"tests/test_vllm_sync.py" = ["TID251"]
+"tests/test_breakit_r1_rl.py" = ["TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Dotted names that import-linter cannot forbid. Each ban is added when its task lands.

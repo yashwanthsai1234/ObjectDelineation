@@ -36,6 +36,7 @@ _I32 = np.iinfo(np.int32)
 
 
 class Geometry(NamedTuple):
+    """One rasterized object: even-odd bool mask, legality and the non-zero defect counts."""
     mask: np.ndarray  # bool (H, W), even-odd fill sampled at pixel centres
     legal: bool
     defects: dict[str, int]  # non-zero _gpucheck.DEFECTS counts

@@ -12,6 +12,7 @@ def outline_tokens(tokens_of, texts) -> int:
 
 
 def runaway_caps(target_tokens, limit: int, factor: float, margin: int) -> list[int]:
+    """Per-row max_tokens cap: factor x the row's target token count plus margin, never above limit."""
     return [min(limit, math.ceil(factor * t) + margin) for t in target_tokens]
 
 

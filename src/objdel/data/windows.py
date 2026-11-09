@@ -50,6 +50,7 @@ DROPS = ("excluded", "not_rl", "shifted_none", "rescaled_none", "padded", "centr
 
 
 def cell(apparent_px: float, offset: float) -> tuple[int, int]:
+    """The (size bin, offset bin) cell of an apparent size in pixels and a window offset."""
     return bisect_right(SIZE_EDGES, float(apparent_px)), bisect_right(OFFSET_EDGES, float(offset))
 
 
@@ -77,14 +78,17 @@ class Window:
 
     @property
     def window_id(self) -> str:  # "~", not "/": the source item's nodule and series parse unchanged
+        """Id of the window: the source item id, `~`, the kind and the draw number."""
         return f"{self.item_id}~{self.kind}{self.draw}"
 
     @property
     def apparent_px(self) -> float:
+        """Apparent size of the union in pixels: `extent_px * s0 / side`."""
         return self.extent_px * self.s0 / self.side
 
     @property
     def cell(self) -> tuple[int, int]:
+        """The (size bin, offset bin) cell of this window."""
         return cell(self.apparent_px, self.offset)
 
 
@@ -100,6 +104,7 @@ def cell_shares(windows) -> np.ndarray:
 
 @dataclass(frozen=True)
 class WindowPool:
+    """The train window pool: windows sorted by id and the count of everything dropped, by reason."""
     windows: tuple[Window, ...]  # sorted by window_id
     dropped: Mapping[str, int]  # every DROPS key: items excluded or not RL, draws without an admissible window
 

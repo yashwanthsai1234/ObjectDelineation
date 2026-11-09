@@ -30,6 +30,7 @@ class TraceStep(TrainerCallback):
         self.out, self.wait = Path(out), wait
 
     def on_train_begin(self, args, state, control, **kw):
+        """Start the profiler."""
         from torch.profiler import ProfilerActivity, profile, schedule
 
         acts = [ProfilerActivity.CPU] + [ProfilerActivity.CUDA] * torch.cuda.is_available()
@@ -38,12 +39,15 @@ class TraceStep(TrainerCallback):
         self.prof.start()
 
     def on_step_end(self, args, state, control, **kw):
+        """Advance the profiler one step."""
         self.prof.step()
 
     def on_train_end(self, args, state, control, **kw):
+        """Stop the profiler."""
         self.prof.stop()
 
     def write(self, prof):
+        """Write the Chrome trace and the top-op tables to `out` when the profiler trace is ready."""
         self.out.mkdir(parents=True, exist_ok=True)
         prof.export_chrome_trace(str(self.out / "trace.json.gz"))
         ops = prof.key_averages()
@@ -66,19 +70,23 @@ class NvtxSteps(TrainerCallback):
         self.window, self.open, self.opt_open, self.capturing, self.done = window, False, False, False, False
 
     def on_train_begin(self, args, state, control, **kw):
+        """Open the `step` range."""
         nvtx.push("step")
         self.open = True
 
     def on_pre_optimizer_step(self, args, state, control, **kw):
+        """Open the `optimizer` range."""
         nvtx.push("optimizer")
         self.opt_open = True
 
     def on_optimizer_step(self, args, state, control, **kw):
+        """Close the `optimizer` range."""
         if self.opt_open:
             nvtx.pop()
             self.opt_open = False
 
     def on_step_end(self, args, state, control, **kw):
+        """Close the `step` range, start or stop the CUDA capture at the window ends, and open the next `step` range."""
         if self.open:
             nvtx.pop()
         if self.window and not self.done and torch.cuda.is_available():
@@ -91,6 +99,7 @@ class NvtxSteps(TrainerCallback):
         self.open = True
 
     def on_train_end(self, args, state, control, **kw):
+        """Close any open range and stop a running capture."""
         if self.open:
             nvtx.pop()
             self.open = False
@@ -116,9 +125,11 @@ class BudgetStop(TrainerCallback):
         self.clock, self.tripped = clock, False
 
     def spend(self) -> float:
+        """Session spend so far in USD."""
         return self.fixed + max(0.0, self.clock() - self.start) / 3600 * self.rate
 
     def on_step_end(self, args, state, control, **kw):
+        """After each step, trip the guard once spend reaches the cap; once tripped, request a stop with a save."""
         self.tripped = self.tripped or self.spend() >= self.cap
         if self.tripped:
             control.should_training_stop = control.should_save = True
@@ -133,6 +144,7 @@ class NoCkptLayers(TrainerCallback):
         self.k = k
 
     def on_train_begin(self, args, state, control, model=None, **kw):
+        """Turn checkpointing off on the last K decoder layers; ValueError if K or a layer is unfit."""
         from transformers.modeling_layers import GradientCheckpointingLayer
 
         layers = next(m for n, m in model.named_modules() if n.endswith("language_model.layers"))
@@ -171,6 +183,7 @@ class LocGuard(TrainerCallback):
         self.tripped = False
 
     def block(self, loc, iou) -> bool:
+        """True when one block shows outlines moving off-centre (loc slope t > 3) while IoU falls (95 % one-sided)."""
         b, se = slope_nw(loc, self.lag)
         c, se_c = slope_nw(iou, self.lag)
         return bool(se > 0 and b / se > 3 and c + 1.645 * se_c < 0)
@@ -186,6 +199,7 @@ class LocGuard(TrainerCallback):
         return self.tripped
 
     def on_log(self, args, state, control, logs=None, **kw):
+        """Feed the logged off-centre means to the guard; request a stop with a save once it trips."""
         keys = [k for k in self.KINDS if f"kind/{k}/loc" in (logs or {})]
         if keys and self.add(float(np.mean([logs[f"kind/{k}/loc"] for k in keys])),
                              float(np.mean([logs[f"kind/{k}/iou_tc"] for k in keys]))):

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def path() -> Path:
+    """The secrets file path: `$OBJDEL_SECRETS` if set, else `.secrets` at the repo root."""
     return Path(os.environ.get("OBJDEL_SECRETS", ROOT / ".secrets"))
 
 

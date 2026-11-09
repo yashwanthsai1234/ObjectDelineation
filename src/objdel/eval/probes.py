@@ -204,6 +204,9 @@ def make_hole(rec, rng, tries=100):
 
 
 def make_two(rec, rng, tries=60):
+    """A synthetic two-part item from a hole record's diameter, part ratio and gap; None after `tries` failed
+    placements.
+    """
     D, ratio, gap = rec["diam"], rec["part_ratio"], rec["gap"]
     a1 = np.pi * (D / 2) ** 2 / (1 + ratio)
     d1, d2 = 2 * np.sqrt(a1 / np.pi), 2 * np.sqrt(ratio * a1 / np.pi)
@@ -227,6 +230,7 @@ def _draw(recs, n, maker, rng):
 
 
 def bin_of(area):
+    """Hole-area bin of an area in pixels: 0 for <= 10, 1 for <= 30, else 2."""
     return 0 if area <= BINS[0] else 1 if area <= BINS[1] else 2
 
 
@@ -468,11 +472,13 @@ def build_topology(out, patch_list, holes, multis, diams, seed=2027, per_bin=120
 
 # ------------------------------------------------------------------------------------------------- scoring
 def records(root, split="val"):
+    """The probe records of a split, read from `<root>/lidc/<split>.jsonl`."""
     with open(Path(root, "lidc", f"{split}.jsonl")) as fh:
         return [json.loads(line) for line in fh]
 
 
 def gt_mask(rec):
+    """The record's ground-truth nodule mask: its first target text rasterized at W x W pixels."""
     return to_mask(parse(rec["targets"][0], NAMES).objs["nodule"], rec["W"], rec["W"]).mask
 
 
@@ -491,6 +497,7 @@ def surface(gt, pred):
 
 
 def centroid(m):
+    """Centroid (x, y) of a mask in pixels, with the 0.5 pixel-centre offset."""
     ys, xs = np.nonzero(m)
     return np.array([xs.mean() + 0.5, ys.mean() + 0.5])
 
@@ -564,6 +571,9 @@ def stratified_ci(per_bin, weights, rng, B=2000):
 
 
 def score_topology(rows, root="data/eval_views/probe-topology", split="val", B=2000, seed=0, rule=TOPOLOGY_RULE):
+    """Score topology-probe answers against the probe records: hole and part recall, controls, legality and bootstrap
+    CIs.
+    """
     recs = {r["item_id"]: r for r in records(root, split)}
     texts = {}
     for row in rows:  # rows of one item (seeds) pool
@@ -616,5 +626,8 @@ def _disc_text(cx, cy, r, S, n=48):
 
 
 def model_centroid_disc(rec, rng):
+    """Synthetic model answer: a disc at the ground-truth centroid with the radius of the ground-truth area (`rng`
+    unused).
+    """
     gt = gt_mask(rec)
     return _disc_text(*centroid(gt), np.sqrt(gt.sum() / np.pi), rec["W"])
