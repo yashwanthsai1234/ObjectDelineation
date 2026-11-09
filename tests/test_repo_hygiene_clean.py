@@ -196,3 +196,33 @@ def test_no_live_file_names_a_retired_tree(tmp_path):
     (tmp_path / "a.md").write_text("see experiments/phase0/x")
     (tmp_path / "docs/research/n.md").write_text("see experiments/phase0/x")
     assert stale_paths(["a.md", "docs/research/n.md"], tmp_path) == ["a.md: experiments/phase0"]
+
+
+# --- CLEAN9: small debts ---------------------------------------------------------------------------------------------
+
+
+def test_make_preflight_default_config_loads_as_run_args():
+    cfg = re.search(r"^CONFIG \?= (\S+)", (ROOT / "Makefile").read_text(), re.M).group(1)
+    assert cfg == "experiments/phase2/configs/r1_qwen3vl2b.yaml"
+    from experiments.phase2 import preflight
+
+    args, _ = preflight.load(ROOT / cfg)
+    assert args.view == "views/lidc-bundle-v3"
+
+
+def test_train_sft_names_its_loader_load_items():
+    from experiments.phase2 import train_sft
+
+    assert callable(train_sft.load_items) and not hasattr(train_sft, "preload")
+
+
+def test_topology_any_docstring_does_not_claim_the_reward_uses_it():
+    from objdel.checker import volume
+
+    assert "reward compares" not in volume.__doc__ and "phase G" in volume.__doc__
+
+
+def test_one_stated_rl_learning_rate():
+    from objdel.train import configs
+
+    assert "prereg.G_PROBE" in configs.__doc__ and "1e-6 full, 1e-5 LoRA" not in configs.__doc__
