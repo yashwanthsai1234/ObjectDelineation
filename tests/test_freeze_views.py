@@ -92,8 +92,8 @@ def test_the_record_has_every_frozen_view():
 
 @pytest.mark.data
 def test_the_record_matches_the_built_views():
-    """DG15 on the Mac views the record was frozen from (data/eval_views_b1)."""
-    views = ROOT / "data/eval_views_b1"
+    """DG15 on the Mac views the record was frozen from (data/eval_views)."""
+    views = ROOT / "data/eval_views"
     if not views.is_dir():
         pytest.skip(f"{views} not found")
     assert Q.frozen(views, json.loads(RECORD.read_text())) == {}
