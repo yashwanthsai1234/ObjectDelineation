@@ -42,6 +42,9 @@ identity record (content and target-set hashes, the last commit of each file tha
 `tost` and `view_identity` are A-G3's paired checks against an older run (tests/test_a_gpu.py G01).
 --resummarize DIR: the schema-2 summary of a finished run's items.jsonl (no model, no scoring), with group_id joined
 from the LIDC store of the run's split; written to --out, never into DIR; exit 2 when an item has no group_id.
+A frozen view (objdel.data.quality.FROZEN) runs only when its content hash and target-set hash equal its entry in
+docs/reference/frozen_views.json (B1.6; shipped to the box by vast.policy.code_files), and --split must name a set of
+the view (the test view is read only with --split test). Both checks run before any model load or rescoring.
 Reads untrusted data: run with python -I.
 """
 
@@ -58,9 +61,11 @@ import numpy as np
 
 from experiments.phase2.select_ckpt import score_items  # imported before the pool forks (no import in a child)
 from objdel import _gpucheck
+from objdel.data import quality as Q
 from objdel.eval import select, signal
 
 ROOT = Path(__file__).resolve().parents[2]
+FROZEN_VIEWS = ROOT / "docs/reference/frozen_views.json"  # /workspace/src on the box
 
 # name -> (source, higher_is_better): "samples" and "objects" lists are averaged over the K answers, "item" scalars
 # (one per object and item) are copied
@@ -261,13 +266,23 @@ def _view_records(view: Path) -> list[dict]:
     return [json.loads(line) for f in sorted(Path(view, "lidc").glob("*.jsonl")) for line in f.read_text().splitlines()]
 
 
-def view_content_sha256(view: Path) -> str:
-    """The view's content hash (B1.6 freezes it): SHA-256 of the newline-joined JSON tuples (item_id, view.offset,
-    view.side, image_sha256) of its LIDC records in file order. A prepared root without windows has null offset and
-    side. Manifest versions and the reward fingerprint do not enter it."""
-    tup = [json.dumps([r["item_id"], (r.get("view") or {}).get("offset"), (r.get("view") or {}).get("side"),
-                       r["image_sha256"]]) for r in _view_records(view)]
-    return hashlib.sha256("\n".join(tup).encode()).hexdigest()
+def frozen_entry(view_name: str) -> dict | None:
+    """The view's frozen_views.json entry, or None (no entry, or no file)."""
+    return json.loads(FROZEN_VIEWS.read_text()).get(view_name) if FROZEN_VIEWS.is_file() else None
+
+
+def check_view(view: Path, split: str) -> None:
+    """Exit unless `split` is a set of the view and a frozen view's hashes equal its frozen_views.json entry."""
+    sets = json.loads((view / "manifest.json").read_text())["sets"]
+    if f"lidc/{split}" not in sets:
+        sys.exit(f"final_eval: {view} holds {sorted(sets)}, not lidc/{split} (the test view needs --split test)")
+    if view.name not in Q.FROZEN:
+        return
+    if (e := frozen_entry(view.name)) is None:
+        sys.exit(f"final_eval: {view.name} is a frozen view with no frozen_views.json entry (looked in {FROZEN_VIEWS})")
+    for key, got in (("content_sha256", Q.view_content_sha256(view)), ("target_set_sha256", Q.target_set_sha256(view))):
+        if got != e[key]:
+            sys.exit(f"final_eval: {view.name} {key} {got} differs from frozen_views.json {e[key]}: refusing to score")
 
 
 def _git(*args: str, root: Path = ROOT) -> str | None:
@@ -294,7 +309,7 @@ def hash_view(view: Path, out: Path) -> None:
     (target_set,) = [s["target_set_sha256"] for k, s in sets.items() if k.startswith("lidc/")]
     commits = {f: _git("log", "-1", "--format=%H", "--", f) or None for f in RENDER_FILES}
     _write(out, json.dumps({
-        "view": str(view), "items": len(_view_records(view)), "content_sha256": view_content_sha256(view),
+        "view": str(view), "items": len(_view_records(view)), "content_sha256": Q.view_content_sha256(view),
         "target_set_sha256": target_set, "generator_commit": commits["experiments/phase2/build_eval_views.py"],
         "render_files": commits, "r5_commit": None,
         "note": "r5_commit not recorded: no file under runs/r5/ holds a code commit. Equal to the R5 box view by "
@@ -376,7 +391,7 @@ def score(pool, view: Path, split: str, out: Path, rows: list[dict], answers: li
 
 def _identity(view: Path, split: str) -> dict:
     return {"view": str(view), "split": split, "view_manifest_sha256": view_manifest_sha256(view),
-            "view_content_sha256": view_content_sha256(view), "code_sha": code_sha(),
+            "view_content_sha256": Q.view_content_sha256(view), "code_sha": code_sha(),
             "checker_build": _gpucheck.build()}
 
 
@@ -443,6 +458,8 @@ def main(argv=None) -> None:
     if len(splits) != len(views) or len(a.out) not in (1, len(views)):
         ap.error("give one --split per --view, and one --out or one per --view")
     outs = a.out if len(a.out) == len(views) else [a.out[0] / v.name for v in views]
+    for view, split in zip(views, splits, strict=True):
+        check_view(view, split)
     if a.rescore:
         if len(views) != 1:
             ap.error("--rescore takes one --view")

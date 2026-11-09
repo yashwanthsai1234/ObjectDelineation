@@ -4,8 +4,11 @@
 
 Checks, in order; the stage (DATA / CHECKER / CODE) with a failure is finished, the later stages are not run:
   DATA     bundle integrity (rows.jsonl and context hashes, eval-view file hashes), patients shared between training and
-           any exam (or probe) view, coverage of every exam view by the training view (objdel.eval.coverage), prompt
-           text identical, CT window consistent, every training target parses and is legal for the reference checker
+           any exam (or probe) view, coverage of every exam view by the training view (objdel.data.coverage), prompt
+           text identical, CT window consistent, every training target parses and is legal for the reference checker;
+           with `rows_plan` (B1.3): the plan's train_rl rows root built locally passes the B data gates
+           (experiments.phase2.audit_data) with the manifest SHA-256 the plan pins, and the pinned HF revision holds
+           exactly the local root's files
   CHECKER  tests/test_cuda_checker*.py when they exist, the scorers on the CUDA checker (tests/test_gpu_scoring.py:
            equal to the host scorer it replaced), then the checker's exactness tests (the slow exact oracles, the
            archived CPU checker's recorded results, topology, geometry)
@@ -15,9 +18,11 @@ refuses unless that stamp passes and all three hashes still match: refusal(). Ex
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -29,7 +34,7 @@ EXAMS = ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-pre
 CHECKER_TESTS = ["tests/test_checker.py", "tests/test_checker_oracle.py", "tests/test_checker_host.py",
                  "tests/test_topology.py", "tests/test_geometry.py", "tests/test_geometry_mask.py",
                  "tests/test_geometry_oracle.py"]  # fmt: skip
-QUICK_TESTS = ["tests/test_eval_coverage.py", "tests/test_preflight.py", "tests/test_p2_scripts.py",
+QUICK_TESTS = ["tests/test_data_coverage.py", "tests/test_preflight.py", "tests/test_p2_scripts.py",
                "tests/test_train_configs.py", "tests/test_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
 DRY_RUN = "tests/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select on a tiny model, CPU
 HF_RATE = {"lfm2.5-vl-450m": "hf-rate-lfm", "qwen3-vl-2b": "hf-rate-qwen3vl"}  # runs/<run>/<dir>/hf_rate.json (R0)
@@ -57,8 +62,8 @@ def load(cfg: Path):
 
 
 def hashes(cfg: Path) -> dict:
-    """code: as run manifests (train_sft.code_hashes); data: the training view hash, each exam view's manifest and the
-    CUDA checker eval set's (it ships in the LIDC bundle);
+    """code: as run manifests (train_sft.code_hashes); data: the training view hash, each exam view's manifest, the
+    CUDA checker eval set's (it ships in the LIDC bundle) and, with rows_plan, the rows root's manifest.json;
     config: the file's bytes."""
     from experiments.phase2 import train_sft as TS
 
@@ -66,8 +71,12 @@ def hashes(cfg: Path) -> dict:
     root = Path(a.data_root)
     view = json.loads((root / a.view / "manifest.json").read_text())["view_hash"]
     exams = [sha(root / "eval_views" / v / "manifest.json") for v in EXAMS] + [sha(root / "checker_eval" / "manifest.json")]
+    rows = ""
+    if a.rows_plan:  # B1.3: an edited rows root refuses the launch
+        with contextlib.suppress(OSError, ValueError, KeyError, StopIteration):
+            rows = sha(rows_plan(a)[0] / "manifest.json")
     return {"code": TS.code_hashes()["objdel_and_script_sha256"], "config": sha(cfg),
-            "data": hashlib.sha256((view + "".join(exams)).encode()).hexdigest()}  # fmt: skip
+            "data": hashlib.sha256((view + "".join(exams) + rows).encode()).hexdigest()}  # fmt: skip
 
 
 def stamp_path(cfg: Path) -> Path:
@@ -140,7 +149,7 @@ def patients(a, cfg) -> list[str]:
 
 
 def exam_props(root: Path, v: str) -> list[dict]:
-    from objdel.eval import coverage as C
+    from objdel.data import coverage as C
 
     out = []
     for r in lines(root / "eval_views" / v / "lidc" / "val.jsonl"):
@@ -149,7 +158,7 @@ def exam_props(root: Path, v: str) -> list[dict]:
 
 
 def coverage(a, cfg) -> list[str]:
-    from objdel.eval import coverage as C
+    from objdel.data import coverage as C
 
     root = Path(a.data_root)
     train = [p for r in lines(root / a.view / "rows.jsonl") if r["epoch"] == 0
@@ -198,6 +207,63 @@ def targets(a, cfg) -> list[str]:
     return [f"{len(bad)} training targets rejected by the reference checker, e.g. {bad[:3]}"] if bad else []
 
 
+def local_rows_root(train_arg: str, data_root="data") -> Path:
+    """The local folder B1.4 built for the box path `{data}/rows/<name>` (fetch_hf.sh --rows): <data_root>/views/<name>;
+    ValueError for any other form."""
+    m = re.fullmatch(r"\{data\}/rows/([^/]+)", train_arg)
+    if not m or m[1] in (".", ".."):
+        raise ValueError(f"--train {train_arg!r}: a rows plan names {{data}}/rows/<name>")
+    return Path(data_root) / "views" / m[1]
+
+
+def rows_plan(a) -> tuple[Path, str, str]:
+    """(local rows root, --rows-manifest-sha256, --rows-revision) of the train_rl stage of a.rows_plan."""
+    import yaml
+
+    step = next(s for s in yaml.safe_load(Path(a.rows_plan).read_text())["steps"] if "experiments.phase2.train_rl" in s)
+    train, manifest, revision = (str(step[step.index(f) + 1]) for f in ("--train", "--rows-manifest-sha256",
+                                                                         "--rows-revision"))
+    return local_rows_root(train, a.data_root), manifest, revision
+
+
+def rows_root(a, cfg) -> list[str]:
+    """B1.3: the local rows root has the manifest the plan pins and passes every hard B data gate."""
+    if not a.rows_plan:
+        return []
+    from experiments.phase2 import audit_data
+    from objdel.data import quality as Q
+
+    root, want, _ = rows_plan(a)
+    if not (root / "manifest.json").is_file():
+        return [f"{root}: no manifest.json (build_rl_rows writes it only after the gates pass)"]
+    if (got := sha(root / "manifest.json")) != want:
+        return [f"{root}/manifest.json SHA-256 {got} is not the plan's --rows-manifest-sha256 {want}"]
+    data = Path(a.data_root)
+    report = audit_data.audit(root, data / "store", data / "eval_views", model=a.model)
+    return [f"{g.name}: {g.value:g} (limit {g.limit})" for g in Q.failures(Q.gates(report))]
+
+
+def rows_revision(a, cfg) -> list[str]:
+    """B1.3 2b: the pinned HF revision holds exactly the local root's files under rows/<name>/ and its manifest.json
+    has the pinned SHA-256 ($0: two Hub API reads, no box)."""
+    if not a.rows_plan:
+        return []
+    import huggingface_hub as hub
+
+    from experiments.phase2.hf_push import REPO
+    from objdel import secrets
+
+    root, want, rev = rows_plan(a)
+    prefix, token = f"rows/{root.name}/", secrets.get("objdel-hf-write")
+    remote = sorted(f[len(prefix):] for f in hub.HfApi(token=token).list_repo_files(REPO, revision=rev)
+                    if f.startswith(prefix))
+    local = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+    bad = [] if remote == local else [f"{REPO}@{rev} {prefix}: {len(remote)} files, local root {len(local)}; "
+                                      f"differ in {sorted(set(local) ^ set(remote))[:3]}"]
+    got = sha(hub.hf_hub_download(REPO, prefix + "manifest.json", revision=rev, token=token))
+    return bad + ([] if got == want else [f"{REPO}@{rev} {prefix}manifest.json SHA-256 {got} is not {want}"])
+
+
 # --- CHECKER, CODE ------------------------------------------------------------------------------------------------
 
 
@@ -244,7 +310,8 @@ def projection(a, cfg) -> list[str]:
 CHECKS = [
     ("DATA bundle integrity", view_integrity), ("DATA patient disjointness", patients),
     ("DATA prompt identity", prompts), ("DATA CT window", ct_window), ("DATA training targets legal", targets),
-    ("DATA coverage of the exam views", coverage), ("CHECKER CPU exactness (+ CUDA equivalence)", checker_tests),
+    ("DATA coverage of the exam views", coverage), ("DATA ROWS root", rows_root), ("DATA ROWS revision", rows_revision),
+    ("CHECKER CPU exactness (+ CUDA equivalence)", checker_tests),
     ("CODE quick tests", lambda a, cfg: pytest("-m", "not slow", *QUICK_TESTS)),
     ("CODE CPU dry run train -> select", lambda a, cfg: pytest(DRY_RUN)),
     ("CODE projected GPU hours and dollars", projection),

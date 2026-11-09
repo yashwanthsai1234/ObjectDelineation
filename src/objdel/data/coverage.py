@@ -2,11 +2,17 @@
 
 A row is a dict of categorical properties of one target outline (props). distribution() gives each property's share per
 category over many rows; gaps() lists every evaluation category with a share >= EVAL_MIN that training has below
-TRAIN_MAX. Pure functions, no I/O.
+TRAIN_MAX. cell_coverage() compares scheduled windows with a (size, offset) cell law (B1.3, gates DG7-DG9, DG16).
+Pure functions, no I/O.
 """
 
 import json
 from collections import Counter
+
+import numpy as np
+from scipy.stats import ks_2samp
+
+from .windows import cell_shares
 
 EVAL_MIN = 0.05  # an eval category this common ...
 TRAIN_MAX = 0.01  # ... must have at least this much training share
@@ -54,3 +60,20 @@ def gaps(train: dict, exam: dict, eval_min: float = EVAL_MIN, train_max: float =
     return [{"key": k, "category": cat, "train": train[k].get(cat, 0.0), "exam": share}
             for k in KEYS for cat, share in sorted(exam[k].items(), key=lambda kv: str(kv[0]))
             if share >= eval_min and train[k].get(cat, 0.0) < train_max]  # fmt: skip
+
+
+def mix_coverage(rows, target, target_offsets) -> dict:
+    """Worst cell ratio (cells with target share >= 1 %), total variation and offset KS (scipy.stats.ks_2samp) of the
+    windows `rows` against the (4, 4) cell law `target` and its offsets; no rows: 0, 1, 1 (a failure, never NaN)."""
+    if not rows:
+        return {"rows": 0, "worst_ratio": 0.0, "tv": 1.0, "ks": 1.0}
+    share, t = cell_shares(rows), np.asarray(target, np.float64)
+    keep = t >= 0.01
+    return {"rows": len(rows), "worst_ratio": float((share[keep] / t[keep]).min()),
+            "tv": float(np.abs(share - t).sum() / 2),
+            "ks": float(ks_2samp([w.offset for w in rows], target_offsets).statistic)}
+
+
+def cell_coverage(scheduled, target, target_offsets) -> dict:
+    """mix_coverage of the off-centre (shifted and rescaled) windows of `scheduled`; centred windows are ignored."""
+    return mix_coverage([w for w in scheduled if w.kind != "centred"], target, target_offsets)

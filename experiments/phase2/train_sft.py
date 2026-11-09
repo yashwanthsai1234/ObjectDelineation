@@ -99,6 +99,8 @@ class RunArgs:
     profile: str | None = field(default=None, metadata={"help": "torch.profiler output dir (timing runs)"})
     stages: list[str] = field(default_factory=list, metadata={"help": "Vast runner only (policy.chain)"})
     sampler: str | None = field(default=None, metadata={"help": "Vast runner only (policy.chain)"})
+    rows_plan: str | None = field(default=None, metadata={
+        "help": "Vast runner only: the steps plan whose train_rl stage names the rows root (preflight ROWS checks)"})
 
     def __post_init__(self):  # a bad G-vision config fails here, not at the first rolling checkpoint (BK3-5)
         if self.vision in (False, "off"):
