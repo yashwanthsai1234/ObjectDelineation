@@ -105,21 +105,15 @@ class CacheRef(Mapping):
         return CacheRef, (self.key, self.root)
 
 
-VIEW_SEP = "::"  # "<i>::<item id>": a row of the i-th root (dataset.grpo_rows_views); no tag: the first root
-
-
 def loader(*roots) -> Callable[[str], CacheRef]:
-    """`caches` bound to preloaded roots (eval views reuse the prepared item ids). With several roots a key
-    "<i>::<item id>" resolves in roots[i] and an untagged key in roots[0] (RL on shifted windows)."""
-    paths = [str(Path(r).resolve()) for r in roots]
-    if len(paths) == 1:
-        return partial(CacheRef, root=paths[0])
-    return partial(_tagged, paths)
+    """`caches` bound to preloaded roots: a key resolves in the first root that holds it, so a key no root holds
+    raises KeyError. train_rl --heldout puts the val view first: the prepared root holds the same val item ids
+    (centred frames) beside its train items, and no train id is in a val view."""
+    return partial(_first, [str(Path(r).resolve()) for r in roots])
 
 
-def _tagged(paths: list[str], key: str) -> CacheRef:
-    tag, sep, item = key.partition(VIEW_SEP)
-    return CacheRef(item, paths[int(tag)]) if sep else CacheRef(key, paths[0])
+def _first(paths: list[str], key: str) -> CacheRef:
+    return CacheRef(key, next((p for p in paths if key in STORE.get(p, {})), paths[0]))
 
 
 class _Pool(ProcessPoolExecutor):

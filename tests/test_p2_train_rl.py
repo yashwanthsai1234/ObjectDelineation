@@ -4,9 +4,14 @@ model folder (the layout train_sft's branches use, so select_ckpt and vLLM read 
 
 import json
 import os
+import shutil
+import subprocess
+import sys
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
-from test_p2_scripts import GRPO_SMOKE, _module, _tiny_vlm
+from test_p2_scripts import GRPO_SMOKE, ROOT, _module, _tiny_vlm
 
 
 @pytest.mark.slow
@@ -71,26 +76,123 @@ def test_full_rl_runs_with_the_shared_prefix_forward(tmp_path, synthetic_items):
     assert (out / "final/model.safetensors").exists()
 
 
-@pytest.mark.slow
-def test_full_rl_trains_on_shifted_windows_beside_the_centred_frames(tmp_path, synthetic_items):
-    """--train-views: RL rows from the policy frames and from shifted / rescaled windows of the same train items
-    (build_eval_views --split train), each scored on its own window's rater masks (rl_plateau_diagnosis_2026-11-08)."""
+SPY = """
+import json, sys
+from objdel.data import splits
+from objdel.train import rewards
+splits.val_half = lambda g: "shape"  # the held-out curve's val-shape rule on synthetic patients
+orig = rewards.TRLReward._terms
+def spy(self, completions, completion_ids, key, *a, **k):
+    if self._last[0] is not completions:
+        with open(sys.argv[1], "a") as f:
+            f.write(json.dumps(sorted(set(key))) + "\\n")
+    return orig(self, completions, completion_ids, key, *a, **k)
+rewards.TRLReward._terms = spy
+from experiments.phase2 import train_rl
+sys.exit(train_rl.main(sys.argv[2:]))
+"""
+
+
+@pytest.fixture
+def rows_run(tmp_path, synthetic_items):
+    """run(out, *flags) -> (CompletedProcess, keys per reward call): train_rl on a 4-step rows root (one prompt per
+    step, blocks of 2; test_train_rl_guards.schedule_root) from a tiny LoRA Qwen3-VL, the reward calls' keys
+    recorded."""
     pytest.importorskip("trl")
-    from experiments.phase2 import build_eval_views as BE
+    from test_train_rl_guards import SMOKE, schedule_root
+
     from objdel.data import store
     from objdel.train import dataset
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
     dataset.prepare(tmp_path / "store", tmp_path / "prepared", procs=1)
-    BE.build(tmp_path / "store", tmp_path / "views", ("lidc",), "train", seed=0, procs=1)
-    views = [str(tmp_path / "views" / f"lidc-train-{v}") for v in ("shifted", "rescaled")]
-    out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
-    r = _module("experiments.phase2.train_rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
-                str(tmp_path / "prepared"), "--train-views", *views, "--out", str(out), "--steps", "2", "--save-steps",
-                "100", "--procs", "1", "--grpo", json.dumps(GRPO_SMOKE), env=env)  # fmt: skip
+    root, keys, sha = schedule_root(tmp_path / "prepared", tmp_path / "rows")
+    env = os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
+
+    n = iter(range(100))
+
+    def run(out, *flags, train=True):
+        log = out.parent / f"{out.name}.{next(n)}.keys"  # one file per call
+        args = ["--model", "qwen3-vl-2b", "--ckpt", str(model), "--out", str(out), "--procs", "1",
+                "--grpo", json.dumps(SMOKE), *flags]
+        if train:
+            args += ["--train", str(root), "--rows-revision", "a" * 40, "--rows-manifest-sha256", sha]
+        r = subprocess.run([sys.executable, "-I", "-c", SPY, str(log), *args], cwd=ROOT, env=env,
+                           capture_output=True, text=True, timeout=900)
+        calls = [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+        return r, calls
+
+    return SimpleNamespace(run=run, keys=keys, sha=sha, root=root, model=model, prepared=tmp_path / "prepared")
+
+
+@pytest.mark.slow
+def test_rows_run_trains_in_schedule_order_and_records_provenance(tmp_path, rows_run):
+    """I15, I39 (B1 side), I41 (adapter before merge), I49: a rows run trains the schedule's keys in file order,
+    rl.json holds the rows provenance, and --merge-last rebuilds final/ from the last checkpoint."""
+    out = tmp_path / "b1"
+    r, calls = rows_run.run(out, "--steps", "2", "--save-steps", "1")
+    assert r.returncode == 0, r.stderr[-4000:]
+    assert calls == [[k] for k in rows_run.keys[:2]]  # step s trains schedule row s
+    doc = json.loads((out / "rl.json").read_text())
+    assert doc["rows"] == {"root": str(rows_run.root), "revision": "a" * 40, "manifest_sha256": rows_run.sha,
+                           "ids_sha256": json.loads((rows_run.root / "manifest.json").read_text())["schedule"]
+                           ["ids_sha256"]}
+    assert doc["numerics"] == "bf16-seqmask" and doc["beta"] == 0.0 and doc["lr"] == 5e-5
+    assert doc["mask_truncated_completions"] is True and doc["steps"] == 2
+    assert (out / "final_adapter/adapter_config.json").exists()  # the unmerged LoRA, before the merge
+    assert not [f for f in os.listdir(out / "final") if f.startswith("adapter_")]
+
+    (out / "final").rename(out / "final_ref")  # a run that died after checkpoint-2, before its own save
+    (out / "rl.json").unlink()
+    shutil.rmtree(out / "final_adapter")
+    r, _ = rows_run.run(out, "--merge-last", train=False)
     assert r.returncode == 0, r.stderr[-4000:]
     doc = json.loads((out / "rl.json").read_text())
-    assert [h["step"] for h in doc["log"] if "reward" in h] == [1, 2]
-    assert doc["train_rows"] == {"prepared": doc["train_rows"]["prepared"], "views": doc["train_rows"]["views"]}
-    assert doc["train_rows"]["views"] > 0 and doc["train_rows"]["prepared"] > 0
+    assert doc["steps"] == 2 and doc["partial"] is True and doc["merged_from"].endswith("checkpoint-2")
+    assert (out / "final_adapter/adapter_config.json").exists()
+    from safetensors.numpy import load_file
+
+    got, ref = (load_file(out / d / "model.safetensors") for d in ("final", "final_ref"))
+    assert got.keys() == ref.keys() and all(np.array_equal(got[k], ref[k]) for k in ref)
+    stamp = (out / "final/model.safetensors").stat().st_mtime_ns
+    r, _ = rows_run.run(out, "--merge-last", train=False)  # final/ exists: nothing changes
+    assert r.returncode == 0 and (out / "final/model.safetensors").stat().st_mtime_ns == stamp
+    r, _ = rows_run.run(tmp_path / "empty", "--merge-last", train=False)
+    assert r.returncode != 0 and "no checkpoint" in r.stderr
+
+
+@pytest.mark.slow
+def test_resume_keeps_the_schedule_order(tmp_path, rows_run):
+    """I33: 4 steps stopped after step 2 and resumed train the same keys per step as an unbroken run, and the
+    resumed run checks ids_sha256 again."""
+    r, whole = rows_run.run(tmp_path / "whole", "--steps", "4", "--save-steps", "2")
+    assert r.returncode == 0, r.stderr[-4000:]
+    assert whole == [[k] for k in rows_run.keys]
+    out = tmp_path / "broken"
+    r, first = rows_run.run(out, "--steps", "2", "--save-steps", "2")
+    assert r.returncode == 0, r.stderr[-4000:]
+    r, rest = rows_run.run(out, "--steps", "4", "--save-steps", "2", "--resume")
+    assert r.returncode == 0, r.stderr[-4000:]
+    assert first + rest == whole
+    assert json.loads((out / "rl.json").read_text())["resumed_from"].endswith("checkpoint-2")
+    m = json.loads((rows_run.root / "manifest.json").read_text())
+    m["schedule"]["ids_sha256"] = "0" * 64
+    (rows_run.root / "manifest.json").write_text(json.dumps(m))
+    r, _ = rows_run.run(out, "--steps", "4", "--resume")  # pinned SHA no longer matches: refused before training
+    assert r.returncode != 0 and "SHA-256" in r.stderr
+
+
+@pytest.mark.slow
+def test_heldout_curve_logs_eval_iou_and_allmiss(tmp_path, rows_run):
+    """I44: with --heldout, FastGRPO runs TRL's evaluation on val-shape items of the view every --heldout-every
+    steps and rl.json holds eval/iou_tc and eval/allmiss_share per evaluation."""
+    out = tmp_path / "h"
+    r, calls = rows_run.run(out, "--steps", "2", "--save-steps", "100", "--heldout", str(rows_run.prepared),
+                            "--heldout-items", "64", "--heldout-every", "2")
+    assert r.returncode == 0, r.stderr[-4000:]
+    doc = json.loads((out / "rl.json").read_text())
+    assert [e["step"] for e in doc["eval"]] == [2]
+    assert 0 <= doc["eval"][0]["eval/iou_tc"] <= 1 and 0 <= doc["eval"][0]["eval/allmiss_share"] <= 1
+    val = ["lidc/1.2.2/n000/z001", "lidc/1.2.2/n000/z004"]
+    assert sorted({k for c in calls for k in c if k in val}) == val  # both val RL items were scored

@@ -54,6 +54,7 @@ References:
   rollback; the alarm lags, hence rollback to the best held-out checkpoint).
 """
 import json
+import time
 from pathlib import Path
 
 import torch
@@ -288,3 +289,25 @@ class NvtxSteps(TrainerCallback):
     def _stop(self):
         torch.cuda.profiler.stop()
         self.capturing, self.done = False, True
+
+
+class BudgetStop(TrainerCallback):
+    """Stop and save once the session spend fixed_usd + (now - session_start) h x rate_usd_per_h reaches cap_usd
+    (train_rl --budget-usd). With run.sh's exports (rate = dph + 6 x inet_up_cost, fixed = 15 x inet_down_cost,
+    session_start = the launch time) this is the amount vast.policy.accrued charges, so the guard trips before the
+    rental's own stop rules and the evaluation steps after train_rl still run. Once tripped it stays tripped."""
+
+    def __init__(self, rate_usd_per_h: float, cap_usd: float, session_start: float, fixed_usd: float = 0.0,
+                 clock=time.time):
+        if rate_usd_per_h <= 0:
+            raise ValueError(f"budget stop: rate {rate_usd_per_h} $/h must be > 0")
+        self.rate, self.cap, self.start, self.fixed = rate_usd_per_h, cap_usd, session_start, fixed_usd
+        self.clock, self.tripped = clock, False
+
+    def spend(self) -> float:
+        return self.fixed + max(0.0, self.clock() - self.start) / 3600 * self.rate
+
+    def on_step_end(self, args, state, control, **kw):
+        self.tripped = self.tripped or self.spend() >= self.cap
+        if self.tripped:
+            control.should_training_stop = control.should_save = True

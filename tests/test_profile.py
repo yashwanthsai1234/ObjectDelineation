@@ -218,24 +218,6 @@ def test_shared_prefix_chain_compares_the_packed_forward_on_e2():
     assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
 
 
-def test_shifted_rl_chain_trains_on_the_windows_and_scores_both_splits():
-    """rl_shifted: train_rl from the full run's model on the centred frames plus the shifted and rescaled train windows
-    (shared-prefix, resumable), then final_eval on the whole val and test splits of the shifted view."""
-    from experiments.phase2.vast import policy
-
-    chain = policy.chain(policy.ROOT / "experiments/phase2/configs/rl_shifted.yaml", "rl2")
-    train = next(s for s in chain if "experiments.phase2.train_rl" in s)
-    i = train.index("--train-views")
-    assert train[i + 1:i + 3] == ["/workspace/data/lidc/views/lidc-train-shifted",
-                                  "/workspace/data/lidc/views/lidc-train-rescaled"]
-    assert {"--resume", "--shared-prefix"} <= set(train)
-    assert train[train.index("--ckpt") + 1] == "/workspace/runs/rl2/ckpt"
-    evals = [s for s in chain if "experiments.phase2.final_eval" in s]
-    assert [s[s.index("--split") + 1] for s in evals] == ["val", "test"]
-    assert all(s[s.index("--ckpt") + 1] == "/workspace/runs/rl2/train_rl/final" for s in evals)
-    assert evals[1][evals[1].index("--view") + 1] == "/workspace/data/lidc/eval_views/lidc-test-shifted"
-
-
 def test_covered_hand_cases():
     """A6: the interval-union length clipped to [t0, t1], shared by busy (torch.profiler) and nsys_baseline."""
     c = PS.covered

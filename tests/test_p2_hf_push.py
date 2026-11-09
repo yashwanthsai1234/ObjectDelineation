@@ -196,3 +196,70 @@ def test_base_card_without_a_license_file_uses_apache_only_when_the_card_declare
     text, meta = H.base_card("Qwen/Qwen3-VL-2B-Instruct")
     assert meta == {"license": "apache-2.0"} and b"Apache License" in text and b"Version 2.0, January 2004" in text
     assert hashlib.sha256(text).hexdigest().startswith("cfc7749b")
+
+
+# --- hf_push --rl: a train_rl output (B1.5, I41) ------------------------------------------------------------------
+
+
+def rl_dir(tmp: Path, final=True, adapter=True) -> Path:
+    out = tmp / "runs" / "v1" / "b1-rows"
+    out.mkdir(parents=True)
+    if final:
+        (out / "final").mkdir()
+        (out / "final" / "model.safetensors").write_bytes(b"merged")
+        (out / "final" / "config.json").write_text("{}")
+    if adapter:
+        (out / "final_adapter").mkdir()
+        (out / "final_adapter" / "adapter_model.safetensors").write_bytes(b"lora")
+        (out / "final_adapter" / "adapter_config.json").write_text("{}")
+    (out / "trainer" / "checkpoint-50").mkdir(parents=True)
+    (out / "trainer" / "checkpoint-50" / "optimizer.pt").write_bytes(b"opt")
+    (out / "rl.json").write_text(json.dumps({"model": "qwen3-vl-2b", "steps": 260, "ckpt": "/workspace/runs/v1/ckpt",
+                                             "rows": {"revision": "a" * 40, "ids_sha256": "1" * 64}}))
+    return out
+
+
+def push_rl(out, monkeypatch, ok=True):
+    monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
+    argv = ["--rl", str(out), "--repo", REPO, "--revision", "b1-rows"]
+    if ok:
+        return H.main(argv)
+    with pytest.raises(SystemExit) as e:
+        H.main(argv)
+    return str(e.value)
+
+
+def test_push_rl_uploads_the_merged_model_and_the_adapter(tmp_path, monkeypatch, fake):
+    """final/ at the revision's root (the folder fetch_hf.sh and final_eval --ckpt read), final_adapter/ beside it,
+    the base licence and an LIDC card; no checkpoint or optimizer state."""
+    assert push_rl(rl_dir(tmp_path), monkeypatch) == 0
+    ((_, repo, rev, files, _),) = [c for c in fake.calls if c[0] == "create_commit"]
+    assert repo == REPO and rev == "b1-rows" and ("create_branch", REPO, "b1-rows", True) in fake.calls
+    assert set(files) == {"model.safetensors", "config.json", "final_adapter/adapter_model.safetensors",
+                          "final_adapter/adapter_config.json", "LICENSE", "README.md"}
+    assert files["model.safetensors"] == b"merged" and files["final_adapter/adapter_model.safetensors"] == b"lora"
+    card = files["README.md"].decode()
+    for want in ("Qwen/Qwen3-VL-2B-Instruct", "base_model: Qwen/Qwen3-VL-2B-Instruct", "GRPO", "260 steps",
+                 "final_adapter", "a" * 40, "LIDC-IDRI", "10.7937/K9/TCIA.2015.LO9QL9SX"):
+        assert want in card, want
+
+
+@pytest.mark.parametrize("case, want", [({"final": False}, "final"), ({"adapter": False}, "final_adapter")])
+def test_push_rl_refuses_an_incomplete_run(tmp_path, monkeypatch, fake, case, want):
+    assert want in push_rl(rl_dir(tmp_path, **case), monkeypatch, ok=False)
+    assert not [c for c in fake.calls if c[0] in ("create_branch", "create_commit")]
+
+
+def test_push_rl_refuses_a_public_repo(tmp_path, monkeypatch, fake):
+    fake.private = False
+    assert "not private" in push_rl(rl_dir(tmp_path), monkeypatch, ok=False)
+    assert not [c for c in fake.calls if c[0] in ("create_branch", "create_commit")]
+
+
+def test_push_hf_of_a_rows_launch_config_pushes_the_train_rl_output(monkeypatch):
+    """push_hf.sh <run> b1_launch.yaml: the config with rows_plan names a train_rl output (output_dir b1-rows)."""
+    sent = _mac(monkeypatch, token())
+    P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/b1_launch.yaml"))
+    ((cmd, stdin, _),) = sent
+    assert "-m experiments.phase2.hf_push --rl /workspace/runs/v1/b1-rows" in cmd and "hf_secret" not in cmd
+    assert f"--repo {REPO} --revision b1-rows" in cmd and stdin == "hf_secret\n"

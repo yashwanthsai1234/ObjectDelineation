@@ -31,7 +31,9 @@ even when its prefix parses.
 
 Typed logs (log_metric, averaged by TRL per logging step, eval-prefixed in evaluation): error/<parser code> is
 the share of completions with that error (codes enter the set when first seen and are logged every batch after),
-defect/<class> the share with that checker defect. log_extra adds the columns key (item id), truncated and group
+defect/<class> the share with that checker defect, allmiss_share the share of groups whose answers are all
+missed answers (gated IoU_tc < MISS_IOU); rows with the kind and cell columns (a B1 rows root) add kind/<k>/iou_tc,
+cell/<ij>/iou_tc and cell/<ij>/allmiss_groups. log_extra adds the columns key (item id), truncated and group
 (index of the completion's group within its reward call) to the completions table (log_completions=True), so
 objdel.train.sample.export can turn it into eval_run JSONL (break-it B4-3), and error (the parser code).
 
@@ -59,6 +61,8 @@ References:
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 
+import numpy as np
+
 from objdel._gpucheck import DEFECTS
 from objdel.reward import REWARD_V4, ExpertCache, advantages_v4, legal_gate, score_batch, topology_reward
 from objdel.train import nvtx
@@ -66,6 +70,7 @@ from objdel.train import nvtx
 LOGGED = ("format_ok", "legal", "iou_tc", "f5", "g_area", "topo_any", "r_topo")
 GATED = ("iou_tc", "f5", "g_area")  # logged times legal_gate: 0 for an illegal rollout, as advantages_v4 sees them
 AGGREGATOR = "advantage_v4"
+MISS_IOU = 0.1  # a missed answer: gated IoU_tc below this (glossary)
 
 
 def stop_ids(model, processing_class) -> set[int]:
@@ -111,8 +116,10 @@ class TRLReward:
     def funcs(self) -> tuple[list[Callable], list[float]]:
         """(reward_funcs, reward_weights) for GRPOTrainer / GRPOConfig."""
         def make(name):
-            def f(completions, completion_ids, key, W, H, names, log_metric=None, log_extra=None, **_):
-                return self._terms(completions, completion_ids, key, W, H, names, log_metric, log_extra)[name]
+            def f(completions, completion_ids, key, W, H, names, log_metric=None, log_extra=None, kind=None,
+                  cell=None, **_):
+                return self._terms(completions, completion_ids, key, W, H, names, log_metric, log_extra, kind,
+                                   cell)[name]
             f.__name__ = name
             f.trl_reward = self  # lets callbacks.Controller find the reward among trainer.reward_funcs
             return f
@@ -136,7 +143,8 @@ class TRLReward:
     def _signature(keys, jobs) -> list[tuple]:
         return [(k, t, tr, n, w, h) for k, (t, tr, n, _, w, h) in zip(keys, jobs, strict=True)]
 
-    def _terms(self, completions, completion_ids, key, W, H, names, log_metric, log_extra) -> dict:
+    def _terms(self, completions, completion_ids, key, W, H, names, log_metric, log_extra, kind=None,
+               cell=None) -> dict:
         if self._last[0] is completions:
             return self._last[1]
         g = REWARD_V4.group
@@ -161,6 +169,7 @@ class TRLReward:
                 log_metric(f"error/{code}", T["error"].count(code) / len(jobs))
             for d in DEFECTS:
                 log_metric(f"defect/{d}", sum(d in x for x in T["defects"]) / len(jobs))
+            self._log_views(log_metric, T["iou_tc"] * legal, kind, cell)
         if log_extra is not None:
             log_extra("key", keys)
             log_extra("truncated", [j[1] for j in jobs])
@@ -168,3 +177,17 @@ class TRLReward:
             log_extra("error", T["error"])
         self._last = (completions, out)
         return out
+
+    @staticmethod
+    def _log_views(log_metric, iou, kind, cell) -> None:
+        """allmiss_share: the share of groups whose G answers are all missed answers (gated IoU_tc < MISS_IOU); with
+        the rows root's kind and cell columns also kind/<k>/iou_tc, cell/<ij>/iou_tc and cell/<ij>/allmiss_groups."""
+        g = REWARD_V4.group
+        allmiss = (iou < MISS_IOU).reshape(-1, g).all(1)
+        log_metric("allmiss_share", float(allmiss.mean()))
+        for col, vals in (("kind", kind), ("cell", cell)):
+            vals = None if vals is None else np.asarray(vals)
+            for v in [] if vals is None else sorted(set(vals)):
+                log_metric(f"{col}/{v}/iou_tc", float(iou[vals == v].mean()))
+                if col == "cell":
+                    log_metric(f"cell/{v}/allmiss_groups", float(allmiss[vals[::g] == v].mean()))

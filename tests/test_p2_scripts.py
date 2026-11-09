@@ -52,7 +52,8 @@ def test_configs_parse_as_run_args(path):
 def test_config_set_complete():
     yaml = pytest.importorskip("yaml")
     names = {p.stem for p in CONFIGS}
-    assert names == {"r1_lfm", "r1_qwen3vl2b", "r0_qwen3vl_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1"}
+    assert names == {"r1_lfm", "r1_qwen3vl2b", "r0_qwen3vl_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1",
+                     "b1_launch"}
     assert yaml.safe_load((ROOT / "experiments/phase2/configs/c2_a0_seed1.yaml").read_text())["a0"] is True
 
 
