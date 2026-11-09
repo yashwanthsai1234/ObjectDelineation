@@ -29,6 +29,7 @@ dev = [
     "pytest>=8.0", "pytest-cov>=6.0", "hypothesis>=6.100", "ruff==0.17.1",
     "matplotlib>=3.9",  # pylidc-parity oracle
     "pyyaml>=6.0",  # experiments/phase2/vast/policy.py reads run configs (in the training lock via transformers)
+    "vulture==2.16",  # `make dead`
 ]
 
 [build-system]
@@ -95,3 +96,17 @@ ignore = ["E731", "E741"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["objdel", "experiments"]
+
+[tool.vulture]
+# Dead-code gate (`make dead`, tests/test_repo_hygiene.py). Each group below is used by name from outside the code.
+paths = ["src", "experiments", "tests"]
+min_confidence = 60
+ignore_decorators = ["@pytest.fixture"]  # autouse fixtures (_no_real_secrets, clean_store)
+ignore_names = [
+  "on_*", "should_save", "should_training_stop",  # transformers TrainerCallback hooks and control flags
+  "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes
+  "cmd_*",  # vast/policy.py subcommands, dispatched by name
+  "pytestmark", "pre_tokenizer", "decoder", "projector_hidden_size", "is_main_process",
+  "writeable", "atexit",  # numpy flag (topology.py), atexit hook (cache.py)
+  "rid", "multimodal_fields", "has_tool_images", "return_tensors",  # fake signatures that callers use by keyword
+]
