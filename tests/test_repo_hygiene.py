@@ -38,9 +38,8 @@ def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
 
 def test_the_old_ceiling_is_archived_and_not_imported():
     """S05: rater_ceiling moved to archive/phase2_lab/A4 (replaced by objdel.eval.ceiling); nothing imports it."""
-    old, new = ROOT / "experiments/phase2/lab/A4", ROOT / "archive/phase2_lab/A4"
+    new = ROOT / "archive/phase2_lab/A4"  # the old tree is gone (test_repo_hygiene_clean: retired trees)
     assert (new / "rater_ceiling.py").is_file() and (new / "rater_ceiling.json").is_file()
-    assert not (old / "rater_ceiling.py").exists()
     assert "replaced by objdel.eval.ceiling (Phase A2)" in (ROOT / "archive/README.md").read_text()
     for top in ("src", "experiments", "tests"):
         for p in (ROOT / top).rglob("*.py"):
