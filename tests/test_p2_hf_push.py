@@ -263,3 +263,64 @@ def test_push_hf_of_a_rows_launch_config_pushes_the_train_rl_output(monkeypatch)
     ((cmd, stdin, _),) = sent
     assert "-m experiments.phase2.hf_push --rl /workspace/runs/v1/b1-rows" in cmd and "hf_secret" not in cmd
     assert f"--repo {REPO} --revision b1-rows" in cmd and stdin == "hf_secret\n"
+
+
+# ---------------------------------------------------------------- DOC11: --card-only
+HEADLINE = {"run": "r5", "model_ref": "svenk029/objdel-sft@rl-full-3ep", "seed": 11, "K": 8, "ci_unit": "item",
+            "test": {"source": "runs/r5/eval/eval_test/final_eval.json", "view": "lidc-test-shifted", "items": 2200,
+                     "metrics": {k: {"mean": 0.5 + i / 100, "ci95": [0.4, 0.6]}
+                                 for i, k in enumerate(("iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote",
+                                                        "legal"))}},  # fmt: skip
+            "val": {"source": "runs/r5/eval/eval_val/final_eval.json", "view": "lidc-val-shifted", "items": 1084,
+                    "metrics": {k: {"mean": 0.3, "ci95": [0.2, 0.4]}
+                                for k in ("iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote",
+                                          "legal")}}}  # fmt: skip
+OLD_CARD = "---\nlicense: apache-2.0\n---\n\n# objdel RL r5\n\nBase: Qwen3-VL-2B.\n\n## Data\n\n" + H.LIDC + "\n"
+
+
+def test_card_update_appends_sections_and_keeps_every_other_line():
+    new = H.card_update(OLD_CARD, HEADLINE)
+    assert set(OLD_CARD.splitlines()) <= set(new.splitlines())
+    assert "## Evaluation" in new and "## Limitations" in new and "0.500" in new and "2200" in new
+    assert "shifted views" in new and "single-run" in new and "RIGA" in new
+
+
+def test_card_update_is_idempotent_and_replaces_an_old_evaluation():
+    once = H.card_update(OLD_CARD, HEADLINE)
+    assert H.card_update(once, HEADLINE) == once
+    other = HEADLINE | {"seed": 12}
+    again = H.card_update(once, other)
+    assert again.count("## Evaluation") == 1 and "seed 12" in again and "seed 11" not in again
+
+
+def card_only(monkeypatch, tmp_path, who=None, private=True):
+    api = FakeApi(private)
+    api.upload_file = lambda **kw: api.calls.append(("upload_file", kw["path_in_repo"], kw["revision"],
+                                                      kw["path_or_fileobj"]))  # fmt: skip
+    (tmp_path / "h.json").write_text(json.dumps(HEADLINE))
+    (tmp_path / "README.md").write_text(OLD_CARD)
+    monkeypatch.setattr(H, "api", lambda tok: api)
+    monkeypatch.setattr(H, "whoami", lambda tok: who or token())
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda *a, **k: str(tmp_path / "README.md"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
+    argv = ["--card-only", "--repo", REPO, "--revision", "rl-full-3ep", "--headline", str(tmp_path / "h.json")]
+    return api, argv
+
+
+def test_card_only_uploads_exactly_the_readme(tmp_path, monkeypatch):
+    pytest.importorskip("trl")
+    api, argv = card_only(monkeypatch, tmp_path)
+    assert H.main(argv) == 0
+    (up,) = [c for c in api.calls if c[0] == "upload_file"]
+    assert up[1:3] == ("README.md", "rl-full-3ep") and b"## Evaluation" in up[3]
+
+
+def test_card_only_with_a_bad_token_or_public_repo_uploads_nothing(tmp_path, monkeypatch):
+    pytest.importorskip("trl")
+    api, argv = card_only(monkeypatch, tmp_path, who=token(role="write"))
+    with pytest.raises(SystemExit):
+        H.main(argv)
+    api, argv = card_only(monkeypatch, tmp_path, private=False)
+    with pytest.raises(SystemExit):
+        H.main(argv)
+    assert not [c for c in api.calls if c[0] == "upload_file"]
