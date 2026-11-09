@@ -702,6 +702,12 @@ def one_pad_per_image(prompts: list[dict], pad: int) -> list[dict]:
     return out
 
 
+def prompt_images(prompts) -> list[list]:
+    """Each conversational prompt's image objects, in order, as TRL extracts them (grpo_trainer.py 1760-1771)."""
+    return [[c["image"] for m in p if isinstance(m["content"], list)
+             for c in m["content"] if c["type"] == "image"] for p in prompts]  # fmt: skip
+
+
 class ImageMemo:
     """The processor's image step once per distinct image per generation batch (perf: images prepared 2-3 times).
 
@@ -750,8 +756,11 @@ class ImageMemo:
         self.hits = self.misses = self.fallback_calls = 0
 
     def prefill(self, images, **kwargs) -> None:
-        """Prepare the distinct images of a generation batch before TRL's processor calls (C1: on the GPU)."""
-        self(images, **kwargs)
+        """Prepare the distinct images of a generation batch before TRL's processor calls (C1: on the GPU); counts
+        one miss per distinct image and no hit."""
+        from transformers.image_utils import make_flat_list_of_images
+
+        self(list({id(x): x for x in make_flat_list_of_images(images)}.values()), **kwargs)
 
     def prepare(self, miss: list, kwargs: dict):
         """(pixel_values, image_grid_thw) of the missed images: gpu_pixels.patchify when self.gpu is set and every
@@ -995,8 +1004,7 @@ class FastGRPO(FastForward, GRPOTrainer):
         if not (self.prompt_memo and self.use_vllm and self._is_vlm):
             return super()._tokenize_prompts(prompts)
         rows = [trl_grpo.prepare_multimodal_messages(p) for p in prompts]
-        images = [[c["image"] for m in p if isinstance(m["content"], list)
-                   for c in m["content"] if c["type"] == "image"] for p in rows]  # fmt: skip
+        images = prompt_images(rows)
         memo, ids = {}, []
         for prompt, row, imgs in zip(prompts, rows, images, strict=True):
             text = self.processing_class.apply_chat_template(
@@ -1011,6 +1019,9 @@ class FastGRPO(FastForward, GRPOTrainer):
     def _generate(self, prompts):
         if self.images is not None:  # the previous batch's images
             self.images.clear()
+            flat = [x for row in prompt_images(prompts) for x in row] if self.prompt_memo else []
+            if flat:  # pass 1 prepares no image with --prompt-memo: fill the memo with pass 2's kwargs (C1)
+                self.images.prefill(flat, return_tensors="pt")
         if self.use_vllm:
             self.patch_vllm_prompts()
             self.time_vllm_phases()

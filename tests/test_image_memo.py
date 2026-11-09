@@ -78,6 +78,27 @@ def test_fast_grpo_installs_one_memo_and_clears_it_before_each_generation(monkey
     assert memo.memo == {}
 
 
+def test_prompt_memo_prefills_the_distinct_images_with_pass_twos_kwargs(counted, monkeypatch):  # C1 + C2
+    """With --prompt-memo pass 1 calls no image processor, so _generate prepares the batch's distinct images once,
+    keyed by the kwargs TRL's pass-2 processor call forwards (return_tensors="pt", measured on Qwen3-VL): pass 2 is
+    then all hits. Without it nothing is prefilled (the B1 control)."""
+    ip, seen = counted
+    a, b = image(0), image(1)
+    ask = lambda x: [{"role": "user", "content": [{"type": "image", "image": x}, {"type": "text", "text": "q"}]}]  # noqa: E731
+    prompts = [ask(a)] * 8 + [ask(b)] * 8
+    monkeypatch.setattr(fast.GRPOTrainer, "_generate", lambda self, prompts: (None, [], None, []))
+    monkeypatch.setattr(fast.FastGRPO, "timed", lambda self, phase: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(fast.FastGRPO, "prefetch_rewards", lambda self, *a: None)
+    for on, want in ((False, []), (True, [2])):
+        t = object.__new__(fast.FastGRPO)
+        t.images, t.use_vllm, t.prompt_memo = fast.ImageMemo(ip), False, on
+        seen.clear()
+        fast.FastGRPO._generate(t, prompts)
+        assert seen == want
+    t.images([[a]] * 8 + [[b]] * 8, return_tensors="pt")  # TRL pass 2
+    assert seen == [2] and (t.images.misses, t.images.hits) == (2, 16)
+
+
 def test_a_saved_processor_holds_the_plain_image_processor_not_the_memo(tmp_path, monkeypatch):
     """TRL saves the processor with every checkpoint; ProcessorMixin.to_dict deep-copies its attributes. A copy of
     the memo is the plain image processor (no cached pixels), so the saved files equal those saved without it."""
