@@ -18,10 +18,12 @@ blocks. shuffle_dataset is False, so an HF resume skips the consumed batches and
 `schedule` (data/prepared) trains shuffled with disagreement items x4 until B1.8.
 
 Saves. Every --save-steps it writes <out>/trainer/checkpoint-N: the LoRA adapter, optimizer, scheduler, RNG and
-trainer state, so --resume continues from the last one after a lost box. At the end the unmerged adapter goes to
+trainer state, so --resume continues from the last one after a lost box (a run without --resume refuses an --out
+that holds checkpoints; --resume refuses one past --steps). At the end the unmerged adapter goes to
 <out>/final_adapter, then the LoRA is merged into the base and saved with its processor to <out>/final, a plain
 model folder (select_ckpt, final_eval and vLLM read it unchanged). --merge-last does the same from the last
-checkpoint of a run that did not reach its end (rl.json: partial true), and nothing when <out>/final exists.
+checkpoint of a run that did not reach its end (rl.json: partial true), and nothing when <out>/final exists (save_final
+writes final.tmp and renames it, so final is complete; a missing rl.json is written with steps null).
 
 Budget. --budget-usd stops and saves (callbacks.BudgetStop) when the session spend --fixed-usd + hours since
 --session-start x --rate-usd-per-h reaches it; run.sh exports OBJDEL_SESSION_START, OBJDEL_RATE_USD_PER_H and
@@ -71,11 +73,11 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--rows-revision", type=_hex(40), help="HF commit of the rows root (provenance in rl.json)")
     ap.add_argument("--rows-manifest-sha256", type=_hex(64), help="SHA-256 of the rows root's manifest.json")
     ap.add_argument("--budget-usd", type=float, help="stop and save when the session spend reaches this")
-    ap.add_argument("--session-start", type=float, default=env("OBJDEL_SESSION_START"),
+    ap.add_argument("--session-start", type=float, default=env("OBJDEL_SESSION_START") or None,
                     help="unix time the rental started (default: $OBJDEL_SESSION_START)")
-    ap.add_argument("--rate-usd-per-h", type=float, default=env("OBJDEL_RATE_USD_PER_H"),
+    ap.add_argument("--rate-usd-per-h", type=float, default=env("OBJDEL_RATE_USD_PER_H") or None,
                     help="USD per hour, bandwidth included (default: $OBJDEL_RATE_USD_PER_H)")
-    ap.add_argument("--fixed-usd", type=float, default=env("OBJDEL_FIXED_USD", "0"),
+    ap.add_argument("--fixed-usd", type=float, default=env("OBJDEL_FIXED_USD") or "0",
                     help="one-off USD of the session (default: $OBJDEL_FIXED_USD, else 0)")
     ap.add_argument("--heldout", type=Path, help="eval view for the held-out curve (val-shape items only)")
     ap.add_argument("--heldout-items", type=int, default=64)
@@ -95,6 +97,8 @@ def parse(argv=None) -> argparse.Namespace:
         ap.error("--budget-usd needs a session start: --session-start or OBJDEL_SESSION_START (run.sh exports it)")
     if a.budget_usd is not None and a.rate_usd_per_h is None:
         ap.error("--budget-usd needs a rate: --rate-usd-per-h or OBJDEL_RATE_USD_PER_H (run.sh exports it)")
+    if json.loads(a.grpo).get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
+        ap.error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
     if a.profile_window and not 2 <= a.profile_window[0] <= a.profile_window[1]:
         ap.error(f"--profile-window {a.profile_window}: needs 2 <= S <= E")
     return a
@@ -173,12 +177,18 @@ def heldout_rows(view: Path, n: int):
 
 
 def save_final(model, proc, out: Path) -> None:
-    """The unmerged LoRA adapter to out/final_adapter, then the merged model and its processor to out/final."""
+    """The unmerged LoRA adapter to out/final_adapter, then the merged model and its processor to out/final.tmp,
+    renamed to out/final at the end: a folder named final is always complete."""
     if hasattr(model, "merge_and_unload"):
         model.save_pretrained(out / "final_adapter")
         model = model.merge_and_unload()  # LoRA -> plain weights
-    model.save_pretrained(out / "final")
-    proc.save_pretrained(out / "final")
+    tmp = out / "final.tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    model.save_pretrained(tmp)
+    proc.save_pretrained(tmp)
+    shutil.rmtree(out / "final", ignore_errors=True)
+    tmp.rename(out / "final")
 
 
 def cut_seq_gaps(trainer_dir: Path, step: int) -> None:
@@ -203,10 +213,14 @@ def merge_last(a) -> int:
     from experiments.phase2.g_probe import save_json
 
     final = a.out / "final"
-    if (final / "config.json").is_file() and any(final.glob("*.safetensors")) and (a.out / "rl.json").is_file():
+    if (final / "config.json").is_file() and any(final.glob("*.safetensors")):  # save_final renames it when complete
         print(f"{final} exists: nothing to merge")
-        return 0
-    shutil.rmtree(final, ignore_errors=True)  # a half-written final (the box died inside save_final)
+        if (a.out / "rl.json").is_file():
+            return 0
+        return save_json(a.out / "rl.json", {  # the box died between save_final and save_json: the step is unknown
+            "model": a.model, "steps": None, "partial": None, "ckpt": str(a.ckpt), "final": str(final),
+            "recovered": "final complete, rl.json missing"}, keys=("steps", "partial", "recovered"))
+    shutil.rmtree(a.out / "final.tmp", ignore_errors=True)  # the box died inside save_final
     last = get_last_checkpoint(str(a.out / "trainer")) if (a.out / "trainer").is_dir() else None
     if last is None:
         print(f"--merge-last: no checkpoint in {a.out / 'trainer'}", file=sys.stderr)
@@ -240,7 +254,11 @@ def main(argv=None) -> int:
     if schedule:
         check_rows(train["key"], schedule)
     heldout = heldout_rows(a.heldout, a.heldout_items) if a.heldout else None
-    last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
+    last = get_last_checkpoint(str(a.out / "trainer")) if (a.out / "trainer").is_dir() else None
+    if not a.resume and last:
+        raise ValueError(f"{last} exists: a fresh run needs an --out without checkpoints (or pass --resume)")
+    if last and int(Path(last).name.split("-")[1]) > a.steps:
+        raise ValueError(f"--resume: {last} is past --steps {a.steps} (an older run in this --out?)")
     if a.resume and last is None:
         print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
     cut_seq_gaps(a.out / "trainer", int(Path(last).name.split("-")[1]) if last else 0)
