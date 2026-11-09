@@ -33,3 +33,16 @@ def test_report_sees_the_location_signal_and_its_gates():
     assert rep["drop_share"] == {"v4": 1.0, "v5": 0.0}
     assert rep["miss_beats_hit"] == 0.0 and rep["adv_size"]["r"] > 0
     assert rep["allmiss_grad_share"]["v5"] > 0 and rep["runaway"]["share"] == 0.0
+
+
+def test_report_splits_the_advantage_variance_by_term():
+    """Rule 3: in all-miss groups only loc varies, so it carries the whole variance; rule 8: the better half of the
+    all-hit group has a valid topology, so r_topo carries part of that group's variance and the jump is c_topo x 1."""
+    T, d = groups()
+    T["topo_any"][28:32] = 1.0  # the four best IoUs, so topology and IoU move together
+    rep = report(T, d, ["p1", "p2", "p3", "p4"], np.zeros(32, bool))
+    share = rep["variance_share"]["allmiss"]
+    assert np.isclose(share["loc"], 1.0) and np.isclose(share["area"], 0.0)
+    assert np.isclose(sum(share.values()), 1.0)
+    topo = rep["topology"]
+    assert 0 < topo["hit_share"] < 1 and np.isclose(topo["jump"], 1.0)

@@ -9,13 +9,18 @@ missed answer has gated IoU_tc < miss_iou. Report keys (rule numbers of B3.7):
   1 loc_signal: per all-miss group with >= 3 distinct centroid distances d, Spearman(A, -d / r) (r = sqrt(radius2));
     groups with constant A count 0; mean and a patient (group_id) bootstrap 95 % CI for v4, v5 and v5 - v4
   2 drop_share: share of all-miss groups with A = 0 for the whole group, v4 and v5
+  3 variance_share: share of the variance of v5 A in live all-miss groups from each weighted term of R
+    (sum of A_term x A over sum of A^2, A_term = the term's RLOO advantage; the shares sum to 1)
   4 miss_beats_hit: share of groups where a missed answer has a higher v5 R than a hit
   5 distance: median and quartiles of d / r over missed answers
   6 adv_size: median |A| on non-dropped groups for v4 and v5, r = their ratio, beta = 1e-3 / r, adam_epsilon = 1e-8 / r
   7 hit_agreement: mean Spearman(A_v4, A_v5) over groups with every IoU_tc >= miss_iou
+  8 topology: jump = c_topo x median r_topo of valid answers; hit_share = the c_topo r_topo share of the variance of
+    v5 A in live all-hit groups (Gate B3: <= 0.5)
   9 runaway: share of truncated answers and their mean v5 R
  10 allmiss_grad_share: S = sum over all-miss groups of sum |A| / sum over all groups, v4 and v5, and S_v5 / S_v4
-Rules 3 (variance split) and 8 (c_topo by the topology-fallback margin) are not computed here.
+Rule 8's c_topo lower bound (q95 of IoU vs vote minus the best same-signature IoU for undrawn signatures) is not
+computed here: the scorer returns no per-signature IoU.
 """
 import argparse
 import json
@@ -25,7 +30,7 @@ import numpy as np
 from scipy.stats import rankdata
 
 from objdel.reward import REWARD_V5, advantages_v4, advantages_v5, score_many
-from objdel.reward.advantages import _groups, _topology, rewards_v5
+from objdel.reward.advantages import _groups, _topology, reward_parts_v5, topology_valid
 
 
 def spearman(a, b) -> float:
@@ -48,13 +53,26 @@ def bootstrap(values, clusters, n=2000, seed=0) -> list[float]:
     return [float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))]
 
 
+def rloo(x: np.ndarray) -> np.ndarray:
+    """Leave-one-out advantage of each row's values (B, G), as advantages_v5 takes it."""
+    return x - (x.sum(1, keepdims=True) - x) / (x.shape[1] - 1)
+
+
+def variance_share(parts: dict, a: np.ndarray, rows: np.ndarray) -> dict:
+    """Share of sum(A^2) over the rows from each part: sum(rloo(part) A) / sum(A^2); nan without variance."""
+    tot = (a[rows] ** 2).sum()
+    return {k: float((rloo(v)[rows] * a[rows]).sum() / tot) if tot else float("nan") for k, v in parts.items()}
+
+
 def report(T: dict, d_over_r: np.ndarray, patients: list[str], truncated: np.ndarray, spec=REWARD_V5) -> dict:
     """The B3.7 report of score terms T (flat, K = spec.group per item), centroid distances d / r (nan for an empty
     answer), the group's patient id per group and the truncated flag per answer."""
     g = spec.group
     a4, a5 = advantages_v4(T, g).reshape(-1, g), advantages_v5(T, g, spec).reshape(-1, g)
     G = _groups(T, g, ("loc",))
-    R = rewards_v5(G, _topology(G, g, spec), spec)
+    r_topo = _topology(G, g, spec)
+    parts = reward_parts_v5(G, r_topo, spec)
+    R = sum(parts.values())
     iou = G["iou_tc"] * (G["legal"] >= 0.5)
     miss = iou < spec.miss_iou
     allmiss = miss.all(1)
@@ -81,12 +99,16 @@ def report(T: dict, d_over_r: np.ndarray, patients: list[str], truncated: np.nda
     allhit = hits.all(1)
     s4, s5 = (float(np.abs(a[allmiss]).sum() / np.abs(a).sum()) if np.abs(a).sum() else 0.0 for a in (a4, a5))
     d_miss = dr[miss & np.isfinite(dr)]
+    valid = topology_valid(G, spec)
     cut = np.asarray(truncated, bool).reshape(-1, g)
     return {
         "groups": len(R), "allmiss_groups": int(allmiss.sum()),
         "loc_signal": loc_signal,
         "drop_share": {k: float((np.ptp(a[allmiss], 1) == 0).mean()) if allmiss.any() else float("nan")
                        for k, a in (("v4", a4), ("v5", a5))},
+        "variance_share": {"allmiss": variance_share(parts, a5, allmiss & live5)},
+        "topology": {"jump": spec.c_topo * float(np.median(r_topo[valid])) if valid.any() else float("nan"),
+                     "hit_share": variance_share(parts, a5, allhit & live5)["topo"]},
         "miss_beats_hit": float(np.mean(beats)) if beats else 0.0,
         "distance": {"median": float(np.median(d_miss)) if d_miss.size else float("nan"),
                      "q25_q75": [float(np.percentile(d_miss, q)) for q in (25, 75)] if d_miss.size else []},
