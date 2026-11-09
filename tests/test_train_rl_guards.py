@@ -407,3 +407,49 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
     policy.ledger(event="teardown", run_id="old", cost_usd=3.25)  # a closed session
     monkeypatch.setattr(policy.time, "time", lambda: t)
     assert cb.spend() == pytest.approx(policy.accrued(run, t)) == pytest.approx(policy.spend() - 3.25)
+
+
+# --- B2.2: --numerics and --opsm-start-delta --------------------------------------------------------------------
+
+
+def test_numerics_defaults_to_the_b1_control(monkeypatch):
+    a = parse(*TRAIN, monkeypatch=monkeypatch)
+    assert a.numerics == "bf16-seqmask" and a.opsm_start_delta is None
+
+
+def test_numerics_takes_the_presets_that_need_only_a_config(monkeypatch):
+    for name in ("bf16-seqmask", "bf16-tis", "bf16-tis-opsm"):
+        assert parse(*TRAIN, "--numerics", name, monkeypatch=monkeypatch).numerics == name
+
+
+def test_unknown_numerics_is_refused(capsys, monkeypatch):
+    assert "bf16-fp8" in refused(capsys, *TRAIN, "--numerics", "bf16-fp8", monkeypatch=monkeypatch)
+
+
+@pytest.mark.parametrize("name", ["fp16-seqmask", "lora-seqmask"])
+def test_presets_that_need_fastgrpo_plumbing_are_refused_until_it_lands(capsys, monkeypatch, name):
+    assert "FastGRPO" in refused(capsys, *TRAIN, "--numerics", name, monkeypatch=monkeypatch)
+
+
+def test_opsm_start_delta_only_with_the_opsm_preset(capsys, monkeypatch):
+    a = parse(*TRAIN, "--numerics", "bf16-tis-opsm", "--opsm-start-delta", "0.8", monkeypatch=monkeypatch)
+    assert a.opsm_start_delta == 0.8
+    assert "bf16-tis-opsm" in refused(capsys, *TRAIN, "--opsm-start-delta", "0.8", monkeypatch=monkeypatch)
+    assert "> 0" in refused(capsys, *TRAIN, "--numerics", "bf16-tis-opsm", "--opsm-start-delta", "0",
+                            monkeypatch=monkeypatch)
+
+
+def test_the_grpo_json_cannot_set_the_opsm_threshold(capsys, monkeypatch):
+    err = refused(capsys, *TRAIN, "--numerics", "bf16-tis-opsm", "--grpo", '{"off_policy_mask_threshold": 0.3}',
+                  monkeypatch=monkeypatch)
+    assert "--opsm-start-delta" in err
+    assert parse(*TRAIN, "--grpo", '{"beta": 0.01}', monkeypatch=monkeypatch).grpo == '{"beta": 0.01}'
+
+
+def test_numerics_reach_the_grpo_config(tmp_path, monkeypatch):
+    from experiments.phase2 import train_rl
+
+    a = parse(*TRAIN, "--numerics", "bf16-tis-opsm", "--opsm-start-delta", "0.8", monkeypatch=monkeypatch)
+    assert train_rl.numerics_overrides(a) == {"numerics": "bf16-tis-opsm", "off_policy_mask_threshold": 0.8}
+    a = parse(*TRAIN, "--numerics", "bf16-tis-opsm", monkeypatch=monkeypatch)
+    assert train_rl.numerics_overrides(a) == {"numerics": "bf16-tis-opsm"}  # the preset's 0.5 stays
