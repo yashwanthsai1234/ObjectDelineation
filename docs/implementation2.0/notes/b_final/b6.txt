@@ -1,0 +1,188 @@
+
+### B.6.1 Data gates (Mac, before any spend; all hard unless marked)
+
+DG7-DG9 are **implementation checks**: the scheduler builds the cell counts from the target, so they pass by
+construction unless the code has a bug or a cell runs out. They run on the full schedule and on every 20-step block
+prefix. DG16 is the independent coverage report against val.
+
+| # | Gate | Limit | Today |
+|---|---|---|---|
+| DG1 | Patient, series, item overlap across splits (store) | 0 | 0 / 0 / 0 [measured: docs/implementation2.0/notes/B1.md F1] |
+| DG1b | Rows-root leakage: every `source_item_id` a train item; no val or test `group_id`; no row `image_sha256` equal to a val or test view image or a frozen test view hash | 0 of each | n/a (new root) |
+| DG2 | Exact slice or crop SHA-256 shared across patients or splits | 0 | 0 [measured] |
+| DG3 | Cross-split near-duplicate pairs (train-val, train-test, val-test; cosine >= 0.98 on centred 32x32 HU crops), each listed with both ids and a side-by-side PNG | 0 unreviewed pairs (a pair is resolved by dropping the train item or by the owner's written OK in `docs/reference/neardup_review.json`) | 1 test->train, 1 test->val, 0 val->train [measured: docs/implementation2.0/notes/b1_out/neardup.json]; within-train 4 / 7,341 (information) |
+| DG4 | Doctor pixels inside each scheduled window | 100 % | 100 % [measured, built views] |
+| DG5 | Clearance >= 2 px and no other outlined nodule, policy frame included | 100 % | 0 crowded [measured] |
+| DG6 | Fallback windows and kept-side windows in the schedule | 0 and 0 | n/a (the pool drops both; counts in DG14) |
+| DG7 | Implementation check: off-centre worst cell ratio vs the train shifted law (cells >= 1 %), full schedule and every block prefix | >= 0.8 | 0.759 for today's off-centre rows, unweighted [measured: docs/implementation2.0/notes/b_final/trainlaw.json] |
+| DG8 | Implementation check: off-centre TV to the train shifted law | <= 0.10 | 0.108 (same rows) [measured: same] |
+| DG9 | Implementation check: off-centre offset KS to the train shifted law | <= 0.06 | 0.109 (same rows) [measured: same] |
+| DG9b (report) | Full mix (all kinds, centred included) vs the train shifted law: worst ratio, TV, offset KS | report | 0.507 / 0.266 / 0.331 for today's 3-view mix [measured: same] |
+| DG10 | Policy-side (S0) share of off-centre rows | >= 0.75 | 56.4 % of today's mix [measured: B1.md F4] |
+| DG11 | Kind counts and per-kind cell counts equal the largest-remainder counts, in every 20-step block | exact | n/a |
+| DG12 | Target tokens: max + 1 < model limit - 100; target_errors | max + 1 < 1,436; 0 | max 1,181 + 1; 0 [measured: B1.md F8, F3] |
+| DG13 | Every scheduled window equals a fresh render (box, side, image sha) | 0 mismatches | 0 on a 150-window sample [measured: B1.md F3] |
+| DG14 (report) | Disagreement share (expected about 14 % at weight 4), top-10 % nodule share, low-contrast items (< 5 grey levels), pool `dropped` counts | report | 30.8 % top-10 %; 4.1 % low contrast [measured] |
+| DG14b (report) | Doctor agreement: distribution of doctor LOO IoU_tc per cell; share < 0.3; joint with low contrast | report; the rule of B.8.3 item 4 applies | needs A2 |
+| DG15 | Frozen views (test shifted, val edge): content hash and target-set hash equal `docs/reference/frozen_views.json`; the test entry equals A3's pre-rental hash | equal | frozen value not yet recorded |
+| DG16 (report) | Schedule coverage vs val-shape, val-select and the whole val (worst ratio, TV, KS) | report | the target law itself vs val-select: 0.821 / 0.063 / 0.037; vs whole val: 0.755 / 0.077 / 0.061 [measured: trainlaw.json] |
+| DG17 | Contour-to-slice check of every series (B1.7): unresolved hits | 0 | not yet run on all series |
+| DG18 | Padded windows (beyond the slice) in the schedule | 0 | n/a (the pool drops them; count in DG14) |
+
+### B.6.2 Run gates
+
+Common rules for Gates B1 and B3:
+- **Value.** Every run gate uses the per-item mean of IoU_tc over the K = 8 answers (`sel_mean_of_k`), whatever
+  Gate A picks. The Gate A answer-choice method is reported as a second line. A miss uses the K-mean rule.
+- **Pairing and CI.** Paired on the same items. The CI is the Phase A1 **patient-level** bootstrap (resample
+  `group_id`, all items of a patient move together) of the per-item difference, 95 %. The gate decision uses the
+  BCa interval; the percentile interval is reported beside it, with the cluster count. Reason: nodules of one patient
+  share the reading sessions, the scanner and the reconstruction, and on R5 val-select the patient CI is 23 % wider
+  than the nodule CI (0.085 vs 0.069) [measured: docs/implementation2.0/reviews/final_r1_data.md, R5 bootstrap].
+- **Noise floor.** These CIs cover data variance only, not training-seed variance. Phase A3 evaluates R5 on val
+  twice with two sampling seeds; the paired difference is the sampling-noise floor. A point gain must exceed it.
+- "Pass" needs every point rule and every CI rule. Rules are fixed before the run (B1.9 prices them). No near-miss is
+  accepted after the run.
+- R5's per-item values come from `runs/r5/eval/eval_val/items.jsonl` (1,084 items) [measured].
+- **Limitations** (also in DOC11): the test split informed the diagnosis (R5's per-offset test results, B.1 item 2);
+  from 2026-11-08 every design number uses train or val only. The target law is a synthetic shift law; the guard
+  views check other laws.
+
+- **Gate B1** (the whole val: 78 patients, 200 nodules, 1,084 items; baselines in section 1):
+  - val IoU: CI lower bound of (B1 - R5) > 0 (R5 0.618). The target 0.66 is reported, not gated. Decomposition: a
+    25 % cut of far misses turns about 0.25 x 0.273 x 406 = 28 misses into found images; at the found IoU 0.706 that
+    adds about 28 x 0.706 / 1,084 = +0.018 [estimate: arithmetic on measured values]. Reaching 0.66 needs gains on
+    found images too.
+  - val misses at offset > 0.3: point <= 20.5 % (25 % below R5's 27.3 %) and CI upper bound of (B1 - R5) < 0;
+  - val IoU at offset < 0.15: CI lower bound of (B1 - R5) > -0.02 (R5 0.751; no regression on centred images);
+  - guard law: val IoU on the `edge` view: CI lower bound of (B1 - R5) > -0.02 (R5 value from A3; B.8.4);
+  - legal share on val >= 0.99 (R5 0.995);
+  - report only: paired patient-CI difference vs R5 on `lidc-val-rescaled` and `lidc-val-rotated`, with a
+    non-inferiority note at -0.02 (when the ledger allows, B.8.1);
+  - report only, the extra-steps control: the near-centre gain (offset < 0.15) beside the far gain (a data effect
+    shows as a far gain much larger than the near gain), and the slope of R5's held-out IoU over the last 300 of its
+    770 steps (`runs/rl/train_rl/rl.json` eval series) beside the B1 result;
+  - test is not read here (test once, final candidate only).
+- **Gate B2** (preset for B3; B2.4):
+  - B1 run: NaN/inf count = 0 over all steps; the counterfactual stats are present for steps 50-300;
+  - the chosen preset has ESS >= the control's (median over B1 steps 50-300); else B3 keeps the control;
+  - optional fp16 arm (steps 41-60): NaN/inf = 0; the vLLM dtype assertion passed; the paired prompt bootstrap
+    95 % lower bound of (fp16 - B1) `rewards/iou_tc` > -0.02 [estimate threshold].
+- **Gate B3:**
+  - before the run: T1-T12 and T14 pass (`B.spec.md`); lab round (B3.7, val-shape): location Spearman mean > 0.3
+    under v5, CI lower bound > 0, and higher than v4 paired by group; drop share v5 <= v4; miss-beats-hit share
+    <= 1 % (after `area_gate` if needed);
+  - after the run, on val-select (re-dealt halves, B1.0), paired against the B1 run: miss share falls by >= 25 %
+    relative (point) and the CI upper bound of (B3 - B1) miss share < 0; IoU on images found by **both** runs: CI
+    lower bound of (B3 - B1) > -0.01 (the paired set avoids the composition bias of new, harder hits); `edge` view
+    IoU: CI lower bound of (B3 - B1) > -0.02; legal share >= 0.99.
+
+---
+
+## B.7. Risks and rollback
+
+| Risk | Sign | Mitigation / rollback |
+|---|---|---|
+| Val shapes the training mix and also judges the gates | val gains more than test | Fixed: the target is the train shifted law (B1.4). No val data reaches training. Test is read once. |
+| The model fits the one synthetic shift law of the test view | shifted val gains, `edge` / rescaled / rotated views fall | Guard views (B1.6) with a hard floor on `edge` (Gate B1). |
+| Small gate sets (78 patients for B1, 38 for B3) | wide patient CIs; a real gain fails | B1.9 power check before the rental; paired comparisons; fixed rules, no written near-miss acceptance. |
+| Gains are seed noise | point gain below the sampling-noise floor | A3 two-seed floor (B.6.2); CIs state that they exclude training-seed variance. |
+| Gain comes from 300 more steps, not data | near-centre gain as large as far gain | Near-centre control and R5 plateau slope reported beside Gate B1; ADR-0014 states the confound. |
+| `draws` needed for DG7 is large; disk grows | B1.4 table | Only scheduled windows are materialized, so disk stays near 1.2-1.6 GB [estimate from 7,341 windows = 1.2 GB]. |
+| A budget cut trains a prefix that misses the target | DG7-DG9 fail on a prefix | 20-step blocks; only whole blocks are trained (B1.2, B1.5). |
+| Noisy doctor references give a near-random reward | DG14b share of low agreement | Report before B1.4; owner rule B.8.3 item 4. |
+| Rescaled share hurts the shifted test view (Q5 in B1.md) | per-kind logs: rescaled reward rises, shifted flat | Shares are config; set rescaled 0 in a rebuild ($0). |
+| fp16 overflow (no VLM in the paper; known Qwen2.5-VL case) | inf/NaN or large activations in the Mac check | Full-model Mac check before the optional arm; on failure the arm is dropped. |
+| New private TRL patch (`LLM` dtype) breaks on a TRL update or silently does nothing | A7 start-up check fails; dtype assertion fails | TRL stays pinned 1.17.1; both checks stop the run with a message. Only needed for the optional fp16 arm. |
+| B3 preset differs from B1's | B2.4 picks B or E | ADR-0012/0013 note it; the counterfactual stats show the size of the weight change. |
+| token_truncate is biased for long answers (secondary sources) | `cf/tok_clamp2_share` high | Option E (OPSM) is the length-fair option; D only under its trigger. |
+| KL spike (398,284 once) | `kl` max in log | It left grad_norm at 0.0041 (median 0.0048); a diagnostic, not a driver. |
+| Location term gamed | T1-T14; `loc` rises while IoU stays flat | Gates in B3.2; LocGuard (B3.5b) stops the run on two windows of clear evidence. |
+| Location kernel too short for real misses | B3.7 d / r median > 3 | `loc_width` or the heavy-tailed kernel, chosen from data. |
+| KL balance differs between v4 and v5 | B3.7 median |A| ratio r | `beta = 1e-3 / r` in the B3 config (or 0.0 by owner decision). Adam needs no scale constant. |
+| Runaway answers get no gradient | B3.7 rule 9 share | Option O with Phase C's C7 limit (owner decision). |
+| c_topo too large: topology dominates IoU | adv sd from topology >> from IoU in lab round | B3.7 rule sets the smallest safe c. |
+| Fingerprint split makes all caches stale | `StaleCacheError` | Done once in B1.0, before any build; the error names the file. |
+| Kernel change alters old terms | golden test | Outputs are additive; revert the commit if goldens change. |
+| Rows dropped, reordered or a different upload loaded | manifest hash, count or ids hash assertion | `train_rl` refuses to start (B1.5). |
+| Resume replays a different order | `ids_sha256` / step index | Order is the file; HF resume skips consumed batches; resume test on a 4-step stub (B1.5). |
+| Budget overrun | ledger; BudgetStop | B.8 plan; preflight refuses over cap; BudgetStop saves and stops at the cap. |
+
+Rollback is per task: an old prepared root still loads until B1.8 (no `schedule` = old path); numerics are a preset;
+reward v4 stays until gate B3; the kernel change is one commit.
+
+---
+
+## B.8. Cost and time, dependencies
+
+### B.8.1 Money and GPU minutes
+
+Inputs, from the front-matter section 6 planning table: rate $0.641 per hour (the highest measured planning rate
+[measured: docs/runbooks/gpu-run.md:136-137]). Step time 27.5 s is the pessimistic base: the mean of the full
+770-step run [measured: docs/runbooks/gpu-run.md:136]. 23.65 s with `--shared-prefix` comes from a short R5 test on
+centred rows [measured: runs/r5/shared_rl.json timing_s.per_step]; shifted rows may lengthen the decode tail, so it
+is optimistic. 20.0 s applies only after Phase C's G-SP1 passes. Val eval 415 s per view (6.9 min), test eval
+634 s [measured: runs/r5/eval/eval_*/final_eval.json seconds.total]. +30 min per session for checks, load and save
+(incl. the rows-root download from HF). B2.3b about 15 min [estimate].
+
+| Session | GPU minutes at 27.5 s | $ | at 23.65 s | $ | at 20.0 s | $ |
+|---|---|---|---|---|---|---|
+| B-S1: B1 run (300) + val shifted and edge evals (2 x 6.9) + B2.3b (15) + 30 | 137.5 + 13.8 + 15 + 30 = 196 | 2.10 | 177 | 1.89 | 159 | 1.70 |
+| B-S1 extra (optional): B1 on val rescaled and rotated (2 x 6.9) | 13.8 | 0.15 | 13.8 | 0.15 | 13.8 | 0.15 |
+| B-S2: B3 run (300) + val + test eval (17.5) + 30 | 137.5 + 17.5 + 30 = 185 | 1.98 | 166 | 1.77 | 148 | 1.58 |
+| B-S2 short: B3 run 200 steps + val + test + 30 | 91.7 + 17.5 + 30 = 139 | 1.49 | 126 | 1.35 | 114 | 1.22 |
+| B-S2 option: fp16 arm (60 steps) | 27.5 | 0.29 | 23.6 | 0.25 | 20.0 | 0.21 |
+| Merged (fallback): one run (B1 rows + v5, 300) + val shifted and edge + test + 30 | 192 | 2.05 | 173 | 1.84 | 154 | 1.65 |
+
+[estimate: arithmetic on the measured inputs; model reloads are inside the 30 min]
+
+- The R5 baselines on the edge view (and, optionally, rescaled and rotated) are not in this table: Phase A3 measures
+  them in its rental (B.8.4). If A3 cannot, B-S1 adds 6.9 min per view ($0.07).
+- B-S1 + B-S2: $4.07 at 27.5 s, $3.66 at 23.65 s, $3.27 at 20.0 s. **This does not fit the $3 cap.** B-S1 alone
+  fits ($1.70-2.10). Direction.md already says Phase B needs $4.4-5.0 and an owner decision.
+- BudgetStop sets the cap per session in the config, so an overrun stops and saves instead of billing on.
+
+### B.8.2 Mac time
+
+Pool + schedule simulation for 4 values of `draws`, minutes [estimate from "about 1 minute" per full audit];
+materialization of 9,600 windows about 1 min with 2 processes [estimate scaled from 22,023 windows in 2 min 11 s];
+the DG13 re-render of every scheduled window about 1 min [estimate: same scale]; the B1.0 rebuild of prepared roots
+and views: same order; the all-series z check: seconds [estimate]; B1.9 power check: minutes [estimate]; fp16 full
+model check: minutes [estimate]. $0.
+
+### B.8.3 Owner decisions needed
+
+1. Budget. Default (b'): keep $3 and run B-S1 first (B1 300 steps, about $1.70-2.10); B-S2 waits for a budget
+   decision. Option (a): raise the cap to about $4.5 for B1-then-B3 attribution. Option (c): the merged run
+   ($1.65-2.05), which loses the B1-vs-B3 split (the lab round B3.7 and the per-cell logs are then the only evidence
+   for v5's own effect). The B1.9 power number is shown with this decision. A shorter B1 must be a multiple of 20
+   steps.
+2. Polygonizer exception (ADR-0014): B1.4 targets use the numpy polygonizer until Phase D K1 passes parity.
+3. Kind shares (15 / 75 / 10), the val-half rule (B1.0) and the disagreement weight (4, default, or 1).
+4. Label noise (DG14b): keep all (default: honest test), or drop items with doctor LOO IoU_tc < X, or weight them
+   0.5. Decided before B1.4 runs.
+5. KL weight: B1 beta 1e-3 (fixed, as R5). B3: `1e-3 / r` (default) or 0.0 (Phase C's C8).
+6. Rows-root storage: the private model repo under `rows/` (default) or a separate private HF dataset repo
+   (front-matter owner decision 10). One place; the config pins `rows_revision`.
+7. Option O (soft overlong penalty in v5), decided together with Phase C's C7 limit. Default off.
+8. Optional fp16 arm in B-S2 (60 steps, $0.21-0.29). Default off unless the full-model Mac check passes and the
+   budget allows.
+9. Option F (vLLM LoRA serving arm) if B2.3b points to merge rounding.
+10. The behaviours pinned in B.9.12 (defaults listed there).
+
+### B.8.4 Dependencies on other phases
+
+| Needs | From | Why |
+|---|---|---|
+| Patient-level paired bootstrap CIs (`group_id`, BCa for the decision, cluster count shown) | A1 | Gates B1 and B3 and the B3.7 Spearman CI use them. |
+| Doctor leave-one-out caches (`objdel.eval.ceiling.loo_caches`) and the fair ceiling | A2 | DG14b; B.1 item 7 recomputed on val (fair difference on found images and on all images, patient CI). |
+| Saved answer text, K = 8 per item; test view content hash; R5 evals on the val edge view (and rescaled, rotated if possible); R5 val eval with a second sampling seed | A3 | B3.7 lab round, B2.2 fp16 check; DG15; the Gate B1 guard baseline; the noise floor. |
+| Private-name start-up check | A7 | B2.2 adds the `LLM` dtype patch (optional fp16 arm only). |
+| Outline-length count | A (done for train targets: max 1,181 tokens, 0 above 1,200 [measured: B1.md F8]) | Gate DG12; C sets the limit. |
+| Faster step | C | Changes cost only (B.8.1). C must keep the B2.1 metrics (incl. counterfactual stats), the chosen preset and the rows order. The decode tail and the runaway cut are C's tasks; option O is decided with C7. |
+| GPU EDT and CUDA polygonizer | D (K1, K2) | Moves B1.4 materialization to the GPU; K1 parity ends the ADR-0014 exception. |
+| Layers | E | New code sits where E's tree expects: `src/objdel/data/{windows,coverage,quality}.py` (data layer; `data/coverage.py` is not moved again), reward in `objdel/reward` (verify layer; `advantages_v5` stays in `verify/reward/advantages.py`, `rl/` only calls it). E may move `g_probe.make_trainer` to `rl/build.py`; keep `--numerics` and `--reward` as spec fields there. |
+| Front matter | 00_front | ADR allocation table (section 4) and the planning rate and step-time table (section 6) that B.8.1 cites. |
+| Docs | DOC | Promote the cited scratchpad notes, the spec and the seed scripts to `docs/implementation2.0/{notes,specs,seeds}/` (header of this phase); `docs/guides/data-quality.md` (new, B1); ADR-0012/0013/0014; `docs/reference/reward.md` rewrite (B3); `docs/reference/{frozen_views,val_halves,neardup_review}.json`; glossary rows (val-shape, val-select, miss, missed answer, train shifted law, edge view); DOC11 Limitations (B.6.2). |
+| Archive | CLEAN | `archive/phase2_configs/rl_shifted.yaml`, `archive/reward_v4/` after gate B3; the old `--train-views` path is deleted after gate B1 (B1.8). |
+

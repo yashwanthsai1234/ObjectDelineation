@@ -1,0 +1,51 @@
+
+`tests/test_reward_v5.py`, using `tests/oracles/score_numpy.py` and the break-it style of
+`tests/test_breakit_reward.py`. List in `docs/implementation2.0/specs/B.spec.md` (T1-T12, T14; T13 is removed with
+`adv_scale`). The key ones: a huge outline centred on the nodule gets `loc = 0` (g_area); a speck at the centroid
+gets `loc = 0`; two blobs around the centroid get `loc = 0`; R is continuous at IoU = 0.1 and non-decreasing in IoU
+for equal f5 and g_area; illegal answers get R = 0; RLOO sums to 0 per group and scales linearly with rewards.
+**T14 (new):** an all-miss group with `loc_raw` = (0.05, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01) and equal other
+terms keeps a non-zero A (the drop rule tests unweighted terms).
+
+#### B3.7 Lab round (offline, $0)
+
+- Script `experiments/phase2/reward_lab_v5.py --answers <A3 saved eval answers, K = 8 per item> --view
+  data/eval_views/lidc-val-shifted --half shape`. Val-shape only, so val-select stays clean for Gate B3.
+- Needs saved answers with text (Phase A3: final_eval saves every answer). Re-score them on the Mac (CPU build of
+  gpucheck) and compute v4 and v5 advantages per group.
+- Report and rules:
+  1. **Location signal in all-miss groups** (a group whose 8 answers are all missed answers). For each all-miss
+     group with >= 3 distinct values of d, compute the Spearman correlation of A_i and -d_i / r over its 8 answers,
+     where d = centroid distance and r = sqrt(radius2). The value is the mean over groups, with a paired patient
+     (group_id) bootstrap 95 % CI (A1). Groups with constant A count as 0 (not excluded), so a rule that zeroes
+     groups cannot raise the mean. Gate: v5 mean > 0.3, its CI lower bound > 0, and (v5 - v4) mean > 0 paired by
+     group [estimate thresholds]. This replaces v1's "share of all-miss groups with non-zero advantage", which v4
+     already has through g_area and F5 (section 1 item 6).
+  2. **Drop share:** share of all-miss groups dropped (A = 0 for the whole group), v4 vs v5. Gate: v5 <= v4.
+  3. **Variance share:** share of the variance of A in all-miss groups from `w_area * g_area` versus `alpha_loc *
+     loc`. If the area term dominates, the location signal is weak; report it.
+  4. **Miss beats hit:** share of groups where a missed answer has a higher R than a hit in the same group. If > 1 %,
+     set `area_gate = True` (the area term then scales by `min(1, iou_tc / miss_iou)`) and re-measure.
+  5. **Distance law:** distribution of d / r for missed answers. If its median is > 3 (the Gaussian kernel is almost
+     0 there), set `loc_width` so that the median missed answer gets a location value of at least 0.1, or switch to
+     the heavy-tailed kernel; record the choice in ADR-0013. Option to check first: the scorer already sums the
+     exact distance to the doctors' union of every spill pixel (`spill`, `spill_n` in `ScoreRows` [code:
+     cuda/gpucheck.cpp:1430-1440]), and the distance table is a full-frame EDT [code:
+     src/objdel/reward/cache.py:130-135]. So the mean spill distance is available with no new row partial. If it
+     predicts IoU gain as well as the centroid term on val-shape, it can replace B3.1 (fewer kernel changes); record
+     the comparison.
+  6. **Advantage size and KL balance:** median |A| for v4 and for v5 on non-dropped groups; r = median |A_v4| /
+     median |A_v5|; the implied effective beta of v5 at beta 1e-3 is 1e-3 x r. The B3 config sets `beta = 1e-3 / r`
+     unless the owner chose 0.0 (B.8.3 item 5). A config value, not a reward constant. Record it in ADR-0013.
+  7. **Agreement on hits:** Spearman of A_v4 and A_v5 on groups with all IoU >= 0.1; advantage sd per cell.
+  8. **Topology fallback:** margin q95 of (IoU vs vote - best same-signature IoU) over legal answers whose signature
+     no doctor drew. Set `c_topo` by rule: the smallest c with `c * eps >= that q95` (so the fallback never beats a
+     valid topology, the H1 hack in docs/implementation2.0/notes/H2_rl_math.md s3.4).
+  9. **Runaway answers:** share of answers that hit the length limit, and their mean v5 R. `mask_truncated_completions`
+     is True [code: src/objdel/train/configs.py:188], so a runaway gets no direct negative gradient. Option O (owner
+     decision B.8.3 item 7, decided together with Phase C's C7 limit): add DAPO's soft overlong penalty as a term of R
+     (weight 1, before the group baseline), using TRL's formula `get_soft_overlong_punishment(max_completion_len=L,
+     soft_punish_cache=200)` [code: .venv trl/rewards/other_rewards.py:83]. Not as a separate TRL reward: TRL would
+     add it after our group-centred aggregator. Default: off, so the B3 A/B changes only the reward of v5.
+- Write all values and the evidence into ADR-0013.
+

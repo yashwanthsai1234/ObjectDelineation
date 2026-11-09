@@ -1,0 +1,30 @@
+site_name: ObjectDelineation
+docs_dir: docs
+site_dir: site
+strict: true
+theme:
+  name: material
+plugins:
+  - search
+  - api-autonav:
+      modules: ['src/objdel']
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            members_order: source
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.superfences
+validation:
+  links:
+    not_found: warn
+    absolute_links: warn
+    unrecognized_links: warn
+exclude_docs: |
+  *.pdf
+  research/notes/Phase 1 stack and algorithms/output_format.md

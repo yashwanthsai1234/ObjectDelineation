@@ -1,0 +1,3 @@
+Snapshot of REPO/cuda (unmodified), last commit touching gpucheck.cpp: 9c5dd2e3d80d66845234c5e9877ab9011c34631a (branch gpu-scorer-open-once, 2026-11-08)
+54169f5a290ca1e7e3ece8adcdbf76958131e20c9e994f53bbc0af80c7c87304  cuda/gpucheck.cpp
+a5400030460ae17eb9a225bead927c9c3712c4c088217490fa34a4e0ff5d15fe  cuda/gpucheck.h

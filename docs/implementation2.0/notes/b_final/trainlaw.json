@@ -1,0 +1,103 @@
+{
+ "cols": [
+  "split",
+  "kind",
+  "item_id",
+  "group_id",
+  "series",
+  "nodule",
+  "k",
+  "S",
+  "scale",
+  "off_euc",
+  "off_cheb",
+  "ext_frac",
+  "ext_px",
+  "area_min",
+  "area_max",
+  "masks_inside",
+  "padded",
+  "crowded",
+  "fallback",
+  "kept",
+  "x0",
+  "y0",
+  "dx",
+  "dy",
+  "n_other"
+ ],
+ "kinds": [
+  "centred",
+  "rescaled",
+  "shifted"
+ ],
+ "vs_train_law": {
+  "today_offcentre": {
+   "n": 14682,
+   "worst_ratio": 0.759,
+   "tv": 0.108,
+   "ks": 0.109
+  },
+  "today_all_kinds": {
+   "n": 22023,
+   "worst_ratio": 0.507,
+   "tv": 0.266,
+   "ks": 0.331
+  },
+  "val_all": {
+   "n": 1084,
+   "worst_ratio": 0.376,
+   "tv": 0.077,
+   "ks": 0.061
+  }
+ },
+ "vs_val_select": {
+  "train_law": {
+   "n": 7341,
+   "worst_ratio": 0.821,
+   "tv": 0.063,
+   "ks": 0.037
+  },
+  "val_shape": {
+   "n": 449,
+   "worst_ratio": 0.218,
+   "tv": 0.169,
+   "ks": 0.099
+  },
+  "today_offcentre": {
+   "n": 14682,
+   "worst_ratio": 0.691,
+   "tv": 0.106,
+   "ks": 0.108
+  },
+  "today_all_kinds": {
+   "n": 22023,
+   "worst_ratio": 0.532,
+   "tv": 0.26,
+   "ks": 0.328
+  }
+ },
+ "vs_val_all": {
+  "train_law": {
+   "n": 7341,
+   "worst_ratio": 0.755,
+   "tv": 0.077,
+   "ks": 0.061
+  },
+  "today_all_kinds": {
+   "n": 22023,
+   "worst_ratio": 0.475,
+   "tv": 0.286,
+   "ks": 0.331
+  }
+ },
+ "offset_median": {
+  "train_law": 0.247,
+  "today_all_kinds": 0.181,
+  "val_all": 0.257
+ },
+ "share_off_gt_0.2": {
+  "today_all_kinds": 0.472,
+  "val_all": 0.684
+ }
+}

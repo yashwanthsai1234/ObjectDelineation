@@ -1,0 +1,149 @@
+
+The mismatch is near zero for a fresh adapter and grows as the adapter drifts (B.1 item 5). So B2 measures it
+inside the B1 run, where the adapter drifts for 300 steps, and not in a short separate probe. The IS correction
+does not change generation, only the loss weights, so the effect of every mode can be computed from the same
+tensors in one run.
+
+#### B2.1 Log what is lost, and what every other mode would do (device stats, no new host sync)
+
+- `src/objdel/train/fast.py`:
+  - New pure function `is_summary(logps, sampling, mask, ratio, advantages, mode, lo, hi) -> torch.Tensor`
+    (float32 vector, fixed order). Active-mode part: masked count, clamped count, ratio-unit count (sequences or
+    tokens), sum and max of the signed sequence log gap Σ_t (logp - sampling), sequence count, count of valid tokens
+    with |gap| > 0.5, valid token count, summed length of masked sequences, summed length of kept sequences.
+    Counterfactual part, computed for the same tensors whatever the active mode:
+    - `cf/seqmask3_share`: sequences a `sequence_mask` with cap 3 would drop;
+    - `cf/tok_clamp2_share`: tokens a `token_truncate` with C = 2 would clamp;
+    - `cf/geo_0.99_1.01_share`: sequences a geometric mask [0.99, 1.01] would drop;
+    - `cf/opsm_share@{0.05,0.1,0.5}`: sequences TRL's OPSM would drop at delta 0.05, 0.1, 0.5 (advantage < 0 and
+      mean gap > delta, TRL's formula [code: .venv trl/trainer/grpo_trainer.py:3066-3089]);
+    - `cf/opsm0.1_bigtok_unmasked_share`: valid tokens with |gap| > 0.5 that OPSM at 0.1 would keep (decides
+      option D, ADR-0012);
+    - `cf/seq_ratio_lt_0.1_share`: kept sequences with weight below 0.1 (down-weighted, counted nowhere today);
+    - quantiles q50, q99, q99.5 of the per-sequence mean gap (q99.5 sets OPSM's delta for option E);
+    - `modified_token_share`: valid tokens whose final weight differs from the raw ratio by more than 1 % (masked
+      tokens included), for the active mode;
+    - `ess`: effective sample size `(sum w)^2 / (N sum w^2)` of the active weights.
+    Quantiles are computed on device with `torch.quantile` over the step's sequences.
+  - `set_is_ratio` adds this vector to `self.is_stats` (concatenate to today's 7 sums; same min/max merge rules)
+    [code: fast.py:581-602].
+  - `log` emits `sampling/is_masked_share`, `sampling/is_clamped_share`, `sampling/seq_logdiff_mean`,
+    `sampling/seq_logdiff_max`, `sampling/tok_absdiff_gt_0.5_share`, `sampling/masked_len_mean`,
+    `sampling/kept_len_mean`, `sampling/modified_token_share`, `sampling/ess` and the `sampling/cf/*` keys, with one
+    `.tolist()` as today [code: fast.py:604-616].
+- No new IS mode is built now. Option E uses TRL's public `off_policy_mask_threshold`, which TRL applies inside its
+  own loss; FastGRPO's `_compute_loss` calls that loss, so it works on both paths [code: src/objdel/train/fast.py:
+  567-571]. The custom `sequence_geo_mask` mode (option D) is built only if `cf/opsm0.1_bigtok_unmasked_share`
+  > 0.5 % over the B1 run's steps 50-300. If it is built: token ratio `exp(gap)` clamped at `hi`, times a
+  per-sequence mask that is 0 when `exp(mean of the masked token gaps)` is outside `[lo, hi_geo]`; valid only on
+  FastGRPO's own ratio path (TRL raises on modes it does not know [code: grpo_trainer.py:2823]), and
+  `FastGRPO.__init__` raises `ValueError` if the mode is set and that path is off.
+- Tests in `tests/test_train_fast.py`: synthetic tensors with planted values for every counterfactual field (a long
+  sequence with a small mean gap is kept by the geo and OPSM counts and dropped by `seqmask3`; a negative-advantage
+  sequence with mean gap 0.2 is dropped by OPSM at 0.1 and kept at 0.5; ESS = 1 for equal weights and 1/N for one
+  non-zero weight); a known masked count for `sequence_mask` and a known clamped count for `token_truncate`;
+  `is_stats` stays a tensor until `log`; old 5 metrics unchanged.
+
+#### B2.2 Numerics presets
+
+- `src/objdel/train/configs.py`: `NUMERICS = {`
+  - `"bf16-seqmask": {"vllm_importance_sampling_mode": "sequence_mask", "vllm_importance_sampling_clip_max": 3.0,
+    "vllm_importance_sampling_clip_min": None}` (today's TRL defaults, written out; the control and the B1 preset);
+  - `"bf16-tis": {"vllm_importance_sampling_mode": "token_truncate", "vllm_importance_sampling_clip_max": 2.0,
+    "vllm_importance_sampling_clip_min": None}` (option B; C = 2.0 as SkyRL's token default [web]);
+  - `"bf16-tis-opsm": {**NUMERICS["bf16-tis"], "off_policy_mask_threshold": <q99.5 from the B1 run>}` (option E;
+    the value is written into the preset by B2.4);
+  - `"fp16-tis": {**NUMERICS["bf16-tis"], "bf16": False, "fp16": True}` plus model dtype and vLLM dtype float16
+    (option A; only if the owner runs the optional fp16 arm).
+  `}` and `grpo_config(..., numerics=DEFAULT_NUMERICS)`. `_bf16()` already refuses bf16 with fp16 [code:
+  configs.py:140-142].
+- fp16 plumbing (only for the optional fp16 arm):
+  0. **Mac check first ($0).** Script `experiments/phase2/fp16_check.py` (`python -I`): load the start checkpoint
+     in float16 on CPU, the **whole model** (vision tower and all 28 text layers). Run it on 32 prompts, each with
+     its saved A3 answers by teacher forcing, including the longest answers (>= 1,200 tokens). Record the max
+     |activation| per vision block and per decoder layer, and the count of inf/NaN in the logits. Drop the fp16 arm
+     before the rental if any layer exceeds 0.5 x 65,504 or any inf/NaN appears, and record why in ADR-0012.
+     Reasons: fp16 overflow can occur in the language model's residual stream, not only in the vision encoder; vLLM
+     had to clamp an fp16 overflow in the Qwen2.5-VL vision encoder [web:
+     https://github.com/vllm-project/vllm/pull/13968]; the FP16 paper tested no VLM. ADR-0012 states that vLLM's
+     fp16 path stays untested until the box.
+  1. `experiments/phase2/g_probe.make_trainer`: `from_pretrained(ckpt, dtype=torch.float16)` for fp16-tis; keep the
+     checkpoint dtype otherwise [code: g_probe.py:83].
+  2. vLLM: TRL builds `LLM(...)` without a dtype [code: .venv trl/generation/vllm_generation.py:356-372]. Add
+     `fast.vllm_dtype(dtype)`, a context manager that wraps `trl.generation.vllm_generation.LLM` with
+     `functools.partial(LLM, dtype=dtype)` during `FastGRPO.__init__`. It works because TRL imports `LLM` at module
+     level [code: vllm_generation.py:43]. Add the name to the Phase A7 private-name start-up check.
+  3. **Prove the patch took effect.** After `FastGRPO.__init__`, assert
+     `self.vllm_generation.llm.llm_engine.model_config.dtype == torch.float16` for fp16-tis. Test the assertion on
+     the Mac with a fake `LLM` object (vLLM is not installed on the Mac).
+  4. LoRA adapters stay fp32 (GradScaler needs fp32 trainable weights). `FastGRPO.drop_lora_input_cast` runs only
+     under bf16 today [code: fast.py:506-511]; extend it to fp16 autocast (same argument) and test both.
+  5. No mixed-dtype fallback. vLLM takes one dtype per model, so "vision bf16, language fp16" cannot be built. On
+     NaN/inf the fp16 arm fails, and the B2.4 rule moves on.
+- `train_rl --numerics {bf16-seqmask,bf16-tis,bf16-tis-opsm,fp16-tis}`; `rl.json` records it.
+- Note: colocate vLLM already returns processed logprobs (`logprobs_mode="processed_logprobs"` [code: .venv
+  trl/generation/vllm_generation.py:370]), and sampling is T = 1, top_k 0 [code: configs.py sampling()]. So the
+  gap is numeric, not a sampling-mode gap.
+- Tests: `tests/test_train_configs.py` (each preset builds a GRPOConfig; fp16 never with bf16; `bf16-tis-opsm` sets
+  the public OPSM key); a CPU test that the `vllm_dtype` patch passes `dtype` and restores the name; the dtype
+  assertion test above.
+
+#### B2.3 Optional fp16 arm (paid, B-S2, owner decision B.8.3 item 8)
+
+- Only if the Mac check passed and the owner funds it. Config `experiments/phase2/configs/b2_fp16.yaml`: start
+  `rl-full-3ep`, the B1 rows root, seed 0, `--numerics fp16-tis --steps 60 --save-steps 60 --shared-prefix`. No
+  eval. 60 steps, because the mismatch appears only after about 20 steps (B.1 item 5).
+- Script `experiments/phase2/b2_summary.py`: reads the fp16 arm's `rl.json` and the B1 run's `rl.json`. It prints,
+  over steps 41-60 of each: the means of the B2.1 metrics, `importance_sampling_ratio/mean`,
+  `sampling_logp_difference/mean`, `rewards/iou_tc/mean`, NaN/inf count (`logging_nan_inf_filter` is off [code:
+  configs.py NO_SYNC], so NaN shows in the log) and s/step. Decision number for the reward: the paired bootstrap
+  over the 640 prompts of steps 41-60 (same prompts, same order in both runs), resampling prompts, 95 % lower bound
+  of the mean (fp16 - B1) `rewards/iou_tc` difference. The one-sided t bound over the 20 per-step differences is a
+  second line only (per-step differences of two trajectories are autocorrelated).
+
+#### B2.3b Attribution of the gap (end of B-S1, about 15 min [estimate])
+
+- Script `experiments/phase2/b2_attribution.py` (no training). Run it on the B1 run's step-100 adapter and its
+  final adapter (both drifted). For each: load through `make_trainer`, generate one batch (32 prompts x 8) with
+  vLLM in bf16, then score the same 256 prompt+answer sequences five ways under `torch.no_grad()`:
+  - (a) the FastGRPO default (packed shared-prefix forward, vision cache, RopeCache);
+  - (b) the plain TRL forward (FastGRPO patches off);
+  - (c) the trainer forward with the LoRA delta merged into the bf16 base weights (`lora_merged_params` values
+    [code: src/objdel/train/fast.py:696-708]), which is what vLLM receives;
+  - (d) the plain trainer forward in fp32 (no autocast, base cast to fp32): the reference;
+  - (e) vLLM teacher-forced scoring of the same sequences (`SamplingParams(max_tokens=1, prompt_logprobs=0)`), in
+    bf16 and in fp32 (the 2B model in fp32 is about 8.5 GB [estimate] and fits).
+- Print, for each pair against (d) and for vLLM-bf16 against HF-bf16 (b): the signed mean gap, the mean |gap| and the
+  gap by token position (bins of 64). Readings:
+  - (b) << (a): the packed forward causes the gap (fix in FastGRPO, not by dtype).
+  - vLLM-bf16 vs (b) much larger than each one's gap to fp32: the engine kernels cause it.
+  - both close to fp32 only in fp16 or fp32: the dtype causes it.
+  - (c) >> (b) on a drifted adapter: merge rounding causes it, and option F (vLLM LoRA serving) applies.
+- Record the table in ADR-0012.
+
+#### B2.4 Decide and clean (after B-S1, $0)
+
+- Decision rule (ADR-0012), applied to the B1 run's counterfactual stats over steps 50-300 (the adapter has
+  drifted there):
+  1. Candidates: C (control), B (bf16-tis), E (bf16-tis-opsm), and A (fp16-tis) if the fp16 arm ran.
+  2. Pick A if it passed Gate B2's fp16 rules AND its mean `sampling_logp_difference/mean` over steps 41-60 is at
+     most half of the B1 run's over the same steps AND its s/step is at most 1.05 x the B1 run's [estimate
+     thresholds: the paper reports a much larger cut, so half is a low bar].
+  3. Else, among C, B and E, pick the one with the higher counterfactual ESS (median over steps 50-300). On a tie of
+     0.01 or less, take the one with the lower `modified_token_share`. On a second tie, take bf16-tis (fewer moving
+     parts).
+  4. If B2.3b points to merge rounding, add option F as a measured arm before B3 (owner decision; ADR-0012).
+  5. Build option D only under the B2.1 trigger.
+- The B1 run used C, so Gate B1 has no numerics confound. If B3 uses another preset, ADR-0012 and ADR-0013 state
+  that the B3-vs-B1 comparison includes the numerics change.
+- Make the chosen preset the `grpo_config` default. Delete the other presets and their code paths (simple code),
+  keeping `bf16-seqmask` only if it is the chosen one. Write ADR-0012 with the counterfactual table and the B2.3b
+  attribution.
+- **KL weight (beta).** Owner decision B.8.3 item 5. B1 keeps beta 1e-3 (as R5), so Gate B1 tests data only. For
+  B3, the default is `beta = 1e-3 / r`, where r = median |A_v4| / median |A_v5| from B3.7 rule 5. That keeps v4's
+  policy-to-KL balance, so the B3 A/B changes only the reward in effect. Option: beta 0.0 (Phase C's C8; with LoRA,
+  TRL needs no reference copy at any beta [code: .venv trl/trainer/grpo_trainer.py:1029-1036], so beta can be raised
+  later). ADR-0012 records the value. Phase C's G-C step-time gate is then computed for the chosen beta.
+- KL spike: one logged KL value of 398,284 at step 746 left grad_norm at 0.0041 (run median 0.0048); median KL 0.32
+  [measured: runs/rl/train_rl/rl.json]. It is a diagnostic, not a driver.
+

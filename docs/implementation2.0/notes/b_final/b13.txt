@@ -1,0 +1,207 @@
+
+- **No duplicate modules.** `src/objdel/eval/coverage.py` already holds train-vs-test coverage of outline
+  properties, used by `experiments/phase2/preflight.py:143-152` and `tests/test_eval_coverage.py`.
+  `src/objdel/eval/audit.py` is the hack audit and `src/objdel/eval/gates.py` holds the phase-2 entry gates as
+  tuples (no reusable gate type) [code: eval/gates.py:86-112].
+  - Move `eval/coverage.py` to `src/objdel/data/coverage.py` (one owner for coverage; it stays in the data layer
+    after Phase E, no second move) and update its two users and its test (`tests/test_eval_coverage.py` ->
+    `tests/test_data_coverage.py`). Add there `cell_coverage(scheduled, target, target_offsets) -> dict`: over
+    cells with target share >= 1 %: worst ratio, TV, offset KS (`scipy.stats.ks_2samp`).
+  - Name the new gate module `src/objdel/data/quality.py` (not `audit.py`, which would clash with
+    `eval/audit.py`). It defines its own `Gate` dataclass, because `eval/gates.py` uses tuples.
+- Start `quality.py` from `docs/implementation2.0/seeds/b1_scripts/{b1_geometry,b1_analyze,b1_pixels,b1_tokens}.py`
+  (they reuse `augment` and `frame`, so they cannot drift).
+- Functions in `quality.py`:
+  - `leakage(store_root) -> dict`: patient (`group_id`), series, item overlaps between splits; SHA-256 of every int16
+    slice and of the 32x32 crop at the nodule centre, cross-patient and cross-split overlaps; the near-duplicate
+    pair list of DG3.
+  - `rows_leakage(rows_root, store_root, frozen_views) -> dict` (DG1b): every row's `source_item_id` is a train item
+    of the store; its `group_id` is not a val or test patient; no row `image_sha256` equals any val or test view
+    image hash or a frozen test view hash (`docs/reference/frozen_views.json`). Called by `build_rl_rows` before the
+    manifest is written, and again by `preflight` on the downloaded root.
+  - `near_duplicates(store_root) -> list[dict]` (DG3): pairs (train item, val or test item) and (val item, test
+    item) with cosine >= 0.98 on centred 32x32 HU crops. Each pair is listed with both item ids, the cosine and a
+    side-by-side PNG in the audit output folder, and a `reviewed` field read from `docs/reference/neardup_review.json`
+    (pair -> "drop train item" or "owner OK, date"). The within-train rate (pairs per train item, today 4 / 7,341)
+    is reported for information only.
+  - `window_checks(windows, store_root) -> dict`: doctor pixels inside (count equality), clearance >= 2 px
+    (`frame.CLEARANCE`), crowded windows **including the policy frame** (today the policy frame skips this check:
+    `moved` flag [code: src/objdel/targets/frame.py:173-206]), padded share (DG18), and a fresh re-render of
+    **every** scheduled window (box, side, `image_sha256`; DG13). Every window, not a sample: a 1 % defect rate is
+    found by a 150-window sample with probability 1 - 0.99^150 = 0.78 only [estimate: arithmetic], and all 9,600
+    renders take about a minute (B.8.2).
+  - `schedule_report(scheduled, pool, target, val_laws) -> dict`: `cell_coverage` of the off-centre rows against the
+    train shifted target (DG7-DG9), on the full schedule and on every block prefix (20, 40, ... steps); the same
+    for the full mix of all kinds (DG9b, report); S0 share of off-centre rows; kind counts; disagreement share;
+    top-10 % nodule share; per-cell counts; the pool's `dropped` counts; and the independent report DG16:
+    `cell_coverage` of the schedule against val-shape, val-select and the whole val (geometry only).
+  - `agreement(rows_root) -> dict` (DG14b, report): per scheduled window, the mean doctor leave-one-out IoU_tc from
+    Phase A2's `objdel.eval.ceiling.loo_caches` + `score_mask` (doctor side only; CPU build). It reports the
+    distribution per cell, the share with doctor LOO IoU_tc < 0.3, and that share jointly with low contrast (< 5
+    grey levels). The keep / drop / down-weight rule is owner decision B.8.3 item 4, made before B1.4 runs.
+  - `tokens(rows_root, tokenizer, limit) -> dict`: certified target tokens (+1 end token): max, p99.9, counts above
+    1,200 and above `limit - 100`. Rule (DG12): `max + 1 < limit - 100` (the section 6.1 form; `B.spec.md` 3.2 is
+    changed to match).
+  - `gates(report) -> list[Gate]`, `failures(gates) -> list[Gate]`. Gate list and limits: section 6.1, DG1-DG18.
+- Script `experiments/phase2/audit_data.py --rows <root> --store data/store --target-law train-shifted
+  [--val-view data/eval_views/lidc-val-shifted] [--json out.json]`. The val view feeds only the DG16 report. It
+  prints the gate table and exits 1 on a hard failure.
+- Wire into `make preflight` (owner rule: audit coverage before spend). In `experiments/phase2/preflight.py` call
+  `quality.failures` on every rows root named in the run config and refuse on any hard failure.
+- Tests `tests/test_data_quality.py`: a planted cross-split patient fails DG1; a planted val item in a 30-row rows
+  root fails DG1b; a planted shared pixel hash fails DG2; a train crop copied into val fails DG3 until the pair is
+  marked reviewed; a planted off-window mask fails DG4; a planted crowded policy frame fails DG5; a planted
+  kept-side window fails DG6; a schedule of only centred rows fails DG8; a schedule whose first block is off-target
+  fails DG7 on the 20-step prefix; one tampered PNG byte fails DG13; a padded window fails DG18; the 30-item fixture
+  passes.
+
+#### B1.4 Build the rows root (script)
+
+- Create `experiments/phase2/build_rl_rows.py`:
+  `--store data/store --target-law train-shifted --out data/views/lidc-train-b1 --steps <budgeted, multiple of 20>
+  --per-step 32 --draws <n> --shares 0.15 0.75 0.10 --seed 0 --procs 6`.
+- Steps:
+  1. `pool(train items, draws=n)`. Target = `cell_shares` of the pool's draw-0 shifted windows (the train shifted
+     law; geometry from the train store only; no val data and no model output). This target equals the test view's
+     generator law by choice; the guard views of B1.6 check that the model did not fit only this law.
+  2. Choose `draws`: simulate `draws` in (1, 2, 4, 8) with `schedule` + `cell_coverage`; take the smallest value that
+     passes DG7-DG9 on every block prefix and does not raise. Print the table. (Today one draw fails [measured: SD3
+     s5]; the value that passes is not yet measured.)
+  3. Materialize only scheduled windows with a public `objdel.train.dataset.window_record(out, item, window)`. It
+     calls `_prepare` with **`window.window_id` as the item id** [code: src/objdel/train/dataset.py:102,110: the PNG
+     is `images/<id>.png` and the caches `caches/<id>/`]. Passing the source `item_id` would make windows overwrite
+     each other's image and caches. Run in a `multiprocessing.Pool(procs)`. Record `item_id = window_id`, plus
+     `source_item_id`, `cell`, and `view = {kind, draw, offset: [dx, dy], side, fallback: false, kept_side: false,
+     op: "id"}` (same keys as today's view records).
+  4. Write `lidc/train.jsonl` in schedule order (NOT sorted by id; the order is the schedule). Run
+     `quality.rows_leakage` and all other gates. Write the manifest only after `quality.failures(...)` is empty: the
+     usual `files`, `sets`, `reward_fingerprint`, `versions` fields (copy `build_eval_views.build`), plus
+     `schedule = {steps, planned_steps, block_steps, per_step, seed, draws, shares, target_law: "train-shifted",
+     target_sha256, ids_sha256 (SHA-256 of the newline-joined ordered window ids), dropped, gates}`.
+  5. Upload the rows root before any rental, so the host downloads it instead of the Mac uploading 1.2-1.6 GB during
+     paid time. One place only, set by owner decision B.8.3 item 6 (front-matter owner decision 10): default the
+     private model repo `svenk029/objdel-sft` under `rows/lidc-train-b1/`. Record the HF commit as `rows_revision`
+     and the SHA-256 of `manifest.json` as `rows_manifest_sha256` in `experiments/phase2/configs/b1_rows.yaml`. The
+     rows root is LIDC only (CC BY 3.0, attribution in the repo README [web:
+     https://www.cancerimagingarchive.net/collection/lidc-idri/]); RIGA stays on the Mac.
+- `build_eval_views._record` also calls `window_record` (the code comment already asks for a public helper: "S1-2:
+  needs a public helper (FX-T)" [code: experiments/phase2/build_eval_views.py:63]).
+- Tests `tests/test_p2_rows.py`: `--limit`-style run on the fixture; manifest present only when gates pass; rows
+  order equals the schedule; every window's PNG path and cache folder is unique; caches load through
+  `cache_loader`; image hashes match records; `--steps 30` with `block_steps` 20 is refused.
+
+#### B1.5 Train on the ordered rows
+
+- `experiments/phase2/configs/b1_rows.yaml`: `--ckpt rl-full-3ep` (the R5 start model, stated, so Gate B1's
+  extra-steps confound is explicit), `--train <rows root at rows_revision>`, `--numerics bf16-seqmask`, beta 1e-3
+  (as R5), `--steps <planned_steps>`, `--save-steps 50`, `--shared-prefix`, `--budget-usd`, `--rate-usd-per-h`,
+  val evals of B.6.2.
+- `experiments/phase2/train_rl.py`:
+  - If the `--train` root's manifest has `schedule`:
+    - Assert SHA-256 of the downloaded `manifest.json` equals `rows_manifest_sha256` from the config. Raise
+      `ValueError` otherwise (the box could load a different upload).
+    - rows = `dataset.grpo_rows(root, "lidc", "train", oversample=1)` (file order kept: `prompts()` keeps record
+      order [code: src/objdel/train/dataset.py:217-232]).
+    - Assert `len(rows) == schedule.steps * schedule.per_step`, and that SHA-256 of the newline-joined
+      `[r["key"] for r in rows]` equals `schedule.ids_sha256`. Raise `ValueError` otherwise (a dropped or reordered
+      row shifts every later step).
+    - Set GRPOConfig `shuffle_dataset=False` (public key [code: .venv trl/trainer/grpo_config.py:509]; TRL then
+      builds `RepeatSampler(shuffle=False)` [code: grpo_trainer.py:1372-1377]).
+    - Check the sampler shape against TRL's own formula [code: grpo_trainer.py:1372-1377]:
+      `args.generation_batch_size // args.num_generations == schedule.per_step`,
+      `args.steps_per_generation == args.gradient_accumulation_steps` and `args.num_iterations == 1`. Raise
+      `ValueError` otherwise. Also require `--steps <= schedule.steps` and `--steps % schedule.block_steps == 0`
+      (only whole blocks are trained).
+  - Without `schedule`: today's behaviour (shuffled `grpo_rows`, oversample 4) stays until B1.8.
+  - `rl.json` gains `rows = {root, revision, manifest_sha256, ids_sha256}`.
+- **Resume.** Save adapter, optimizer and step every 50 steps (`save_strategy="steps"`, `save_steps=50`).
+  `train_rl --resume` passes the last checkpoint to `trainer.train(resume_from_checkpoint=...)` (the path exists
+  today [code: experiments/phase2/train_rl.py:55]). The sampler is unshuffled, so HF resume skips the consumed
+  batches and the order stays the file order. Test: a 4-step stub run stopped after step 2 and resumed gives the
+  same row keys per step as an unbroken run.
+- Add columns `kind` and `cell` (string "ij") to prompt rows when the record has `view`.
+- `src/objdel/train/rewards.py` `TRLReward`: accept `kind`, `cell` kwargs; log per batch with `log_metric`:
+  `kind/<k>/iou_tc`, `cell/<ij>/iou_tc`, `cell/<ij>/allmiss_groups` (share of groups whose 8 answers are all missed
+  answers). (v1's `cell/<ij>/group_sd` is dropped: it fed the removed B3.8.)
+- Run guard `callbacks.BudgetStop(rate_usd_per_h, cap_usd, start_time)` in `src/objdel/train/callbacks.py`: stops
+  training and saves when elapsed time x rate reaches the cap. `train_rl --budget-usd X --rate-usd-per-h Y`; the
+  run configs set both. Unit test with a fake clock.
+- Archive `experiments/phase2/configs/rl_shifted.yaml` to `archive/phase2_configs/` with a README row ("replaced by
+  b1_rows.yaml").
+
+#### B1.6 Freeze the test view; build the guard views
+
+- `experiments/phase2/build_eval_views.py`: add `--kinds` (default all: `shifted,rescaled,rotated`; plus the new
+  `edge`), so the config no longer deletes views with `rm -r`.
+- New kind `edge` (the guard law). `augment.shift` draws uniformly over the admissible rectangle [code:
+  src/objdel/targets/augment.py:58-71], so a "uniform" view would repeat the training law. The `edge` view draws the
+  offset uniformly on the **boundary** of the admissible rectangle (the largest legal shift in a random direction),
+  same side S0, same clearance and crowding checks, with its own RNG stream `row_rng(1, "edge", item_id)`. Its
+  offset law has a heavier far tail than training. No row of training uses it.
+- Build on the Mac after B1.0: `--split test --kinds shifted` (R5 predicts 2,200 items, offset median 0.262
+  [measured: B1.md F3]); `--split val --kinds shifted,rescaled,rotated,edge`.
+- **Freeze a content hash, not the manifest SHA.** The view manifest holds `reward_fingerprint`, the Python version
+  and the package versions [code: experiments/phase2/build_eval_views.py:89-92], so its hash changes with harmless
+  changes (another Python or OpenCV build, the B1.0 split). Content hash = SHA-256 of the newline-joined ordered
+  tuples `(item_id, view.offset, view.side, image_sha256)`, plus the manifest's `target_set_sha256`.
+- Store it in one place: `docs/reference/frozen_views.json`, one entry per frozen view (`lidc-test-shifted`,
+  `lidc-val-edge`) with fields `view`, `items`, `content_sha256`, `target_set_sha256`, the build arguments (`seed`,
+  `kinds`, `store_manifest_sha256`) and `generator_commit`.
+- **One hash from A3 to the end.** Phase A3 rebuilds the test view before its rental and writes its content hash to
+  the pre-rental record. B1.6 must reproduce that hash after the B1.0 rebuild, and `final_eval.json`
+  `view_manifest_sha256` from A3 must equal the frozen entry. The R5 box view was never hashed [measured:
+  runs/r5/eval/eval_test/final_eval.json has no view hash]. So `frozen_views.json` states: "equal to the R5 box
+  view by code identity (generator files unchanged since commit 734b1ec), not measured".
+- `experiments/phase2/final_eval.py`: for a frozen view, load `frozen_views.json`, recompute the content hash and the
+  target-set hash, and stop with a clear message on a mismatch. A view built on the GPU host then gives the same
+  hash when its windows and pixels are the same, whatever the Python or library build.
+- Tests: `tests/test_p2_views.py` (content hash ignores manifest versions; changes when one offset changes; `edge`
+  offsets lie on the admissible boundary and keep every doctor pixel inside with 2 px clearance);
+  `tests/test_final_eval.py` (refuses a planted mismatch).
+
+#### B1.7 Contour-to-slice check of every series
+
+- `lidc.slice_index` maps every ROI to the nearest z [code: src/objdel/data/lidc.py:162-164], so any series with an
+  ambiguous z can put a contour on the wrong slice. A third-party card lists duplicate-z series 0085, 0146, 0418,
+  0572, 0979 [web: https://huggingface.co/datasets/YongchengYAO/LIDC-IDRI-Lite]; TCIA lists known issues for
+  LIDC-IDRI-0396 (SOP UID fix, 2018-06-28) and -0510 [web:
+  https://wiki.cancerimagingarchive.net/pages/viewpage.action?pageId=1966254]. The XML check is free and takes
+  seconds, so it covers **every** series of the store, not a list.
+- No LIDC DICOM is on the Mac: `data/raw` holds only `lidc_xml` and `riga` [measured: `ls data/raw`, 2026-11-08].
+- Step 1 ($0, XML only). Script `experiments/phase2/check_series_z.py` (`python -I`), on every series of the store:
+  (a) z values shared by different `imageSOP_UID` (`lidc.sop_z(xml_root)` [code: src/objdel/data/lidc.py:272-279]);
+  (b) ROIs whose `|imageZposition - nearest zval|` exceeds half the slice spacing; (c) the local XML for
+  LIDC-IDRI-0396 carries the 2018-06-28 SOP UID correction. It writes a report with every hit.
+- Step 2 (only for series with a hit). Download the DICOM headers of the affected series from TCIA into
+  `data/raw/lidc_dicom/<series>/` (untrusted, own folder). Read them with pydicom under `python -I`; list duplicate
+  `ImagePositionPatient[2]`; compare with the z used by `lidc.slice_index`. Optional helper: NVIDIA
+  `dicom-series-preflight` skill (recommend only).
+- Gate DG17: 0 unresolved hits. A hit is resolved by mapping by `imageSOP_UID` or by dropping the items from train
+  or val; the report says which. A val change moves the val baselines: re-run `valsplit.py` and the B1 audit, and
+  note the new baselines.
+
+#### B1.8 Clean after gate B1
+
+- In the commit after gate B1 passes: delete `dataset.grpo_rows_views`, `serve.VIEW_SEP` and `_tagged`
+  [code: src/objdel/train/serve.py:108-123] (keep single-root `loader(root)`), `--train-views`
+  [code: experiments/phase2/train_rl.py:26,47], the `train_views` line in `experiments/phase2/g_probe.py:90`, and the
+  "without schedule" branch of `train_rl` (one training path left). Update `tests/test_p2_views.py:610`,
+  `tests/test_p2_train_rl.py:76-90`, `tests/test_profile.py:227`. Git history keeps the old code (CLEAN rule: dead
+  code is deleted, not archived).
+- The same rule applies to v4 (B3.10): old code goes only after the gate that replaces it passes.
+
+#### B1.9 Gate power check ($0, before any spend)
+
+- Script `experiments/phase2/gate_power.py` (`python -I`). Input: R5 per-item values
+  (`runs/r5/eval/eval_val/items.jsonl`) joined with geometry, plus the A3 two-seed R5 evals when they exist.
+- Simulated B1 effect: convert 25 % of far misses (offset > 0.3), chosen by patient, into found images with IoU drawn
+  from the found-image distribution of the same cell. Leave other items unchanged up to item-level noise: the
+  paired difference of the two A3 sampling seeds, resampled per item (without A3: the K = 8 answer spread / sqrt 8).
+- For each simulated run, apply every Gate B1 and Gate B3 rule exactly as B.6.2 writes it (paired patient
+  bootstrap, same B and seed). 1,000 runs. Print P(pass) per rule and jointly, and the smallest effect (share of far
+  misses converted) with joint P(pass) >= 0.8.
+- The owner prices B-S1 with this number (B.8.3 item 1). If joint P(pass) < 0.5 for the 25 % effect, the owner
+  decides before the rental whether to change a rule. Rules are fixed before the run and never changed after it.
+- Test: on a synthetic set with a huge planted effect, P(pass) = 1.0; with no effect, P(pass) of the IoU rule is
+  <= 0.05 + 0.03.
+

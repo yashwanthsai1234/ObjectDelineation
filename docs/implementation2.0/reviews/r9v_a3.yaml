@@ -1,0 +1,6 @@
+steps:
+  - ["~", bash, -c, "(lscpu; nproc; nvidia-smi -q; df -h /dev/shm) > {rd}/box.txt 2>&1"]
+  - [bash, -c, "/opt/venv/bin/python -I -c 'import objdel._gpucheck as g; assert g.build() == \"cuda\"' || { bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c 'import objdel._gpucheck as g; assert g.build() == \"cuda\"'; }"]
+  - [-m, experiments.phase2.final_eval, --ckpt, "{rd}/ckpt", --train, "{data}/prepared",
+     --view, "{data}/eval_views/lidc-val-edge", --split, val, --out, "{rd}/eval_val_edge",
+     --view, "{data}/eval_views/lidc-val-shifted", --split, val, --out, "{rd}/eval_val"]

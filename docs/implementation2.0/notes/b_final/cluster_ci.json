@@ -1,0 +1,1 @@
+{"items": 635, "mean": 0.5993, "item": {"clusters": 635, "ci": [0.576, 0.621], "width": 0.045}, "nodule": {"clusters": 106, "ci": [0.564, 0.633], "width": 0.069}, "patient": {"clusters": 38, "ci": [0.556, 0.641], "width": 0.085}}

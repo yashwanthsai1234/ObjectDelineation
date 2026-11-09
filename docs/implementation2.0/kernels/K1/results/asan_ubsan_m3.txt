@@ -1,0 +1,4 @@
+k1poly test: CPU build, 400 random cases, seed 7, references: ref_polygonize + gpucheck::check_masks (CPU)
+adversarial: 124 masks done, failures so far 0
+random singles: done, failures so far 0
+PASS: 683 masks, 103049 rings checked, 0 failures, 5.5 s

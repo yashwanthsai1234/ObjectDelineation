@@ -1,0 +1,14 @@
+
+[33m │  [1mMaterial for MkDocs reaches end of life on May 5, 2027.[0m
+[33m │[0m  Critical fixes and security updates continue until that date.
+[33m │[0m
+[33m │[0m  Zensical is its maintained successor, built by the same team.
+[33m │[0m  Try it alongside MkDocs with your existing mkdocs.yml:
+[33m │[0m  [36m[4mhttps://zensical.org/docs/compatibility/mkdocs/migration/[0m
+
+[90m  To disable this warning, set NO_MKDOCS_2_WARNING=1.[0m
+
+WARNING -  mkdocs_autorefs: research/notes/Phase 1 stack and algorithms/output_format.md: Could not find cross-reference target 'memory'
+real 2.34
+user 2.07
+sys 0.11

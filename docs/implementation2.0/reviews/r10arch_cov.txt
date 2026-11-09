@@ -1,0 +1,100 @@
+........................................................................ [  4%]
+........................................................................ [  9%]
+...............................ssssss................................... [ 14%]
+........................................................................ [ 19%]
+........................................................................ [ 24%]
+........................................................................ [ 29%]
+........................................................................ [ 34%]
+........................................................................ [ 39%]
+........................................................................ [ 44%]
+........................................................................ [ 49%]
+........................................................................ [ 54%]
+........................................................................ [ 59%]
+........................................................................ [ 64%]
+........................................................................ [ 69%]
+........................................................................ [ 74%]
+........................................................................ [ 79%]
+........................................................................ [ 84%]
+........................................................................ [ 89%]
+........................................................................ [ 94%]
+........................................................................ [ 99%]
+.............$REPO/.venv/lib/python3.12/site-packages/coverage/inorout.py:574: CoverageWarning: Module objdel was previously imported, but not measured (module-not-measured); see https://coverage.readthedocs.io/en/7.16.2/messages.html#warning-module-not-measured
+  self.warn(msg, slug="module-not-measured")
+                                                            [100%]
+=============================== warnings summary ===============================
+tests/test_p2_breakit_scoring.py: 4 warnings
+tests/test_p2_serve.py: 9 warnings
+  ~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=98022) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+tests/test_p2_hf_eval.py::test_g_probe_json_writes_null_for_nan
+  $REPO/src/objdel/eval/signal.py:205: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+    return _ci(lambda d: stats.spearmanr(x[d], y[d]).statistic, len(x), D)
+
+tests/test_p2_hf_eval.py::test_g_probe_json_writes_null_for_nan
+  $REPO/.venv/lib/python3.12/site-packages/numpy/lib/_nanfunctions_impl.py:1573: RuntimeWarning: All-NaN slice encountered
+    return _nanquantile_unchecked(
+
+tests/test_p2_scripts.py::test_wsd_resumed_decay_equals_uninterrupted_run
+tests/test_p2_scripts.py::test_wsd_resumed_decay_equals_uninterrupted_run
+tests/test_p2_scripts.py::test_wsd_resumed_decay_equals_uninterrupted_run
+  $REPO/.venv/lib/python3.12/site-packages/transformers/optimization.py:557: UserWarning: Both num_training_steps and num_stable_steps are specified. num_stable_steps will be used.
+    warnings.warn("Both num_training_steps and num_stable_steps are specified. num_stable_steps will be used.")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+______________ coverage: platform darwin, python 3.12.11-final-0 _______________
+
+Name                                Stmts   Miss  Cover
+-------------------------------------------------------
+experiments/phase2/final_eval.py       57     25    56%
+experiments/phase2/g_probe.py         121     40    67%
+experiments/phase2/profile.py          97      6    94%
+experiments/phase2/select_ckpt.py     269     35    87%
+experiments/phase2/train_rl.py         45     24    47%
+experiments/phase2/train_sft.py       293    166    43%
+src/objdel/__init__.py                  1      0   100%
+src/objdel/checker/__init__.py          6      0   100%
+src/objdel/checker/bitquad.py          36      0   100%
+src/objdel/checker/certify.py          35      4    89%
+src/objdel/checker/polygonize.py       92      0   100%
+src/objdel/checker/topology.py         70      0   100%
+src/objdel/checker/volume.py           35      0   100%
+src/objdel/data/__init__.py             2      0   100%
+src/objdel/data/lidc.py               184      0   100%
+src/objdel/data/riga.py               196      6    97%
+src/objdel/data/splits.py             104      1    99%
+src/objdel/data/store.py              110      1    99%
+src/objdel/eval/__init__.py             4      0   100%
+src/objdel/eval/audit.py               58      0   100%
+src/objdel/eval/coverage.py            26      0   100%
+src/objdel/eval/gates.py               80      0   100%
+src/objdel/eval/metrics.py            169      1    99%
+src/objdel/eval/probes.py             346     27    92%
+src/objdel/eval/signal.py             101      0   100%
+src/objdel/eval/vision.py              83      2    98%
+src/objdel/geometry/__init__.py         3      0   100%
+src/objdel/geometry/shape.py           74      2    97%
+src/objdel/geometry/text.py            93      0   100%
+src/objdel/reward/__init__.py           5      0   100%
+src/objdel/reward/advantages.py        42      0   100%
+src/objdel/reward/cache.py            136      0   100%
+src/objdel/reward/score.py             74      0   100%
+src/objdel/reward/spec.py              24      0   100%
+src/objdel/secrets.py                  22      2    91%
+src/objdel/targets/__init__.py          4      0   100%
+src/objdel/targets/augment.py          82      3    96%
+src/objdel/targets/build.py           151      4    97%
+src/objdel/targets/frame.py           106      0   100%
+src/objdel/targets/simplify.py        150    114    24%
+src/objdel/train/__init__.py            0      0   100%
+src/objdel/train/callbacks.py         141     12    91%
+src/objdel/train/configs.py            56      0   100%
+src/objdel/train/dataset.py           208     11    95%
+src/objdel/train/fast.py              495     28    94%
+src/objdel/train/rewards.py            74      0   100%
+src/objdel/train/sample.py             90      2    98%
+src/objdel/train/serve.py              98      0   100%
+-------------------------------------------------------
+TOTAL                                4748    516    89%
+1447 passed, 6 skipped, 31 deselected, 18 warnings in 581.94s (0:09:41)

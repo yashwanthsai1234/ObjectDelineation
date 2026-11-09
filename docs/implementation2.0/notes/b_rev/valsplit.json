@@ -1,0 +1,56 @@
+{
+ "shape": {
+  "patients": 40,
+  "items": 449,
+  "nodules": 94,
+  "iou": 0.645,
+  "miss": 0.116,
+  "found_iou": 0.727,
+  "near_n": 70,
+  "near_iou": 0.789,
+  "far_n": 189,
+  "far_iou": 0.543,
+  "far_miss": 0.222,
+  "legal": 0.997
+ },
+ "select": {
+  "patients": 38,
+  "items": 635,
+  "nodules": 106,
+  "iou": 0.599,
+  "miss": 0.134,
+  "found_iou": 0.69,
+  "near_n": 136,
+  "near_iou": 0.732,
+  "far_n": 217,
+  "far_iou": 0.469,
+  "far_miss": 0.318,
+  "legal": 0.994
+ },
+ "all": {
+  "patients": 78,
+  "items": 1084,
+  "nodules": 200,
+  "iou": 0.618,
+  "miss": 0.126,
+  "found_iou": 0.706,
+  "near_n": 206,
+  "near_iou": 0.751,
+  "far_n": 406,
+  "far_iou": 0.503,
+  "far_miss": 0.273,
+  "legal": 0.995
+ },
+ "coverage_vs_val_shape": {
+  "train_shifted": {
+   "worst_ratio": 0.547,
+   "tv": 0.169,
+   "ks": 0.109
+  },
+  "train_shifted_plus_rescaled_unweighted": {
+   "worst_ratio": 0.448,
+   "tv": 0.157,
+   "ks": 0.04
+  }
+ }
+}

@@ -1,0 +1,71 @@
+
+**Goal.** Teach the model to find off-centre nodules, and use the full learning signal of every step. Do it in this
+order: data (B1), numbers (B2), reward (B3).
+
+**Why, with evidence.**
+
+1. The test view is shifted, RL training was not. RL trained on centred views (offset median 0.018 of the side). The
+   test view has offset median 0.265 and 37.5 % above 0.3 [measured:
+   docs/research/notes/rl_plateau_diagnosis_2026-11-08.md].
+2. The misses are where the shift is. Offset = distance between the doctors' union-box centre and the window centre,
+   divided by the side S (one definition for all of Phase B) [code: docs/implementation2.0/seeds/b1_scripts/b1_geometry.py].
+   Miss = K-mean rule (header). All numbers below are per-item means over K = 8 answers.
+
+   | Split | patients / items | all images IoU | misses | offset < 0.15: n, IoU | offset > 0.3: n, IoU, misses |
+   |---|---|---|---|---|---|
+   | val (all) | 78 / 1,084 | 0.618 | 12.6 % | 206, 0.751 | 406, 0.503, 27.3 % |
+   | val-shape (parity rule) | 40 / 449 | 0.645 | 11.6 % | 70, 0.789 | 189, 0.543, 22.2 % |
+   | val-select (parity rule) | 38 / 635 | 0.599 | 13.4 % | 136, 0.732 | 217, 0.469, 31.8 % |
+   | test | - / 2,200 | 0.645 | 10.8 % | 375, 0.751 | 807, 0.552, 22.2 % |
+
+   [measured: runs/r5/eval/eval_{val,test}/final_eval.json and items.jsonl joined with
+   docs/implementation2.0/notes/b1_out/geom.json; val halves: docs/implementation2.0/notes/b_rev/valsplit.json, script
+   valsplit.py beside it.] The val halves will be re-dealt by a stratified rule (B1.0); B1.0 re-measures the two half
+   rows. The test row is kept as the record of the diagnosis. From 2026-11-08 every design number uses train or val
+   only (B.6.2, Limitations).
+3. Today's fix (`--train-views`, 24,624 rows) still misses the target law. The 3-view mix has offset median 0.181
+   against 0.257 on val (all). Only 47.2 % of its rows have offset above 0.2 (val 68.4 %). Total variation distance
+   (TV) of (size x offset) cells to val-select is 0.260, worst cell ratio 0.532 [measured:
+   docs/implementation2.0/notes/b_final/trainlaw.json]. The off-centre rows alone (shifted + rescaled, unweighted) give
+   worst ratio 0.759, TV 0.108, offset KS 0.109 against the train shifted law (the B1 target, B1.4) [measured: same].
+   An earlier test-based check found that no weighting of the 3 fixed windows brings the worst cell ratio to 0.8
+   (best try 0:2:1 gives 0.77) [measured on test: docs/implementation2.0/notes/SD3_data.md s5]. The cause: one fixed draw
+   per item leaves the small-object, offset 0.15-0.2 cells thin.
+4. The data is clean. Patient, series and item overlap across splits are 0. Exact pixel-hash overlap across patients
+   is 0. Every doctor mask is inside every window (100 %) [measured: docs/implementation2.0/notes/B1.md F1, F2].
+   Two near-duplicate pairs (cos >= 0.98) cross splits: 1 test->train, 1 test->val [measured:
+   docs/implementation2.0/notes/b1_out/neardup.json]. DG3 lists and reviews them.
+5. Some of the signal is down-weighted or dropped, and nobody knows how much. `importance_sampling_ratio/min` is 0 in
+   98.1 % of 770 steps, so at least 1 of 256 sequences was masked in those steps. The median step-mean ratio is 0.82.
+   That does not mean 18 % are masked. TRL's `sequence_mask` with `clip_min` None masks only ratios above 3 [code:
+   .venv trl/trainer/grpo_trainer.py:2803-2818]. A kept sequence with a summed gap of -3 has weight 0.05. It is
+   down-weighted and counted nowhere. The median token |logp diff| is 0.018 [measured: runs/rl/train_rl/rl.json]. The
+   mode is `sequence_mask` with cap 3, a TRL default that our config does not set [code:
+   src/objdel/train/configs.py:177-196; .venv trl/trainer/grpo_config.py:330-347]. A sequence ratio is exp(sum of
+   token gaps), so long answers pass the cap first. The dropped share is not logged [code:
+   src/objdel/train/fast.py:351-363, 604-616]. **The mismatch grows with the adapter** [measured: rl.json, by step
+   range]:
+
+   | steps | median logp diff | median IS ratio mean | share of steps with IS min = 0 |
+   |---|---|---|---|
+   | 1-20 | 0.011 | 0.998 | 0.25 |
+   | 21-100 | 0.028 | 0.827 | 1.00 |
+   | 101-300 | 0.024 | 0.771 | 1.00 |
+   | 301-500 | 0.019 | 0.810 | 1.00 |
+   | 501-770 | 0.016 | 0.845 | 1.00 |
+
+   So a short run from a fresh adapter cannot measure the mismatch. B2.1 logs the counterfactual effect of every IS
+   mode inside the B1 run. B2.3b measures the cause (engine kernels, dtype or merged-weight rounding) on drifted
+   adapters.
+6. A miss gets no gradient toward the nodule. Reward v4 z-scores IoU, F5, legal and g_area inside the group, with
+   sigma floors 0.05 / 0.05 / 0.25 / 0.05. A group is zeroed only when every term spans less than 0.01
+   [code: src/objdel/reward/advantages.py:95-107; src/objdel/reward/spec.py:28-34]. So an all-miss group still gets
+   an advantage from g_area and F5 (for example, doctor-sized versus not). But no v4 term depends on where the
+   outline sits once IoU is 0. Misses are 10.8 % of test images (K-mean rule) [measured: final_eval test].
+7. The model is probably not the limit, on found images only. Found images score 0.722 against a doctor ceiling of
+   0.740 [measured: diagnosis note] [to be confirmed by A2]. The 0.740 is the old ceiling, which A2 calls unfair to
+   the doctors. The found subset is also chosen by the model's own success. This bounds the gain on found images
+   only; it says nothing about misses. After A2, B.8.4 recomputes the fair difference on val, on found images and on
+   all images, with a patient CI.
+
+---

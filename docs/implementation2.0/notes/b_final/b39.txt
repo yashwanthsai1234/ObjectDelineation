@@ -1,0 +1,34 @@
+
+- Config `experiments/phase2/configs/b3_v5.yaml`: the same start checkpoint as B1 (`rl-full-3ep`), the same B1 rows
+  root and `rows_revision` (untilted), the numerics preset chosen in B2.4, `--reward v5`, `beta` from B2.4 / B3.7
+  rule 6, `--steps 300` (or the budgeted multiple of 20, B.8.3 item 1), LocGuard and BudgetStop on, val eval
+  (shifted and edge views), then the test eval of the final candidate. A clean A/B against B1: only the reward
+  changes (plus the preset if B2.4 chose another one; ADR-0013 then says so).
+
+#### B3.10 Clean after gate B3
+
+- Pass: v5 becomes the only reward. Move `RewardV4`, `advantages_v4`, their tests and the v4 TRL wiring to
+  `archive/reward_v4/` with a README row (what, replaced by, restore command). Remove `--reward`. Update
+  `docs/reference/reward.md`, `docs/glossary.md` (RLOO, location term, miss, missed answer),
+  `src/objdel/eval/signal.py` weights if they mirror v4 (E1 Q5).
+- Fail: keep v4, archive v5 code to `archive/reward_v5_try/`, record why in ADR-0013.
+
+---
+
+## B.5. Custom kernels used
+
+- **No new kernel file in Phase B.** B3.1 extends the existing `ScoreRows` / `ObjTerms` functors in
+  `cuda/gpucheck.cpp` (single source, CPU and nvcc builds) with two integer partials. If B3.7 rule 5 shows that the
+  existing spill-distance sum serves as the location signal, B3.1 is skipped.
+- Related kernel designs, used later or optionally:
+  - K2 `edt_tables` (GPU EDT for the cache tables): `docs/implementation2.0/kernels/K2/DESIGN.md` (s7 item 6). When
+    Phase D lands it, B1.4 materialization calls it instead of scipy; bits are identical (K2 s5), so no fingerprint
+    change.
+  - K1 polygonizer (certified targets on the GPU): `docs/implementation2.0/kernels/K1/DESIGN.md`. Same role for targets
+    in B1.4 after Phase D; its parity gate ends the ADR-0014 exception.
+  - K3 `is_ratio` (fused ratio + stats): `docs/implementation2.0/kernels/K3/DESIGN.md` (s4 (b)). Optional: if adopted
+    in Phase C, it must also emit the B2.1 fields (including the counterfactual stats) and support the chosen B2
+    preset.
+
+---
+

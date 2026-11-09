@@ -1,0 +1,40 @@
+
+- **ADR-0014 Scheduled RL rows.** Options: (a) reweight the 3 fixed windows; (b) online draws with GPU-derived
+  tables (SD3); (c) offline multi-draw pool, schedule, materialize only scheduled rows. (a) fails the coverage gate
+  [measured: SD3 s5]. (b) needs new GPU table and render parity first (Phase D work). Decision: (c). It meets the
+  cell shares by construction, needs no new GPU code, and keeps disk use flat. Revisit when Phase D gives
+  parity-checked GPU tables; then (b) removes materialization.
+  - **Target law.** Options: val-shape cell shares (40 patients), the train shifted law (7,341 items, 557
+    patients), or a pooled law. Decision: the train shifted law. Its distance to val-select is TV 0.063, offset KS
+    0.037; val-shape's is TV 0.169, KS 0.099 [measured: docs/implementation2.0/notes/b_final/trainlaw.json]. The offset
+    law is the generator's (`augment.shift`, uniform over the admissible rectangle [code:
+    src/objdel/targets/augment.py:58-71]), so a patient sample adds only a noisy size mix. The train law also uses
+    no val data. It equals the test view's generator law **by choice**; the `edge`-law, rescaled and rotated val
+    views guard against fitting that one law (B1.6, Gate B1).
+  - **Size axis.** The cell size is the apparent size `extent_px x S0 / side` for every kind (equal to
+    `extent_px` for centred and shifted windows). A rescaled window with a larger side shows the object smaller, so
+    raw `extent_px` would put it in the wrong cell.
+  - **Confound.** B1 continues `rl-full-3ep` for 300 more steps; R5 is that start model. Part of a gain can be
+    extra training. Evidence that more centred steps add about 0: the held-out IoU plateau over the last epochs of
+    the 770-step run [measured: docs/research/notes/rl_plateau_diagnosis_2026-11-08.md]. Within-run check: the
+    per-cell logs (offset < 0.15 cells flat, off-centre cells rising). Gate B1 reports the near-centre gain as the
+    control (B.6.2).
+  - **Exception:** B1.4 targets use the numpy polygonizer until Phase D K1 passes parity (owner sign-off, B.8.3).
+- **ADR-0012 Number match.** Options: A fp16 in both + token TIS (C = 2); B bf16 + token TIS (C = 2); C keep
+  `sequence_mask` (the control; drops long answers); D bf16 + token TIS + geometric sequence mask [0.99, 1.01]
+  (SkyRL's first recommendation; our own code); E bf16 + token TIS (C = 2) + TRL's OPSM
+  (`off_policy_mask_threshold` = q99.5 of the B1 run's per-sequence mean gap; length-fair, public key); F vLLM
+  `enable_lora` with the adapter pushed every step (keeps the LoRA delta apart from W in vLLM, as the trainer does;
+  triggered only if B2.3b shows merge rounding as the cause). E is the length-fair option. D is built only if the
+  counterfactual stats show that OPSM's one-sided rule leaves more than 0.5 % of valid tokens with |gap| > 0.5
+  unmasked. The B1 run uses C, so the B1-vs-R5 comparison has no numerics confound. B2.4 picks the preset for B3
+  from the B1 run's counterfactual stats.
+- **ADR-0013 Reward v5.** Mean-centred group baseline written as RLOO (equal to mean-centring times 8/7 for G = 8),
+  no std division, location term for missed answers, F5 and area at weight 0.1. No advantage-scale constant: AdamW
+  is invariant to a constant gradient scale except through `eps` and clipping, and neither is active (grad norm
+  0.0018-0.022, median 0.0048, against `max_grad_norm` 1.0 [measured: runs/rl/train_rl/rl.json]). A scale changes
+  only the policy-to-KL balance, so that balance is the config value `beta` (B2.4, B3.7 rule 5). Reward v4 stays
+  until gate B3 passes, then moves to `archive/reward_v4/`.
+
+---
+

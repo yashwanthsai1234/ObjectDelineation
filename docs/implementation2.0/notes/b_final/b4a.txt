@@ -1,0 +1,128 @@
+
+Common rules for every task: library code in `src/objdel`, tests in `tests/`, scripts in `experiments/phase2/` run
+as modules with `.venv/bin/python -I -m`. `make test` and `make lint` pass before each commit. Every task path is
+pre-E; Phase E's move tables define the post-E paths. No new dependency: numpy, scipy (`scipy.stats.ks_2samp`),
+datasets, pyarrow, Pillow, torch, TRL 1.17.1, vLLM (pinned) are already in the lock [code: pyproject.toml].
+
+Task order:
+1. $0 on the Mac: B1.0, B1.1 to B1.7, B1.9, B2.1, B2.2, B3.1 to B3.7.
+2. Session **B-S1** (paid): the B1 run on the control numerics `bf16-seqmask`, with the B2.1 counterfactual stats
+   on. Then the val evals (B.6.2). Then B2.3b on the step-100 and final adapters.
+3. $0: Gate B1, B1.8, B2.4 (preset for B3 from the B1 run's stats).
+4. Session **B-S2** (paid, only after the owner's budget decision, B.8.3 item 1): the optional fp16 arm (B2.3,
+   >= 60 steps), then the B3 run, then the test eval of the final candidate.
+5. $0: Gate B3, B3.10.
+
+### B1. Data first
+
+#### B1.0 Cache fingerprint split and val halves (do first; one rebuild)
+
+- **Fingerprint split** (moved here from B3.3, so caches, views and rows are built and uploaded once). Today
+  `fingerprint()` hashes `astuple(REWARD_V4)`, which holds every v4 weight [code: src/objdel/reward/spec.py:42-50].
+  New rule: `fingerprint()` hashes only the table constants that stored cache values depend on (`expert_score`,
+  `tau_floor`, `tau_quantile`), the size rule and the numpy / OpenCV / scipy versions. Put the three constants in one
+  frozen `CacheSpec` in `src/objdel/reward/spec.py`; `RewardV4` and `RewardV5` read them from it. A change of
+  reward weights then never invalidates caches.
+- The stored values (tau, T5) do not change, only the digests. So the R5 baselines in section 1 stay valid.
+- Rebuild on the Mac, once: the prepared roots, the val and test eval views (B1.6) and later the B1 rows root.
+  `StaleCacheError` names any file that was missed [code: src/objdel/reward/cache.py load].
+- **Val halves (for B3 only).** Add `objdel.data.splits.val_half(group_id) -> "shape" | "select"`. Rule: deal the
+  val patients with `splits.deal(groups, (("shape", 0.5), ("select", 0.5)), seed=0)` inside each
+  `splits.lidc_stratum` stratum [code: src/objdel/data/splits.py:63-70, 84-88]. The stratum holds the disagreement
+  flag and the multi-reader slice count, so the halves balance items and disagreement. The parity-of-first-byte
+  rule of revision 2 gave 449 / 635 items and IoU 0.645 / 0.599 [measured: valsplit.json]: unbalanced. Store the
+  dealt map in `docs/reference/val_halves.json` (patient id -> half, plus the rule and seed), so `val_half` is a
+  table lookup and needs no store at run time.
+- Re-run `valsplit.py` with the new rule and replace the two half rows of the section 1 table and the B3 baselines
+  in B.6.2 in the same commit.
+- Val-shape tunes B3 (B3.7). Val-select judges Gate B3. Gate B1 uses the whole val. Nothing in training reads val.
+- Tests: `tests/test_reward_spec.py` (fingerprint unchanged by `alpha_loc`, `w_f5`, `c_topo`, `lam`, `eps`; changed by
+  `expert_score`, `tau_floor`, `tau_quantile`); `tests/test_splits.py` (`val_half` is deterministic, splits
+  patients, not items, and each stratum's two halves differ in size by at most 1 patient).
+
+#### B1.1 Window pool and cells (library)
+
+- Create `src/objdel/data/windows.py`.
+- Constants: `SIZE_EDGES = (10, 20, 40)` px and `OFFSET_EDGES = (0.15, 0.2, 0.3)`. These are SD3's cells, so SD3's
+  measured baseline applies. Size = apparent size `extent_px x S0 / side`, where `extent_px` = max side of the
+  doctors' union box in slice pixels (ADR-0014). For centred and shifted windows `side == S0`, so the size is
+  `extent_px`.
+- `@dataclass(frozen=True) class Window`: `item_id, group_id, nodule, kind, draw, dx, dy, side, s0, offset,
+  extent_px, disagreement`; properties `window_id`, `apparent_px` and `cell`.
+- `window_id = f"{item_id}~{kind}{draw}"`. The separator is "~", not "/". Reason: today's item ids already contain
+  "/" (`lidc/<series>/n000/z089`), and code reads the nodule as `item_id.rsplit("/", 1)[0]` [code:
+  src/objdel/eval/signal.py:99] and the series as `split("/")[1]` [code: experiments/phase2/preflight.py:137]. With
+  "~" both still work, and window files do not nest inside the source item's cache folder.
+- `offset_of(union_box, window_box) -> float`: Euclidean distance of the two box centres divided by the window side.
+  Copy the formula from `docs/implementation2.0/seeds/b1_scripts/b1_geometry.py` (lines with
+  `np.hypot(cx-wx, cy-wy)/f.W`).
+- `cell(apparent_px, offset) -> tuple[int, int]`: `np.searchsorted(EDGES, v, side="right")` on each axis.
+- `@dataclass(frozen=True) class WindowPool`: `windows: tuple[Window, ...]`, `dropped: Mapping[str, int]` (keys
+  `"not_rl"`, `"shifted_none"`, `"rescaled_none"`, `"padded"`).
+- `pool(items, draws: int, seed: int = 0) -> WindowPool`:
+  1. Skip every item with `not rl_eligible(item.raters)` [code: src/objdel/reward/cache.py:103-105] and count it
+     under `"not_rl"`. Reason: `dataset.prompts()` keeps only `rl` records [code: src/objdel/train/dataset.py:221];
+     a single-rater window in the schedule would be dropped there and shift every later step.
+  2. `bare = replace(item, image=None)`, `S0 = frame(bare).W` (as `build_eval_views._record` does [code:
+     experiments/phase2/build_eval_views.py:55-56]).
+  3. One `centred` window, draw 0: `frame(bare)`.
+  4. For d in `range(draws)`: `rng = augment.row_rng(seed, kind, item_id)` for d = 0 (so draw 0 equals the built
+     views), `augment.row_rng(seed, kind, d, item_id)` for d >= 1 [code: src/objdel/targets/augment.py:54].
+     - Shifted: `augment.draw(bare, rng, side=S0)`. The `side=S0` is required. Without it, `draw` picks S from S0 and
+       its neighbours [code: augment.py:85-94], a 50/50 side mix [measured: docs/implementation2.0/notes/B1.md F4], and
+       DG10 fails. On None: drop and count `"shifted_none"`.
+     - Rescaled: `augment.neighbour_side(bare, S0, rng)` [code: augment.py:97]. On None: drop and count
+       `"rescaled_none"`. Do NOT fall back to a shifted S0 window. (`_record` does that and labels it
+       `kept_side=True` [code: build_eval_views.py:57-62]; in the pool such a window would be a shifted window under
+       the wrong kind.)
+     - A window that extends beyond the slice is dropped and counted under `"padded"`. Rule: a scheduled window
+       never extends beyond the slice (DG18 = 0).
+  5. Return windows sorted by `window_id` (independent of item order).
+- `cell_shares(windows) -> np.ndarray` shape (4, 4), sums to 1.
+- Tests `tests/test_data_windows.py` on a 30-item synthetic store fixture (build it like `tests/test_p2_views.py`
+  does, with some single-rater items): determinism; draw 0 equals `build_eval_views` geometry for shifted and for
+  rescaled items where `neighbour_side` succeeds; single-rater items never appear and are counted; S0 windows are
+  >= 0.75 of off-centre windows; every window keeps all doctor pixels with 2 px clearance; no window extends beyond
+  the slice; order independence; cells on the edges (offset exactly 0.15 goes to bin 1); a rescaled window with
+  side 2 x S0 and `extent_px` 30 falls in size bin 1 (apparent 15 px); `window_id` contains no "/" after the source
+  item id.
+
+#### B1.2 Scheduler (library)
+
+- Add to `src/objdel/data/windows.py`:
+  `schedule(windows, target, steps, per_step=32, shares={"centred": 0.15, "shifted": 0.75, "rescaled": 0.10},
+  seed=0, disagreement_weight=4.0, block_steps=20) -> list[Window]`. No tilt argument (B3.8 is removed). Callers
+  and tests pass every argument after `steps` by keyword.
+- Shares are config values [estimate]: B2.md R2 proposed 15/55/30, B1.md 10/60/30, SD3 about 20 % centred. This plan
+  takes 15 % centred as a regression anchor (centred items are at the doctors' level: 0.751 vs ceiling 0.73-0.74),
+  and 10 % rescaled because the test view has no rescaled kind and S = 50 is 90.8 % of the test view [measured:
+  B1.md F4]. Gate DG10 checks the side share; the owner can change shares in the config.
+- `steps` must be a multiple of `block_steps`; else `ValueError`. Build with `steps` equal to the budgeted steps
+  (B.8.3 item 1), and record `planned_steps` and `block_steps` in `manifest.schedule`.
+- Steps, done per block of `block_steps x per_step` rows (640 rows for 20 x 32):
+  1. Kind counts per block = largest-remainder rounding of shares x block rows. Spread them over the block's steps by
+     the same rounding per step (each step gets 4 or 5 centred rows, 3 or 4 rescaled rows).
+  2. For each off-centre kind with n slots in the block: cell counts = largest-remainder rounding of `target x n`
+     (deterministic; DG7 and DG8 then depend only on the pool, not on sampling noise). Assign the cell slots to
+     that kind's slot positions **inside the block** by a shuffle with `np.random.default_rng((seed, block))`.
+     So every prefix of whole blocks has exact per-kind cell counts.
+  3. In a cell, draw a window of the slot's kind with weight `disagreement_weight` for disagreement items, else 1
+     (replaces `DISAGREEMENT_OVERSAMPLE = 4` row repetition [code: src/objdel/train/dataset.py:81]).
+  4. Reject a window whose `item_id` is already in the step, or that is already used in the run. If a (kind, cell)
+     has no free window, raise `ValueError` naming the kind and the cell. There is no substitution of the other kind
+     (DG11 stays exact; the fix is a larger `draws`, see B1.4).
+  5. Centred slots: uniform over free centred windows with the same disagreement weight.
+  6. Return step-major order: rows of step 1, then step 2, and so on.
+- Disagreement weight. 289 of 7,341 train items are disagreement items (3.9 %) [measured: data/prepared manifest,
+  via docs/implementation2.0/notes/b1_out]. Weight 4 inside each cell gives about 4p / (1 + 3p) = 14 % of rows
+  [estimate: arithmetic], against 44 of 1,084 (4.1 %) in val. DG14 reports the share. Owner decision B.8.3 item 3:
+  weight 4 (inherited from `DISAGREEMENT_OVERSAMPLE`) or 1 (the test law). Default: 4, so B1 changes only the
+  geometry against R5.
+- Nodule weighting is OFF. The test view weights slices too (top 10 % of nodules hold 28.3 % of test images, 30.8 %
+  of train) [measured: B1.md F7]. `quality` reports the share; no gate.
+- Tests (property tests, `tests/test_data_windows.py`): length N; kind counts exact; per-kind cell counts equal the
+  largest-remainder counts **in every 20-step block and every block prefix**; no item twice in a step; no window
+  twice in a run; same seed gives the same list; another seed gives another list; disagreement share responds to
+  the weight; `ValueError` naming (kind, cell) on an exhausted cell; `ValueError` when `steps % block_steps != 0`.
+  A separate non-hypothesis test checks that a feasible pool returns rows (so a schedule that always raises fails).
+

@@ -1,0 +1,11 @@
+bench_k1: CPU build (k1poly cpu, gpucheck cpu), reps 3
+device: cpu
+lesion512 b256             n=256   seeds=16 rings=513      corners=27070     | K1    41.126 ms (     6225 masks/s) | check_masks  3926.641 ms (       65 masks/s) | x95.5 | IDENTICAL | K1 split h2d 2.026 ccl 36.546 rings 2.202 trace 1.419 d2h 0.005
+lesion512 b256             n=256   seeds=0  rings=513      corners=27070     | K1    40.846 ms (     6267 masks/s) | check_masks  3959.575 ms (       65 masks/s) | x96.9 | IDENTICAL | K1 split h2d 1.941 ccl 34.678 rings 2.066 trace 1.245 d2h 0.005
+noise512 b16               n=16    seeds=16 rings=285941   corners=3148594   | K1   194.123 ms (       82 masks/s) | check_masks  1240.641 ms (       13 masks/s) | x6.4 | IDENTICAL | K1 split h2d 0.094 ccl 36.090 rings 20.681 trace 134.622 d2h 0.697
+comb512 b4                 n=4     seeds=16 rings=4        corners=4104      | K1    32.414 ms (      123 masks/s) | check_masks   115.190 ms (       35 masks/s) | x3.6 | IDENTICAL | K1 split h2d 0.023 ccl 7.472 rings 5.225 trace 19.618 d2h 0.001
+comb512 b4                 n=4     seeds=0  rings=4        corners=4104      | K1    27.992 ms (      143 masks/s) | check_masks   113.363 ms (       35 masks/s) | x4.0 | IDENTICAL | K1 split h2d 0.020 ccl 7.595 rings 4.457 trace 15.877 d2h 0.001
+spiral512 b4               n=4     seeds=16 rings=4        corners=4104      | K1    23.572 ms (      170 masks/s) | check_masks   167.581 ms (       24 masks/s) | x7.1 | IDENTICAL | K1 split h2d 0.029 ccl 3.922 rings 2.408 trace 17.166 d2h 0.001
+concentric512 b4           n=4     seeds=16 rings=512      corners=2048      | K1    11.745 ms (      341 masks/s) | check_masks   130.488 ms (       31 masks/s) | x11.1 | IDENTICAL | K1 split h2d 0.024 ccl 1.926 rings 1.243 trace 8.561 d2h 0.001
+checker512 b4              n=4     seeds=16 rings=520204   corners=2097152   | K1    79.323 ms (       50 masks/s) | check_masks   115.566 ms (       35 masks/s) | x1.5 | IDENTICAL | K1 split h2d 0.027 ccl 11.120 rings 7.166 trace 57.988 d2h 0.548
+real (all)                 n=37093 seeds=16 rings=38002    corners=1476508   | K1   217.715 ms (   170374 masks/s) | check_masks  4833.905 ms (     7674 masks/s) | x22.2 | IDENTICAL | K1 split h2d 3.623 ccl 127.741 rings 12.387 trace 69.853 d2h 1.179

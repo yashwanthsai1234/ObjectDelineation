@@ -1,0 +1,12 @@
+k1_dump: 3000 masks, 311518 rings, 2406946 corners, 175.5 ms (CPU build)
+k1_dump: gpucheck::check_masks IDENTICAL
+cross_numpy: 3000 masks, 311518 rings, 0 mismatches -> PASS
+k1_dump: 1500 masks, 153724 rings, 1203654 corners, 76.4 ms (CPU build)
+k1_dump: gpucheck::check_masks IDENTICAL
+cross_numpy: 1500 masks, 153724 rings, 0 mismatches -> PASS
+k1_dump: 37093 masks, 38002 rings, 1476508 corners, 229.9 ms (CPU build)
+k1_dump: gpucheck::check_masks IDENTICAL
+cross_numpy: 37093 masks, 38002 rings, 0 mismatches -> PASS
+k1_dump: 37093 masks, 38002 rings, 1476508 corners, 213.4 ms (CPU build)
+k1_dump: gpucheck::check_masks IDENTICAL
+cross_numpy: 37093 masks, 38002 rings, 0 mismatches -> PASS

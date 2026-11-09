@@ -1,0 +1,6 @@
+src/objdel/checker/topology.py:63: unused attribute 'writeable' (60% confidence)
+src/objdel/reward/cache.py:256: unused attribute 'atexit' (60% confidence)
+src/objdel/train/callbacks.py:141: unused method 'on_step_end' (60% confidence)
+src/objdel/train/callbacks.py:218: unused method 'on_train_begin' (60% confidence)
+src/objdel/train/callbacks.py:226: unused method 'on_step_end' (60% confidence)
+src/objdel/train/callbacks.py:229: unused method 'on_train_end' (60% confidence)

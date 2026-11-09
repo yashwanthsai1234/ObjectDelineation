@@ -1,0 +1,1 @@
+{"train/centred": [150, 150, 150], "train/shifted": [150, 150, 150], "train/rescaled": [150, 150, 150], "val/centred": [150, 150, 150], "val/shifted": [150, 150, 150], "val/rescaled": [150, 150, 150]}

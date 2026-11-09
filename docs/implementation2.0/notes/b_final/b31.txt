@@ -1,0 +1,76 @@
+
+```
+ MAC (offline, $0)                                                    GPU HOST (RTX 5090, paid)
++------------------+   +-------------------+   +------------------+
+| store (Parquet)  |-->| windows.pool      |-->| windows.schedule |
+| train items,     |   | RL items only,    |   | steps x 32 rows, |
+| (int16 HU, masks)|   | `draws` per item, |   | 20-step blocks,  |
++------------------+   | geometry only     |   | cell counts by   |
+         |             +-------------------+   | largest remainder|
+         v                      ^              +--------+---------+
++------------------+            |                       |
+| train shifted law|--target----+                       v
+| (draw-0 cell     |                          +------------------+    +------------------+
+|  shares, train   |                          | materialize only |--->| quality.gates    |
+|  store only)     |                          | scheduled windows|    | leakage (store + |
++------------------+                          | key item~kindN   |    | rows root), z,   |
+                                              +--------+---------+    | inside, coverage,|
+                                                       |              | tokens           |
+                                                       v              +--------+---------+
+                                              +----------------------------------------+
+                                              | rows root data/views/lidc-train-b1     |  all hard gates pass
+                                              | manifest: schedule, ids_sha256, gates  |<-----------+
+                                              +-------------------+--------------------+
+                                                                  | upload to the private HF repo (one place,
+                                                                  v BEFORE the rental; revision pinned in config)
+ +---------------------------------------------------------------------------------------------+
+ | train_rl (FastGRPO, TRL 1.17.1, shuffle_dataset=False: rows in file order, ckpt rl-full-3ep)  |
+ |  assert manifest sha256 == config, len(rows) == steps x 32, ordered ids hash == ids_sha256   |
+ |  rows --> vLLM colocate (numerics preset: dtype, IS mode) --> 256 answers                    |
+ |        --> gpucheck score (GPU: IoU_tc, F5, g_area, topology, NEW sum_x/sum_y) --> numbers   |
+ |        --> advantages (v4 for B1, v5 for B3; 256 numbers) --> TRL loss                       |
+ |        --> IS ratio + NEW counterfactual stats on device --> one host read per log step     |
+ |  guards: BudgetStop (dollars), LocGuard (B3 only); checkpoint every 50 steps (resume)        |
+ +---------------------------------------------------------------------------------------------+
+                                                                  |
+                                                                  v
+                  final_eval: Gate B1 on the whole val (shifted view + edge-law view);
+                  Gate B3 on val-select; test once, final candidate only
+                  (test view checked against docs/reference/frozen_views.json)
+```
+
+### B.3.2 Data flow in words
+
+1. `pool` draws `draws` shifted and `draws` rescaled windows per RL-eligible train item (`rl_eligible(raters)`, 2
+   or more doctors), plus the centred view. It reads only geometry (union box, doctor areas). It writes no pixel. It
+   counts every dropped item and draw.
+2. The target law is the (size x offset) cell shares of the draw-0 shifted windows of the train items. This is the
+   test view's generator law, measured on 7,341 train items of 557 patients. No val data shapes training.
+3. `schedule` picks exactly `steps x 32` windows. It works in blocks of 20 steps (640 rows). In each block it fills
+   centred, shifted and rescaled slots by fixed shares. For each off-centre kind it gives every cell a slot count by
+   largest-remainder rounding of the target shares. Then it picks a window in that cell. So every trained prefix of
+   whole blocks meets the target. One source item appears at most once in a step. No window repeats in a run.
+4. Only the scheduled windows get pixels and caches (the existing `_prepare` path, with the window id as the key).
+   9,600 windows is about the size of today's train-shifted view (7,341 windows, 1.2 GB) [measured: SD3 s2].
+5. `quality` runs every gate on the store and on the rows root. A hard failure writes no manifest, so `train_rl`
+   cannot load the root.
+6. `train_rl` reads the rows in file order and checks the manifest hash, the count and the ordered-id hash. Step s
+   gets rows 32(s-1) .. 32s-1.
+7. Gate B1 uses the whole val (78 patients). The val halves (B1.0) serve only B3: B3.7 tunes on val-shape, Gate B3
+   judges on val-select. Test is read once.
+
+### B.3.3 Where each part runs
+
+| Part | Runs on | Why (CPU items justified) |
+|---|---|---|
+| Pool, schedule, quality geometry | Mac CPU, offline | Once per data version. About 1 min for all windows [measured: B1 audit "about 1 minute"]. The Mac has no NVIDIA GPU. $0. |
+| Materialize scheduled windows (render, targets, caches) | Mac CPU, offline | Same reason. Today 22,023 windows take 2 min 11 s with 2 processes [measured: rl_plateau note]. **Owner exception needed:** the targets use the numpy polygonizer, against the rule "CUDA for the polygonizer". The exception is recorded in ADR-0014 and ends when Phase D K1 passes parity; then B1.4 calls the CUDA polygonizer. Listed in B.8.3 for sign-off. |
+| Leakage hashes, LIDC XML z check of every series (B1.7), doctor agreement report (DG14b) | Mac CPU, offline | One time; untrusted data under `python -I`. |
+| fp16 full-model check (B2.2) | Mac CPU, offline | One forward of the whole model (vision + 28 text layers [measured: HF config.json of Qwen3-VL-2B-Instruct, `text_config.num_hidden_layers`]) on 32 prompts with saved answers; $0; runs only if the owner wants the optional fp16 arm. |
+| Gate power simulation (B1.9) | Mac CPU, offline | Bootstrap over R5 per-item values; $0. |
+| Image decode per step | host (existing OpenOnce) | Unchanged in Phase B. Phase C moves pixels to the GPU. |
+| Scoring incl. new centroid sums | GPU (gpucheck) | Owner rule. Masks never leave the device. Only integers and terms return [code: src/objdel/reward/score.py docstring]. |
+| Reference centroid of the doctors | host, once per cache | Computed from `ExpertCache.vote` / `.union`, which are host arrays already. Once per cache, never per step. |
+| Location term exp, advantages v5 | host numpy, 256 numbers per step | TRL reward functions return Python floats [code: src/objdel/train/rewards.py]. A kernel launch costs more than 256 multiply-adds. Same rule as today's v4. |
+| IS ratio, the new stats and the counterfactual stats | GPU (torch) | Sums stay on device; one `.tolist()` per log step [code: src/objdel/train/fast.py:604-616]. |
+

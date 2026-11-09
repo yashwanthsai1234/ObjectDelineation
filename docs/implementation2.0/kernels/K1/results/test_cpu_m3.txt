@@ -1,0 +1,15 @@
+== test_k1_cpu 3000 41
+k1poly test: CPU build, 3000 random cases, seed 41, references: ref_polygonize + gpucheck::check_masks (CPU)
+adversarial: 124 masks done, failures so far 0
+random singles: done, failures so far 0
+PASS: 4453 masks, 453142 rings checked, 0 failures, 4.2 s
+== test_k1_cpu_o1 3000 41
+k1poly test: CPU build, 3000 random cases, seed 41, references: ref_polygonize + gpucheck::check_masks (CPU)
+adversarial: 124 masks done, failures so far 0
+random singles: done, failures so far 0
+PASS: 4453 masks, 453142 rings checked, 0 failures, 4.7 s
+== test_k1_cpu_o2 3000 41
+k1poly test: CPU build, 3000 random cases, seed 41, references: ref_polygonize + gpucheck::check_masks (CPU)
+adversarial: 124 masks done, failures so far 0
+random singles: done, failures so far 0
+PASS: 4453 masks, 453142 rings checked, 0 failures, 4.7 s

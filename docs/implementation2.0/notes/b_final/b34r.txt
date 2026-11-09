@@ -1,0 +1,53 @@
+
+- `src/objdel/reward/advantages.py`: `advantages_v5(terms, group=8, spec=REWARD_V5) -> np.ndarray` (B*G,). It stays
+  in this module (numpy, fingerprinted with `REWARD_V5`); Phase E moves the module to `verify/reward/advantages.py`,
+  and `rl/` only calls it.
+  ```
+  area = w_area * g_area * (min(1, iou_tc / miss_iou) if spec.area_gate else 1)
+  R = legal * (iou_tc + alpha_loc*loc + w_f5*f5 + area) + c_topo * r_topo
+  A_i = R_i - (sum_g R - R_i) / (G - 1)      # RLOO = G/(G-1) x (R_i - mean_g R); group mean of A is exactly 0
+  flat = (np.ptp(np.stack([iou_tc, f5, g_area, loc, r_topo], -1), axis=1).max(-1) < spec.drop_spread) \
+         & (sig_id == sig_id[:, :1]).all(1)
+  A[flat] = 0
+  ```
+  `r_topo` = today's `_topology` (unchanged maths). `loc` here is the gated term of B3.2 (ramp x g_area x topo x
+  loc_raw) **before** `alpha_loc`. Because A has group mean 0, TRL's `sum_then_normalize` with
+  `scale_rewards="none"` leaves it unchanged (same reasoning as v4 [code: rewards.py docstring]).
+- Why the drop rule tests each unweighted term: v4 tests the span of each raw term [code:
+  src/objdel/reward/advantages.py:103]. A test on the weighted R would drop exactly the far-miss groups the location
+  term is for. Example: an all-miss group whose `loc_raw` values span less than 0.1 (every answer more than about 2
+  radii away: exp(-2) = 0.135, exp(-4.5) = 0.011 at 3 radii) and whose g_area and F5 are equal has ptp(R) < 0.01
+  after `alpha_loc` = 0.1 and the ramp, so it would get A = 0 [estimate: arithmetic].
+- Why no scale constant: the optimiser is AdamW [code: src/objdel/train/configs.py:100] with `max_grad_norm` 1.0.
+  The grad norm never comes near the clip (0.0018-0.022, median 0.0048 over 770 steps [measured:
+  runs/rl/train_rl/rl.json]). AdamW's step does not depend on a constant gradient scale, except through `eps`
+  = 1e-8, and per-parameter gradients are far above it [estimate: 0.0048 / sqrt(trainable LoRA parameters)]. So a
+  scale on A changes only the weight of the policy term against `beta x KL`. That balance is set by `beta` in the
+  B3 config (B2.4), not by a reward constant.
+- Worked check (Direction s5 example, radius 7 px, IoU 0.02 for all, ramp factor 0.8): loc terms 0.62, 0.29,
+  0.014 x 6. RLOO for answer 1: 0.1 x (0.62 - (0.29 + 6 x 0.014)/7) = +0.057. Without the ramp the plan's value was
+  +0.07; the ramp keeps the sign and order. The drop rule keeps this group: the `loc` span is 0.606 > 0.01.
+
+#### B3.5 Wire v5 into the TRL adapter
+
+- `src/objdel/train/rewards.py`: `TRLReward(caches, stop_ids, spec=REWARD_V5)`; `LOGGED` adds `"loc"`; aggregator
+  name `f"advantage_{spec.name.split('_')[1]}"`; `GATED` adds `"loc"`; group checks use `spec.group`.
+- `src/objdel/train/configs.py`: `grpo_config(..., reward=REWARD_V5)`; `num_generations` check uses
+  `reward.group`; `reward_weights` length follows `len(LOGGED) + 1`.
+- `train_rl --reward {v4,v5}` (v4 only until B3.10); `rl.json` records `reward = {name, fingerprint, c_topo,
+  loc_width, area_gate}` and `beta`.
+
+#### B3.5b Location guard (run guard)
+
+- `callbacks.LocGuard(window=50)` in `src/objdel/train/callbacks.py`. It watches whether the model learns to move
+  outlines toward the nodule without hitting it. Active only with `--reward v5`.
+- Inputs: per-step means over the off-centre rows only (`kind/shifted/*` and `kind/rescaled/*` logs) of the
+  location term and of IoU_tc. Batch means are noisy, because the cell mix changes every step, so a sign test
+  would stop a healthy run.
+- Rule: stop (and save) only when, in **two disjoint consecutive windows** of 50 logged steps, both hold: (a) the
+  least-squares slope of the location mean has t-statistic > 3; (b) the upper 95 % bound of the IoU_tc slope is
+  < 0.
+- Unit tests with synthetic logs: seeded noise with flat true trends (per-step sd as in R5) stops in < 1 % of
+  300-step runs; a rising location term with a flat-to-falling IoU stops within 100 steps; rising both does not stop;
+  fewer than 100 steps never stops.
+

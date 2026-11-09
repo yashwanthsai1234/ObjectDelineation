@@ -1,0 +1,89 @@
+
+[notice] A new release of pip is available: 25.0.1 -> 26.3
+[notice] To update, run: pip install --upgrade pip
+Cuda compilation tools, release 13.0, V13.0.88
+Build cuda_13.0.r13.0/compiler.36424714_0
+Compiling entry function '_ZN5k3gpu14is_rows_kernelILb0EEEvPKfS2_PKhiiffPfS5_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 33 registers, used 1 barriers, 1024 bytes smem
+Compiling entry function '_ZN5k3gpu14is_rows_kernelILb1EEEvPKfS2_PKhiiffPfS5_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 35 registers, used 1 barriers, 1024 bytes smem
+Compiling entry function '_ZN5k3gpu15is_stats_kernelEPKfiPf' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 39 registers, used 1 barriers, 1024 bytes smem
+Compiling entry function '_ZN5k3gpu10lse_kernelILb0EEEvPK13__nv_bfloat16S3_PKiiiifiPfS6_S6_S6_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 128 registers, used 1 barriers, 33792 bytes smem
+Compiling entry function '_ZN5k3gpu10lse_kernelILb1EEEvPK13__nv_bfloat16S3_PKiiiifiPfS6_S6_S6_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 81 registers, used 1 barriers, 33792 bytes smem
+Compiling entry function '_ZN5k3gpu17lse_finish_kernelEPKfS1_S1_S1_PKiiiiiPfS4_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu11rope_kernelEPKlS1_S1_iiS1_S1_S1_llPlPi' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 31 registers, used 1 barriers, 1184 bytes smem
+Compiling entry function '_ZN5k3gpu17preprocess_kernelILb0ELb0EEEvPKhPKiiN2k39PatchGeomEffffffPv' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu17preprocess_kernelILb0ELb1EEEvPKhPKiiN2k39PatchGeomEffffffPv' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu17preprocess_kernelILb1ELb0EEEvPKhPKiiN2k39PatchGeomEffffffPv' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu17preprocess_kernelILb1ELb1EEEvPKhPKiiN2k39PatchGeomEffffffPv' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu14is_rows_kernelILb0EEEvPKfS2_PKhiiffPfS5_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 33 registers, used 1 barriers, 1024 bytes smem
+Compiling entry function '_ZN5k3gpu14is_rows_kernelILb1EEEvPKfS2_PKhiiffPfS5_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 35 registers, used 1 barriers, 1024 bytes smem
+Compiling entry function '_ZN5k3gpu15is_stats_kernelEPKfiPf' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 39 registers, used 1 barriers, 1024 bytes smem
+Compiling entry function '_ZN5k3gpu10lse_kernelILb0EEEvPK13__nv_bfloat16S3_PKiiiifiPfS6_S6_S6_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 128 registers, used 1 barriers, 33792 bytes smem
+Compiling entry function '_ZN5k3gpu10lse_kernelILb1EEEvPK13__nv_bfloat16S3_PKiiiifiPfS6_S6_S6_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 81 registers, used 1 barriers, 33792 bytes smem
+Compiling entry function '_ZN5k3gpu17lse_finish_kernelEPKfS1_S1_S1_PKiiiiiPfS4_' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu11rope_kernelEPKlS1_S1_iiS1_S1_S1_llPlPi' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 31 registers, used 1 barriers, 1184 bytes smem
+Compiling entry function '_ZN5k3gpu17preprocess_kernelILb0ELb0EEEvPKhPKiiN2k39PatchGeomEffffffPv' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu17preprocess_kernelILb0ELb1EEEvPKhPKiiN2k39PatchGeomEffffffPv' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu17preprocess_kernelILb1ELb0EEEvPKhPKiiN2k39PatchGeomEffffffPv' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+Compiling entry function '_ZN5k3gpu17preprocess_kernelILb1ELb1EEEvPKhPKiiN2k39PatchGeomEffffffPv' for 'sm_120'
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+Used 40 registers, used 0 barriers
+k3_expf max error 0.908 ulp (at 48.1756134); k3_logf max error 1.102 ulp (at 0.649671197)
+preprocess: emul == ref on 8 + 2 images, both layouts
+rope qwen3vl 512x512        Lp 321 end 81: emul == HF-port ref on 16 rows x 1900
+rope non-square 1x32x64     Lp 528 end 48: emul == HF-port ref on 8 rows x 900
+lse_ref S=1 : max |logp - fp64| 3.63e-06, max |entropy - fp64| 7.43e-06
+lse_ref S=3 : max |logp - fp64| 3.63e-06, max |entropy - fp64| 4.37e-06
+lse_ref S=8 : max |logp - fp64| 3.63e-06, max |entropy - fp64| 7.43e-06
+lse_ref S=16: max |logp - fp64| 3.63e-06, max |entropy - fp64| 7.43e-06
+is_ref: 6 mode/bound cases match the fp64 torch-semantics check
+test_cpu: all passed
+total 4356
+drwxr-xr-x 2 root root    4096 Nov  9 02:09 .
+drwxr-xr-x 3 root root    4096 Nov  9 02:09 ..
+-rwxr-xr-x 1 root root 2130632 Nov  9 02:09 bench_gpu
+-rwxr-xr-x 1 root root   53776 Nov  9 02:09 k3_cpu_cli
+-rwxr-xr-x 1 root root   71808 Nov  9 02:09 test_cpu
+-rwxr-xr-x 1 root root 2183544 Nov  9 02:09 test_gpu
+exit 0

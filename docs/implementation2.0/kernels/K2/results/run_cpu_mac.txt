@@ -1,0 +1,55 @@
+checks 11901, failures 0
+DIGEST b158d8132b18be83
+ALL PASS
+checks 47547, failures 0
+DIGEST f92b9a3939cec10f
+ALL PASS
+DIGEST b158d8132b18be83
+ALL PASS
+k2bench: CPU build, scale 1/8, best of 1
+edt_sq (all masks)                 wall   163.024 ms  device   154.903 ms  (81.2 Mpx/s device)
+    EdtRowsH                  19.618 ms
+    EdtColsV                 135.285 ms
+surface: boundary F + HD95         wall   162.654 ms  device   162.419 ms  (788.1 pairs/s device)
+    BoundaryRows               0.766 ms
+    EdtRowsH                  20.615 ms
+    EdtColsV                 138.260 ms
+    host round trip            0.009 ms
+    Directed                   2.419 ms
+    Select                     0.350 ms
+sets: GED + HM-IoU (K=8, k=4)      wall     0.448 ms  device     0.233 ms  (17158.2 sets/s device)
+    SetInter                   0.229 ms
+    SetTerms                   0.004 ms
+validity typical (512 shapes), grid off, wall (both paths) 30.342 ms
+  old: EdgePairs + ShapeTotals     wall     0.000 ms  device    12.475 ms  (41041.9 shapes/s device)
+    EdgePairs                 12.460 ms
+    ShapeTotals                0.015 ms
+  new: grid / rest + warp totals   wall     0.000 ms  device    17.470 ms  (29306.7 shapes/s device)
+    GridBox+Count              1.727 ms
+    host round trip            0.003 ms
+    GridScan+Fill              1.697 ms
+    GridPairs                  0.000 ms
+    EdgePairsRest             14.004 ms
+    ShapeTotalsWarp            0.039 ms
+validity typical (512 shapes), grid on, wall (both paths) 46.947 ms
+  old: EdgePairs + ShapeTotals     wall     0.000 ms  device    12.481 ms  (41021.5 shapes/s device)
+    EdgePairs                 12.463 ms
+    ShapeTotals                0.018 ms
+  new: grid / rest + warp totals   wall     0.000 ms  device    34.094 ms  (15017.5 shapes/s device)
+    GridBox+Count              3.892 ms
+    host round trip            0.015 ms
+    GridScan+Fill              4.400 ms
+    GridPairs                 24.027 ms
+    EdgePairsRest              1.726 ms
+    ShapeTotalsWarp            0.034 ms
+validity adversarial (8 shapes x 10 rings x 1000 vertices, grid on 8), wall 349.423 ms, same=1
+  old: EdgePairs + ShapeTotals     wall     0.000 ms  device   310.254 ms  (25.8 shapes/s device)
+    EdgePairs                294.889 ms
+    ShapeTotals               15.365 ms
+  new: grid / rest + warp totals   wall     0.000 ms  device    38.744 ms  (206.5 shapes/s device)
+    GridBox+Count              1.292 ms
+    host round trip            0.006 ms
+    GridScan+Fill              1.684 ms
+    GridPairs                 19.918 ms
+    EdgePairsRest              0.663 ms
+    ShapeTotalsWarp           15.182 ms

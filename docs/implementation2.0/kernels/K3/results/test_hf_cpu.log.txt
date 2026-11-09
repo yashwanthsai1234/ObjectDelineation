@@ -1,0 +1,4 @@
+(a) preprocess: 41 images, mean' [127.5, 127.5, 127.5] std' [127.5, 127.5, 127.5]: fp32 bit-equal True (0 differ), bf16 bit-equal True
+(c) rope: Lp 325, grid [1, 32, 32], 16 rows x 1868: err 0, template+extrapolation == HF True, C++ port == HF True
+(c) rope adversarial flags (mismatch, image in answer, short row): [True, True, True]
+test_hf_cpu: all passed

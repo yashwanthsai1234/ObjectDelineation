@@ -1,0 +1,10 @@
+k3_expf max error 0.908 ulp (at 48.1756134); k3_logf max error 1.079 ulp (at 0.718831837)
+preprocess: emul == ref on 8 + 2 images, both layouts
+rope qwen3vl 512x512        Lp 321 end 81: emul == HF-port ref on 16 rows x 1900
+rope non-square 1x32x64     Lp 528 end 48: emul == HF-port ref on 8 rows x 900
+lse_ref S=1 : max |logp - fp64| 3.63e-06, max |entropy - fp64| 7.43e-06
+lse_ref S=3 : max |logp - fp64| 2.33e-06, max |entropy - fp64| 4.37e-06
+lse_ref S=8 : max |logp - fp64| 3.63e-06, max |entropy - fp64| 7.43e-06
+lse_ref S=16: max |logp - fp64| 3.63e-06, max |entropy - fp64| 7.43e-06
+is_ref: 6 mode/bound cases match the fp64 torch-semantics check
+test_cpu: all passed

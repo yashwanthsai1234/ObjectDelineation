@@ -1,0 +1,56 @@
+
+[notice] A new release of pip is available: 25.0.1 -> 26.3
+[notice] To update, run: pip install --upgrade pip
+Cuda compilation tools, release 13.0, V13.0.88
+Build cuda_13.0.r13.0/compiler.36424714_0
++ /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/nvcc -std=c++17 -O3 -arch=sm_120 -lineinfo -Xptxas -v -x cu -c /work/k1poly.cpp -I/work -o /work/build/gpu/k1poly_gpu.o
++ grep -E 'Compiling entry|registers' /work/build/gpu/ptxas_k1.txt
++ sed -E 's/.*entry function '\''([^'\'']+)'\''.*/\1/'
++ paste - -
++ c++filt
++ head -40
++ sed -E 's/void k1poly::\(anonymous namespace\)::kernel<k1poly::\(anonymous namespace\)::([A-Za-z]+)>.*ptxas info *: /\1 /'
+void cub::CUB_300001_SM_1200::detail::scan::DeviceScanKernel<cub::CUB_300001_SM_1200::detail::scan::policy_hub<int, int, int, unsigned int, cuda::std::__4::plus<void> >::Policy1000, int const*, int*, cub::CUB_300001_SM_1200::ScanTileState<int, true>, cuda::std::__4::plus<void>, cub::CUB_300001_SM_1200::detail::InputValue<int, int*>, unsigned int, int, false, int>(int const*, int*, cub::CUB_300001_SM_1200::ScanTileState<int, true>, int, cuda::std::__4::plus<void>, cub::CUB_300001_SM_1200::detail::InputValue<int, int*>, unsigned int)	ptxas info    : Used 71 registers, used 1 barriers, 33808 bytes smem
+void cub::CUB_300001_SM_1200::detail::scan::DeviceScanInitKernel<cub::CUB_300001_SM_1200::ScanTileState<int, true> >(cub::CUB_300001_SM_1200::ScanTileState<int, true>, int)	ptxas info    : Used 8 registers, used 0 barriers
+void cub::CUB_300001_SM_1200::detail::EmptyKernel<void>()	ptxas info    : Used 4 registers, used 0 barriers
+Header Used 14 registers, used 0 barriers
+RingWalk Used 30 registers, used 0 barriers
+Trace Used 40 registers, used 0 barriers
+SeedEmit Used 30 registers, used 0 barriers
+SetCounts Used 12 registers, used 0 barriers
+SeedFlag Used 16 registers, used 0 barriers
+RingInit Used 25 registers, used 0 barriers
+Popc Used 10 registers, used 0 barriers
+RingMark Used 22 registers, used 0 barriers
+HoleKey Used 36 registers, used 0 barriers
+Flatten Used 14 registers, used 0 barriers
+Merge Used 26 registers, used 0 barriers
+RunEmit Used 40 registers, used 0 barriers
+RunCount Used 36 registers, used 0 barriers
+Quads Used 37 registers, used 0 barriers
+k1poly::(anonymous namespace)::pack_kernel(k1poly::(anonymous namespace)::Pack, long long)	ptxas info    : Used 22 registers, used 0 barriers
++ /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/nvcc -std=c++17 -O3 -arch=sm_120 -lineinfo --fmad=false -x cu -c /gc/gpucheck.cpp -I/gc -o /work/build/gpu/gpucheck_gpu.o
++ g++ -std=c++17 -O2 -ffp-contract=off -c /gc/gpucheck.cpp -I/gc -o /work/build/gpu/gpucheck_cpu.o
++ g++ -std=c++17 -O2 -DWITH_GPUCHECK -I/work -I/gc -c /work/test_k1.cpp -o /work/build/gpu/test_k1.o
++ g++ -std=c++17 -O2 -DWITH_GPUCHECK -I/work -I/gc -c /work/k1_dump.cpp -o /work/build/gpu/k1_dump.o
++ g++ -std=c++17 -O2 -I/work -I/gc -c /work/bench_k1.cpp -o /work/build/gpu/bench_k1.o
++ /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/nvcc -arch=sm_120 /work/build/gpu/test_k1.o /work/build/gpu/k1poly_gpu.o /work/build/gpu/gpucheck_cpu.o -o /work/build/gpu/test_k1_gpu
++ /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/nvcc -arch=sm_120 /work/build/gpu/k1_dump.o /work/build/gpu/k1poly_gpu.o /work/build/gpu/gpucheck_cpu.o -o /work/build/gpu/k1_dump_gpu
++ /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/nvcc -arch=sm_120 /work/build/gpu/bench_k1.o /work/build/gpu/k1poly_gpu.o /work/build/gpu/gpucheck_gpu.o -o /work/build/gpu/bench_k1_gpu
++ set +x
+build_gpu: OK (sm_120) -> /work/build/gpu
+total 8396
+drwxr-xr-x 2 root root    4096 Nov  9 02:10 .
+drwxr-xr-x 3 root root    4096 Nov  9 02:10 ..
+-rw-r--r-- 1 root root   54424 Nov  9 02:10 bench_k1.o
+-rwxr-xr-x 1 root root 2962224 Nov  9 02:10 bench_k1_gpu
+-rw-r--r-- 1 root root   84496 Nov  9 02:10 gpucheck_cpu.o
+-rw-r--r-- 1 root root 1444768 Nov  9 02:10 gpucheck_gpu.o
+-rw-r--r-- 1 root root   19344 Nov  9 02:10 k1_dump.o
+-rwxr-xr-x 1 root root 1621872 Nov  9 02:10 k1_dump_gpu
+-rw-r--r-- 1 root root  611216 Nov  9 02:10 k1poly_gpu.o
+-rw-r--r-- 1 root root    8570 Nov  9 02:10 ptxas_k1.txt
+-rw-r--r-- 1 root root   97216 Nov  9 02:10 test_k1.o
+-rwxr-xr-x 1 root root 1666192 Nov  9 02:10 test_k1_gpu
+nvcc_docker_check: OK
+exit=0

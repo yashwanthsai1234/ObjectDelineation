@@ -1,0 +1,211 @@
+ptxas info    : 0 bytes gmem
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8SetTermsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8SetTermsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 64 registers, used 0 barriers
+ptxas info    : Compile time = 65.691 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d11warp_kernelINS0_8SetInterEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d11warp_kernelINS0_8SetInterEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 6.172 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d11warp_kernelINS0_6SelectEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d11warp_kernelINS0_6SelectEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 52 registers, used 0 barriers
+ptxas info    : Compile time = 13.971 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8DirectedEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8DirectedEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 3.553 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8EdtColsVEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8EdtColsVEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 38 registers, used 0 barriers
+ptxas info    : Compile time = 13.707 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d11warp_kernelINS0_8EdtRowsHEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d11warp_kernelINS0_8EdtRowsHEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 38 registers, used 0 barriers
+ptxas info    : Compile time = 9.804 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_12BoundaryRowsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_12BoundaryRowsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 5.871 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d11warp_kernelINS0_15ShapeTotalsWarpEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d11warp_kernelINS0_15ShapeTotalsWarpEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 0 barriers
+ptxas info    : Compile time = 188.615 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_13EdgePairsRestEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_13EdgePairsRestEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 80 registers, used 0 barriers
+ptxas info    : Compile time = 20.823 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9GridPairsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9GridPairsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 98 registers, used 0 barriers
+ptxas info    : Compile time = 54.355 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8GridFillEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8GridFillEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 13.063 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8GridScanEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8GridScanEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 20 registers, used 0 barriers
+ptxas info    : Compile time = 1.281 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9GridCountEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9GridCountEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 13.777 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_7GridBoxEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_7GridBoxEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 0 barriers
+ptxas info    : Compile time = 3.733 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_10SigCompactEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_10SigCompactEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 20 registers, used 0 barriers
+ptxas info    : Compile time = 1.119 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_7SigScanEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_7SigScanEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 4.027 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8ObjTermsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8ObjTermsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 0 barriers
+ptxas info    : Compile time = 29.426 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9ScoreRowsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9ScoreRowsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 48 registers, used 0 barriers
+ptxas info    : Compile time = 8.945 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_6GatherEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_6GatherEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 20 registers, used 0 barriers
+ptxas info    : Compile time = 4.364 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_5HolesEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_5HolesEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 0 barriers
+ptxas info    : Compile time = 4.482 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_6FilterEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_6FilterEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 25 registers, used 0 barriers
+ptxas info    : Compile time = 6.616 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8CropFillEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8CropFillEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 25 registers, used 0 barriers
+ptxas info    : Compile time = 4.964 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_5CountEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_5CountEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 25 registers, used 0 barriers
+ptxas info    : Compile time = 6.490 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_12LabelFlattenEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_12LabelFlattenEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 2.159 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_10LabelMergeEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_10LabelMergeEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 0 barriers
+ptxas info    : Compile time = 7.023 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9LabelInitEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9LabelInitEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 20 registers, used 0 barriers
+ptxas info    : Compile time = 2.687 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_6ObjBoxEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_6ObjBoxEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 36 registers, used 0 barriers
+ptxas info    : Compile time = 3.825 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_6RowBoxEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_6RowBoxEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 0 barriers
+ptxas info    : Compile time = 3.675 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_11ShapeTotalsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_11ShapeTotalsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 66 registers, used 0 barriers
+ptxas info    : Compile time = 181.191 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9EdgePairsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9EdgePairsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 80 registers, used 0 barriers
+ptxas info    : Compile time = 19.478 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_10CleanRingsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_10CleanRingsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 17.398 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9PrecisionEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9PrecisionEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 34 registers, used 0 barriers
+ptxas info    : Compile time = 4.381 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_14ScatterCornersEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_14ScatterCornersEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 26 registers, used 0 barriers
+ptxas info    : Compile time = 3.634 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_7SetBaseEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_7SetBaseEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 14 registers, used 0 barriers
+ptxas info    : Compile time = 0.739 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_11GatherRingsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_11GatherRingsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers
+ptxas info    : Compile time = 0.927 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9RingStatsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9RingStatsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 44 registers, used 0 barriers
+ptxas info    : Compile time = 5.314 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9RankRoundEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9RankRoundEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 0 barriers
+ptxas info    : Compile time = 3.228 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8RankInitEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_8RankInitEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 0 barriers
+ptxas info    : Compile time = 3.470 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_4PredEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_4PredEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 26 registers, used 0 barriers
+ptxas info    : Compile time = 4.274 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_10LabelRoundEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_10LabelRoundEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 0 barriers
+ptxas info    : Compile time = 3.248 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9InitSlotsEEEvlT_' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d6kernelINS0_9InitSlotsEEEvlT_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 48 registers, used 0 barriers
+ptxas info    : Compile time = 15.783 ms
+ptxas info    : Compiling entry function '_ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d13raster_kernelENS0_6ShapesEPKhPjl' for 'sm_120'
+ptxas info    : Function properties for _ZN8gpucheck38_GLOBAL__N__e8b539e1_6_k2_cpp_ab77ad0d13raster_kernelENS0_6ShapesEPKhPjl
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 77 registers, used 0 barriers, 16384 bytes smem
+ptxas info    : Compile time = 61.113 ms
