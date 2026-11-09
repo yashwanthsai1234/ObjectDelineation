@@ -253,3 +253,12 @@ def test_vulture_is_pinned_and_configured():
 def test_retired_models_absent():
     hits = [str(p.relative_to(ROOT)) for p in (ROOT / "src").rglob("*.py") if "smolvlm" in p.read_text().lower()]
     assert hits == []
+
+
+# --- CLEAN13: the Vast CLI is pinned outside the project environment ------------------------------------------------
+
+
+def test_vastai_pinned_in_runbook_and_not_a_project_dependency():
+    assert "uv tool install vastai==1.11.0" in (ROOT / "docs/runbooks/gpu-run.md").read_text()
+    deps = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    assert not any("vastai" in d for d in deps["dependencies"] + sum(deps["optional-dependencies"].values(), []))
