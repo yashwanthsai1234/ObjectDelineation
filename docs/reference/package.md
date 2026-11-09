@@ -28,7 +28,7 @@ Package version: `0.1.0` (`objdel.__version__`). Python 3.12 or newer.
 
 `objdel._gpucheck` is the compiled extension of [cuda/gpucheck.cpp](cuda-engine.md).
 Importing `objdel.train` submodules is lazy on purpose: `objdel/train/__init__.py` holds only a docstring, so using `objdel.train.configs` does not import `objdel.train.fast`.
-`objdel.eval.vision` and `objdel.eval.coverage` import without torch.
+`objdel.eval.vision`, `objdel.data.coverage` and `objdel.data.quality` import without torch.
 
 ---
 
@@ -112,6 +112,13 @@ Parquet item store. See [Data](data.md) for layout.
 | `encode_masks`, `decode_masks` | `(stack)`, `(bits, width)` | `np.packbits` along W, as NPY bytes |
 
 Constants: `DATASETS = ("riga", "lidc")`, `SPLITS = ("train", "val", "test")`, `ROW_GROUP_BYTES = 128 MiB`, zstd level 6.
+
+### `data.coverage`, `data.quality`
+
+| Module | Public API | Purpose |
+|---|---|---|
+| `coverage` | `props`, `distribution`, `gaps`, `cell_coverage(scheduled, target, target_offsets)` | Train-versus-exam coverage of outline properties; cell coverage of scheduled windows |
+| `quality` | `Gate`, `leakage`, `rows_leakage`, `window_checks`, `schedule_report`, `agreement`, `tokens`, `gates`, `failures`, `z_report`, `dg17` | The B data gates DG1-DG18 (21 gates; `experiments.phase2.audit_data`) |
 
 ### `data.lidc`
 
@@ -252,7 +259,6 @@ Exam harness. Exports: `alarms_for`, `gates`, `hack_audit`, `metrics`, `summariz
 | `probes` | `build_precision`, `build_topology`, `score_precision`, `score_topology`, `lidc_stats`, `patches`, `make_item`, `make_hole`, `make_two` | Synthetic precision and topology probes |
 | `signal` | `group`, `panel`, `per_item`, `paired`, `select_rb`, `spearman_ci`, `draws`, `ci` | GRPO-signal panel and checkpoint rule R-B |
 | `vision` | `decide`, `fixed_set`, `projector_distance`, `next_token_probs`, `image_use`, `check` | G-vision |
-| `coverage` | `props`, `distribution`, `gaps` | Train-versus-exam coverage |
 
 ---
 

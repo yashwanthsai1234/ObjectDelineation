@@ -420,6 +420,106 @@ def test_build_eval_views_help():
         BE.main(["--help"])
 
 
+def _jsonl(d, ds="lidc"):
+    return (d / ds / "val.jsonl").read_bytes()
+
+
+def test_kinds_builds_only_the_named_views_with_the_default_records(eval_views, tmp_path):
+    """I06: --kinds filters without renumbering draws (the shifted records equal the default build's byte for byte)."""
+    from experiments.phase2 import build_eval_views as BE
+    root, _ = eval_views
+    BE.main(["--store", str(root / "store"), "--out", str(tmp_path / "a"), "--kinds", "shifted", "--procs", "1"])
+    BE.build(root / "store", tmp_path / "b", ("lidc",), "val", procs=1, kinds=("shifted", "rescaled"))
+    assert sorted(p.name for p in (tmp_path / "a").iterdir()) == ["lidc-val-shifted"]
+    assert sorted(p.name for p in (tmp_path / "b").iterdir()) == ["lidc-val-rescaled", "lidc-val-shifted"]
+    for d in (tmp_path / "a", tmp_path / "b"):
+        assert _jsonl(d / "lidc-val-shifted") == _jsonl(root / "out" / "lidc-val-shifted")
+    assert json.loads((tmp_path / "a" / "lidc-val-shifted" / "manifest.json").read_text())["kinds"] == ["shifted"]
+    assert sorted(p.name for p in (root / "out").iterdir()) == [  # the default: three kinds, no edge
+        "lidc-val-rescaled", "lidc-val-rotated", "lidc-val-shifted", "riga-val-rescaled", "riga-val-shifted"]
+
+
+@pytest.mark.parametrize("kinds", ["shifted,uniform", "", "edge,,shifted"])
+def test_unknown_kind_exits_2(kinds, tmp_path, capsys):
+    from experiments.phase2 import build_eval_views as BE
+    with pytest.raises(SystemExit) as e:
+        BE.main(["--out", str(tmp_path), "--kinds", kinds])
+    assert e.value.code == 2 and "--kinds" in capsys.readouterr().err and not any(tmp_path.iterdir())
+
+
+def _clearances(it, offset, side):
+    """(left, top, right, bottom) px between the doctors' union and the window (from frame's own box)."""
+    (ux0, uy0, ux1, uy1), (wx0, wy0, wx1, wy1) = union_box(it), frame(it, offset=offset, side=side).box
+    return ux0 - wx0, uy0 - wy0, wx1 - ux1, wy1 - uy1
+
+
+def _copies(items, n=200):
+    """n renamed copies of the synthetic LIDC items with pixels (the draws depend on the item id)."""
+    base = [replace(it, image=None) for it in items if it.dataset == "lidc"]
+    return [replace(base[k % len(base)], item_id=f"lidc/9.{k}/n000/z001") for k in range(n)]
+
+
+def test_edge_offsets_lie_on_the_admissible_boundary(items):
+    """I32: one coordinate at the edge of the admissible rectangle (a clearance of exactly 2 px on one side), every
+    doctor pixel inside with >= 2 px clearance, no other nodule; another stream than the shifted view, farther out."""
+    from objdel.data.windows import offset_of
+    shared, frac = 0, {"edge": [], "shifted": []}
+    for it in _copies(items):
+        S0 = frame(it).W
+        off = augment.edge(it, S0, augment.row_rng(0, "edge", it.item_id))
+        c = _clearances(it, off, S0)
+        assert min(c) >= CLEARANCE and CLEARANCE in c, (it.item_id, off, c)
+        assert not augment.crowded(it, frame(it, offset=off, side=S0).box)
+        sh = augment.draw(it, augment.row_rng(0, "shifted", it.item_id), side=S0)[0]
+        shared += off == sh
+        for k, o in (("edge", off), ("shifted", sh)):
+            frac[k].append(offset_of(union_box(it), frame(it, offset=o, side=S0).box))
+    assert shared < 10 and np.median(frac["edge"]) > np.median(frac["shifted"])
+
+
+def test_edge_draws_every_boundary_point_alike(items):
+    """The edge law is uniform over the boundary lattice points (each side and corner), not only the corners."""
+    it = _copies(items, 1)[0]
+    S0 = frame(it).W
+    got = Counter(augment.edge(it, S0, augment.row_rng(0, "edge", k)) for k in range(4000))
+    xs, ys = sorted({o[0] for o in got}), sorted({o[1] for o in got})
+    w, h = xs[-1] - xs[0], ys[-1] - ys[0]
+    assert len(got) == 2 * (w + h) and len(xs) == w + 1 and len(ys) == h + 1
+    assert max(got.values()) < 2.5 * min(got.values())
+
+
+def test_edge_falls_back_to_the_policy_frame_when_every_boundary_window_is_crowded(items, tmp_path):
+    """I32: no uncrowded boundary window in 64 tries -> None; the view keeps the policy frame and counts it."""
+    pytest.importorskip("datasets")
+    from experiments.phase2 import build_eval_views as BE
+    it = next(i for i in items if i.dataset == "lidc")
+    walled = replace(it, meta={"other_nodules": [list(union_box(it))]})  # every admissible window holds it
+    assert augment.edge(replace(walled, image=None), frame(it).W, augment.row_rng(0, "edge", it.item_id)) is None
+    rec = BE._record((str(tmp_path), walled, "edge", 0))
+    assert rec["view"]["fallback"] and rec["view"]["offset"] == [0, 0] and rec["box"] == list(frame(it).box)
+    store.write([replace(walled, split="val"), *(replace(i, split="val") for i in items[1:2])], tmp_path / "store")
+    (m,) = BE.build(tmp_path / "store", tmp_path / "out", ("lidc",), "val", procs=1, kinds=("edge",)).values()
+    assert m["view"] == "lidc-val-edge" and m["sets"]["lidc/val"]["fallback"] == 1
+
+
+def test_every_view_record_carries_its_offset_fraction(eval_views, synthetic_items):
+    """I06: view.offset_frac = windows.offset_of(union box, window box); view.padded = the window leaves the slice."""
+    from objdel.data.windows import offset_of
+    from objdel.train import dataset as D
+    root, manifests = eval_views
+    its = {i.item_id: i for i in synthetic_items(("train", "val"))}
+    for name, m in manifests.items():
+        ds = name.split("-")[0]
+        recs = D.records(root / "out" / name, ds, "val")
+        for r in recs:
+            it = its[r["item_id"]]
+            H, W = next(iter(it.masks.values())).shape[-2:]
+            x0, y0, x1, y1 = r["box"]
+            assert r["view"]["offset_frac"] == offset_of(union_box(it), r["box"])
+            assert r["view"]["padded"] == (x0 < 0 or y0 < 0 or x1 > W or y1 > H)
+        assert m["sets"][f"{ds}/val"]["padded"] == sum(r["view"]["padded"] for r in recs)
+
+
 # --------------------------------------------------------------------------------------------- M9: fetch_lidc_pixels
 def test_fetch_refuses_hu_truncation():
     from experiments.phase1.fetch_lidc_pixels import hounsfield
@@ -563,11 +663,32 @@ def test_eval_view_windows_are_unchanged():
 
 
 @pytest.mark.data
+def test_real_edge_view_is_another_law_with_a_heavier_far_tail():
+    """I32 on 200 real val items: no edge offset equals the shifted view's, each lies on the admissible boundary
+    with every doctor pixel 2 px inside, and the median offset fraction is larger than the shifted view's."""
+    from objdel.data.windows import offset_of
+    _need(STORE)
+    its = [replace(it, image=None) for it in _val_items("lidc", every=5)][:200]
+    frac = {"edge": [], "shifted": []}
+    for it in its:
+        S0 = frame(it).W
+        off = augment.edge(it, S0, augment.row_rng(0, "edge", it.item_id))
+        sh = augment.draw(it, augment.row_rng(0, "shifted", it.item_id), side=S0)
+        if off is None or sh is None:  # fallback items: counted in the manifest, not here
+            continue
+        c = _clearances(it, off, S0)
+        assert off != sh[0] and min(c) >= CLEARANCE and CLEARANCE in c, it.item_id
+        for k, o in (("edge", off), ("shifted", sh[0])):
+            frac[k].append(offset_of(union_box(it), frame(it, offset=o, side=S0).box))
+    assert len(frac["edge"]) >= 190 and np.median(frac["edge"]) > np.median(frac["shifted"])
+
+
+@pytest.mark.data
 def test_bundle_covers_every_eval_view():
     """D10 revision: no category (side, nodule extent as share of the frame, position) that an eval view has at >= 5 %
     is under 1 % of training rows (epoch 0), and each such share is at least a third of the eval view's (R1 bundle:
     nodules under 10 % of the frame 0.5 % of rows vs 27.1 % of the rescaled val)."""
-    from objdel.eval import coverage
+    from objdel.data import coverage
     kinds = ("shifted", "rescaled", "rotated")
     _need(BUNDLE / "rows.jsonl", *(EVAL_VIEWS / f"lidc-val-{k}" / "lidc" / "val.jsonl" for k in kinds))
     keys = ("W", "ext", "pos")

@@ -9,7 +9,8 @@ top-left tie rule is not mirror-symmetric, issue I7); vertices are never transfo
 draw(item, rng, side=None): one D10 window: side S uniform over `sides(item)`, the policy side and its LADDER
 neighbours (scale 1), i.e. every side the shifted and rescaled eval views ask for (plan §5.0), then an offset uniform
 over the windows that keep the union inside with CLEARANCE px and meet no other outlined nodule (rejection sampling,
-so uniform over the admissible sides and offsets). neighbour_side: the eval "rescaled" view's S (plan §5.0).
+so uniform over the admissible sides and offsets). neighbour_side: the eval "rescaled" view's S (plan §5.0); edge:
+the eval "edge" view's offset, uniform on the boundary of the admissible rectangle (B1.6).
 The side set is the eval views' on purpose: a margin draw ([8 px, 60 % of the union's extent], the R1 bundle) pinned
 every union under 23 px at S = 50 (min_side), so 27 % of the rescaled val's nodules fill < 10 % of the frame against
 0.5 % of those training rows.
@@ -55,16 +56,39 @@ def row_rng(*keys) -> np.random.Generator:
     return np.random.default_rng(int.from_bytes(hashlib.sha256("|".join(map(str, keys)).encode()).digest()[:8]))
 
 
+def _admissible(item: Item, side: int, box):
+    """(centred corner, lo, hi): the offsets in [lo, hi] (inclusive) keep the union inside with CLEARANCE px."""
+    x0, y0, x1, y1 = box
+    cx, cy = centred(item, side, box)
+    lo, hi = (x1 + CLEARANCE - side - cx, y1 + CLEARANCE - side - cy), (x0 - CLEARANCE - cx, y0 - CLEARANCE - cy)
+    return (cx, cy), lo, hi
+
+
 def shift(item: Item, side: int, rng, tries: int = 200, box=None) -> tuple[int, int] | None:
     """A uniform offset of a window of `side` from its centred corner that keeps the union inside with CLEARANCE px
     and meets no other outlined nodule (rejection sampling), or None."""
-    x0, y0, x1, y1 = box = box or union_box(item)
-    cx, cy = centred(item, side, box)
-    lo, hi = (x1 + CLEARANCE - side - cx, y1 + CLEARANCE - side - cy), (x0 - CLEARANCE - cx, y0 - CLEARANCE - cy)
+    (cx, cy), lo, hi = _admissible(item, side, box := box or union_box(item))
     if lo[0] > hi[0] or lo[1] > hi[1]:
         return None
     for _ in range(tries):
         dx, dy = (int(v) for v in rng.integers(lo, np.add(hi, 1)))
+        if not crowded(item, (cx + dx, cy + dy, cx + dx + side, cy + dy + side)):
+            return dx, dy
+    return None
+
+
+def edge(item: Item, side: int, rng, tries: int = 64) -> tuple[int, int] | None:
+    """The guard view's offset (B1.6): a lattice point drawn uniformly on the boundary of shift's admissible
+    rectangle (one coordinate at its lo or hi: the largest legal shift that way), the first of `tries` draws that
+    meets no other outlined nodule, or None."""
+    (cx, cy), lo, hi = _admissible(item, side, union_box(item))
+    w, h = hi[0] - lo[0], hi[1] - lo[1]
+    if w < 0 or h < 0:
+        return None
+    for _ in range(tries):  # t walks the perimeter: bottom, right, top, left (a segment or a point: each once)
+        t = int(rng.integers(2 * (w + h) if w and h else w + h + 1))
+        dx, dy = ((lo[0] + t, lo[1]) if t < w else (hi[0], lo[1] + t - w) if t < w + h
+                  else (hi[0] - (t - w - h), hi[1]) if t < 2 * w + h else (lo[0], hi[1] - (t - 2 * w - h)))
         if not crowded(item, (cx + dx, cy + dy, cx + dx + side, cy + dy + side)):
             return dx, dy
     return None

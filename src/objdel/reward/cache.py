@@ -35,7 +35,7 @@ by 1 ULP between arm64 and x86 (m = 3, 7), so S_1..S_8 are the reference values 
 larger rater count falls back to quad.
 
 Storage: `save` writes the rater masks, tau and T5 (the only costly values) to a compressed .npz together with
-the reward fingerprint (spec.fingerprint: REWARD_V4, size rule, numpy / scipy / OpenCV versions) and a SHA-256 of
+the reward fingerprint (spec.fingerprint: CACHE_SPEC, size rule, numpy / scipy / OpenCV versions) and a SHA-256 of
 the content. `load` refuses a corrupted file (ValueError), a file whose digest differs from `expected_digest`
 (ValueError), and a file built under another fingerprint (StaleCacheError, a ValueError) unless `rebuild=True`, which
 rebuilds tau and T5 from the verified rater masks.
@@ -88,12 +88,12 @@ from scipy import integrate, ndimage, stats
 from objdel import _gpucheck
 from objdel.checker.topology import min_area, signature
 
-from .spec import REWARD_V4, fingerprint
+from .spec import CACHE_SPEC, fingerprint
 
 _CROSS = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
 _BIG = np.float32(1e6)  # distance when no target pixel exists in the crop
 _P95_PAIR_OVER_SIGMA = 1.959963984540054 * np.sqrt(2.0)  # P95 of |X - Y|, X, Y ~ N(0, 1)
-_X_STAR = 1.0 / REWARD_V4.expert_score - 1.0
+_X_STAR = 1.0 / CACHE_SPEC.expert_score - 1.0
 # S_m, m = 1..8 (module docstring): _excursion_quad's values on the reference arm64 Mac (the stored caches' T5)
 S_M = {m: float.fromhex(h) for m, h in enumerate((
     "0x1.0000000000001p+1", "0x1.9062e2bc50596p-1", "0x1.cb7070234b5dap-2", "0x1.35e135a79b622p-2",
@@ -117,7 +117,7 @@ def _drop_tables(pid: int, handle: int) -> None:
 
 
 class StaleCacheError(ValueError):
-    """The cache file was built under another reward fingerprint (REWARD_V4, size rule or a numpy / scipy / OpenCV
+    """The cache file was built under another reward fingerprint (CACHE_SPEC, size rule or a numpy / scipy / OpenCV
     version): re-run prepare_rl, or load it with rebuild=True."""
 
 
@@ -178,8 +178,8 @@ def rater_tau(stack: np.ndarray) -> float:
     st = _crop(stack)
     d = np.concatenate([np.concatenate([_contour_distances(a, b), _contour_distances(b, a)])
                         for a, b in combinations(st, 2)])
-    raw = float(np.percentile(d, REWARD_V4.tau_quantile)) if d.size else 0.0
-    return max(REWARD_V4.tau_floor, raw)
+    raw = float(np.percentile(d, CACHE_SPEC.tau_quantile)) if d.size else 0.0
+    return max(CACHE_SPEC.tau_floor, raw)
 
 
 def _band(stack: np.ndarray):
@@ -196,7 +196,7 @@ def f5_tolerance(stack: np.ndarray) -> float:
         union, core, perimeter, d_out, d_in = _band(np.delete(st, j, axis=0))
         q.append(2.0 * band_depth(st[j], union, core, d_out, d_in) / perimeter)
     q_m = float(np.mean(q)) * excursion_moment(m) / excursion_moment(m - 1)
-    floor = REWARD_V4.tau_floor * np.sqrt(excursion_moment(m) / _X_STAR) / _P95_PAIR_OVER_SIGMA
+    floor = CACHE_SPEC.tau_floor * np.sqrt(excursion_moment(m) / _X_STAR) / _P95_PAIR_OVER_SIGMA
     return max(float(np.sqrt(q_m / _X_STAR)), float(floor))
 
 
@@ -287,7 +287,7 @@ class ExpertCache:
         if fp != fingerprint():
             if not rebuild:
                 raise StaleCacheError(f"{path}: built under another reward fingerprint ({fp[:12]}, now "
-                                      f"{fingerprint()[:12]}: REWARD_V4, size rule or numpy/scipy/OpenCV changed); "
+                                      f"{fingerprint()[:12]}: CACHE_SPEC, size rule or numpy/scipy/OpenCV changed); "
                                       "re-run prepare_rl or load with rebuild=True")
             return cls.build(raters)
         return cls(raters, tau, t5)
