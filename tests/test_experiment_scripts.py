@@ -49,7 +49,7 @@ def helps(tmp_path_factory):
 
 
 def test_phase1_scripts_found():
-    assert {"census_sizerule", "eval_run", "prepare_rl"} <= set(SCRIPTS)
+    assert {"eval_run", "prepare_rl", "build_data"} <= set(SCRIPTS)
 
 
 @pytest.mark.parametrize("script", SCRIPTS)
@@ -61,46 +61,3 @@ def test_phase1_script_help(helps, script):
         pytest.fail(f"{script}: missing module {h['missing']}")
     assert h["code"] == 0, h
     assert h["stdout"].startswith("usage:")
-
-
-@pytest.mark.parametrize("cuda, supported, expect", [(False, True, False), (True, False, False), (True, True, True)])
-def test_sample_eval_uses_bf16_only_on_cuda_cards_that_support_it(cuda, supported, expect, monkeypatch):
-    """A pre-Ampere card (no bf16) must not get bf16=True (TrainingArguments raises); the Mac (no CUDA) samples in
-    fp32, as F3 verified the sampler."""
-    torch = pytest.importorskip("torch")
-    from experiments.phase1 import sample_eval
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda)
-    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: supported)
-    assert sample_eval.bf16() is expect
-
-
-def test_smoke_grpo_group_stats_use_the_gate_definitions():
-    """REVIEW #10: smoke.json's GRPO-signal numbers are the Phase 2 gates' (objdel.eval: duplicates = equal rasters,
-    sigma of the legality-gated geometric terms), not text duplicates and ungated sigma."""
-    pytest.importorskip("trl")
-    import numpy as np
-
-    from experiments.phase1 import smoke_grpo
-    from objdel.eval import metrics, summarize
-    from objdel.reward import ExpertCache
-
-    def square(x0, side=400, dx=0):  # grid units on a 50 px frame (20 per px); dx nudges x within a pixel
-        return json.dumps({"nodule": [{"outer": [[x0 + dx, x0], [x0 + dx + side, x0], [x0 + dx + side, x0 + side],
-                                                 [x0 + dx, x0 + side]], "holes": []}]}, separators=(",", ":"))
-
-    m = np.zeros((3, 50, 50), bool)
-    for i, (a, b) in enumerate([(8, 28), (8, 28), (8, 30)]):
-        m[i, a:b, a:b] = True
-    caches = {"lidc/a": {"nodule": ExpertCache.build(m)}, "lidc/b": {"nodule": ExpertCache.build(m)}}
-    same = [square(160)] * 4 + [square(160, dx=d) for d in (1, 2, 3, 4)]  # 5 texts, one raster
-    spread = [square(160 + 20 * i) for i in range(8)]  # 8 rasters
-    records = [("lidc/a", t, False, 50, 50, ["nodule"]) for t in same]
-    records += [("lidc/b", t, False, 50, 50, ["nodule"]) for t in spread]
-    adv = np.r_[np.zeros(8), np.linspace(-1, 1, 8)]
-    s = smoke_grpo.group_stats(records, caches.__getitem__, adv)
-    assert s["duplicate_rate"] == pytest.approx((7 / 8 + 0) / 2)  # text duplicates would give (3 / 8 + 0) / 2
-    items = [{"item_id": k, "dataset": "lidc", **metrics(ts, {"nodule": m}, 50, 50, ["nodule"], [False] * 8, caches[k])}
-             for k, ts in (("lidc/a", same), ("lidc/b", spread))]
-    gate = summarize(items)["datasets"]["lidc"]
-    assert s["duplicate_rate"] == gate["dup_rate"] and s["sigma_above_floor_any_term"] == gate["signal_share"]
-    assert s["groups"] == 2 and s["nonzero_adv_groups"] == 1 and s["adv_abs_max"] == 1.0

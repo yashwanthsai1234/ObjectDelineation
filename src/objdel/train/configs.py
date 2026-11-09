@@ -33,7 +33,9 @@ the processor's chat template, qwen3_vl_training for Qwen3-VL and lfm2_training 
 (truncation can cut image tokens), no packing. Full fine-tuning lr 5e-5, LoRA r16 on the language model's linear
 layers lr 5e-4 (lab T4). LoRA only for Qwen3-VL-2B (full fine-tuning with AdamW needs ~34 GB for weights, gradients
 and optimizer state, more than a 24 GB card has; LoRA with a frozen bf16 base peaks far below); SmolVLM-256M and
-LFM2.5-VL-450M are trained in full. GRPO learning rates: 1e-6 full, 1e-5 LoRA (lab K12 used 1e-5 with LoRA).
+LFM2.5-VL-450M are trained in full. GRPO learning rate: every real run takes it from `prereg.G_PROBE` through
+`g_probe.make_trainer` (5e-5 LoRA, 5e-6 full); the `grpo_config` default (1e-5 / 1e-6) is used only by tests, and
+E1.1 replaces it with `rl_lr`.
 Precision: bf16 exactly where transformers accepts it (transformers.utils.is_torch_bf16_gpu_available: CUDA with
 bf16 support, i.e. Ampere or newer such as the Vast cards, MPS on macOS >= 14, XPU / NPU / TPU), else fp32. TRL's
 own default (bf16=True unless fp16) makes TrainingArguments raise "Your setup doesn't support bf16/gpu" on a
@@ -56,7 +58,7 @@ References:
   sandbox measurement in experiments/phase1/impl/M7_train.md
 - transformers 5.20 TrainingArguments.__post_init__ (bf16 check) and utils.is_torch_bf16_gpu_available:
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/training_args.py
-- Lab: experiments/phase1/lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
+- Lab: archive/phase1_lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
 """
 import re
 
@@ -76,7 +78,8 @@ MODELS = {
 MAX_COMPLETION = {"smolvlm-256m": 1536, "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
 _LORA = {"qwen3-vl-2b"}
 _GRAD_CKPT = {"qwen3-vl-2b"}
-# vision tower + projector of every model (recorded module names in tests/test_p2_train.py; lab/B1/common.VISION)
+# vision tower + projector of every model (recorded module names in tests/test_p2_train.py;
+# archive/phase2_lab/B1/common.VISION)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
 WARMUP, DECAY = 0.03, 0.15  # D5: of the stable run's steps; of the branch point's steps
 

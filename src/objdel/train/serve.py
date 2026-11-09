@@ -28,7 +28,7 @@ training script's torch in every worker (lab B4 §2).
 Several roots (prepared val plus eval views) share item ids, so a CacheRef always names its root.
 
 References: https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor ,
-https://docs.python.org/3/library/gc.html#gc.freeze , experiments/phase2/lab/B4/REPORT.md.
+https://docs.python.org/3/library/gc.html#gc.freeze , archive/phase2_lab/B4/REPORT.md.
 """
 
 import gc

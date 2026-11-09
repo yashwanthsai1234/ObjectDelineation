@@ -5,7 +5,7 @@
         [--datasets lidc riga] [--models prior medsam sam2] [--every 1] [--threads 2]
 
 Every row is labelled with its view and scored by objdel.reward.score_mask (IoU_tc) on the view's prepared caches,
-the gate path (§5.1 G-prior, G-geometry). Promoted from lab/A4 null_prior.py, null_prior_jitter.py (the prior on
+the gate path (§5.1 G-prior, G-geometry). Promoted from archive/phase2_lab/A4 null_prior.py, null_prior_jitter.py (the prior on
 shifted frames is now simply the prior on the shifted view) and medsam_check.py (official min-max variant only).
 - prior: a disc at the frame centre whose diameter is the median train-target diameter for that frame side S and
   structure (fit on the centred train records' certified targets, >= 5 px); never looks at the image.

@@ -13,7 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 # Frozen paths (DOC.spec "Definitions"); experiments/phase1 is live after DOC4, except its lab folder.
 FROZEN_PARTS = ("/lab/", "/impl/")
-FROZEN_PREFIXES = ("docs/research/", "experiments/phase0/", "experiments/cuda_checker/", "docs/implementation2.0/")
+FROZEN_PREFIXES = ("docs/research/", "experiments/cuda_checker/", "docs/implementation2.0/")
 BANNER = "> Frozen record (written "
 
 
@@ -153,7 +153,7 @@ def test_r2_config_comment_is_not_history_wording():
 FROZEN_RECORDS = (
     ["experiments/phase2/PLAN.md", "experiments/phase2/V0_V1.md", "experiments/phase1/PLAN.md"]
     + [f"experiments/phase2/JUDGE_R{i}.md" for i in range(1, 5)]
-    + ["experiments/phase0/PLAN.md", "experiments/phase0/PLAN_0b.md"]
+    + ["docs/research/records/phase0/PLAN.md", "docs/research/records/phase0/PLAN_0b.md"]
 )
 
 

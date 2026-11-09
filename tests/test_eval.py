@@ -427,22 +427,6 @@ def test_summary_of_the_raters_own_targets(nod, riga):
 
 # ---------------------------------------------------------------- eval_demo
 
-def test_eval_demo_builds_targets_with_the_prepare_size_rule(riga, monkeypatch):
-    """REVIEW #11: the demo's rater, honest and adversary targets use targets.min_areas (with the RIGA rim), the rule
-    build_targets and train.dataset.prepare use, so the "raters" model is the rater's own SFT target."""
-    from experiments.phase1 import eval_demo
-    from objdel.targets import min_areas
-    raters, texts = riga
-    seen = []
-
-    def spy(masks, names, cfg=None, min_area=None):
-        seen.append(min_area)
-        return build_target(masks, names, cfg, min_area)
-
-    monkeypatch.setattr(eval_demo, "build_target", spy)
-    _, out = eval_demo._texts(("riga/x", {"dataset": "riga", "masks": raters}))
-    assert seen and all(m == min_areas(raters) for m in seen) and "rim" in seen[0]
-    assert out["raters"] == texts
 
 
 def test_precision_and_recall_vs_the_majority_outline(nod):

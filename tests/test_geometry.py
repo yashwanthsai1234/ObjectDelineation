@@ -12,7 +12,7 @@ from objdel.geometry import GRID, MAX_CHARS, MAX_RINGS, MAX_VERTICES, SCHEMAS, c
 
 RIGA, LIDC = SCHEMAS["riga"], SCHEMAS["lidc"]
 
-# Canonical texts produced by the lab target builder (experiments/phase1/lab/t_targets, BuildConfig() and the
+# Canonical texts produced by the lab target builder (archive/phase1_lab/t_targets, BuildConfig() and the
 # lossless mode give the same text here) for hand-made masks of 25 x 20 px, serialized in the lab grammar.
 LAB_TARGETS = [
     (LIDC, '{"nodule":[{"outer":[[240,200],[600,200],[600,400],[800,400],[800,800],[400,800],[400,600],[240,600]],'
@@ -334,3 +334,43 @@ def test_lab_grammar_compatibility():
     """The lab texts are also plain compact JSON (json.dumps with separators)."""
     for _, text in LAB_TARGETS:
         assert json.dumps(json.loads(text), separators=(",", ":")) == text
+
+
+# --- CLEAN9: one box-overlap rule ------------------------------------------------------------------------------------
+
+_box = st.tuples(*[st.integers(0, 20)] * 4).map(
+    lambda t: (min(t[0], t[2]), min(t[1], t[3]), max(t[0], t[2]), max(t[1], t[3]))
+)
+
+
+@settings(max_examples=2000)
+@given(box=_box, others=st.lists(_box, max_size=5))
+def test_boxes_meet_equals_the_half_open_overlap_rule(box, others):
+    from objdel.geometry.box import boxes_meet
+
+    x0, y0, x1, y1 = box
+    old = any(a < x1 and x0 < c and b < y1 and y0 < d for a, b, c, d in others)
+    assert boxes_meet(box, others) is old
+    assert boxes_meet(box, iter(others)) is old  # any iterable
+
+
+def test_boxes_meet_edges_and_empty():
+    from objdel.geometry.box import boxes_meet
+
+    assert boxes_meet((0, 0, 10, 10), []) is False
+    assert boxes_meet((0, 0, 10, 10), [(10, 0, 20, 10)]) is False  # touching edge: half-open, no overlap
+    assert boxes_meet((0, 0, 10, 10), [(9, 9, 20, 20)]) is True
+
+
+def test_crowded_in_data_and_targets_use_the_one_rule():
+    import importlib
+    from types import SimpleNamespace
+
+    from objdel.data import lidc
+
+    frame = importlib.import_module("objdel.targets.frame")  # `objdel.targets.frame` the name is a function
+    others = [(5, 5, 8, 8)]
+    assert lidc.crowded(SimpleNamespace(others=others), (0, 0, 6, 6)) is True
+    assert lidc.crowded(SimpleNamespace(others=others), (8, 0, 20, 20)) is False
+    assert frame.crowded(SimpleNamespace(meta={"other_nodules": others}), (0, 0, 6, 6)) is True
+    assert frame.crowded(SimpleNamespace(meta={}), (0, 0, 6, 6)) is False

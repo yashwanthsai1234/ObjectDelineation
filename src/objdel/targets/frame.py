@@ -38,7 +38,7 @@ union with >= CLEARANCE background pixels on every side and meet no other outlin
 B3-2), else ValueError; the defaults reproduce the policy frame byte for byte and skip those checks.
 
 References:
-    experiments/phase1/lab/t_targets/REPORT.md (crop policy H6) and targets/crops.py (pad_div, block reduce)
+    archive/phase1_lab/t_targets/REPORT.md (crop policy H6) and targets/crops.py (pad_div, block reduce)
     M. Chen, Y. Peng, "Topology-preserving downsampling of binary images", ECCV 2024: https://arxiv.org/abs/2407.17786
     Pillow resampling (bicubic a = -0.5, centre = (xx + 0.5) * scale, PRECISION_BITS = 22 fixed point for 8-bit):
         https://github.com/python-pillow/Pillow/blob/main/src/libImaging/Resample.c ,
@@ -46,7 +46,7 @@ References:
     OpenCV INTER_CUBIC (A = -0.75, same half-pixel centres), replaced:
         https://github.com/opencv/opencv/blob/4.x/modules/imgproc/src/resize.cpp
     experiments/phase1/impl/M9_x86.md (finding 3: cv2 vs Pillow pixels on x86 and arm64)
-    experiments/phase0/baseline_medsam.py (LUNG_WINDOW = (-1000, 400))
+    archive/phase0/baseline_medsam.py (LUNG_WINDOW = (-1000, 400))
 """
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -56,6 +56,7 @@ from PIL import Image
 
 from objdel.checker import as_mask
 from objdel.data import Item
+from objdel.geometry.box import boxes_meet
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
 LUNG_WINDOW = (-1000, 400)
@@ -123,8 +124,7 @@ def centred(item: Item, side: int, box=None) -> tuple[int, int]:
 
 def crowded(item: Item, box) -> bool:
     """Does the half-open window box meet another outlined nodule (objdel.data.lidc.crowded, B3-2)?"""
-    x0, y0, x1, y1 = box
-    return any(a < x1 and x0 < c and b < y1 and y0 < d for a, b, c, d in item.meta.get("other_nodules", ()))
+    return boxes_meet(box, item.meta.get("other_nodules", ()))
 
 
 def pixels(image: np.ndarray, x0: int, y0: int, side: int, window=None, noise=None) -> np.ndarray:

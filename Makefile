@@ -3,7 +3,7 @@ PY := .venv/bin/python
 EXT_SRC := CMakeLists.txt cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
 EXT_STAMP := build/.gpucheck-stamp
 
-.PHONY: setup build test test-all cov lint fmt wheels cuda preflight
+.PHONY: setup build test test-all cov lint dead fmt wheels cuda preflight
 
 setup:            ## create .venv and install the package (editable, all extras); builds the C++ extension
 	uv venv --python 3.12
@@ -25,12 +25,15 @@ test-all: $(EXT_STAMP) ## run every test, including the slow K1/K2 10k-case gate
 cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objdel; fails below 90 % (K13, as CI)
 	$(PY) -m pytest -q -m "not slow" --cov=objdel --cov-report=term-missing:skip-covered --cov-fail-under=90
 
-CONFIG ?= experiments/phase2/configs/r1_lfm.yaml
+CONFIG ?= experiments/phase2/configs/r1_qwen3vl2b.yaml
 preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=...); launch needs its stamp
 	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG)
 
 lint:             ## lint library, tests and experiments
 	$(PY) -m ruff check src tests experiments
+
+dead:             ## list unused code (vulture, [tool.vulture] in pyproject.toml)
+	$(PY) -m vulture
 
 fmt:              ## auto-fix lint issues
 	$(PY) -m ruff check src tests experiments --fix
