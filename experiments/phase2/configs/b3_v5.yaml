@@ -22,8 +22,8 @@ steps:
   - ["~", -m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/rows/lidc-train-b1",
      --out, "{rd}/b3-v5", --steps, "260", --save-steps, "50", --shared-prefix, --lr, "5e-5", --reward, v5,
      --grpo, '{{"mask_truncated_completions": false, "beta": 0.001, "adam_epsilon": 1e-08}}',
-     --rows-revision, "0000000000000000000000000000000000000000",
-     --rows-manifest-sha256, "0000000000000000000000000000000000000000000000000000000000000000", --budget-usd, "2.20"]
+     --rows-revision, "34213dceb068128f1a1abf9c67aa65dd59bc1220",
+     --rows-manifest-sha256, "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4", --budget-usd, "2.20"]
   - [-m, experiments.phase2.train_rl, --merge-last, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --out, "{rd}/b3-v5"]
   - [-m, experiments.phase2.final_eval, --ckpt, "{rd}/b3-v5/final", --train, "{data}/prepared",
      --view, "{data}/eval_views/lidc-val-shifted", --split, val, --out, "{rd}/eval_b3_val_shifted",
