@@ -49,7 +49,8 @@ def test_all_items_is_the_one_count_of_the_contract():
     ALL_ITEMS = tuple((kind, name) for kinds in (T._SIGNED, T._TEXT) for kind, items in kinds.items() for name in items)
     parts = (T.METHODS, T.GLOBALS, T.VLLM_METHODS, T.PRIVATE_ATTRS, T.ATTRS, T.KEYS, T.BEHAVIOURS)
     assert len(ALL_ITEMS) == sum(map(len, parts)) and len(set(ALL_ITEMS)) == len(ALL_ITEMS)
-    assert len(ALL_ITEMS) == 29  # the Phase A value (6 + 1 + 1 + 2 + 13 + 4 + 2); later phases change it
+    # Phase A 29 (6 + 1 + 1 + 2 + 13 + 4 + 2), plus C5's _llm_weights_sleeping, plus BR1-rl's 3 reward-kwarg behaviours
+    assert len(ALL_ITEMS) == 33
     assert len(T.METHODS) + len(T.GLOBALS) + len(T.VLLM_METHODS) + len(T.PRIVATE_ATTRS) == 10  # private names
     doc = ROOT / "docs/reference/trl-coupling.md"  # A9 writes it: one table row per item (header and rule excluded)
     if doc.is_file():
