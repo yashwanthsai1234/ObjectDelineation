@@ -1,7 +1,7 @@
 """SFT targets: rater masks of one item -> certified, canonical polygon text (plan D11, gates K5-K7, R1).
 
 Per object (structure) of one rater:
-1. exact crack-edge rings (objdel.checker.polygonize), each ring's holes grouped with its 8-connected component;
+1. exact crack-edge rings (objdel.checker.trace), each ring's holes grouped with its 8-connected component;
 2. every ring simplified by `simplify` at tolerance tau (min-# polygon, lossless or L-inf tau shortcuts);
 3. corners mapped to the 0-1000 grid; every vertex the object uses twice (a pinch: two pixels touching at a corner)
    split into two points one grid unit along the pinch's incoming and outgoing crack steps ("bevel", legal and
@@ -50,13 +50,12 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-from objdel.checker import as_mask, instance_topology, polygonize, signature, size_filter, topology
+from objdel.checker import as_mask, instance_topology, signature, size_filter, topology, trace
 from objdel.geometry import GRID, MAX_RINGS, MAX_VERTICES, Objects, canonicalize, parse, serialize, to_mask
 
 from .simplify import STEPS, lattice_path, simplify, to_grid
 
 MAX_SIDE = 500  # crop policy; beyond it the exact-ring fallback is no longer guaranteed (lab stress test, S = 640)
-_RIGHT = np.array([[0, 0], [-1, 0], [-1, -1], [0, -1]])  # pixel right of a step E S W N, relative to its start
 
 
 @dataclass(frozen=True)
@@ -78,23 +77,16 @@ class Target(NamedTuple):
 
 
 def _rings(mask):
-    """(lattice path, step directions, component label, is hole) of every ring, traced on the mask cut to its
-    bounding box (crop before trace, Phase 2 B3 P4: every target text and hash unchanged, RIGA -23 % build time).
-    The texts cannot change: boundary_edges pads by one pixel itself, the ring start key orders vertices by (y, x, d)
-    for any width, so a translation keeps every ring's start and order, and connectedComponents labels in raster
-    order, which a crop keeps."""
+    """(lattice path, step directions, component, is hole) of every ring, traced on the mask cut to its bounding box
+    (crop before trace, Phase 2 B3 P4: every target text and hash unchanged, RIGA -23 % build time). The component is
+    the ring's part (the 8-connected component it bounds, D3; it replaced cv2.connectedComponents labels, which group
+    the rings the same way). The texts cannot change: the ring start key orders vertices by (y, x, d) for any width,
+    so a translation keeps every ring's start and order."""
     mask = np.ascontiguousarray(mask, dtype=bool)
     x0, y0, w, h = cv2.boundingRect(mask.view(np.uint8))
     if not w:
         return []
-    sub = np.ascontiguousarray(mask[y0:y0 + h, x0:x0 + w])
-    _, label = cv2.connectedComponents(sub.view(np.uint8), connectivity=8)
-    out = []
-    for r in polygonize(sub, offset=(x0, y0)):
-        path, dirs = lattice_path(r.pts)
-        x, y = path[0] + _RIGHT[dirs[0]]  # the foreground pixel right of the first step
-        out.append((path, dirs, int(label[y - y0, x - x0]), r.hole))
-    return out
+    return [(*lattice_path(r.pts), r.part, r.hole) for r in trace([mask[y0:y0 + h, x0:x0 + w]], [(x0, y0)])[0].rings]
 
 
 def _clean(v):

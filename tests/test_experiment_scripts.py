@@ -1,4 +1,8 @@
-"""Every Phase 1 script has a command line: `--help` prints usage and exits 0 without touching data (B4-7).
+"""Every Phase 1 script has a command line: `--help` prints usage and exits 0 without touching data (B4-7). D3 (S03)
+adds the other non-lab scripts that import objdel.checker or objdel.targets: experiments/phase1/bench,
+experiments/cuda_checker (not compare.py, a helper module) and experiments/phase2. The Phase 0 scripts fail before
+their command line on names removed in Phase 1 (topology.BG4, reward.AnnotatorSet; CLEAN's to archive), so for them
+only the names they take from the objdel.checker and objdel.targets packages are checked.
 
 Scripts run as modules in an isolated interpreter, as CLAUDE.md prescribes for anything that reads data/
 (`python -I -m experiments.phase1.<script>`; -I drops the current directory from sys.path, so this also checks that
@@ -9,6 +13,8 @@ only `[dev]`) is skipped, not failed.
 References: https://docs.python.org/3/using/cmdline.html#cmdoption-I,
 https://docs.python.org/3/library/runpy.html#runpy.run_module, https://docs.python.org/3/library/argparse.html
 """
+import ast
+import importlib
 import json
 import subprocess
 import sys
@@ -17,7 +23,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = sorted(p.stem for p in (ROOT / "experiments" / "phase1").glob("*.py") if p.stem != "__init__")
+SCRIPTS = [f"experiments.{d.replace('/', '.')}.{p.stem}"
+           for d in ("phase1", "phase1/bench", "cuda_checker", "phase2")
+           for p in sorted((ROOT / "experiments" / d).glob("*.py")) if p.stem not in ("__init__", "compare")]
 OPTIONAL = {"torch", "transformers", "trl", "datasets", "peft", "accelerate", "pydicom", "pylidc"}  # extras
 
 RUNNER = """
@@ -27,7 +35,7 @@ for s in scripts:
     buf, sys.argv = io.StringIO(), [s, "--help"]
     try:
         with contextlib.redirect_stdout(buf):
-            runpy.run_module("experiments.phase1." + s, run_name="__main__", alter_sys=True)
+            runpy.run_module(s, run_name="__main__", alter_sys=True)
         out[s] = {"code": "returned without exiting", "stdout": buf.getvalue()}
     except SystemExit as e:
         out[s] = {"code": e.code or 0, "stdout": buf.getvalue()}
@@ -48,12 +56,14 @@ def helps(tmp_path_factory):
     return json.loads(out.read_text())
 
 
-def test_phase1_scripts_found():
-    assert {"census_sizerule", "eval_run", "prepare_rl"} <= set(SCRIPTS)
+def test_scripts_found():
+    assert {f"experiments.phase1.{s}" for s in ("census_sizerule", "eval_run", "prepare_rl")} | {
+        "experiments.phase1.bench.xarch_hashes", "experiments.cuda_checker.eval",
+        "experiments.phase2.verify_target_hashes", "experiments.phase2.final_eval"} <= set(SCRIPTS)
 
 
 @pytest.mark.parametrize("script", SCRIPTS)
-def test_phase1_script_help(helps, script):
+def test_script_help(helps, script):
     h = helps[script]
     if "missing" in h:
         if h["missing"].split(".")[0] in OPTIONAL:
@@ -61,6 +71,17 @@ def test_phase1_script_help(helps, script):
         pytest.fail(f"{script}: missing module {h['missing']}")
     assert h["code"] == 0, h
     assert h["stdout"].startswith("usage:")
+
+
+@pytest.mark.parametrize("path", sorted((ROOT / "experiments" / "phase0").glob("*.py")), ids=lambda p: p.stem)
+def test_phase0_checker_and_target_imports_resolve(path):
+    """The names taken from the objdel.checker and objdel.targets packages exist; no import of a module D3 moved."""
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.ImportFrom) and node.module in ("objdel.checker", "objdel.targets"):
+            mod = importlib.import_module(node.module)
+            assert all(hasattr(mod, a.name) for a in node.names), (node.module, [a.name for a in node.names])
+        if isinstance(node, ast.ImportFrom):
+            assert node.module not in ("objdel.checker.bitquad", "objdel.checker.polygonize"), node.module
 
 
 @pytest.mark.parametrize("cuda, supported, expect", [(False, True, False), (True, False, False), (True, True, True)])

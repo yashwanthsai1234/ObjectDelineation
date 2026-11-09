@@ -8,8 +8,9 @@ from hypothesis.extra.numpy import arrays
 from oracles import topology_oracle as oracle
 from scipy import ndimage
 
-from objdel.checker import as_mask, betti, bitquads, instance_topology, min_area, signature, size_filter
+from objdel.checker import as_mask, betti, instance_topology, min_area, signature, size_filter
 from objdel.checker.topology import bbox
+from tests.oracles.bitquad_oracle import bitquads
 
 N_RANDOM = 10_000
 

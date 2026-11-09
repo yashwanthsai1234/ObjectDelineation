@@ -1,7 +1,7 @@
 """Pack cases for objdel._gpucheck, run it, and compare it with the references: for polygons, the results of the CPU
 checker it replaced (polycore, archived in archive/cpu_checker), recorded per case in tests/goldens/polycore.npz
 before the archive; for masks, the numpy polygonizer (tests/oracles/polygonize_oracle.py, never the engine under
-test), bitquad and cv2's 8-connected labels (ring parts), run here.
+test), the bit-quad oracle (tests/oracles/bitquad_oracle.py) and cv2's 8-connected labels (ring parts), run here.
 
 Shared by tests/test_cuda_checker*.py, tests/test_checker_host.py, tests/test_gpu_scoring.py and
 experiments/cuda_checker/eval.py. The packed formats are those of data/checker_eval
@@ -20,8 +20,8 @@ import cv2
 import numpy as np
 
 from objdel import _gpucheck
-from objdel.checker import bitquads
 from objdel.geometry.shape import pack_rings, unpack_rows
+from tests.oracles.bitquad_oracle import bitquads
 from tests.oracles.polygonize_oracle import polygonize
 
 TESTS = Path(__file__).resolve().parents[2] / "tests"

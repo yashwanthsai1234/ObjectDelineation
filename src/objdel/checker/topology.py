@@ -15,7 +15,8 @@ Algorithm, O(pixels), two labelings and no per-component loop:
    4-adjacent, hence in the hole, and earlier in raster order), and that pixel belongs to the enclosing
    component: an island inside the hole lies strictly below the hole's top row. A bincount gives holes per
    component.
-The bit-quad Euler number (checker.bitquad) is an independent certificate: chi8 = b0 - b1 = sum_k (1 - holes_k).
+The bit-quad Euler number (the engine's quads, checker.rings.trace) is an independent certificate:
+chi8 = b0 - b1 = sum_k (1 - holes_k).
 
 Input: any 2-D array-like; every nonzero value is foreground (NaN included). `as_mask` is the one normalisation,
 used here and by objdel.targets. A numpy bool array may hold bytes other than 0 and 1 (np.asarray(PIL "1" image,

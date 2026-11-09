@@ -14,13 +14,13 @@ from oracles import raster_oracle as RO
 from test_geometry_oracle import lab_parse
 
 from objdel import _gpucheck
-from objdel.checker.bitquad import bitquads
 from objdel.checker.topology import instance_topology, min_area, signature, size_filter
 from objdel.data import Item
 from objdel.geometry import parse, pattern, serialize, shape, to_mask, to_masks
 from objdel.reward.cache import ExpertCache
 from objdel.reward.score import score_completion
 from objdel.targets import build_target, frame
+from tests.oracles.bitquad_oracle import bitquads
 
 DOC = '{"nodule":[{"outer":[[0,0],[1000,0],[1000,1000]],"holes":[]}]}'
 NODULE = ("nodule",)

@@ -39,8 +39,8 @@ import cv2
 import numpy as np
 
 from objdel import _gpucheck
-from objdel.checker import bitquads
 from objdel.checker.topology import betti
+from tests.oracles.bitquad_oracle import bitquads
 from tests.oracles.polygonize_oracle import polygonize
 
 from . import compare as C

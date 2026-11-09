@@ -1,6 +1,8 @@
-"""I10, the check_masks half (D-G16; D3 adds certify): the CPU test variant mutfg4 (K1_MUTATE_FG4, tests/variants.py)
-labels and traces foreground 4-connected, so its rings and Betti numbers disagree with the true (8, 4) topology on
-diagonal contacts. The mutant must exist when OBJDEL_REQUIRE_VARIANTS=1 (make test-order); it is skipped otherwise."""
+"""I10 (D-G16): the CPU test variant mutfg4 (K1_MUTATE_FG4, tests/variants.py) labels and traces foreground
+4-connected, so its rings and Betti numbers disagree with the true (8, 4) topology on diagonal contacts, and certify,
+whose b0, b1 come from a second labeller, must catch it. The mutant must exist when OBJDEL_REQUIRE_VARIANTS=1
+(make test-order); it is skipped otherwise. The variant is a non-editable install, so rebuild it after a Python change
+(python -I -m tests.variants)."""
 import os
 
 import numpy as np
@@ -19,6 +21,12 @@ for m in ({DIAG.tolist()}, {NOTCH.tolist()}):
     m = np.array(m, np.uint8)
     out = g.check_masks(m.ravel(), np.array([m.shape], np.int32), np.array([0, m.size], np.int64))
     print(*out["betti"][0], *out["ring_area"])
+"""
+CERTIFY = f"""
+from objdel.checker import certify
+for m in ({DIAG.tolist()}, {NOTCH.tolist()}):
+    r = certify(m)
+    print(r.certified, r.b0, r.b1, any(f.startswith("rings:") for f in r.failures))
 """
 
 
@@ -42,3 +50,10 @@ def test_a_four_adjacent_ring_labeller_breaks_the_topology(mutant):
     assert _rows([DIAG, NOTCH]) == [[1, 0, 2], [1, 1, 24, -1]]  # this build: (8, 4)
     got = [[int(v) for v in line.split()] for line in variants.run_code("mutfg4", CODE, {"K1_MUTATE_FG4"}).splitlines()]
     assert got == [[2, 0, 1, 1], [1, 0, 23]]  # the mutant: two parts, and no hole
+
+
+def test_certify_catches_a_four_adjacent_ring_labeller(mutant):
+    from objdel.checker import certify
+    assert [certify(m).certified for m in (DIAG, NOTCH)] == [True, True]  # this build
+    got = variants.run_code("mutfg4", CERTIFY, {"K1_MUTATE_FG4"}).split()
+    assert got == ["False", "1", "0", "True", "False", "1", "1", "True"]  # the pixel labeller: one part, NOTCH's hole
