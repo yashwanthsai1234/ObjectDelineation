@@ -27,7 +27,7 @@ def _bucket(x, edges: tuple, names: tuple) -> str:
 def props(target: str, W: int, op: str) -> dict | None:
     """Properties of one target text ({"nodule": [{"outer", "holes"}]}), or None when it holds no outline.
     ext: longer side of the outline's box as a share of the crop; pos: how far its centre is from the crop centre."""
-    parts = next(iter(json.loads(target).values()))
+    parts = next(iter(json.loads(target).values()), [])
     pts = [p for part in parts for p in part["outer"]]
     if not pts:
         return None

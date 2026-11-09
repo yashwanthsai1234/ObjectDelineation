@@ -90,6 +90,8 @@ def _checks(report: dict, ds: str, prior_a: float | None = None) -> list[tuple[s
     rows = [("G-format", f"format/shifted/{ds}", summ("shifted", "format"), FORMAT),
             ("G-format", f"legal/shifted/{ds}", summ("shifted", "legal"), LEGAL)]
     out = [(g, k, v, _ge(v, t)) for g, k, v, t in rows]
+    if not names:  # a dataset without structure thresholds cannot pass the geometry gates
+        out.append(("G-geometry", f"structures/{ds}", None, False))
     for view in GEOMETRY_VIEWS:
         out += [("G-geometry", f"median/{view}/{ds}/{n}", v := summ(view, "objects", n, "iou_tc_median"),
                  _ge(v, MEDIAN_IOU_TC[ds, n])) for n in names]

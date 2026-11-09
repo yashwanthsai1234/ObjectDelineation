@@ -112,6 +112,8 @@ def draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: Callable[
         raise ValueError("draws: no ids to resample")
     nod = [key(i) for i in ids]
     groups = [np.array([j for j, x in enumerate(nod) if x == u]) for u in dict.fromkeys(nod)]
+    if len(groups) < 2:
+        raise ValueError("draws: a bootstrap needs at least 2 clusters")
     rng = np.random.default_rng(seed)
     return [np.concatenate([groups[g] for g in rng.integers(0, len(groups), len(groups))]) for _ in range(boot)]
 
@@ -121,7 +123,7 @@ def _ci(f, n: int, D: list[np.ndarray]) -> list[float]:
     if np.isnan(point):  # a NaN item: no finite interval from the draws that missed it
         return [point, np.nan, np.nan]
     q = (1 - LEVEL) / 2
-    return [point, float(np.nanquantile(reps, q)), float(np.nanquantile(reps, 1 - q))]
+    return [point, float(np.quantile(reps, q)), float(np.quantile(reps, 1 - q))]
 
 
 def ci(x: np.ndarray, D: list[np.ndarray]) -> list[float]:
