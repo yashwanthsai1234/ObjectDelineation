@@ -436,6 +436,48 @@ class RopeCache:
             return torch.stack([self.store[k] for k in keys], dim=1)
 
 
+class RopeTemplate(typing.NamedTuple):
+    """One prompt layout's rope positions (C2): `pos` (3, Lp), the next position `end`, its ids and token types."""
+
+    pos: torch.Tensor
+    end: int
+    ids: torch.Tensor
+    types: torch.Tensor
+
+
+def rope_template(base, input_ids, mm_token_type_ids, image_grid_thw) -> RopeTemplate:
+    """One HF get_rope_index call on one bare prompt row (Lp,), on host copies; the template lives on the row's
+    device. Text after the prompt continues from `end` = max + 1 on all three axes."""
+    pos, _ = base.get_rope_index(input_ids[None].cpu(), mm_token_type_ids=mm_token_type_ids[None].cpu(),
+                                 image_grid_thw=image_grid_thw.cpu())  # fmt: skip
+    pos = pos[:, 0]
+    return RopeTemplate(pos.to(input_ids.device), int(pos.max()) + 1, input_ids, mm_token_type_ids.long())
+
+
+def rope_positions(tmpl: RopeTemplate, input_ids, attention_mask, mm_token_type_ids):
+    """(positions (3, B, W), bad (B,)) for rows that start with the template's prompt; no host read. Real token r
+    (cumsum of the mask - 1) takes tmpl.pos[:, r] inside the prompt, tmpl.end + r - Lp after it; masked columns 0.
+    `bad` marks rows whose first Lp real tokens are not the template's, with a non-text token after the prompt, or
+    with fewer than Lp real tokens."""
+    n = tmpl.ids.numel()
+    real = attention_mask != 0
+    r = real.long().cumsum(1) - 1
+    inside, idx = r < n, r.clamp(0, n - 1)
+    pos = torch.where(inside, tmpl.pos[:, idx], tmpl.end + r - n)
+    pos = torch.where(real, pos, 0)
+    head = real & inside & ((input_ids != tmpl.ids[idx]) | (mm_token_type_ids != tmpl.types[idx]))
+    tail = real & ~inside & (mm_token_type_ids != 0)
+    return pos, (head | tail).any(1) | (real.sum(1) < n)
+
+
+def rope_bad_rows(prompt_ids, completion_ids, tmpl_ids, vision_ids) -> np.ndarray:
+    """The host's routing decision per row: its prompt ids differ from its template's, or its answer holds an image,
+    video or vision start/end id (TRL types every answer token as text)."""
+    vision = set(vision_ids)
+    return np.array([tuple(p) != tuple(t) or not vision.isdisjoint(c)
+                     for p, c, t in zip(prompt_ids, completion_ids, tmpl_ids, strict=True)], dtype=bool)  # fmt: skip
+
+
 def raw_ratio(logps, sampling, mask, mode: str) -> torch.Tensor:
     """exp of the trainer - vLLM logprob gap per token (`token_*`) or summed per sequence (`sequence_*`, shape
     (B, 1)), before TRL's bounds. Tokens vLLM could not score (NaN) get no correction."""
