@@ -1,0 +1,3 @@
+accept = [200, 429]
+exclude = ["localhost", "huggingface.co/svenk029/"]
+exclude_path = ["docs/research/"]

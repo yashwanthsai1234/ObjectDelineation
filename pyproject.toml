@@ -31,6 +31,8 @@ dev = [
     "pyyaml>=6.0",  # experiments/phase2/vast/policy.py reads run configs (in the training lock via transformers)
     "vulture==2.16",  # `make dead`
 ]
+# Docs site (DOC3, ADR-0012). Rollback, not installed: mkdocs-material==9.8.1, mkdocs-api-autonav==0.4.0.
+docs = ["zensical==0.1.0", "mkdocstrings-python==2.0.10"]
 
 [build-system]
 # Pinned: the extension's machine code depends on them (plan §6).
@@ -71,6 +73,8 @@ markers = [
     "data: needs data/fixtures or data/store (skipped when absent)",
     "gpu: needs the CUDA build on a GPU box (skipped on the CPU build)",
     "sanitizer: runs under compute-sanitizer in make gpu-check (small fixed corpus)",
+    "docs_build: needs the docs extra and builds the site (make docs)",
+    "post_commit: reads the git index; owner and CI only",
 ]
 
 [tool.coverage.run]
