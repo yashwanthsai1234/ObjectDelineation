@@ -402,9 +402,10 @@ def test_masks_stale_scratch_does_not_leak():
     dense = [rng.random((300, 300)) < .5 for _ in range(4)]
     sparse = [rng.random((40, 50)) < .02 for _ in range(30)]
     empty = [np.zeros((30, 30), bool), np.zeros((0, 4), bool)]
-    for batches in ([dense, sparse, empty], [empty, sparse, dense]):
+    for batches in ([dense, sparse, empty], [empty, sparse, dense], [dense, sparse, empty]):
         for ms in batches:
             assert mask_mismatches(ms) == []
+        gc.trim(0)  # the third round runs on memory the pool handed back (CUDA build; no-op on the CPU build)
 
 
 def test_masks_scratch_too_small_for_one_mask_raises():

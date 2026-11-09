@@ -112,6 +112,42 @@ void check_tables(const In<i64, 1>& tables, i64 n) {
   if (i64(tables.shape(0)) != n) throw std::invalid_argument("tables must have one handle per object");
 }
 
+// add_tables' arguments, checked (frame and rater caps, shapes, the dist precondition, the scalars).
+gpucheck::Tables tables_of(const In<u8, 3>& raters, const In<u8, 2>& uni, const In<u8, 2>& core, const In<u8, 2>& vote,
+                           const In<float, 2>& dist, const In<i64, 1>& rater_area, const In<u8, 1>& voter,
+                           const In<i64, 1>& sig_start, const In<i32, 1>& sig, i64 n_vote, i64 perimeter, double t5,
+                           i32 min_area) {
+  const i64 k = i64(raters.shape(0)), H = i64(raters.shape(1)), W = i64(raters.shape(2));
+  gpucheck::check_dims(W, H);
+  if (k < 2 || k > 32) throw std::invalid_argument("tables need 2 to 32 raters");
+  for (const auto* a : {&uni, &core, &vote})
+    if (i64(a->shape(0)) != H || i64(a->shape(1)) != W) throw std::invalid_argument("planes must be (H, W)");
+  if (i64(dist.shape(0)) != H || i64(dist.shape(1)) != W) throw std::invalid_argument("dist must be (H, W)");
+  if (i64(rater_area.shape(0)) != k || i64(voter.shape(0)) != k || i64(sig_start.shape(0)) != k + 1)
+    throw std::invalid_argument("rater_area, voter and sig_start must have one entry per rater (+1)");
+  check_offsets(sig_start, i64(sig.shape(0)), i64(H) * W, "sig_start");
+  for (i64 i = 0; i < H * W; ++i) {  // the exactness of the band-depth sums (gpucheck.cpp, scoring)
+    const float d = dist.data()[i];
+    if (!(d == 0.0f || (d >= 1.0f && d <= 16777216.0f)))
+      throw std::invalid_argument("dist values must be 0 or in [1, 2^24]");
+  }
+  if (perimeter < 1 || !(t5 > 0) || !std::isfinite(t5) || min_area < 0)
+    throw std::invalid_argument("perimeter >= 1, t5 > 0 and min_area >= 0 are required");
+  return {i32(H),           i32(W),       i32(k),           raters.data(), uni.data(), core.data(),
+          vote.data(),      dist.data(),  rater_area.data(), voter.data(), sig_start.data(), sig.data(),
+          n_vote,           perimeter,    t5,               min_area};
+}
+
+struct TablesIn {  // add_tables_many: one item's arrays, kept alive during the call
+  In<u8, 3> raters;
+  In<u8, 2> uni, core, vote;
+  In<float, 2> dist;
+  In<i64, 1> rater_area;
+  In<u8, 1> voter;
+  In<i64, 1> sig_start;
+  In<i32, 1> sig;
+};
+
 // timing=True: the call's per-stage milliseconds (stage -> ms, in run order) as the result's "timing".
 nb::dict times_dict(const gpucheck::Times& times) {
   nb::dict t;
@@ -131,12 +167,14 @@ NB_MODULE(_gpucheck, m) {
     nb::dict d;
     d["waits"] = s.waits, d["drain_syncs"] = s.drain_syncs, d["label_pairs"] = s.label_pairs;
     d["sync_alloc"] = s.sync_alloc, d["sync_free"] = s.sync_free;
-    d["pool_allocs"] = s.pool_allocs, d["pool_frees"] = s.pool_frees;
+    d["pool_allocs"] = s.pool_allocs, d["pool_frees"] = s.pool_frees, d["pinned_grows"] = s.pinned_grows;
     d["arena_bytes"] = s.arena_bytes, d["table_bytes"] = s.table_bytes;
     d["live_device_bytes"] = s.live_device_bytes, d["contexts"] = s.contexts;
+    d["pool_reserved"] = s.pool_reserved, d["default_pool_reserved"] = s.default_pool_reserved;
     return d;
   });
   m.def("reset_stats", &gpucheck::reset_stats);
+  m.def("trim", &gpucheck::trim, nb::arg("bytes"));
   nb::list names;
   for (const char* name : gpucheck::kDefectNames) names.append(name);
   m.attr("DEFECTS") = nb::tuple(names);
@@ -207,25 +245,8 @@ NB_MODULE(_gpucheck, m) {
       [](const In<u8, 3>& raters, const In<u8, 2>& uni, const In<u8, 2>& core, const In<u8, 2>& vote,
          const In<float, 2>& dist, const In<i64, 1>& rater_area, const In<u8, 1>& voter, const In<i64, 1>& sig_start,
          const In<i32, 1>& sig, i64 n_vote, i64 perimeter, double t5, i32 min_area) {
-        const i64 k = i64(raters.shape(0)), H = i64(raters.shape(1)), W = i64(raters.shape(2));
-        gpucheck::check_dims(W, H);
-        if (k < 2 || k > 32) throw std::invalid_argument("tables need 2 to 32 raters");
-        for (const auto* a : {&uni, &core, &vote})
-          if (i64(a->shape(0)) != H || i64(a->shape(1)) != W) throw std::invalid_argument("planes must be (H, W)");
-        if (i64(dist.shape(0)) != H || i64(dist.shape(1)) != W) throw std::invalid_argument("dist must be (H, W)");
-        if (i64(rater_area.shape(0)) != k || i64(voter.shape(0)) != k || i64(sig_start.shape(0)) != k + 1)
-          throw std::invalid_argument("rater_area, voter and sig_start must have one entry per rater (+1)");
-        check_offsets(sig_start, i64(sig.shape(0)), i64(H) * W, "sig_start");
-        for (i64 i = 0; i < H * W; ++i) {  // the exactness of the band-depth sums (gpucheck.cpp, scoring)
-          const float d = dist.data()[i];
-          if (!(d == 0.0f || (d >= 1.0f && d <= 16777216.0f)))
-            throw std::invalid_argument("dist values must be 0 or in [1, 2^24]");
-        }
-        if (perimeter < 1 || !(t5 > 0) || !std::isfinite(t5) || min_area < 0)
-          throw std::invalid_argument("perimeter >= 1, t5 > 0 and min_area >= 0 are required");
-        const gpucheck::Tables t{i32(H), i32(W), i32(k), raters.data(), uni.data(), core.data(), vote.data(),
-                                 dist.data(), rater_area.data(), voter.data(), sig_start.data(), sig.data(),
-                                 n_vote, perimeter, t5, min_area};
+        const gpucheck::Tables t = tables_of(raters, uni, core, vote, dist, rater_area, voter, sig_start, sig, n_vote,
+                                             perimeter, t5, min_area);
         nb::gil_scoped_release release;
         return gpucheck::add_tables(t);
       },
@@ -233,6 +254,35 @@ NB_MODULE(_gpucheck, m) {
       nb::arg("vote").noconvert(), nb::arg("dist").noconvert(), nb::arg("rater_area").noconvert(),
       nb::arg("voter").noconvert(), nb::arg("sig_start").noconvert(), nb::arg("sig").noconvert(), nb::arg("n_vote"),
       nb::arg("perimeter"), nb::arg("t5"), nb::arg("min_area"));
+  // Many caches' tables in one batch (one host wait) -> int64 handles; each item is add_tables' 13 arguments. Every
+  // item is checked before anything is uploaded.
+  m.def(
+      "add_tables_many",
+      [](const nb::list& items) {
+        std::vector<TablesIn> keep;  // the arrays stay referenced during the call
+        std::vector<gpucheck::Tables> ts;
+        for (nb::handle item : items) {
+          const nb::tuple a = nb::cast<nb::tuple>(item);
+          if (a.size() != 13) throw std::invalid_argument("each item must be the 13 arguments of add_tables");
+          keep.push_back(TablesIn{nb::cast<In<u8, 3>>(a[0], false),  nb::cast<In<u8, 2>>(a[1], false),
+                                  nb::cast<In<u8, 2>>(a[2], false),  nb::cast<In<u8, 2>>(a[3], false),
+                                  nb::cast<In<float, 2>>(a[4], false), nb::cast<In<i64, 1>>(a[5], false),
+                                  nb::cast<In<u8, 1>>(a[6], false),  nb::cast<In<i64, 1>>(a[7], false),
+                                  nb::cast<In<i32, 1>>(a[8], false)});
+          const TablesIn& k = keep.back();
+          ts.push_back(tables_of(k.raters, k.uni, k.core, k.vote, k.dist, k.rater_area, k.voter, k.sig_start, k.sig,
+                                 nb::cast<i64>(a[9]), nb::cast<i64>(a[10]), nb::cast<double>(a[11]),
+                                 nb::cast<i32>(a[12])));
+        }
+        std::vector<i64> h;
+        {
+          nb::gil_scoped_release release;
+          h = gpucheck::add_tables_many(ts);
+        }
+        const size_t m = h.size();
+        return to_numpy(std::move(h), {m});
+      },
+      nb::arg("items"));
   m.def("drop_tables", &gpucheck::drop_tables, nb::arg("handle"));
   m.def("resident", &gpucheck::resident);
 

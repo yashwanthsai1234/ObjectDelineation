@@ -20,11 +20,15 @@
 //    edge in raster order) and canonical start in closed form from the labels, its rank by a popcount scan (no sort);
 //  * crack tracing from seeds over boundary edges only, corners written in place: work ~ words + runs + edges.
 //
-// Host side (issues CK-1 to CK-3 of experiments/phase2/perf/issues.md): per lane one stream, one device arena and two
-// staging buffers (pinned host memory), all made at the first call and grown to the next power of two, never freed
-// per call. A polygon call is: pack the inputs into the pinned buffer, one copy in, the kernels on the lane's stream,
-// one copy out, one stream synchronize. A large polygon batch is cut into two halves on two lanes, so the second
-// half's copy and the host's packing overlap the first half's kernels (C7). One mutex serializes the calls.
+// Host side (issues CK-1 to CK-3 of experiments/phase2/perf/issues.md): per lane one stream, device arenas and two
+// staging buffers (pinned host memory). Device memory (arenas, tables) comes from the engine's own stream-ordered pool
+// (D5c: allocated and freed in stream order, no device-wide sync; the process's default pool is never touched); an
+// arena grows to the next power of two and is never freed per call. The staging buffers are sized once, in the first
+// call of the process, to the bounds of a 256-answer score_polygons call (stage bounds below), so the RL step never
+// grows them (a growth synchronizes the device; it is counted as pinned_grows and logged). A polygon call is: pack
+// the inputs into the pinned buffer, one copy in, the kernels on the lane's stream, one copy out, one stream
+// synchronize. A large polygon batch is cut into two halves on two lanes, so the second half's copy and the host's
+// packing overlap the first half's kernels (C7). One mutex serializes the calls.
 //
 // References: the headers of archive/cpu_checker/cpp/polycore/polycore.hpp and src/objdel/checker/polygonize.py; CUDA C++ Programming
 // Guide (https://docs.nvidia.com/cuda/cuda-c-programming-guide/): __int128 in device code (CUDA >= 11.5, "Supported
@@ -36,6 +40,8 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <numeric>
@@ -105,18 +111,57 @@ Stream new_stream() {  // non-blocking (no implicit sync with the legacy default
 // cudaGetLastError() after a good launch would return it: clear it at the start of every call.
 void clear_error() { (void)cudaGetLastError(); }
 
-void* alloc(bool device, size_t bytes) {  // cudaMalloc and cudaMallocHost synchronize the device
-  void* p = nullptr;
-  cuda_check(device ? cudaMalloc(&p, bytes) : cudaMallocHost(&p, bytes));
-  ++counters().sync_alloc;
-  if (device) counters().live_device_bytes += i64(bytes);
+// The engine's device memory pool (made by Engine::start): its own pool on the current device, never set as the
+// device's pool (cudaDeviceSetMemPool would change torch's and vLLM's allocations too), release threshold UINT64_MAX
+// so a sync never shrinks it (CUDA programming guide, stream-ordered memory allocator; cudaMemPoolCreate,
+// cudaMallocFromPoolAsync, cudaMemPoolTrimTo in the runtime API reference).
+cudaMemPool_t& pool() {
+  static cudaMemPool_t p = nullptr;
   return p;
 }
 
-void release(bool device, void* p, size_t bytes) {
-  ++counters().sync_free;
-  if (device) counters().live_device_bytes -= i64(bytes);
-  cuda_check(device ? cudaFree(p) : cudaFreeHost(p));
+cudaMemPool_t new_pool() {
+  int dev = 0;
+  cuda_check(cudaGetDevice(&dev));
+  cudaMemPoolProps props{};
+  props.allocType = cudaMemAllocationTypePinned;
+  props.location.type = cudaMemLocationTypeDevice;
+  props.location.id = dev;
+  cudaMemPool_t p = nullptr;
+  cuda_check(cudaMemPoolCreate(&p, &props));
+  std::uint64_t keep = UINT64_MAX;
+  cuda_check(cudaMemPoolSetAttribute(p, cudaMemPoolAttrReleaseThreshold, &keep));
+  return p;
+}
+
+i64 reserved(cudaMemPool_t p) {
+  std::uint64_t v = 0;
+  cuda_check(cudaMemPoolGetAttribute(p, cudaMemPoolAttrReservedMemCurrent, &v));
+  return i64(v);
+}
+
+// Device memory: from the engine's pool in stream order on `st`. Host staging: cudaMallocHost / cudaFreeHost, which
+// synchronize the device (counted as sync_alloc / sync_free).
+void* alloc(bool device, size_t bytes, Stream st) {
+  void* p = nullptr;
+  if (device) {
+    cuda_check(cudaMallocFromPoolAsync(&p, bytes, pool(), st));
+    ++counters().pool_allocs, counters().live_device_bytes += i64(bytes);
+  } else {
+    cuda_check(cudaMallocHost(&p, bytes));
+    ++counters().sync_alloc;
+  }
+  return p;
+}
+
+void release(bool device, void* p, size_t bytes, Stream st) {
+  if (device) {
+    ++counters().pool_frees, counters().live_device_bytes -= i64(bytes);
+    cuda_check(cudaFreeAsync(p, st));
+  } else {
+    ++counters().sync_free;
+    cuda_check(cudaFreeHost(p));
+  }
 }
 
 void to_device(void* dst, const void* src, size_t bytes, Stream st) {
@@ -173,15 +218,14 @@ void for_each(Stream st, i64 n, const F& f) {
 struct Stream {};  // the CPU build runs every step at once, in order
 
 Stream new_stream() { return {}; }
-// Counted as the CUDA build counts them after the stream-ordered pool (D5c): device memory as pool allocations, host
-// staging as synchronizing ones.
-void* alloc(bool device, size_t bytes) {
+// Counted as the CUDA build counts them: device memory as pool allocations, host staging as synchronizing ones.
+void* alloc(bool device, size_t bytes, Stream) {
   void* p = ::operator new(bytes);
   ++(device ? counters().pool_allocs : counters().sync_alloc);
   if (device) counters().live_device_bytes += i64(bytes);
   return p;
 }
-void release(bool device, void* p, size_t bytes) {
+void release(bool device, void* p, size_t bytes, Stream) {
   ++(device ? counters().pool_frees : counters().sync_free);
   if (device) counters().live_device_bytes -= i64(bytes);
   ::operator delete(p);
@@ -207,26 +251,47 @@ void for_each(Stream, i64 n, const F& f) {
 }
 #endif
 
-// Grow-only buffer: device memory, or host staging memory (pinned on the GPU build). get(bytes) keeps the buffer when
-// it is large enough, else replaces it by one of the next power of two up to 64 MiB, exact above (the polygon path
-// stays in a few MiB; one large check_masks call must not keep twice its need). Never freed per call.
+// The entry and size of the running call (set by Engine::start), named by the staging growth log.
+struct Call {
+  const char* entry = "";
+  i64 n = 0;
+};
+Call& call() {
+  static Call c;
+  return c;
+}
+
+// Grow-only buffer: device memory (stream-ordered on `st`, the lane's stream), or host staging memory (pinned on the
+// GPU build). get(bytes) keeps the buffer when it is large enough, else replaces it by one of the next power of two up
+// to 64 MiB, exact above (the polygon path stays in a few MiB; one large check_masks call must not keep twice its
+// need). Never freed per call. A staging buffer is sized once by Engine::start (resize), so its growth in get is the
+// event pinned_grows, logged with the call that needed it.
 template <bool kDevice>
 struct Block {
   u8* p = nullptr;
   size_t cap = 0;
+  Stream st{};
+  void resize(size_t c) {
+    void* old = p;
+    const size_t old_cap = cap;
+    p = nullptr, cap = 0;
+    if (kDevice) counters().arena_bytes -= i64(old_cap);
+    if (old) release(kDevice, old, old_cap, st);
+    p = static_cast<u8*>(alloc(kDevice, c, st));
+    cap = c;
+    if (kDevice) counters().arena_bytes += i64(cap);
+  }
   u8* get(size_t bytes) {
     if (bytes <= cap) return p;
     size_t c = 4096;
     while (c < bytes && c < (size_t(64) << 20)) c <<= 1;
     if (c < bytes) c = bytes;
-    void* old = p;
-    const size_t old_cap = cap;
-    p = nullptr, cap = 0;
-    if (kDevice) counters().arena_bytes -= i64(old_cap);
-    if (old) release(kDevice, old, old_cap);
-    p = static_cast<u8*>(alloc(kDevice, c));
-    cap = c;
-    if (kDevice) counters().arena_bytes += i64(cap);
+    if (!kDevice) {
+      ++counters().pinned_grows;
+      std::fprintf(stderr, "gpucheck: pinned staging grows from %zu to %zu bytes in %s (n = %lld, %zu bytes asked)\n",
+                   cap, c, call().entry, static_cast<long long>(call().n), bytes);
+    }
+    resize(c);
     return p;
   }
 };
@@ -237,17 +302,25 @@ struct Lane {  // one stream with its device arenas (dev: checker, score: scorer
   Block<false> in, out;
 };
 
+size_t stage_in_bound();  // the staging bounds (after the polygon layout, below)
+size_t stage_out_bound();
+
 struct Engine {
   std::mutex mu;
   bool ready = false;
   Lane lanes[2];
-  void start() {  // called with mu held
+  // Called with mu held by every entry before it stages a byte: names the call; the first call of the process makes
+  // the streams and the pool and sizes every lane's staging buffers to their bounds.
+  void start(const char* entry, i64 n) {
+    call() = Call{entry, n};
     if (ready) return;
-    for (Lane& l : lanes) l.stream = new_stream();
-    ready = true;
+    for (Lane& l : lanes) l.stream = l.dev.st = l.score.st = l.scan.st = new_stream();
 #ifdef __CUDACC__
+    if (!pool()) pool() = new_pool();
     counters().contexts = 1;  // the streams live in the device's primary context
 #endif
+    for (Lane& l : lanes) l.in.resize(stage_in_bound()), l.out.resize(stage_out_bound());
+    ready = true;
   }
 };
 
@@ -1614,6 +1687,14 @@ struct PolyChunk {
   size_t raster_wide, validate_wide, fewer, cxy, len, box, area2, counts, pairs, defects, words, size;
 };
 
+// The copied-in arrays of a chunk of n shapes, nr rings and nv vertices, at the front of its layout.
+void put_inputs(Layout& l, PolyChunk& c) {
+  c.xy = l.put<i32>(2 * c.nv), c.roles = l.put<i32>(c.nr), c.W = l.put<i32>(c.n), c.H = l.put<i32>(c.n);
+  c.ring_start = l.put<i64>(c.nr + 1), c.shape_start = l.put<i64>(c.n + 1), c.row_start = l.put<i64>(c.n + 1);
+  c.word_start = l.put<i64>(c.n + 1);
+  c.in_bytes = l.size;
+}
+
 PolyChunk plan(const Polygons& in, const std::vector<i64>& word_start, i64 a, i64 b) {
   PolyChunk c{};
   c.a = a, c.b = b, c.n = b - a;
@@ -1623,16 +1704,27 @@ PolyChunk plan(const Polygons& in, const std::vector<i64>& word_start, i64 a, i6
   for (i64 s = a; s < b; ++s) c.rows += in.H[s];
   c.nwords = word_start[b] - word_start[a];
   Layout l;
-  c.xy = l.put<i32>(2 * c.nv), c.roles = l.put<i32>(c.nr), c.W = l.put<i32>(c.n), c.H = l.put<i32>(c.n);
-  c.ring_start = l.put<i64>(c.nr + 1), c.shape_start = l.put<i64>(c.n + 1), c.row_start = l.put<i64>(c.n + 1);
-  c.word_start = l.put<i64>(c.n + 1);
-  c.in_bytes = l.size;
+  put_inputs(l, c);
   c.raster_wide = l.put<u8>(c.n), c.validate_wide = l.put<u8>(c.n), c.fewer = l.put<u8>(c.nr);
   c.cxy = l.put<i32>(2 * c.nv), c.len = l.put<i32>(c.nr), c.box = l.put<i32>(4 * c.nr), c.area2 = l.put<i64>(c.nr);
   c.counts = l.put<i32>(c.nr * kNumDefects), c.pairs = l.put<i32>(c.n * 2 * kPairs);  // zeroed, with defects
   c.defects = l.put<i64>(c.n * kNumDefects), c.words = l.put<u32>(c.nwords);
   c.size = l.size;
   return c;
+}
+
+// Stage bounds: one score_polygons call of 256 answers of at most 2 objects (geometry.text SCHEMAS: RIGA's disc and
+// cup) at the grammar's caps (10 rings of 1,000 vertices per object). In: the chunk's copied-in arrays, about 41 MB
+// (the scorer's own staging, planes and tables per object, is about 100 KB at this n). Out: the largest copy back of
+// such a call: the signatures at 64 components per object (twice the largest count of the D1 replay set is 4) are
+// 128 KiB, above the defects (52 KiB), the boxes (20 KiB) and the per-object results (32 KiB).
+constexpr i64 kStageObjects = 256 * 2, kStageComps = 64;
+size_t stage_in_bound() {
+  PolyChunk c{};
+  c.n = kStageObjects, c.nr = c.n * kMaxRings, c.nv = c.nr * kMaxRingVertices;
+  Layout l;
+  put_inputs(l, c);
+  return l.size;
 }
 
 void pack(const Polygons& in, const std::vector<i64>& word_start, const PolyChunk& c, u8* h) {
@@ -1802,6 +1894,8 @@ struct Crops {  // the call's crops, one item per crop row; pixel p of a crop = 
   u8* img;             // 1 = foreground
   i32 *fg, *bg, *aux;  // labels (root = the component's first raster pixel), per-root counts
   i32* ncomp;          // per plane: components after the filter
+  i32* changed;        // per plane: rows the size filter changed (0 = the first labels stay)
+  i64* relabelled;     // per plane: crop rows the second label pair relabelled (the label_pairs counter)
   HD i64 row(i64 r, i32& y) const {
     const i64 o = segment(crow_start, n, r);
     y = i32(r - crow_start[o]);
@@ -1826,13 +1920,19 @@ struct CropFill {
   }
 };
 
-// The three labeling steps of one class: which = 1 (foreground, 8-connected) or 0 (background, 4-connected).
+// The three labeling steps of one class: which = 1 (foreground, 8-connected) or 0 (background, 4-connected). With
+// `lazy` (the second pair, after the size filter) a row is labelled again only if the filter changed its plane: else
+// the first labels are those of the same image (roots are first pixels, so labels do not depend on the run).
 struct LabelInit {
   Crops c;
   int which;
+  bool lazy;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Plane& b = c.pl[c.row(r, y)];
+    const i64 o = c.row(r, y);
+    if (lazy && !c.changed[o]) return;
+    if (lazy && which) atomic_add(c.relabelled + o, 1);
+    const Plane& b = c.pl[o];
     const i32 cw = b.bw + 2;
     i32* par = (which ? c.fg : c.bg) + b.crop;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p) par[p] = c.img[b.crop + p] == which ? p : -1;
@@ -1842,9 +1942,12 @@ struct LabelInit {
 struct LabelMerge {
   Crops c;
   int which;
+  bool lazy;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Plane& b = c.pl[c.row(r, y)];
+    const i64 o = c.row(r, y);
+    if (lazy && !c.changed[o]) return;
+    const Plane& b = c.pl[o];
     const i32 cw = b.bw + 2;
     const u8* img = c.img + b.crop;
     i32* par = (which ? c.fg : c.bg) + b.crop;
@@ -1864,9 +1967,12 @@ struct LabelMerge {
 struct LabelFlatten {
   Crops c;
   int which;
+  bool lazy;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Plane& b = c.pl[c.row(r, y)];
+    const i64 o = c.row(r, y);
+    if (lazy && !c.changed[o]) return;
+    const Plane& b = c.pl[o];
     const i32 cw = b.bw + 2;
     i32* par = (which ? c.fg : c.bg) + b.crop;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p)
@@ -1888,19 +1994,23 @@ struct Count {  // aux[root] = pixels of the class's component (aux zeroed)
 };
 
 // Size filter (topology.size_filter): which = 1 drops foreground components below min_area, which = 0 fills holes
-// (background components other than the outside, root 0) below min_area. aux holds the class's counts.
+// (background components other than the outside, root 0) below min_area. aux holds the class's counts. A row with a
+// changed pixel adds 1 to its plane's `changed`.
 struct Filter {
   Crops c;
   int which;
   HD void operator()(i64 r) const {
     i32 y = 0;
-    const Plane& b = c.pl[c.row(r, y)];
+    const i64 o = c.row(r, y);
+    const Plane& b = c.pl[o];
     const i32 cw = b.bw + 2;
     const i32* par = (which ? c.fg : c.bg) + b.crop;
+    bool hit = false;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p) {
-      if (c.img[b.crop + p] != which || (!which && par[p] == 0)) continue;
-      if (c.aux[b.crop + par[p]] < b.min_area) c.img[b.crop + p] = u8(1 - which);
+      if (c.img[b.crop + p] != which || (!which && par[p] == 0) || c.aux[b.crop + par[p]] >= b.min_area) continue;
+      c.img[b.crop + p] = u8(1 - which), hit = true;
     }
+    if (hit) atomic_add(c.changed + o, 1);
   }
 };
 
@@ -1979,10 +2089,11 @@ struct SigCompact {  // the lists, one after the other, into aux (no longer need
 // crop pixel the image, the labels and the counts.
 struct CropLayout {
   i64 n, crop;
-  size_t pl = 0, crows = 0, img = 0, fg = 0, bg = 0, aux = 0, nc = 0;
+  size_t pl = 0, crows = 0, img = 0, fg = 0, bg = 0, aux = 0, nc = 0, ch = 0, rl = 0, end = 0;
   void front(Layout& l) { pl = l.put<Plane>(n), crows = l.put<i64>(n + 1); }
-  void back(Layout& l) {
-    img = l.put<u8>(crop), fg = l.put<i32>(crop), bg = l.put<i32>(crop), aux = l.put<i32>(crop), nc = l.put<i32>(n);
+  void back(Layout& l) {  // the per-plane counters last and together: label_chain zeroes [nc, end) at once
+    img = l.put<u8>(crop), fg = l.put<i32>(crop), bg = l.put<i32>(crop), aux = l.put<i32>(crop);
+    nc = l.put<i32>(n), ch = l.put<i32>(n), rl = l.put<i64>(n), end = l.size;
   }
   void stage(u8* h, const std::vector<Plane>& p, const std::vector<i64>& crow_start) const {
     std::copy_n(p.data(), n, ptr<Plane>(h, pl));
@@ -1990,7 +2101,8 @@ struct CropLayout {
   }
   Crops at(u8* d) const {
     return Crops{ptr<Plane>(d, pl), ptr<i64>(d, crows), n,        ptr<u8>(d, img),
-                 ptr<i32>(d, fg),   ptr<i32>(d, bg),    ptr<i32>(d, aux), ptr<i32>(d, nc)};
+                 ptr<i32>(d, fg),   ptr<i32>(d, bg),    ptr<i32>(d, aux), ptr<i32>(d, nc),
+                 ptr<i32>(d, ch),   ptr<i64>(d, rl)};
   }
 };
 
@@ -2030,13 +2142,14 @@ CropLayout boxes(Lane& L, std::vector<Plane>& pl, const u32* words, std::vector<
 }
 
 // Queues the chain on the crops: fill them from the words, label, size-filter the foreground then the background
-// (topology.size_filter), label again. Stages "label", "count" and "filter".
-void label_chain(Stream st, const Crops& c, i64 crows, i64 crop, const u32* words, Timer& t) {
-  auto label = [&](int which) {
+// (topology.size_filter), label again the planes the filter changed (topology.py's skip). Stages "label", "count" and
+// "filter". `counters` = [ncomp, end of relabelled) of the layout: zeroed first, as the arenas are never cleared.
+void label_chain(Stream st, const Crops& c, i64 crows, i64 crop, const u32* words, size_t counters, Timer& t) {
+  auto label = [&](int which, bool lazy) {
     t.stage("label", st, [&] {
-      for_each(st, crows, LabelInit{c, which});
-      for_each(st, crows, LabelMerge{c, which});
-      for_each(st, crows, LabelFlatten{c, which});
+      for_each(st, crows, LabelInit{c, which, lazy});
+      for_each(st, crows, LabelMerge{c, which, lazy});
+      for_each(st, crows, LabelFlatten{c, which, lazy});
     });
   };
   auto count = [&](int which) {
@@ -2046,11 +2159,11 @@ void label_chain(Stream st, const Crops& c, i64 crows, i64 crop, const u32* word
     });
   };
   auto filter = [&](int which) { t.stage("filter", st, [&] { for_each(st, crows, Filter{c, which}); }); };
-  zero(c.ncomp, sizeof(i32) * size_t(c.n), st);
+  zero(c.ncomp, counters, st);
   t.stage("label", st, [&] { for_each(st, crows, CropFill{c, words}); });
-  label(1), count(1), filter(1);
-  label(0), count(0), filter(0);
-  label(1), label(0);
+  label(1, false), count(1), filter(1);
+  label(0, false), count(0), filter(0);
+  label(1, true), label(0, true);
 }
 
 // After label_chain, each plane's signature: hole counts per component, sorted descending, at the head of its crop
@@ -2091,10 +2204,16 @@ struct Obj {  // one object of a scoring call: its tables and its row partials (
   i64 part;
 };
 
-struct ObjOut {  // copied back per object
-  i64 area, ncomp;
+struct ObjOut {  // copied back per object (8-byte fields only: no padding for initcheck to flag)
+  i64 area, ncomp, relabelled;
   double iou_tc, f5, g_area, topo_freq;
 };
+
+size_t stage_out_bound() {
+  const size_t n = kStageObjects, objs = (sizeof(ObjOut) * n + 255) / 256 * 256 + sizeof(i64) * (n + 1);
+  return std::max({sizeof(i64) * size_t(kNumDefects) * n, sizeof(i64) * 5 * n, objs,
+                   sizeof(i32) * n * size_t(kStageComps)});
+}
 
 HD inline i64 units(float d) { return i64(double(d) * 8388608.0); }  // d in units of 2^-23: exact for 0 and d >= 1
 
@@ -2190,7 +2309,7 @@ struct ObjTerms {
       const double up = double(hi) / double(p.area), down = lo > 0 ? double(p.area) / double(lo) : 1.0;
       g = (up < 1.0 ? up : 1.0) * (down < 1.0 ? down : 1.0);
     }
-    out[o] = ObjOut{p.area, m, same ? best : iou(vote, p.area, t.n_vote),
+    out[o] = ObjOut{p.area, m, c.relabelled[o], same ? best : iou(vote, p.area, t.n_vote),
                     1.0 / (1.0 + (2.0 * d / double(t.perimeter)) / (t.t5 * t.t5)), g, double(same) / double(voters)};
   }
 };
@@ -2215,7 +2334,6 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
   const i64 rows = row_start[size_t(n)];
   CropLayout cl = boxes(L, pl, words, crow_start, t);
   const i64 crows = crow_start[size_t(n)];
-  counters().label_pairs += crows;  // the second label pair relabels every crop row
 
   // Labeling, row partials, terms.
   Layout l;
@@ -2230,7 +2348,7 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
   std::copy_n(row_start.data(), n + 1, ptr<i64>(h, o_rows));
   to_device(d, h, up, st);
   const Crops c = cl.at(d);
-  label_chain(st, c, crows, cl.crop, words, t);
+  label_chain(st, c, crows, cl.crop, words, cl.end - cl.nc, t);
   sig_lists(st, c, crows, cl.crop, t);
   t.stage("score", st, [&] {  // row partials and the terms
     for_each(st, rows, ScoreRows{ptr<Obj>(d, o_obj), c.pl, ptr<i64>(d, o_rows), n, words, ptr<i64>(d, o_parts)});
@@ -2244,6 +2362,7 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
   wait(st);
   const ObjOut* r = ptr<ObjOut>(ho, 0);
   for (i64 o = 0; o < n; ++o) {
+    counters().label_pairs += r[o].relabelled;
     out.area.push_back(r[o].area);
     out.iou_tc.push_back(r[o].iou_tc), out.f5.push_back(r[o].f5), out.g_area.push_back(r[o].g_area);
     out.topo_freq.push_back(r[o].topo_freq);
@@ -2379,10 +2498,22 @@ int device_count() {
 #endif
 }
 
+// The pools' reserved bytes are read live, and only once the engine has a context (stats() must not open one: forked
+// workers read it).
 Stats stats() {
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
-  return counters();
+  Stats s = counters();
+#ifdef __CUDACC__
+  if (e.ready) {
+    int dev = 0;
+    cudaMemPool_t dp = nullptr;
+    cuda_check(cudaGetDevice(&dev));
+    cuda_check(cudaDeviceGetDefaultMemPool(&dp, dev));
+    s.pool_reserved = reserved(pool()), s.default_pool_reserved = reserved(dp);
+  }
+#endif
+  return s;
 }
 
 void reset_stats() {
@@ -2412,7 +2543,7 @@ PolygonResult check_polygons(const Polygons& in, Times* times) {
   clear_error();
   Drain drain{e};
   Timer t{times, {}};
-  e.start();
+  e.start("check_polygons", n);
   for (int k = 0; k < used; ++k) {  // every buffer is grown before any work is queued
     Lane& L = e.lanes[k];
     L.dev.get(chunks[k].size), L.in.get(chunks[k].in_bytes), L.out.get(chunks[k].size - chunks[k].defects);
@@ -2445,7 +2576,7 @@ MaskResult check_masks(const Masks& in, Times* times, const MaskOptions& opt) {
   clear_error();
   Drain drain{e};
   Timer t{times, {}};
-  e.start();
+  e.start("check_masks", in.n);
   // Chunks of at most chunk_pixels vertices, (W + 1)(H + 1) per mask (that also bounds rows and empty masks); a larger
   // mask goes alone. So every count inside a chunk fits an i32.
   for (i64 m0 = 0; m0 < in.n;) {
@@ -2477,53 +2608,89 @@ std::vector<std::string> test_hooks() {
   return h;
 }
 
-i64 add_tables(const Tables& t) {
+// Each table set is one pool block (so drop_tables frees it alone), filled from one pageable host buffer (never the
+// pinned staging: the number of cold caches changes per step); the batch makes one host wait.
+std::vector<i64> add_tables_many(const std::vector<Tables>& ts) {
   GC_RANGE("add_tables");
-  const i64 wpr = words_per_row(t.W), plane = i64(t.H) * wpr, px = i64(t.H) * t.W, nsig = t.sig_start[t.k];
-  Layout l;
-  const size_t o_r = l.put<u32>(t.k * plane), o_u = l.put<u32>(plane), o_c = l.put<u32>(plane),
-               o_v = l.put<u32>(plane), o_d = l.put<float>(px), o_a = l.put<i64>(t.k), o_ss = l.put<i64>(t.k + 1),
-               o_s = l.put<i32>(nsig), o_vt = l.put<u8>(t.k);
-  std::vector<u8> h(l.size, 0);
-  for (i32 r = 0; r < t.k; ++r) pack_plane(t.raters + r * px, t.H, t.W, ptr<u32>(h.data(), o_r) + r * plane);
-  pack_plane(t.uni, t.H, t.W, ptr<u32>(h.data(), o_u));
-  pack_plane(t.core, t.H, t.W, ptr<u32>(h.data(), o_c));
-  pack_plane(t.vote, t.H, t.W, ptr<u32>(h.data(), o_v));
-  std::copy_n(t.dist, px, ptr<float>(h.data(), o_d));
-  std::copy_n(t.rater_area, t.k, ptr<i64>(h.data(), o_a));
-  std::copy_n(t.sig_start, t.k + 1, ptr<i64>(h.data(), o_ss));
-  std::copy_n(t.sig, nsig, ptr<i32>(h.data(), o_s));
-  std::copy_n(t.voter, t.k, ptr<u8>(h.data(), o_vt));
+  const size_t m = ts.size();
+  if (m == 0) return {};
+  struct Placed {
+    size_t at, size, r, u, c, v, d, a, ss, s, vt;
+  };
+  std::vector<Placed> pl(m);
+  size_t total = 0;
+  for (size_t k = 0; k < m; ++k) {
+    const Tables& t = ts[k];
+    const i64 plane = i64(t.H) * words_per_row(t.W), px = i64(t.H) * t.W;
+    Layout l;
+    Placed& q = pl[k];
+    q.r = l.put<u32>(t.k * plane), q.u = l.put<u32>(plane), q.c = l.put<u32>(plane), q.v = l.put<u32>(plane);
+    q.d = l.put<float>(px), q.a = l.put<i64>(t.k), q.ss = l.put<i64>(t.k + 1), q.s = l.put<i32>(t.sig_start[t.k]);
+    q.vt = l.put<u8>(t.k);
+    q.at = total, q.size = l.size, total += (l.size + 255) / 256 * 256;
+  }
+  std::vector<u8> host(total, 0);
+  for (size_t k = 0; k < m; ++k) {
+    const Tables& t = ts[k];
+    const Placed& q = pl[k];
+    u8* h = host.data() + q.at;
+    const i64 plane = i64(t.H) * words_per_row(t.W), px = i64(t.H) * t.W;
+    for (i32 r = 0; r < t.k; ++r) pack_plane(t.raters + r * px, t.H, t.W, ptr<u32>(h, q.r) + r * plane);
+    pack_plane(t.uni, t.H, t.W, ptr<u32>(h, q.u));
+    pack_plane(t.core, t.H, t.W, ptr<u32>(h, q.c));
+    pack_plane(t.vote, t.H, t.W, ptr<u32>(h, q.v));
+    std::copy_n(t.dist, px, ptr<float>(h, q.d));
+    std::copy_n(t.rater_area, t.k, ptr<i64>(h, q.a));
+    std::copy_n(t.sig_start, t.k + 1, ptr<i64>(h, q.ss));
+    std::copy_n(t.sig, t.sig_start[t.k], ptr<i32>(h, q.s));
+    std::copy_n(t.voter, t.k, ptr<u8>(h, q.vt));
+  }
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
   clear_error();
   Drain drain{e};
-  e.start();
-  u8* d = static_cast<u8*>(alloc(true, l.size));
+  e.start("add_tables", i64(m));
+  const Stream st = e.lanes[0].stream;
+  std::vector<u8*> d(m, nullptr);
   try {
-    to_device(d, h.data(), l.size, e.lanes[0].stream);
-    wait(e.lanes[0].stream);
+    for (size_t k = 0; k < m; ++k) {
+      d[k] = static_cast<u8*>(alloc(true, pl[k].size, st));
+      to_device(d[k], host.data() + pl[k].at, pl[k].size, st);
+    }
+    wait(st);
   } catch (...) {
-    release(true, d, l.size);
+    for (size_t k = 0; k < m; ++k)
+      if (d[k]) release(true, d[k], pl[k].size, st);
     throw;
   }
-  const TableView v{ptr<u32>(d, o_r), ptr<u32>(d, o_u), ptr<u32>(d, o_c), ptr<u32>(d, o_v), ptr<float>(d, o_d),
-                    ptr<i64>(d, o_a), ptr<i64>(d, o_ss), ptr<i32>(d, o_s), ptr<u8>(d, o_vt), t.n_vote, t.perimeter,
-                    t.t5, t.H, t.W, t.k, t.min_area};
   Registry& r = registry();
-  i64 handle = i64(r.block.size());
-  if (r.free.empty()) {
-    r.block.push_back(d), r.bytes.push_back(l.size), r.view.push_back(v);
-  } else {
-    handle = r.free.back();
-    r.free.pop_back();
-    r.block[size_t(handle)] = d, r.bytes[size_t(handle)] = l.size, r.view[size_t(handle)] = v;
+  std::vector<i64> handles(m);
+  for (size_t k = 0; k < m; ++k) {
+    const Tables& t = ts[k];
+    const Placed& q = pl[k];
+    u8* b = d[k];
+    const TableView v{ptr<u32>(b, q.r), ptr<u32>(b, q.u), ptr<u32>(b, q.c),  ptr<u32>(b, q.v), ptr<float>(b, q.d),
+                      ptr<i64>(b, q.a), ptr<i64>(b, q.ss), ptr<i32>(b, q.s), ptr<u8>(b, q.vt), t.n_vote, t.perimeter,
+                      t.t5, t.H, t.W, t.k, t.min_area};
+    i64 handle = i64(r.block.size());
+    if (r.free.empty()) {
+      r.block.push_back(b), r.bytes.push_back(q.size), r.view.push_back(v);
+    } else {
+      handle = r.free.back();
+      r.free.pop_back();
+      r.block[size_t(handle)] = b, r.bytes[size_t(handle)] = q.size, r.view[size_t(handle)] = v;
+    }
+    ++r.live;
+    counters().table_bytes += i64(q.size);
+    handles[k] = handle;
   }
-  ++r.live;
-  counters().table_bytes += i64(l.size);
-  return handle;
+  return handles;
 }
 
+i64 add_tables(const Tables& t) { return add_tables_many({t})[0]; }
+
+// Freed in stream order on lane 0 (no host wait); every call drains both lanes before it returns, so no kernel still
+// reads the tables.
 void drop_tables(i64 handle) {
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
@@ -2531,11 +2698,20 @@ void drop_tables(i64 handle) {
   if (handle < 0 || handle >= i64(r.block.size()) || !r.block[size_t(handle)])
     throw std::invalid_argument("unknown tables handle");
   clear_error();
-  release(true, r.block[size_t(handle)], r.bytes[size_t(handle)]);
+  release(true, r.block[size_t(handle)], r.bytes[size_t(handle)], e.lanes[0].stream);
   counters().table_bytes -= i64(r.bytes[size_t(handle)]);
   r.block[size_t(handle)] = nullptr;
   r.free.push_back(handle);
   --r.live;
+}
+
+void trim(i64 bytes) {
+  if (bytes < 0) throw std::invalid_argument("trim needs bytes >= 0");
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+#ifdef __CUDACC__
+  if (e.ready) cuda_check(cudaMemPoolTrimTo(pool(), size_t(bytes)));
+#endif
 }
 
 i64 resident() {
@@ -2558,7 +2734,7 @@ Scores score_polygons(const Polygons& in, const i64* tables, Times* times) {
   const std::vector<TableView> tv = views(tables, n, in.W, in.H);
   clear_error();
   Timer t{times, {}};
-  e.start();
+  e.start("score_polygons", n);
   Lane& L = e.lanes[0];
   const PolyChunk c = plan(in, word_start, 0, n);
   L.dev.get(c.size), L.in.get(c.in_bytes), L.out.get(c.words - c.defects);
@@ -2585,7 +2761,7 @@ Scores score_masks(const Masks& in, const i64* tables, Times* times) {
   const std::vector<TableView> tv = views(tables, n, in.W, in.H);
   clear_error();
   Timer t{times, {}};
-  e.start();
+  e.start("score_masks", n);
   Lane& L = e.lanes[0];
   const size_t bytes = sizeof(u32) * size_t(word_start[size_t(n)]);
   u8* h = L.in.get(bytes);
@@ -2622,7 +2798,7 @@ Certified certify_polygons(const Polygons& in, const Masks& ref, const i32* ref_
   clear_error();
   Drain drain{e};
   Timer t{nullptr, {}};
-  e.start();
+  e.start("certify_polygons", n);
   Lane& L = e.lanes[0];
   const Stream st = L.stream;
   const PolyChunk c = plan(in, word_start, 0, n);
@@ -2694,7 +2870,7 @@ Certified certify_polygons(const Polygons& in, const Masks& ref, const i32* ref_
   cl.stage(L.in.get(up), pl, crow_start);
   to_device(ds, L.in.p, up, st);
   const Crops cr = cl.at(ds);
-  label_chain(st, cr, crow_start.back(), cl.crop, words, t);
+  label_chain(st, cr, crow_start.back(), cl.crop, words, cl.end - cl.nc, t);
   sig_lists(st, cr, crow_start.back(), cl.crop, t);
   compact_sigs(st, cr, ptr<i64>(ds, o_ss), t);
   const size_t ov = sizeof(i64) * size_t(3 * n), ov_pad = (ov + 255) / 256 * 256;
@@ -2732,7 +2908,7 @@ Topology topology(const Masks& in, const i64* min_area, bool want_masks) {
   clear_error();
   Drain drain{e};
   Timer t{nullptr, {}};
-  e.start();
+  e.start("topology", in.n);
   Lane& L = e.lanes[0];
   const Stream st = L.stream;
   const size_t bytes = sizeof(u32) * size_t(word_start[size_t(n)]);
@@ -2762,7 +2938,7 @@ Topology topology(const Masks& in, const i64* min_area, bool want_masks) {
   cl.stage(L.in.get(up), pl, crow_start);
   to_device(d, L.in.p, up, st);
   const Crops c = cl.at(d);
-  label_chain(st, c, crows, cl.crop, words, t);
+  label_chain(st, c, crows, cl.crop, words, cl.end - cl.nc, t);
   i32 *cnt = ptr<i32>(d, o_cnt), *rc = ptr<i32>(d, o_rc), *rh = ptr<i32>(d, o_rh), *kc = ptr<i32>(d, o_kc),
       *kh = ptr<i32>(d, o_kh);
   t.stage("topology", st, [&] {  // areas, hole counts and ranks in raster order

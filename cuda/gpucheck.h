@@ -191,11 +191,14 @@ struct Stats {
   i64 sync_alloc = 0, sync_free = 0;  // allocations that synchronize the device: cudaMalloc(Host) / cudaFree(Host);
                                       // on the CPU build, the host staging buffers
   i64 pool_allocs = 0, pool_frees = 0;  // stream-ordered pool allocations; on the CPU build, device-kind memory
+  i64 pinned_grows = 0;  // growths of a staging buffer after its one sizing in the first call (logged to stderr)
   // State, kept by reset_stats():
   i64 arena_bytes = 0;        // capacity of the grow-only device arenas of both lanes
   i64 table_bytes = 0;        // bytes of the resident expert tables
   i64 live_device_bytes = 0;  // device bytes allocated and not released (== arena_bytes + table_bytes)
   i64 contexts = 0;           // 1 once a call has opened a CUDA context in this process (0 on the CPU build)
+  i64 pool_reserved = 0;          // bytes the engine's pool holds from the driver (CUDA build, read live)
+  i64 default_pool_reserved = 0;  // bytes the device's default pool holds (torch, vLLM; the engine never uses it)
 };
 
 bool cuda_build();   // compiled by nvcc
@@ -207,7 +210,9 @@ PolygonResult check_polygons(const Polygons& in, Times* times = nullptr);
 MaskResult check_masks(const Masks& in, Times* times = nullptr, const MaskOptions& opt = {});
 std::vector<std::string> test_hooks();  // the test-only compile definitions of this build (none in a shipped one)
 i64 add_tables(const Tables& t);  // -> handle
-void drop_tables(i64 handle);
+std::vector<i64> add_tables_many(const std::vector<Tables>& ts);  // one host wait per batch (none when empty)
+void drop_tables(i64 handle);     // no host wait
+void trim(i64 bytes);             // the engine's pool keeps <= `bytes` unused (cudaMemPoolTrimTo); CPU build: no-op
 i64 resident();                    // tables on the device
 // Object s is scored against the tables tables[s]; its frame must be theirs (std::invalid_argument otherwise).
 Scores score_polygons(const Polygons& in, const i64* tables, Times* times = nullptr);
