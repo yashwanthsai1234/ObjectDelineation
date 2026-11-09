@@ -67,6 +67,8 @@ from PIL import Image as PILImage
 
 from objdel.data import store
 from objdel.geometry import SCHEMAS, canonicalize, parse, serialize
+from objdel.hashing import pixels_sha256
+from objdel.io import read_jsonl
 from objdel.reward import ExpertCache, fingerprint, rater_answers, rl_eligible
 from objdel.targets import build_target, frame, min_areas, target_set_hash
 
@@ -81,10 +83,6 @@ PROMPTS = {
 DISAGREEMENT_OVERSAMPLE = 4  # decided in experiments/phase1/impl/M7_train.md
 _PINS = ("numpy", "numba", "opencv-python-headless", "objdel")
 _BATCH = 12  # items framed per pool.map: bounds main-process memory (RIGA: 1.8 GB at 6, 2.4 GB at 32)
-
-
-def _pixels_sha(image: np.ndarray) -> str:
-    return hashlib.sha256(repr(image.shape).encode() + image.tobytes()).hexdigest()
 
 
 def _prepare(job) -> dict:
@@ -105,7 +103,7 @@ def _prepare(job) -> dict:
         raise OSError(f"{path}: cv2.imwrite failed")
     rec = {"item_id": item_id, "group_id": group_id, "W": f.W, "H": f.H, "box": list(map(int, f.box)),
            "scale": f.scale, "raters": list(raters), "targets": targets, "rl": rl_eligible(raters),
-           "disagreement": False, "image_sha256": _pixels_sha(f.image), "caches": {}, "errors": errors}
+           "disagreement": False, "image_sha256": pixels_sha256(f.image), "caches": {}, "errors": errors}
     if rec["rl"]:
         caches = {n: ExpertCache.build(f.masks[n]) for n in names}
         cdir = Path(out, "caches", item_id)
@@ -113,6 +111,22 @@ def _prepare(job) -> dict:
         rec["caches"] = {n: c.save(cdir / f"{n}.npz") for n, c in caches.items()}
         rec["disagreement"] = len(rater_answers(caches, names)) > 1  # voting raters only (B2-4)
     return rec
+
+
+def window_record(out, item, window=None, *, f=None) -> dict:
+    """The `_prepare` record of one window of `item`, writing its image and caches under `out`.
+
+    window (an objdel.data.windows.Window, B1.4 rows): framed at (dx, dy) and side, keyed by `window.window_id` (so
+    two windows of one item never share an image or a cache folder), plus `source_item_id`, `cell` and
+    `view = {kind, draw, offset, side, fallback: false, kept_side: false, op: "id"}`.
+    window None (eval views): the given frame `f`, keyed by the item's own id; the caller adds its `view`."""
+    if window is None:
+        return _prepare((str(out), item.item_id, item.dataset, item.group_id, item.raters, f))
+    f = frame(item, offset=(window.dx, window.dy), side=window.side)
+    rec = _prepare((str(out), window.window_id, item.dataset, item.group_id, item.raters, f))
+    return rec | {"source_item_id": item.item_id, "cell": f"{window.cell[0]}{window.cell[1]}",
+                  "view": {"kind": window.kind, "draw": window.draw, "offset": [window.dx, window.dy],
+                           "side": window.side, "fallback": False, "kept_side": False, "op": "id"}}
 
 
 def _jobs(store_root, out, dataset, split, skipped):
@@ -157,8 +171,8 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
 
 
 def records(root, dataset: str, split: str) -> list[dict]:
-    with open(Path(root, dataset, f"{split}.jsonl")) as f:
-        return [json.loads(line) for line in f]
+    """The rows of `<root>/<dataset>/<split>.jsonl` as dicts."""
+    return read_jsonl(Path(root, dataset, f"{split}.jsonl"))
 
 
 def _user(dataset: str) -> dict:
@@ -171,7 +185,7 @@ def _image(root, item_id: str) -> str:
 
 def _check(root, rec: dict) -> None:
     im = cv2.imread(_image(root, rec["item_id"]), cv2.IMREAD_COLOR)
-    if im is None or _pixels_sha(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) != rec["image_sha256"]:
+    if im is None or pixels_sha256(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) != rec["image_sha256"]:
         raise ValueError(f"{rec['item_id']}: prepared image missing or not the one recorded (image_sha256)")
 
 
@@ -183,6 +197,7 @@ def _verified(root, recs: list[dict]) -> list[dict]:
 
 
 def target_tokens(tokenizer, text: str) -> int:
+    """Token count of the text under the tokenizer, without special tokens."""
     return len(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 

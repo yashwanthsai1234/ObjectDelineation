@@ -11,7 +11,7 @@ from objdel.targets import build_target
 
 
 def image_sha(path):
-    return P._pixels_sha(cv2.cvtColor(cv2.imread(str(path), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB))
+    return P.pixels_sha256(cv2.cvtColor(cv2.imread(str(path), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB))
 
 
 def mask_text(m):

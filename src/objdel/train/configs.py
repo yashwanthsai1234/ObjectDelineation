@@ -15,6 +15,14 @@ whole groups at any world size. vLLM colocate (perf F1): vllm_gpu_memory_utiliza
 frees its memory during the update). num_generations_eval = None (= 8): held-out evaluation samples groups like
 training, which is what the Phase 2 GRPO-signal gate (duplicates, sigma above the floor at T = 1) measures.
 
+Owner decisions (C7, C8): beta stays 1e-3 in the control (B1) and is 0.0 for a B run that sets it through
+`--grpo '{"beta": 0.0}'` (with beta 0 TRL loads no reference adapter and skips the reference pass; with LoRA the
+reference is the adapter-off model, so beta can be raised again later, and the warning above applies to full
+fine-tuning only). A completion limit L below the model's budget goes in through `--grpo '{"max_completion_length":
+L}'`: train_rl refuses L above the budget, records the dr_grpo loss scale budget / L in rl.json, and the soft
+overlong penalty (DAPO) needs `check_soft_overlong`. Truncated rows stay masked by default; the runaway cap
+(objdel.train.runaway) needs them unmasked.
+
 max_completion_length: 1,536 tokens for Qwen3-VL, 1,024 for LFM2.5-VL (5.2 vs 8.2 tokens per vertex,
 D10). Issue I5: on the final prepared set 1 of 3,282 RIGA train targets is over budget for each of the three
 models and 0 of 23,469 LIDC train targets (prepare_rl's token_budget, re-counted with each tokenizer; 10 / 3,546
@@ -67,12 +75,21 @@ MODELS = {
     "qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct",
 }
 MAX_COMPLETION = {"lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
+LONGEST_OUTLINE = 1182  # LIDC train doctor outline, end token counted (A1 F9)
 _LORA = {"qwen3-vl-2b"}
 _GRAD_CKPT = {"qwen3-vl-2b"}
 # vision tower + projector of every model (recorded module names in tests/test_p2_train.py;
 # archive/phase2_lab/B1/common.VISION)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
 WARMUP, DECAY = 0.03, 0.15  # D5: of the stable run's steps; of the branch point's steps
+
+
+def check_soft_overlong(limit: int, cache: int) -> None:
+    """DAPO's soft overlong penalty starts at limit - cache tokens: it must start above the longest doctor outline
+    + 32, or a correct doctor-length answer is punished (C7 option O)."""
+    if limit - cache < LONGEST_OUTLINE + 32:
+        raise ValueError(f"soft overlong penalty starts at {limit - cache} tokens; "
+                         f"it needs limit - cache >= {LONGEST_OUTLINE + 32}")
 
 
 def dtype(lora: bool) -> str:
@@ -173,12 +190,37 @@ def rl_lr(model: str) -> float:
     return 5e-5 if model in _LORA else 5e-6
 
 
-def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
-    g = REWARD_V4.group
+# Numerics presets (B2.2, ADR-0013): the importance-sampling mode and dtype of a run. The shared parts are named first
+# (a literal cannot refer to itself). Only the keys a preset changes are listed; vllm_lora is ours (see grpo_config).
+_SEQMASK = {"vllm_importance_sampling_mode": "sequence_mask", "vllm_importance_sampling_clip_max": 3.0,
+            "vllm_importance_sampling_clip_min": None}  # TRL's defaults, written out
+_TIS = {"vllm_importance_sampling_mode": "token_truncate", "vllm_importance_sampling_clip_max": 2.0,
+        "vllm_importance_sampling_clip_min": None}  # C = 2, SkyRL's token default
+NUMERICS = {
+    "bf16-seqmask": _SEQMASK,  # ADR option C: the control (B1 and B3)
+    "bf16-tis": _TIS,  # option B
+    "bf16-tis-opsm": {**_TIS, "off_policy_mask_threshold": 0.5},  # option E; train_rl --opsm-start-delta overrides 0.5
+    "fp16-seqmask": {**_SEQMASK, "bf16": False, "fp16": True},  # option A numerics, the control's IS mode
+    "lora-seqmask": {**_SEQMASK, "vllm_lora": True},  # option F, the control's IS mode
+}
+DEFAULT_NUMERICS = "bf16-seqmask"
+
+
+def grpo_config(model: str, output_dir: str, reward=REWARD_V4, numerics: str = DEFAULT_NUMERICS,
+                **overrides) -> GRPOConfig:
+    """reward: the reward spec (its group sets num_generations). numerics: a key of NUMERICS; explicit overrides win
+    over the preset. vllm_lora is not a TRL field: it is set as an attribute of the returned config, for FastGRPO to
+    read (False elsewhere)."""
+    if numerics not in NUMERICS:
+        raise ValueError(f"numerics {numerics!r}: not one of {sorted(NUMERICS)}")
+    preset = dict(NUMERICS[numerics])
+    lora = preset.pop("vllm_lora", False)
+    overrides = preset | overrides
+    g = reward.group
     for k in ("num_generations", "num_generations_eval"):
         if overrides.get(k) not in (None, g):
-            raise ValueError(f"{k}={overrides[k]}: reward v4 scores groups of exactly {g} (REWARD_V4.group)")
-    return GRPOConfig(**{
+            raise ValueError(f"{k}={overrides[k]}: {reward.name} scores groups of exactly {g} (its group)")
+    cfg = GRPOConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
         # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM
         "per_device_train_batch_size": 2 * g, "gradient_accumulation_steps": 16, "per_device_eval_batch_size": 2 * g,
@@ -192,4 +234,12 @@ def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
         "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
+    train, spg = cfg.per_device_train_batch_size, cfg.steps_per_generation
+    b = {"per_device_train_batch_size": train, "per_device_eval_batch_size": cfg.per_device_eval_batch_size,
+         "per_device_train_batch_size * steps_per_generation": train * spg}
+    for k, v in b.items():  # TRLReward scores whole groups: refuse here, not at the first held-out eval
+        if v % g:
+            raise ValueError(f"{k}={v}: must be a multiple of the group size {g} ({reward.name}'s group)")
+    cfg.vllm_lora = lora
+    return cfg
 

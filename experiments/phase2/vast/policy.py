@@ -71,9 +71,6 @@ SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
 IMPORT_CHECK = "import objdel._gpucheck, experiments.phase1.reward_gates, tests.oracles.reward_harness"
-# the CLIs the bundle must import (test_bundle_imports_standalone)
-LIVE_CLIS = ("experiments.phase2.train_rl", "experiments.phase2.g_probe", "experiments.phase2.select_ckpt",
-             "experiments.phase2.final_eval")  # fmt: skip
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
 # never closes a run younger than this as vanished (it may not be listed yet). PULL_S: added to --cap-hours, as the
 # watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min.
@@ -318,7 +315,7 @@ def launch_refusal(offer: dict, cap_hours: float) -> str:
     bw = {k: offer[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"dph": offer["dph_total"], **bw, "started": now, "deadline": now + int(cap_hours * 3600) + PULL_S}
     committed, worst = spend(committed=True), accrued(run, run["deadline"])
-    if committed + worst > HARD_STOP:
+    if not committed + worst <= HARD_STOP:  # not "> ": a NaN price must refuse too
         return f"hard stop: ${committed:.2f} committed + ${worst:.2f} worst case > ${HARD_STOP} (G10)"
     return ""
 

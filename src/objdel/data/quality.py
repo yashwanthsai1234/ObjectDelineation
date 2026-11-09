@@ -49,6 +49,7 @@ import numpy as np
 import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
+from objdel.hashing import file_sha256, pixels_sha256
 from objdel.targets import frame
 from objdel.targets.frame import CLEARANCE, crowded, hu_window, union_box
 
@@ -58,11 +59,6 @@ from .store import SPLITS
 from .windows import KINDS, Window, cell_shares, offset_of
 
 KNOWN_0396 = ("LIDC-IDRI-0396", 1420.0)  # TCIA known issue 6: patient, contour z of the corrected SOP UID
-
-
-def file_sha256(path) -> str:
-    with open(path, "rb") as fh:
-        return hashlib.file_digest(fh, "sha256").hexdigest()
 
 
 def _sidecar_hit(path: Path) -> dict | None:
@@ -161,15 +157,12 @@ NULL_DRAWS = 500  # DG16 null: random train-patient subsamples
 
 @dataclass(frozen=True)
 class Gate:
+    """One quality gate: its measured value, the limit as text, whether it is hard and whether it passed."""
     name: str
     value: float
     limit: str
     hard: bool
     ok: bool
-
-
-def image_sha256(image: np.ndarray) -> str:  # as objdel.train.dataset._pixels_sha (that module needs `datasets`)
-    return hashlib.sha256(repr(image.shape).encode() + image.tobytes()).hexdigest()
 
 
 def records(rows_root) -> list[dict]:
@@ -240,8 +233,8 @@ def leakage(store_root, review: Mapping[str, str], exclusions: Mapping, out) -> 
         for it in store.load("lidc", split, store_root):
             c = crop32(it.image, union_box(it))
             meta.append((it.item_id, split, it.group_id))
-            slices.setdefault(image_sha256(it.image), set()).add((split, it.group_id))
-            crops.setdefault(image_sha256(c), set()).add((split, it.group_id))
+            slices.setdefault(pixels_sha256(it.image), set()).add((split, it.group_id))
+            crops.setdefault(pixels_sha256(c), set()).add((split, it.group_id))
             units.append(unit(c))
             raw.append(c)
     keys = {"patients": lambda m: m[2], "series": lambda m: m[0].split("/")[1], "items": lambda m: m[0]}
@@ -326,9 +319,9 @@ def window_checks(rows_root, store_root) -> dict:
                 bad.add(r["item_id"])
                 continue
             png = cv2.imread(str(rows_root / "images" / f"{r['item_id']}.png"), cv2.IMREAD_COLOR)
-            sha = image_sha256(f.image)
+            sha = pixels_sha256(f.image)
             if (list(f.box) != box or f.W != v["side"] or sha != r["image_sha256"] or png is None
-                    or image_sha256(cv2.cvtColor(png, cv2.COLOR_BGR2RGB)) != sha):
+                    or pixels_sha256(cv2.cvtColor(png, cv2.COLOR_BGR2RGB)) != sha):
                 bad.add(r["item_id"])
     bad |= {r["item_id"] for rs in by_src.values() for r in rs}  # rows whose source item is not a train item
     return out | {"mismatch": sorted(bad), "low_contrast": sorted(set(low))}
@@ -472,6 +465,7 @@ def view_content_sha256(view_dir) -> str:
 
 
 def target_set_sha256(view_dir) -> str:
+    """The `target_set_sha256` of the one set listed in the view directory's `manifest.json`."""
     (s,) = json.loads(Path(view_dir, "manifest.json").read_text())["sets"].values()
     return s["target_set_sha256"]
 
@@ -541,4 +535,5 @@ def gates(report: Mapping) -> list[Gate]:
 
 
 def failures(gs: Sequence[Gate]) -> list[Gate]:
+    """The hard gates that failed."""
     return [g for g in gs if g.hard and not g.ok]

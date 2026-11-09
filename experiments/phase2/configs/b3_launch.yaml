@@ -1,0 +1,9 @@
+# The V3 launch config (Implementation.md front 6.3 "V3 launch config"; B3.9): the one file `make preflight CONFIG=`
+# stamps for the B3 run, launch.sh --config and push_hf.sh read. Never given to run.sh. rows_plan names the plan
+# whose train_rl step pins the rows root (preflight ROWS checks). push_hf.sh <run> experiments/phase2/configs/
+# b3_launch.yaml pushes the train_rl output {rd}/b3-v5 to the HF revision b3-v5.
+model: qwen3-vl-2b
+view: views/lidc-bundle-v3
+seed: 1
+output_dir: b3-v5                     # push_hf.sh uses it as the HF revision
+rows_plan: experiments/phase2/configs/b3_v5.yaml

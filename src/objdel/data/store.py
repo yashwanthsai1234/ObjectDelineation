@@ -31,7 +31,6 @@ References:
   https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetFile.html
 - COCO RLE, the alternative considered: https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/mask.py
 """
-import hashlib
 import io
 import json
 from collections.abc import Iterable, Iterator
@@ -41,6 +40,8 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+from objdel.hashing import file_sha256
 
 DATASETS = ("riga", "lidc")
 SPLITS = ("train", "val", "test")
@@ -86,10 +87,12 @@ def _from_npy(b: bytes) -> np.ndarray:
 
 
 def encode_masks(stack: np.ndarray) -> bytes:
+    """Pack a bool mask stack along its last axis into `.npy` bytes (`np.packbits`)."""
     return _npy(np.packbits(stack, axis=-1))
 
 
 def decode_masks(bits: bytes, width: int) -> np.ndarray:
+    """Unpack `encode_masks` bytes into a bool stack whose last axis has `width` entries."""
     return np.unpackbits(_from_npy(bits), axis=-1, count=width).astype(bool)
 
 
@@ -120,11 +123,6 @@ def _row(it: Item) -> dict:
             "image": None if it.image is None else _npy(np.ascontiguousarray(it.image)),
             "masks": [{"name": k, "bits": encode_masks(v)} for k, v in it.masks.items()],
             "meta": json.dumps(it.meta, sort_keys=True)}
-
-
-def _sha256(path: Path) -> str:
-    with open(path, "rb") as fh:
-        return hashlib.file_digest(fh, "sha256").hexdigest()
 
 
 def write(items: Iterable[Item], root) -> dict:
@@ -162,14 +160,14 @@ def write(items: Iterable[Item], root) -> dict:
         for w in writers.values():
             w.close()
     manifest = {"format": 1, "versions": {"numpy": np.__version__, "pyarrow": pa.__version__},
-                "files": {rel: {"sha256": _sha256(root / rel), "rows": rows[rel], "bytes": (root / rel).stat().st_size}
-                          for rel in sorted(rows)}}
+                "files": {rel: {"sha256": file_sha256(root / rel), "rows": rows[rel],
+                                "bytes": (root / rel).stat().st_size} for rel in sorted(rows)}}
     (root / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
     return manifest
 
 
 def _verified(root: Path, rel: str, entry: dict) -> None:
-    if _sha256(root / rel) != entry["sha256"] or pq.ParquetFile(root / rel).metadata.num_rows != entry["rows"]:
+    if file_sha256(root / rel) != entry["sha256"] or pq.ParquetFile(root / rel).metadata.num_rows != entry["rows"]:
         raise ValueError(f"{rel}: SHA-256 or row count differs from the manifest")
 
 

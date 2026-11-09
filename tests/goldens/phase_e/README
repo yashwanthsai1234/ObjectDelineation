@@ -17,3 +17,9 @@ module_strings_stale.json  dotted objdel names in strings that already point now
 old_names.json             E-G16 baseline: top-level definitions of each old module (OLD_MODULES in test_layers.py).
                            Re-record after a merge that changes one of them:
                            .venv/bin/python -I -c "import sys; sys.path.insert(0, '.'); import tests.core.test_layers as t; t.record_old_names()"
+
+Lane merge (impl2, after E0): lanes branched before E0 change these on purpose, so the merged tree re-records only
+what they changed. Golden 1: RewardV4 gains its `name` field (B3.3; the constants are unchanged). Golden 3: score_batch
+gains the `loc` term (B3.2; the other keys keep their bits). Golden 6: reward_weights gains one 0 for the `loc` logger.
+host_syncs: train/gpu_pixels.py (C1, 3 host-buffer and self-check sites). tests_import_experiments: the lanes' new
+test files. module_strings_stale: test_repo_hygiene's forward name objdel.geom.rings (E3a).

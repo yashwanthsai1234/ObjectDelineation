@@ -27,7 +27,7 @@ def _bucket(x, edges: tuple, names: tuple) -> str:
 def props(target: str, W: int, op: str) -> dict | None:
     """Properties of one target text ({"nodule": [{"outer", "holes"}]}), or None when it holds no outline.
     ext: longer side of the outline's box as a share of the crop; pos: how far its centre is from the crop centre."""
-    parts = next(iter(json.loads(target).values()))
+    parts = next(iter(json.loads(target).values()), [])
     pts = [p for part in parts for p in part["outer"]]
     if not pts:
         return None
@@ -55,11 +55,11 @@ def distribution(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
-def gaps(train: dict, exam: dict, eval_min: float = EVAL_MIN, train_max: float = TRAIN_MAX) -> list[dict]:
-    """Every (property, category) the exam has at >= eval_min whose training share is < train_max."""
+def gaps(train: dict, exam: dict) -> list[dict]:
+    """Every (property, category) the exam has at >= EVAL_MIN whose training share is < TRAIN_MAX."""
     return [{"key": k, "category": cat, "train": train[k].get(cat, 0.0), "exam": share}
             for k in KEYS for cat, share in sorted(exam[k].items(), key=lambda kv: str(kv[0]))
-            if share >= eval_min and train[k].get(cat, 0.0) < train_max]  # fmt: skip
+            if share >= EVAL_MIN and train[k].get(cat, 0.0) < TRAIN_MAX]  # fmt: skip
 
 
 def mix_coverage(rows, target, target_offsets) -> dict:

@@ -330,7 +330,7 @@ def test_draws_default_key_is_bit_identical_to_legacy():
 
 
 def test_one_item_per_cluster_equals_integers_rows():
-    for n in (1, 2, 10, 17, 401):
+    for n in (2, 10, 17, 401):  # n = 1 is one cluster: refused (BR1-data)
         want = np.random.default_rng(5).integers(0, n, (100, n))
         assert np.array_equal(np.stack(S.draws([f"x{i}" for i in range(n)], 100, 5)), want)
         assert np.array_equal(np.stack(S.draws([f"lidc/s{i}/n000/z1" for i in range(n)], 100, 5)), want)
@@ -371,15 +371,16 @@ def test_draws_with_a_key_keep_whole_clusters_in_first_appearance_order():
             rest = rest[len(block):]
             seen.add(tuple(block))
     assert seen == {(0, 1, 2), (3,)}
-    for d in S.draws(pids, 5, 0, key=lambda s: "one"):
-        assert np.array_equal(d, np.arange(4))
+    with pytest.raises(ValueError, match="at least 2 clusters"):  # BR1-data: one cluster has no spread to resample
+        S.draws(pids, 5, 0, key=lambda s: "one")
 
 
 def test_draws_edges():
     with pytest.raises(ValueError, match="no ids"):
         S.draws([], 3)
-    assert all(np.array_equal(d, [0, 1]) for d in S.draws(["lidc/s/n0/z1", "lidc/s/n0/z2"], 5))
-    assert [d.tolist() for d in S.draws(["a"], 4)] == [[0]] * 4
+    for one in (["lidc/s/n0/z1", "lidc/s/n0/z2"], ["a"]):  # one cluster (BR1-data)
+        with pytest.raises(ValueError, match="at least 2 clusters"):
+            S.draws(one, 5)
     assert S.draws(["a", "b"], 0) == []
 
 
@@ -519,6 +520,7 @@ def test_gate_a_g1_exact_numbers_on_r5_test_items():
 def test_summary_speed_memory_and_two_draw_calls(monkeypatch):
     """Q01: the golden's 2,200 ids with the 12 metrics and 6 selection keys: one nodule and one patient draw set,
     reused by every key, plus the same two on the found subset (iou_found, U10)."""
+    import os
     import time
     import tracemalloc
 
@@ -536,4 +538,7 @@ def test_summary_speed_memory_and_two_draw_calls(monkeypatch):
     seconds = time.perf_counter() - t
     peak = tracemalloc.get_traced_memory()[1]
     tracemalloc.stop()
-    assert len(calls) == 4 and seconds < 20 and peak < 600e6
+    # 20 s on an idle machine; CPU-bound, so the bound scales with the run queue per core (75 s seen at load 37 on 8
+    # cores, same code as before the merge)
+    slack = max(1.0, os.getloadavg()[0] / (os.cpu_count() or 1))
+    assert len(calls) == 4 and seconds < 20 * slack and peak < 600e6

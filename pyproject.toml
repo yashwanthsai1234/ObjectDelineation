@@ -32,6 +32,8 @@ dev = [
     "vulture==2.16",  # `make dead`
     "import-linter==2.16",  # `make lint`: layer contracts
 ]
+# Docs site (DOC3, ADR-0012). Rollback, not installed: mkdocs-material==9.8.1, mkdocs-api-autonav==0.4.0.
+docs = ["zensical==0.1.0", "mkdocstrings-python==2.0.10"]
 
 [build-system]
 # Pinned: the extension's machine code depends on them (plan §6).
@@ -72,6 +74,8 @@ markers = [
     "data: needs data/fixtures or data/store (skipped when absent)",
     "gpu: needs the CUDA build on a GPU box (skipped on the CPU build)",
     "sanitizer: runs under compute-sanitizer in make gpu-check (small fixed corpus)",
+    "docs_build: needs the docs extra and builds the site (make docs)",
+    "post_commit: reads the git index; owner and CI only",
 ]
 
 [tool.coverage.run]
@@ -90,17 +94,24 @@ target-version = "py312"
 extend-exclude = ["archive"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "TID"]
+select = ["E", "F", "I", "B", "UP", "TID", "D100", "D101", "D102", "D103", "D104", "D106"]
 ignore = ["E731", "E741"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 # Phase scripts are frozen records of what produced the published numbers: lint lightly.
-"experiments/**" = ["E501", "B023", "B905"]
+"experiments/**" = ["E501", "B023", "B905", "D"]
+"tests/**" = ["D"]
 "src/objdel/train/fast.py" = ["TID251"]          # removed in E5 (file split)
 "src/objdel/train/trl_adapter.py" = ["TID251"]   # becomes rl/trl_adapter.py in E5
 "src/objdel/train/sample.py" = ["TID251"]        # removed in E5 (sample -> rl/trl_adapter.py)
 "tests/test_trl_adapter.py" = ["TID251"]         # becomes tests/rl/test_trl_adapter.py in E5
 "tests/test_train_fast.py" = ["TID251"]          # removed in E5
+"src/objdel/train/vllm_sync.py" = ["TID251"]    # moves into rl/ in E5
+"tests/test_vllm_sync.py" = ["TID251"]
+"tests/test_breakit_r1_rl.py" = ["TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Dotted names that import-linter cannot forbid. Each ban is added when its task lands.
@@ -114,7 +125,7 @@ known-first-party = ["objdel", "experiments"]
 # Dead-code gate (`make dead`, tests/test_repo_hygiene.py). Each group below is used by name from outside the code.
 paths = ["src", "experiments", "tests"]
 min_confidence = 60
-ignore_decorators = ["@pytest.fixture", "@model_validator"]  # autouse fixtures (_no_real_secrets, clean_store); pydantic validators (core/spec.py)
+ignore_decorators = ["@pytest.fixture", "@model_validator"]  # autouse fixtures; pydantic validators (core.spec)
 ignore_names = [
   "on_*", "should_save", "should_training_stop",  # transformers TrainerCallback hooks and control flags
   "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes
@@ -122,12 +133,12 @@ ignore_names = [
   "pytestmark", "pre_tokenizer", "decoder", "projector_hidden_size", "is_main_process",
   "writeable", "atexit",  # numpy flag (topology.py), atexit hook (cache.py)
   "rid", "multimodal_fields", "has_tool_images", "return_tensors",  # fake signatures that callers use by keyword
-  "clean_store", "no_nvtx_calls", "no_load", "mutant",  # fixtures requested by name for their side effect
+  "clean_store", "no_nvtx_calls", "no_load", "mutant", "lora_request",  # fixtures requested by name for their side effect
   "repo_id", "trial", "stream", "num_images", "pixel_attention_mask", "image_sizes", "num_tiles", "spatial_shapes", "token_type_ids", "image_position_ids", "_save_checkpoint",  # fakes of library signatures
+  "schema_version", "compute",  # objdel.core.spec RunSpec fields, read by pydantic and the YAML specs
+  "record_old_names",  # tests/core/test_layers.py: run by hand to re-record a golden (goldens README)
   "current_gradient_accumulation_steps",  # Trainer attribute that the code under test reads
   "TransferSyntaxUID", "MediaStorageSOPInstanceUID", "MediaStorageSOPClassUID",  # pydicom file-meta that save_as reads
-  "schema_version", "compute",  # RunSpec fields that pydantic validates from the spec YAML (core/spec.py)
-  "record_old_names",  # run by hand to re-record tests/goldens/phase_e/old_names.json (goldens README)
 ]
 
 [tool.importlinter]

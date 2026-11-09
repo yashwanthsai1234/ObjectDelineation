@@ -74,6 +74,7 @@ References:
 - Lab derivation and evidence: archive/phase1_lab/t_reward/rewardcore/band.py, results/ITERATION3.md (R5).
 """
 import hashlib
+import math
 import os
 import weakref
 from collections import defaultdict
@@ -223,6 +224,8 @@ def _rater_stack(stack) -> np.ndarray:
     stack = np.ascontiguousarray(stack, dtype=bool)
     if stack.ndim != 3 or not rl_eligible(stack):
         raise ValueError(f"need a (k >= 2, H, W) rater stack, got shape {stack.shape}")
+    if len(stack) > 32:  # the engine's tables hold at most 32 raters
+        raise ValueError(f"at most 32 raters, got {len(stack)}")
     return stack
 
 
@@ -243,6 +246,8 @@ class ExpertCache:
     built by the first `device()` (or `device_many`) in the process; the distance maps on the host only when read."""
 
     def __init__(self, raters: np.ndarray, tau: float, t5: float):
+        if not (math.isfinite(t5) and t5 > 0):
+            raise ValueError(f"t5 must be finite and > 0, got {t5}")
         raters = _rater_stack(raters)
         self.raters, self.tau, self.t5, self.k = raters, float(tau), float(t5), len(raters)
         s = raters.sum(0, dtype=np.int16)
@@ -277,6 +282,7 @@ class ExpertCache:
 
     @property
     def voters(self) -> tuple[int, ...]:
+        """Raters with a topology vote (`voters` of the signatures)."""
         return voters(self.rater_sigs)
 
     @property
@@ -288,11 +294,25 @@ class ExpertCache:
         return dict(same)
 
     @cached_property
+    def ref_sum(self) -> tuple[int, int, int]:
+        """(sum of column indices, sum of row indices, pixel count) of the vote mask, or of the union when the vote is
+        empty: the location term's reference centroid times its area (Implementation.md B3.2)."""
+        ys, xs = np.nonzero(self.vote if self.n_vote > 0 else self.union)
+        return int(xs.sum()), int(ys.sum()), int(xs.size)
+
+    @cached_property
+    def radius2(self) -> float:
+        """|union| / pi: the squared radius of a disc of the union's area (the location kernel's scale)."""
+        return int(np.count_nonzero(self.union)) / np.pi
+
+    @cached_property
     def dist_out_union(self) -> np.ndarray:
+        """Distance in pixels (float32) from each pixel outside the union to the union."""
         return edt(~self.union)
 
     @cached_property
     def dist_in_core(self) -> np.ndarray:
+        """Distance in pixels (float32) from each core pixel to the nearest non-core pixel."""
         return edt(self.core)
 
     def table_args(self) -> tuple:
@@ -310,6 +330,7 @@ class ExpertCache:
 
     @classmethod
     def build(cls, stack) -> "ExpertCache":
+        """Build the cache from a rater mask stack, computing tau and the F5 tolerance from it."""
         stack = _rater_stack(stack)
         return cls(stack, rater_tau(stack), f5_tolerance(stack))
 

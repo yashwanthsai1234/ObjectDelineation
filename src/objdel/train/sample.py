@@ -100,6 +100,7 @@ def export(paths: Iterable, keys: Iterable[str] | None = None) -> list[dict]:
 
 
 def write(rows: Iterable[dict], path) -> None:
+    """Write rows as JSON lines to `path`, creating its folder."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         for r in rows:

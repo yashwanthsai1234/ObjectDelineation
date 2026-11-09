@@ -30,7 +30,9 @@ OBJDEL_FIXED_USD from the active run, the flags' defaults.
 Held-out curve (off by default): --heldout VIEW evaluates --heldout-items val-shape items (splits.val_half) of that
 eval view every --heldout-every steps, 8 answers each; rl.json "eval" holds eval/iou_tc and eval/allmiss_share.
 
-<out>/rl.json: steps, LR, numerics, beta, rows provenance, timing and TRL's log.
+<out>/rl.json: steps, LR, numerics, opsm_start_delta (None outside bf16-tis-opsm), beta, reward (name, fingerprint,
+c_topo, loc_width, area_gate), rows provenance, timing and TRL's log. --reward v5 trains on reward v5 and adds
+callbacks.LocGuard (stop and save; loc_guard_stopped).
 """
 import argparse
 import gc
@@ -38,11 +40,21 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
 
-NUMERICS = "bf16-seqmask"  # today's values (bf16, sequence_mask, cap 3) until B2.2 adds --numerics
+# fp16-seqmask needs fp16 weights and vLLM dtype, lora-seqmask needs LoRA serving: both are FastGRPO plumbing (B2.2)
+NEEDS_FASTGRPO = ("fp16-seqmask", "lora-seqmask")
+
+
+def _finite(lo_open: bool):
+    def check(s: str) -> float:
+        if not (0 < (x := float(s)) if lo_open else 0 <= (x := float(s))) or x == float("inf"):
+            raise argparse.ArgumentTypeError(f"{s!r}: needs a finite number {'> 0' if lo_open else '>= 0'}")
+        return x
+    return check
 
 
 def _hex(n: int):
@@ -54,6 +66,8 @@ def _hex(n: int):
 
 
 def parse(argv=None) -> argparse.Namespace:
+    from objdel.train import configs
+
     env = os.environ.get
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     ap.add_argument("--model", required=True, help="configs.MODELS key")
@@ -63,37 +77,90 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--steps", type=int, help="optimizer steps in total (a resumed run included)")
     ap.add_argument("--save-steps", type=int, default=50, help="checkpoint every N steps (default 50)")
     ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
+    ap.add_argument("--fast-sync", action="store_true",
+                    help="C5: the vLLM weight push in one load_weights call (vllm_sync), not TRL's per-parameter loop")
+    ap.add_argument("--group-requests", action="store_true",
+                    help="C6: vLLM gets one request with n = num_generations per prompt, not n = 1 per row")
+    ap.add_argument("--no-ckpt-layers", type=int, metavar="K",
+                    help="C9 arm (a): gradient checkpointing off on the last K text decoder layers")
     ap.add_argument("--lr", type=float, help="learning rate (default: the G-probe's, LoRA or full FT)")
     ap.add_argument("--resume", action="store_true", help="continue from the last <out>/trainer/checkpoint-N")
     ap.add_argument("--merge-last", action="store_true",
                     help="no training: merge the last checkpoint into --ckpt as <out>/final unless it exists")
     ap.add_argument("--rows-revision", type=_hex(40), help="HF commit of the rows root (provenance in rl.json)")
     ap.add_argument("--rows-manifest-sha256", type=_hex(64), help="SHA-256 of the rows root's manifest.json")
-    ap.add_argument("--budget-usd", type=float, help="stop and save when the session spend reaches this")
-    ap.add_argument("--session-start", type=float, default=env("OBJDEL_SESSION_START"),
+    ap.add_argument("--budget-usd", type=_finite(True), help="stop and save when the session spend reaches this")
+    ap.add_argument("--session-start", type=_finite(False), default=env("OBJDEL_SESSION_START"),
                     help="unix time the rental started (default: $OBJDEL_SESSION_START)")
-    ap.add_argument("--rate-usd-per-h", type=float, default=env("OBJDEL_RATE_USD_PER_H"),
+    ap.add_argument("--rate-usd-per-h", type=_finite(True), default=env("OBJDEL_RATE_USD_PER_H"),
                     help="USD per hour, bandwidth included (default: $OBJDEL_RATE_USD_PER_H)")
-    ap.add_argument("--fixed-usd", type=float, default=env("OBJDEL_FIXED_USD", "0"),
+    ap.add_argument("--fixed-usd", type=_finite(False), default=env("OBJDEL_FIXED_USD", "0"),
                     help="one-off USD of the session (default: $OBJDEL_FIXED_USD, else 0)")
     ap.add_argument("--heldout", type=Path, help="eval view for the held-out curve (val-shape items only)")
     ap.add_argument("--heldout-items", type=int, default=64)
     ap.add_argument("--heldout-every", type=int, default=50)
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config")
+    ap.add_argument("--runaway-cap", type=float, default=0, metavar="FACTOR",
+                    help="C11: cap each answer at min(L, ceil(FACTOR x its doctor outline) + 64) tokens "
+                         "(0 = off); needs mask_truncated_completions false in --grpo")
+    ap.add_argument("--reward", choices=("v4", "v5"), default="v4",
+                    help="reward spec (objdel.reward.REWARDS); v5 adds callbacks.LocGuard (default v4)")
+    ap.add_argument("--numerics", choices=sorted(configs.NUMERICS), default=configs.DEFAULT_NUMERICS,
+                    help="configs.NUMERICS preset (default: the B1 control)")
+    ap.add_argument("--opsm-start-delta", type=float,
+                    help="off_policy_mask_threshold of steps 1-20; only with --numerics bf16-tis-opsm (B2.4 rule 4)")
     ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
                     help="NVTX step ranges and a cudaProfilerApi capture of steps S..E (nsys_capture.sh; S >= 2)")
     ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
                                     "else step 3 (the nsys fallback)")
+    ap.add_argument("--count-syncs", action="store_true", help="C0: log perf/host_syncs/<phase> (torch sync warnings)")
+    ap.add_argument("--host-meta", action="store_true",
+                    help="C4: row lengths, image ids and groups from vLLM's host lists in the batch (host_meta)")
+    ap.add_argument("--check-meta-every", type=int, default=50, metavar="N",
+                    help="with --host-meta: compare host_meta with the device masks on steps 1, N+1, ... (0: never)")
+    ap.add_argument("--gpu-pixels", choices=("off", "auto"), default="off",
+                    help="C1: prepare pixel values on the GPU after a start-up self-check (default off: the CPU path)")
+    ap.add_argument("--allow-cpu-pixels", action="store_true",
+                    help="with --gpu-pixels auto: keep the CPU processor when no GPU backend passes, instead of failing")
     a = ap.parse_args(argv)
     if not a.merge_last and (a.train is None or a.steps is None):
         ap.error("--train and --steps are required (except with --merge-last)")
+    for k in ("steps", "save_steps", "heldout_every"):  # TRL reads max_steps <= 0 as "train num_train_epochs"
+        if getattr(a, k) is not None and getattr(a, k) < 1:
+            ap.error(f"--{k.replace('_', '-')} {getattr(a, k)}: needs >= 1")
     if a.budget_usd is not None and a.session_start is None:
         ap.error("--budget-usd needs a session start: --session-start or OBJDEL_SESSION_START (run.sh exports it)")
     if a.budget_usd is not None and a.rate_usd_per_h is None:
         ap.error("--budget-usd needs a rate: --rate-usd-per-h or OBJDEL_RATE_USD_PER_H (run.sh exports it)")
+    if a.numerics in NEEDS_FASTGRPO:
+        ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM dtype or LoRA serving, B2.2), not built yet")
+    if a.opsm_start_delta is not None and (a.numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
+        ap.error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
+    if "off_policy_mask_threshold" in json.loads(a.grpo):
+        ap.error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     if a.profile_window and not 2 <= a.profile_window[0] <= a.profile_window[1]:
         ap.error(f"--profile-window {a.profile_window}: needs 2 <= S <= E")
     return a
+
+
+def check_flags(a) -> None:
+    """Refusals that need no model: the completion limit (C7: set from the outline count, never above the model's
+    budget) and the runaway cap (C11: a capped answer is cut mid-text, so masking it would bias the update toward
+    more capping)."""
+    from objdel.train import configs
+
+    over = json.loads(a.grpo)
+    budget = configs.MAX_COMPLETION[a.model]
+    if over.get("max_completion_length", budget) > budget:
+        raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
+    if a.runaway_cap and over.get("mask_truncated_completions", True):
+        raise ValueError("--runaway-cap needs --grpo '{\"mask_truncated_completions\": false}'")
+
+
+def numerics_overrides(a) -> dict:
+    """The grpo_config arguments of --numerics and --opsm-start-delta (absent: the preset's own threshold)."""
+    return {"numerics": a.numerics} | ({} if a.opsm_start_delta is None
+                                       else {"off_policy_mask_threshold": a.opsm_start_delta})
 
 
 def budget_stop(a):
@@ -142,6 +209,8 @@ def check_sampler(cfg, schedule: dict, steps: int) -> None:
                          f"{cfg.gradient_accumulation_steps}: one generation batch must be one optimizer step")
     if cfg.num_iterations != 1:
         raise ValueError(f"num_iterations {cfg.num_iterations}: the schedule gives each step its own prompts")
+    if steps < 1:
+        raise ValueError(f"--steps {steps}: needs >= 1")
     if steps > schedule["steps"]:
         raise ValueError(f"--steps {steps} > the schedule's {schedule['steps']} steps")
     if steps % schedule["block_steps"]:
@@ -175,15 +244,32 @@ def save_final(model, proc, out: Path) -> None:
     proc.save_pretrained(out / "final")
 
 
+def cut_seq_gaps(trainer_dir: Path, step: int) -> None:
+    """seq_gaps.f32 back to the first `step` steps (rows a crashed run logged after its last checkpoint go; a fresh
+    run, step 0, deletes it), so step i of the file stays optimizer step i after --resume."""
+    f, meta = trainer_dir / "seq_gaps.f32", trainer_dir / "seq_gaps.json"
+    if not step or not meta.is_file() or not f.is_file():
+        f.unlink(missing_ok=True)
+        meta.unlink(missing_ok=True)
+        return
+    m = json.loads(meta.read_text())
+    with open(f, "r+b") as fh:
+        fh.truncate(min(f.stat().st_size, step * m["rows_per_step"] * 3 * 4))
+    m["steps"] = f.stat().st_size // (m["rows_per_step"] * 3 * 4)
+    meta.write_text(json.dumps(m) + "\n")
+
+
 def merge_last(a) -> int:
     """--merge-last: <out>/final from the last checkpoint when the run ended before its own save."""
     from transformers.trainer_utils import get_last_checkpoint
 
     from experiments.phase2.g_probe import save_json
 
-    if (a.out / "final").is_dir():
-        print(f"{a.out / 'final'} exists: nothing to merge")
+    final = a.out / "final"
+    if (final / "config.json").is_file() and any(final.glob("*.safetensors")) and (a.out / "rl.json").is_file():
+        print(f"{final} exists: nothing to merge")
         return 0
+    shutil.rmtree(final, ignore_errors=True)  # a half-written final (the box died inside save_final)
     last = get_last_checkpoint(str(a.out / "trainer")) if (a.out / "trainer").is_dir() else None
     if last is None:
         print(f"--merge-last: no checkpoint in {a.out / 'trainer'}", file=sys.stderr)
@@ -209,8 +295,11 @@ def main(argv=None) -> int:
     from transformers.trainer_utils import get_last_checkpoint
 
     from experiments.phase2.g_probe import make_trainer, save_json
-    from objdel.train import dataset, serve
+    from objdel.train import configs, dataset, serve
 
+    check_flags(a)
+    if a.runaway_cap:
+        raise SystemExit("--runaway-cap: FastGRPO does not read the `cap` column yet (C11 fast.py step; handoff)")
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
     stop = budget_stop(a)
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule else dataset.DISAGREEMENT_OVERSAMPLE)
@@ -220,15 +309,21 @@ def main(argv=None) -> int:
     last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
     if a.resume and last is None:
         print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
+    cut_seq_gaps(a.out / "trainer", int(Path(last).name.split("-")[1]) if last else 0)
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
-    over = {"save_strategy": "steps", "save_steps": a.save_steps}
+    over = {"save_strategy": "steps", "save_steps": a.save_steps} | numerics_overrides(a)
     over |= {"shuffle_dataset": False} if schedule else {}
     over |= {"eval_strategy": "steps", "eval_steps": a.heldout_every, "num_generations_eval": 8} if a.heldout else {}
     check = (lambda cfg: check_sampler(cfg, schedule, a.steps)) if schedule else None
+    from objdel.reward import REWARDS, reward_fingerprint
+    from objdel.train.callbacks import LocGuard
+
+    spec = REWARDS[a.reward]
+    guard = LocGuard() if a.reward == "v5" else None
     trainer, proc, lr = make_trainer(a, a.ckpt, train, a.steps, eval_dataset=heldout, check=check,
-                                     calls=[stop] if stop else [], **over)
+                                     calls=[c for c in (stop, guard) if c], reward=spec, **over)
     t0 = time.time()
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
@@ -240,8 +335,15 @@ def main(argv=None) -> int:
     return save_json(a.out / "rl.json", {
         "model": a.model, "steps": done, "lr": lr, "ckpt": str(a.ckpt), "resumed_from": last,
         "final": str(a.out / "final"),
-        "numerics": NUMERICS, "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
+        "numerics": a.numerics,
+        "opsm_start_delta": a.opsm_start_delta if a.opsm_start_delta is not None else cfg.off_policy_mask_threshold,
+        "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
+        "max_completion_length": cfg.max_completion_length,
+        "loss_scale": configs.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L (C7)
+        "reward": {"name": spec.name, "fingerprint": reward_fingerprint(spec), "c_topo": spec.c_topo,
+                   "loc_width": getattr(spec, "loc_width", None), "area_gate": getattr(spec, "area_gate", None)},
         "rows": rows, "train_rows": len(train), "budget_stopped": bool(stop and stop.tripped),
+        "loc_guard_stopped": bool(guard and guard.tripped),
         "eval": [{"step": h["step"], "eval/iou_tc": h["eval_rewards/iou_tc/mean"],
                   "eval/allmiss_share": h["eval_allmiss_share"]} for h in log if "eval_rewards/iou_tc/mean" in h],
         "timing_s": {"train": t1 - t0, "per_step": (t1 - t0) / max(1, done - start)},

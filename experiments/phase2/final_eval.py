@@ -49,20 +49,21 @@ Reads untrusted data: run with python -I.
 """
 
 import argparse
-import hashlib
 import json
-import os
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
+from experiments.phase2.freeze_views import render_files
 from experiments.phase2.select_ckpt import score_items  # imported before the pool forks (no import in a child)
 from objdel import _gpucheck
 from objdel.data import quality as Q
 from objdel.eval import select, signal
+from objdel.hashing import file_sha256
+from objdel.io import git, read_jsonl
+from objdel.io import write_atomic as _write
 
 ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VIEWS = ROOT / "docs/reference/frozen_views.json"  # /workspace/src on the box
@@ -76,14 +77,11 @@ METRICS = {"legal": ("samples", True), "iou_tc": ("samples", True), "f5": ("samp
 SELECTION = ("sel_mean_of_k", "sel_legal_mean", "sel_medoid", "sel_medoid_legal", "sel_oracle", "sel_vote")
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
-RENDER_FILES = ("src/objdel/targets/augment.py", "src/objdel/targets/frame.py", "src/objdel/targets/build.py",
-                "src/objdel/targets/simplify.py", "src/objdel/train/dataset.py",
-                "experiments/phase2/build_eval_views.py")  # the files that shape a view's images and targets
 
 
 def per_item(result: dict, obj: str = "nodule") -> dict:
     """K-sample means of one item's scores (metrics' output; METRICS), `miss` (the K-mean IoU_tc below signal.MISS),
-    the doctors' vote area, and the answer choices (A4): the mean of the K IoU_tc,
+    and the answer choices (A4): the mean of the K IoU_tc,
     the mean over legal answers (0 if none), the medoid's (with its legality), the best one (it reads the labels: an
     upper bound, never deployed) and the pixel vote's (analysis only: a mask is not an answer; absent when the
     result has no `pixel_vote_iou_tc`)."""
@@ -94,7 +92,6 @@ def per_item(result: dict, obj: str = "nodule") -> dict:
     vote = o.get("pixel_vote_iou_tc")
     means = {m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()}
     return {"item_id": result["item_id"], **means, "miss": float(means["iou_tc"] < signal.MISS),
-            "vote_area": o["vote_area"],
             "sel_mean_of_k": float(iou.mean()), "sel_legal_mean": float(iou[legal].mean()) if legal.any() else 0.0,
             "sel_medoid": float(iou[i]), "sel_medoid_legal": float(legal[i]), "sel_oracle": float(iou.max()),
             **({} if vote is None else {"sel_vote": float(vote)})}
@@ -104,6 +101,8 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     """Schema 2: per METRICS key the items hold, the mean and its item, nodule and patient (with `groups`,
     {item_id: group_id}) 95 % bootstrap intervals; the median of iou_tc; the miss rate. One draw set per unit."""
     ids = [it["item_id"] for it in items]
+    if len(set(ids)) != len(ids):
+        raise ValueError("summarize: duplicate item_id")
     D = {"ci95_nodule": signal.draws(ids, draws, seed),
          "ci95_patient": None if groups is None else signal.draws(ids, draws, seed, key=groups.__getitem__)}
     idx = np.random.default_rng(seed).integers(0, len(items), (draws, len(items)))
@@ -147,24 +146,6 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
 
     out["paired"] = {"medoid_minus_mean": paired("sel_medoid"), "vote_minus_mean": paired("sel_vote")}
     return out
-
-
-def size_terciles(items: list[dict]) -> dict:
-    """Items in three groups by the doctors' vote area (`vote_area`): area <= bounds[0], <= bounds[1], above, with
-    bounds at the 1/3 and 2/3 order statistics, so equal areas share a group; per group the item count and the mean
-    iou_tc and boundary_iou (None when empty). ValueError for fewer than 3 items."""
-    if len(items) < 3:
-        raise ValueError(f"size_terciles: need >= 3 items, got {len(items)}")
-    area = np.array([it["vote_area"] for it in items])
-    a = np.sort(area)
-    bounds = [int(a[-(-len(a) * j // 3) - 1]) for j in (1, 2)]
-    group = np.searchsorted(bounds, area)  # 0: <= bounds[0], 1: <= bounds[1], 2: above
-    terciles = []
-    for g in range(3):
-        its = [it for it, x in zip(items, group, strict=True) if x == g]
-        terciles.append({"items": len(its), **{m: float(np.mean([it[m] for it in its])) if its else None
-                                               for m in ("iou_tc", "boundary_iou")}})
-    return {"bounds": bounds, "terciles": terciles}
 
 
 def gate_a(val: dict, test: dict | None) -> dict:
@@ -259,7 +240,7 @@ def view_groups(view: Path, split: str) -> dict[str, str]:
 
 def view_manifest_sha256(view: Path) -> str:
     """SHA-256 of the view's manifest.json bytes (it changes with harmless rebuild details: versions, fingerprint)."""
-    return hashlib.sha256((Path(view) / "manifest.json").read_bytes()).hexdigest()
+    return file_sha256(Path(view) / "manifest.json")
 
 
 def _view_records(view: Path) -> list[dict]:
@@ -276,23 +257,14 @@ def check_view(view: Path, split: str) -> None:
     sets = json.loads((view / "manifest.json").read_text())["sets"]
     if f"lidc/{split}" not in sets:
         sys.exit(f"final_eval: {view} holds {sorted(sets)}, not lidc/{split} (the test view needs --split test)")
-    if view.name not in Q.FROZEN:
+    name = view.resolve().name  # an alias (symlink) of a frozen view is that view
+    if name not in Q.FROZEN:
         return
-    if (e := frozen_entry(view.name)) is None:
+    if (e := frozen_entry(name)) is None:
         sys.exit(f"final_eval: {view.name} is a frozen view with no frozen_views.json entry (looked in {FROZEN_VIEWS})")
     for key, got in (("content_sha256", Q.view_content_sha256(view)), ("target_set_sha256", Q.target_set_sha256(view))):
         if got != e[key]:
             sys.exit(f"final_eval: {view.name} {key} {got} differs from frozen_views.json {e[key]}: refusing to score")
-
-
-def _git(*args: str, root: Path = ROOT) -> str | None:
-    """git's stdout in root, or None without git (the box gets the code by rsync, with no .git)."""
-    if not (root / ".git").exists():
-        return None
-    try:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
 
 
 def code_sha(root: Path = ROOT) -> str | None:
@@ -300,14 +272,14 @@ def code_sha(root: Path = ROOT) -> str | None:
     git rev-parse HEAD, else None."""
     f = Path(root) / "CODE_SHA"
     text = f.read_text().strip() if f.exists() else ""
-    return text or _git("rev-parse", "HEAD", root=Path(root))
+    return text or git("rev-parse", "HEAD", root=root, required=False)
 
 
 def hash_view(view: Path, out: Path) -> None:
     """--hash-view: the view's identity record (the pre-rental record of A3 step 1)."""
     sets = json.loads((view / "manifest.json").read_text())["sets"]
     (target_set,) = [s["target_set_sha256"] for k, s in sets.items() if k.startswith("lidc/")]
-    commits = {f: _git("log", "-1", "--format=%H", "--", f) or None for f in RENDER_FILES}
+    commits = render_files()
     _write(out, json.dumps({
         "view": str(view), "items": len(_view_records(view)), "content_sha256": Q.view_content_sha256(view),
         "target_set_sha256": target_set, "generator_commit": commits["experiments/phase2/build_eval_views.py"],
@@ -316,18 +288,6 @@ def hash_view(view: Path, out: Path) -> None:
                 "code identity, not measured"}, indent=1))
 
 
-def _write(path: Path, text: str) -> None:
-    """Write through a temp file and os.replace: a crash leaves the old file or none, never half a file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
-
-
-def read_jsonl(path: Path) -> list[dict]:
-    """One dict per line, read line by line (a 2,200-item answers.jsonl is about 18 MB)."""
-    with open(path) as f:
-        return [json.loads(line) for line in f]
 
 
 def _lines(rows: list[dict]) -> str:
@@ -339,8 +299,7 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
     import pyarrow.parquet as pq
 
     doc = json.loads((run / "final_eval.json").read_text())
-    with open(run / "items.jsonl") as f:
-        items = [json.loads(line) for line in f]
+    items = read_jsonl(run / "items.jsonl")
     table = pq.read_table(store / "lidc" / f"{doc['split']}.parquet", columns=["item_id", "group_id"])
     found = {i: g for i, g in zip(*table.to_pydict().values(), strict=True) if g}
     lost = [it["item_id"] for it in items if it["item_id"] not in found]
@@ -460,7 +419,11 @@ def main(argv=None) -> None:
     outs = a.out if len(a.out) == len(views) else [a.out[0] / v.name for v in views]
     for view, split in zip(views, splits, strict=True):
         check_view(view, split)
+    if len({o.resolve() for o in outs}) != len(outs):
+        ap.error("two views write the same --out folder: give distinct --view directory names or one --out each")
     if a.rescore:
+        if outs[0].resolve() == a.rescore.resolve():
+            ap.error("--out must not be the --rescore folder")
         if len(views) != 1:
             ap.error("--rescore takes one --view")
         return rescore(a.rescore, views[0], splits[0], outs[0])

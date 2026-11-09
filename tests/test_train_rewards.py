@@ -161,7 +161,8 @@ def test_an_illegal_high_iou_answer_does_not_raise_the_logged_geometry():
     assert all(ref["legal"][i] == 0 and ref["iou_tc"][i] == 1.0 for i in swap)  # the precondition
     for name in R.GATED:
         assert all(hacked[name][i] == 0.0 for i in swap)
-        assert np.mean(hacked[name]) < np.mean(honest[name])
+        if name != "loc":  # the honest answers are hits: their location term is 0 too
+            assert np.mean(hacked[name]) < np.mean(honest[name])
     assert hacked[R.AGGREGATOR] == advantages_v4(ref).tolist()
 
 

@@ -16,17 +16,20 @@ image once per generation batch. Valid because LoRA leaves the tower and project
 """
 
 import contextlib
+import dataclasses
 import functools
 import math
 import sys
 import time
+import typing
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
-from objdel.train import nvtx, trl_adapter
+from objdel.train import nvtx, trl_adapter, vllm_requests
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -48,6 +51,86 @@ def window(attention_mask: torch.Tensor, logits_to_keep: int, buckets=BUCKETS) -
     keep = min(logits_to_keep, width - prompt)
     return P + keep - width, keep
 
+
+
+@dataclasses.dataclass(frozen=True)
+class RowMeta:
+    """Host facts of a generation batch's rows (C4), int32 arrays of shape (B,): real prompt tokens, real answer
+    tokens (0 for a truncated row under mask_truncated_completions, as TRL zeroes its completion_mask), the row's
+    distinct image (first-appearance index) and its group of G answers."""
+
+    prompt_len: np.ndarray
+    completion_len: np.ndarray
+    image_id: np.ndarray
+    group: np.ndarray
+
+
+def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_truncated: bool,
+             eos_and_pad_ids) -> RowMeta:  # fmt: skip
+    """RowMeta from the host lists TRL already holds. A row is truncated when its last id is not in eos_and_pad_ids
+    (TRL's own rule, grpo_trainer.py 2604-2606, with TRL's list)."""
+    if any(not c for c in completion_ids_list):
+        raise ValueError("an empty answer: TRL's truncation rule reads its last id")
+    ends = set(eos_and_pad_ids)
+    clen = [0 if mask_truncated and c[-1] not in ends else len(c) for c in completion_ids_list]
+    i32 = functools.partial(np.asarray, dtype=np.int32)
+    return RowMeta(i32([len(p) for p in prompt_ids_list]), i32(clen), i32(image_ids),
+                   i32([i // G for i in range(len(clen))]))  # fmt: skip
+
+
+class MetaRow(typing.NamedTuple):
+    """One row of a RowMeta: the batch's host_meta list field, which TRL's split and shuffle move with the row."""
+
+    prompt_len: int
+    completion_len: int
+    image_id: int
+    group: int
+
+
+def host_rows(meta: RowMeta) -> list[MetaRow]:
+    """meta as one MetaRow per row (Python ints)."""
+    return [MetaRow(*r) for r in np.stack(dataclasses.astuple(meta), 1).tolist()]
+
+
+def meta_of(batch: dict) -> RowMeta | None:
+    """The RowMeta of a batch's host_meta rows (in their current order), or None without host_meta."""
+    rows = batch.get("host_meta")
+    return None if rows is None else RowMeta(*(np.asarray(c, dtype=np.int32) for c in zip(*rows, strict=True)))
+
+
+def image_ids(rows) -> list[int]:
+    """Each dataset row's image as a dense id in first-appearance order, by object (OpenOnce shares one object per
+    distinct image)."""
+    seen: dict[int, int] = {}
+    return [seen.setdefault(id(r.get("image")), len(seen)) for r in rows]
+
+
+def check_meta(batch: dict) -> None:
+    """C4 step 5 (--check-meta-every): host_meta's lengths equal the device mask sums; raises naming field and row."""
+    for field, mask in (("prompt_len", "prompt_mask"), ("completion_len", "completion_mask")):
+        for i, (r, d) in enumerate(zip(batch["host_meta"], batch[mask].sum(1).tolist(), strict=True)):
+            if getattr(r, field) != d:
+                raise AssertionError(f"host_meta row {i}: {field} {getattr(r, field)} != device {d}")
+
+
+def window_from_meta(meta: RowMeta, rows, P: int, logits_to_keep: int, buckets=BUCKETS) -> tuple[int, int]:
+    """window() of the chunk `rows` (indices into meta) without a device read; P is the padded prompt width."""
+    prompt, longest = int(meta.prompt_len[rows].max()), max(int(meta.completion_len[rows].max()), 1)
+    W = P + logits_to_keep
+    width = min(next((b for b in buckets if b >= prompt + longest), W), W)
+    keep = min(logits_to_keep, width - prompt)
+    return P + keep - width, keep
+
+
+def length_order(meta: RowMeta) -> np.ndarray:
+    """by_length's order: real prompt + answer tokens, longest first, stable."""
+    return np.argsort(-(meta.prompt_len.astype(np.int64) + meta.completion_len), kind="stable")
+
+
+def group_order(meta: RowMeta, G: int) -> np.ndarray:
+    """by_group_length's order: groups of G by their longest member, longest first, stable; rows kept in place."""
+    n = (meta.prompt_len.astype(np.int64) + meta.completion_len).reshape(-1, G).max(1)
+    return (np.argsort(-n, kind="stable")[:, None] * G + np.arange(G)).ravel()
 
 def per_row(pv, rows, nimg) -> list | None:
     """Each row's pixel rows (its images' slices of the chunk's pixel_values), or None without images."""
@@ -259,9 +342,11 @@ class VisionCache:
         return cls(visual) if visual is not None else None
 
     def clear(self):
+        """Empty the cache."""
         self.store.clear()
 
     def keys(self, pixel_values, grid_thw) -> list[tuple]:
+        """Exact integer hash and (t, h, w) grid of each image: one tuple per image, with one host read per call."""
         rows = grid_thw.prod(-1)
         image = torch.repeat_interleave(torch.arange(len(rows), device=rows.device), rows)
         first = torch.cumsum(rows, 0) - rows
@@ -274,6 +359,9 @@ class VisionCache:
         return list(zip(h.tolist(), map(tuple, grid_thw.tolist()), strict=True))  # one host read per call
 
     def forward(self, pixel_values, grid_thw=None, **kw):
+        """Vision tower forward that encodes only images missing from the cache and returns the pooled and deepstack
+        features of all, in order.
+        """
         with nvtx.range("vision_cache"):
             keys = self.keys(pixel_values, grid_thw)
             rows = grid_thw.prod(-1).tolist()
@@ -313,9 +401,11 @@ class RopeCache:
         return cls(base) if base is not None else None
 
     def clear(self):
+        """Empty the cache."""
         self.store.clear()
 
     def inject(self, module, args, kwargs):
+        """Forward pre-hook: give the pending rope positions as `position_ids` when the call has none."""
         if self.pending is not None and kwargs.get("position_ids") is None:
             kwargs["position_ids"] = self.pending
         return args, kwargs
@@ -351,6 +441,48 @@ class RopeCache:
                 for j, i in enumerate(miss):
                     self.store[keys[i]] = pos[:, j]
             return torch.stack([self.store[k] for k in keys], dim=1)
+
+
+class RopeTemplate(typing.NamedTuple):
+    """One prompt layout's rope positions (C2): `pos` (3, Lp), the next position `end`, its ids and token types."""
+
+    pos: torch.Tensor
+    end: int
+    ids: torch.Tensor
+    types: torch.Tensor
+
+
+def rope_template(base, input_ids, mm_token_type_ids, image_grid_thw) -> RopeTemplate:
+    """One HF get_rope_index call on one bare prompt row (Lp,), on host copies; the template lives on the row's
+    device. Text after the prompt continues from `end` = max + 1 on all three axes."""
+    pos, _ = base.get_rope_index(input_ids[None].cpu(), mm_token_type_ids=mm_token_type_ids[None].cpu(),
+                                 image_grid_thw=image_grid_thw.cpu())  # fmt: skip
+    pos = pos[:, 0]
+    return RopeTemplate(pos.to(input_ids.device), int(pos.max()) + 1, input_ids, mm_token_type_ids.long())
+
+
+def rope_positions(tmpl: RopeTemplate, input_ids, attention_mask, mm_token_type_ids):
+    """(positions (3, B, W), bad (B,)) for rows that start with the template's prompt; no host read. Real token r
+    (cumsum of the mask - 1) takes tmpl.pos[:, r] inside the prompt, tmpl.end + r - Lp after it; masked columns 0.
+    `bad` marks rows whose first Lp real tokens are not the template's, with a non-text token after the prompt, or
+    with fewer than Lp real tokens."""
+    n = tmpl.ids.numel()
+    real = attention_mask != 0
+    r = real.long().cumsum(1) - 1
+    inside, idx = r < n, r.clamp(0, n - 1)
+    pos = torch.where(inside, tmpl.pos[:, idx], tmpl.end + r - n)
+    pos = torch.where(real, pos, 0)
+    head = real & inside & ((input_ids != tmpl.ids[idx]) | (mm_token_type_ids != tmpl.types[idx]))
+    tail = real & ~inside & (mm_token_type_ids != 0)
+    return pos, (head | tail).any(1) | (real.sum(1) < n)
+
+
+def rope_bad_rows(prompt_ids, completion_ids, tmpl_ids, vision_ids) -> np.ndarray:
+    """The host's routing decision per row: its prompt ids differ from its template's, or its answer holds an image,
+    video or vision start/end id (TRL types every answer token as text)."""
+    vision = set(vision_ids)
+    return np.array([tuple(p) != tuple(t) or not vision.isdisjoint(c)
+                     for p, c, t in zip(prompt_ids, completion_ids, tmpl_ids, strict=True)], dtype=bool)  # fmt: skip
 
 
 def raw_ratio(logps, sampling, mask, mode: str) -> torch.Tensor:
@@ -529,9 +661,13 @@ def no_lora_input_cast(model) -> int:
 def by_length(batch: dict) -> dict:
     """The generation batch's rows longest first (prompt + answer real tokens; stable), every per-row field moved
     with them, in place of TRL's shuffle_sequence_dict (same field rules: None and 0-d tensors stay, tensors are
-    indexed, lists reordered). One host read for the order."""
-    n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
-    order = torch.sort(n, descending=True, stable=True).indices
+    indexed, lists reordered). One host read for the order (none with host_meta, C4)."""
+    meta = meta_of(batch)
+    if meta is not None:
+        order = torch.from_numpy(length_order(meta))
+    else:
+        n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
+        order = torch.sort(n, descending=True, stable=True).indices
     idx = order.tolist()
 
     def move(v):
@@ -545,9 +681,13 @@ def by_length(batch: dict) -> dict:
 def by_group_length(batch: dict, G: int) -> dict:
     """by_length with each group of G consecutive rows (one prompt's answers) kept together: groups longest member
     first (stable), so update micro-batches of whole groups can share their prompt (FastForward.shared_prefix)."""
-    n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
-    groups = torch.sort(n.view(-1, G).max(1).values, descending=True, stable=True).indices
-    order = (groups[:, None] * G + torch.arange(G, device=groups.device)).flatten()
+    meta = meta_of(batch)
+    if meta is not None:  # C4: no device read
+        order = torch.from_numpy(group_order(meta, G))
+    else:
+        n = batch["prompt_mask"].sum(1) + batch["completion_mask"].sum(1)
+        groups = torch.sort(n.view(-1, G).max(1).values, descending=True, stable=True).indices
+        order = (groups[:, None] * G + torch.arange(G, device=groups.device)).flatten()
     idx = order.tolist()
 
     def move(v):
@@ -581,8 +721,13 @@ class ImageMemo:
 
     KEYS = {"pixel_values", "image_grid_thw"}  # Qwen-VL image processors: patch rows and one (t, h, w) row per image
 
-    def __init__(self, inner):
-        self.inner = inner
+    hits = misses = fallback_calls = 0  # C1 counters: rows served from the memo, images prepared, CPU fallbacks
+
+    def __init__(self, inner, gpu: tuple[str, str] | None = None, per_image: bool = False):
+        """gpu: (gpu_pixels backend, device) to prepare missed images with gpu_pixels.patchify (C1), or None for the
+        processor itself (the B1 control). per_image (--encoder-once, C3): pixel_values holds each distinct image of
+        the call once (first-appearance order) instead of once per row; image_grid_thw stays one row per row."""
+        self.inner, self.gpu, self.per_image = inner, gpu, per_image
         self.memo: dict[tuple, tuple] = {}  # (id(image), kwargs) -> (image, its patch rows, its grid row)
 
     @classmethod
@@ -607,25 +752,53 @@ class ImageMemo:
         return copy.deepcopy(self.inner, memo)
 
     def clear(self) -> None:
+        """Drop the cached images and zero the counters (one generation batch: 32 misses, 256 hits expected)."""
         self.memo.clear()
+        self.hits = self.misses = self.fallback_calls = 0
+
+    def prefill(self, images, **kwargs) -> None:
+        """Prepare the distinct images of a generation batch before TRL's processor calls (C1: on the GPU)."""
+        self(images, **kwargs)
+
+    def prepare(self, miss: list, kwargs: dict):
+        """(pixel_values, image_grid_thw) of the missed images: gpu_pixels.patchify when self.gpu is set and every
+        call kwarg is the processor's own value (else the processor: a counted fallback), or the processor."""
+        if self.gpu is not None:
+            from objdel.train import gpu_pixels
+
+            own = all(v is None or getattr(self.inner, k, object()) == v for k, v in kwargs.items()
+                      if k != "return_tensors")  # fmt: skip
+            try:
+                if own:
+                    return gpu_pixels.patchify(miss, self.inner, device=self.gpu[1], backend=self.gpu[0])
+            except gpu_pixels.UnsupportedImage:
+                pass
+            self.fallback_calls += 1
+        out = self.inner(miss, **kwargs)
+        return None if set(out.keys()) != self.KEYS else (out["pixel_values"], out["image_grid_thw"])
 
     def __call__(self, images, **kwargs):
+        """Image processor call that processes only images not yet in the memo and returns pixel values and grids of
+        all, in order.
+        """
         with nvtx.range("image_memo"):
             from transformers.feature_extraction_utils import BatchFeature
             from transformers.image_utils import make_flat_list_of_images
 
             flat, kw = make_flat_list_of_images(images), repr(sorted(kwargs.items()))
             miss = list({id(x): x for x in flat if (id(x), kw) not in self.memo}.values())
+            self.misses, self.hits = self.misses + len(miss), self.hits + len(flat) - len(miss)
             if miss:
-                out = self.inner(miss, **kwargs)
-                if set(out.keys()) != self.KEYS:  # another processor family: no memo
+                out = self.prepare(miss, kwargs)
+                if out is None:  # another processor family: no memo
                     return self.inner(images, **kwargs)
-                grid = out["image_grid_thw"]
-                rows = torch.split(out["pixel_values"], grid.prod(-1).tolist())
+                pv, grid = out
+                rows = torch.split(pv, grid.prod(-1).tolist())
                 for x, r, g in zip(miss, rows, grid, strict=True):
                     self.memo[(id(x), kw)] = (x, r, g)
             parts = [self.memo[(id(x), kw)] for x in flat]
-            data = {"pixel_values": torch.cat([r for _, r, _ in parts]),
+            once = {id(x): p for x, p in zip(flat, parts, strict=True)}.values() if self.per_image else parts
+            data = {"pixel_values": torch.cat([r for _, r, _ in once]),
                     "image_grid_thw": torch.stack([g for *_, g in parts])}
             return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
 
@@ -640,8 +813,13 @@ class FastGRPO(FastForward, GRPOTrainer):
     seq_gaps = []  # B2.1: the step's per-sequence (seq_kl, advantage, valid tokens) rows (train mode), on the device
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
+    host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
+    check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
+    meta = None  # the generation batch's RowMeta, from _generate to the batch
+    count_syncs = False  # C0, train_rl --count-syncs: perf/host_syncs/<phase> per timed phase
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
+    group_requests = False  # C6, train_rl --group-requests: vLLM gets one n = G request per prompt (vllm_requests)
 
     def __init__(self, *args, **kwargs):
         trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
@@ -650,6 +828,21 @@ class FastGRPO(FastForward, GRPOTrainer):
         self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
         self.sync_without_merge()
+
+    def use_gpu_pixels(self, images, allow_cpu: bool = False) -> str:
+        """C1 start-up self-check (train_rl --gpu-pixels auto): the first gpu_pixels backend equal to the CPU
+        processor on `images` (training views) plus an in-memory digit image prepares the memo's misses on CUDA.
+        None passing raises, unless allow_cpu (then the CPU processor stays: returns "cpu")."""
+        from objdel.train import gpu_pixels
+
+        if self.images is None or not torch.cuda.is_available():
+            raise RuntimeError("--gpu-pixels auto needs CUDA and a Qwen-VL image processor")
+        digit = (np.arange(64 * 64 * 3) & 255).astype(np.uint8).reshape(64, 64, 3)
+        backend = gpu_pixels.pick_backend([*images, digit], self.images.inner, "cuda")
+        if backend is None and not allow_cpu:
+            raise RuntimeError("no GPU pixel backend equals the CPU processor (pass --allow-cpu-pixels to run on it)")
+        self.images.gpu = None if backend is None else (backend, "cuda")
+        return backend or "cpu"
 
     def sync_without_merge(self) -> bool:
         """vLLM weight sync through lora_merged_params (the base weights are never written), on one process; FSDP and
@@ -690,9 +883,15 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.vllm_importance_sampling_correction = False
         try:
             with self.timed("batch"):
-                return super()._generate_and_score_completions(inputs)
+                batch = super()._generate_and_score_completions(inputs)
+            if self.meta is not None:
+                batch["host_meta"] = host_rows(self.meta)
+                n = self.check_meta_every
+                if n and self.state.global_step % n == 0:  # steps 1, N + 1, 2N + 1, ...
+                    check_meta(batch)
+            return batch
         finally:
-            self.rows = None
+            self.rows, self.meta = None, None
             if skip:
                 self.vllm_importance_sampling_correction = True
 
@@ -724,10 +923,12 @@ class FastGRPO(FastForward, GRPOTrainer):
             trl_grpo.shuffle_sequence_dict = shuffle
 
     def training_step(self, *args, **kwargs):
+        """Run the micro-batch step inside the `micro` NVTX range."""
         with nvtx.range("micro"):  # the micro-batch's forward and backward (the first one also generates: `batch`)
             return super().training_step(*args, **kwargs)
 
     def get_batch_samples(self, *args, **kwargs):
+        """Fetch batch samples inside the `loader` NVTX range."""
         with nvtx.range("loader"):  # transformers fetches the step's 16 micro-batches before on_step_begin
             return super().get_batch_samples(*args, **kwargs)
 
@@ -807,6 +1008,10 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.time_vllm_phases()
         with self.timed("generate"):
             out = super()._generate(prompts)
+        if self.host_meta and self.rows is not None and len(self.rows) == len(out[1]):
+            eos_and_pad = [*self.eos_token_ids, self._tokenizer.pad_token_id]  # TRL's truncation list
+            self.meta = row_meta(out[0], out[1], image_ids(self.rows), self.num_generations,
+                                 self.mask_truncated_completions, eos_and_pad)  # fmt: skip
         self.prefetch_rewards(out[3], out[1])
         return out
 
@@ -825,6 +1030,24 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     @contextlib.contextmanager
     def timed(self, phase: str):
+        """phase_clock(phase); with count_syncs (train_rl --count-syncs, C0) also perf/host_syncs/<phase>, torch's
+        synchronizing operations inside the phase and outside its nested phases (nvtx.count_syncs). The vLLM range
+        (`generate`) logs perf/host_syncs_vllm instead, for information only."""
+        if not self.count_syncs:
+            with self.phase_clock(phase):
+                yield
+            return
+        n = None
+        try:
+            with nvtx.count_syncs() as n, self.phase_clock(phase):
+                yield
+        finally:
+            if n is not None:
+                key = "perf/host_syncs_vllm" if phase == "generate" else f"perf/host_syncs/{phase}"
+                self._metrics["train" if self.model.training else "eval"][key].append(n.syncs)
+
+    @contextlib.contextmanager
+    def phase_clock(self, phase: str):
         """time/<phase>_s in TRL's metrics (logged as the mean per logging step), inside the NVTX range `phase`, also
         when the phase raises. By default one device sync at the end, so queued GPU work is charged to the phase that
         queued it (a few per step: negligible). With OBJDEL_NVTX_SYNC=0 and CUDA: no sync, a CUDA event pair on the
@@ -888,16 +1111,26 @@ class FastGRPO(FastForward, GRPOTrainer):
 
         one_pad.one_pad = True
         llm.generate = one_pad
+        if self.group_requests:  # C6: outside one_pad, so its check compares the 32 sent prompts
+
+            def by_group(prompts, *args, **kwargs):
+                G = self.num_generations if self.model.training else self.num_generations_eval
+                return vllm_requests.grouped(one_pad, G)(prompts, *args, **kwargs)
+
+            by_group.one_pad = True
+            llm.generate = by_group
 
     def floating_point_ops(self, inputs):
+        """FLOP count: always 0, which skips the Trainer's per-micro-batch module walk."""
         return 0  # perf F3: the Trainer default walks ~2.5k PEFT modules per micro-batch
 
 
-def lora_merged_params(model):
+def lora_merged_params(model, with_delta: bool = True):
     """(vLLM name, tensor) for every weight of a PEFT model, as TRL 1.17's VLLMGeneration._iter_named_params names
     them, with each LoRA layer's delta added into a new tensor. TRL instead runs merge_adapter / unmerge_adapter on the
     bf16 base weights in place, and W + d - d != W in bf16, so the frozen base drifts at every sync (trl #6688,
-    #7423). Same values pushed (W + delta in W's dtype, as PEFT's merge computes it); no parameter is written."""
+    #7423). Same values pushed (W + delta in W's dtype, as PEFT's merge computes it); no parameter is written.
+    with_delta=False: the same names with the base W alone (vllm_sync's option-F base push)."""
     from peft.tuners.lora import LoraLayer
 
     deltas = {}
@@ -906,7 +1139,7 @@ def lora_merged_params(model):
             ads = [a for a in m.active_adapters if a in m.lora_A]
             if ads and (getattr(m, "use_dora", {}).get(ads[0]) or getattr(m, "lora_bias", {}).get(ads[0])):
                 raise NotImplementedError(f"{name}: DoRA / LoRA bias are not merged here")
-            if ads:
+            if ads and with_delta:
                 deltas[f"{name}.base_layer.weight"] = sum(m.get_delta_weight(a) for a in ads)
     for name, p in model.named_parameters():
         out = name.removeprefix("base_model.model.").replace(".base_layer", "")

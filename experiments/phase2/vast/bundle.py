@@ -22,6 +22,7 @@ import tarfile
 from pathlib import Path
 
 from experiments.phase2.vast.policy import ROOT, die, is_raw, load
+from objdel.hashing import file_sha256
 
 LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
 SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view would differ (BK1-7)
@@ -60,6 +61,8 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
             if missing := [n for n in LIDC_EVAL if not (data / kind / n).is_dir()]:
                 die(f"eval views missing: {missing}")
             names |= set(LIDC_EVAL)
+        if kind == "eval_views":  # held-out test views never ride in a train bundle (plan B1 rental 4c)
+            names = {n for n in names if not n.startswith(f"{ds}-test-")}
         if not names:
             die(f"no {ds} {kind} under {data / kind}")
         picked += [f for n in sorted(names) for f in walk(data, data / kind / n, f"{kind}/{n}")]
@@ -74,10 +77,7 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
 
 
 def sha(p: Path | bytes) -> str:
-    if isinstance(p, bytes):
-        return hashlib.sha256(p).hexdigest()
-    with p.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
+    return hashlib.sha256(p).hexdigest() if isinstance(p, bytes) else file_sha256(p)
 
 
 def write_tar(fileobj, files: list[tuple[str, Path | bytes]]) -> None:

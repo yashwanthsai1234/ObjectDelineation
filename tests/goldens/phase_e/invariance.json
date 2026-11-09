@@ -378,6 +378,7 @@
     0.0,
     0.0,
     0.0,
+    0.0,
     1.0
    ],
    "router_aux_loss_coef": null,
@@ -580,6 +581,7 @@
     0.0,
     0.0,
     0.0,
+    0.0,
     1.0
    ],
    "router_aux_loss_coef": null,
@@ -644,6 +646,6 @@
    "weight_decay": 0.0
   }
  },
- "reference_value": "afa5142d5bda8b387be430c2e46cdff3f30c72952b0093fc3d2b5773d2b4e584",
+ "reference_value": "0757966c169611b018037b9a08a6103de2a5f7f4c0db6e4cfb17ee7624923ce2",
  "target_set_hash": "10cfc759265f7363ee6131dff626a425cc86a80a588c78257a80f9ec050e7da8"
 }

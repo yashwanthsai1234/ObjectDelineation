@@ -1,5 +1,6 @@
 """objdel.train.configs: plan D8 (GRPO), SFT settings, D12 image sizes, the I5 completion budget; CLEAN7 (the 256M
 model retired: CT-05, CT-06, CT-07)."""
+import dataclasses
 import re
 import subprocess
 from dataclasses import asdict
@@ -73,8 +74,8 @@ GRPO_PRE_CLEAN = {  # captured at 08e6455 (asdict of grpo_config(m, out, use_cpu
     m: {"loss_type": "dr_grpo", "epsilon": 0.2, "epsilon_high": 0.28, "beta": 0.001, "num_generations": 8,
         "per_device_train_batch_size": 16, "max_completion_length": n, "vllm_gpu_memory_utilization": 0.35,
         "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, "learning_rate": lr,
-        "reward_weights": [0.0] * 7 + [1.0]}
-    for m, n, lr in (("qwen3-vl-2b", 1536, 1e-05), ("lfm2.5-vl-450m", 1024, 1e-06))}
+        "reward_weights": [0.0] * 8 + [1.0]}  # B3.5 adds the weight-0 loc logger
+    for m, n, lr in (("qwen3-vl-2b", 1536, 5e-05), ("lfm2.5-vl-450m", 1024, 5e-06))}  # E1: rl_lr, pre-registered
 
 
 @pytest.mark.parametrize("model", sorted(GRPO_PRE_CLEAN))
@@ -138,3 +139,54 @@ def test_configs_build_on_this_machine(tmp_path):
     for m in configs.MODELS:
         assert configs.grpo_config(m, str(tmp_path)).bf16 == configs.is_torch_bf16_gpu_available()
         assert configs.sft_config(m, str(tmp_path)).bf16 == configs.is_torch_bf16_gpu_available()
+
+
+# B2.2 numerics presets
+def test_default_preset_is_the_b1_control(tmp_path):
+    """No numerics argument: today's TRL values, written out (sequence mask, cap 3, no OPSM, no vllm_lora)."""
+    assert configs.DEFAULT_NUMERICS == "bf16-seqmask"
+    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path))
+    assert (c.vllm_importance_sampling_mode, c.vllm_importance_sampling_clip_max) == ("sequence_mask", 3.0)
+    assert c.vllm_importance_sampling_clip_min is None and c.off_policy_mask_threshold is None
+    assert not c.fp16 and not getattr(c, "vllm_lora", False)
+
+
+def test_numerics_names():
+    assert set(configs.NUMERICS) == {"bf16-seqmask", "bf16-tis", "bf16-tis-opsm", "fp16-seqmask", "lora-seqmask"}
+
+
+@pytest.mark.parametrize("name", list(configs.NUMERICS))
+def test_every_preset_builds_a_grpo_config(name, tmp_path):
+    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics=name)
+    assert not (c.bf16 and c.fp16)
+
+
+def test_tis_presets_use_token_truncation_at_2(tmp_path):
+    for name in ("bf16-tis", "bf16-tis-opsm"):
+        c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics=name)
+        assert (c.vllm_importance_sampling_mode, c.vllm_importance_sampling_clip_max) == ("token_truncate", 2.0)
+    assert configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-tis").off_policy_mask_threshold is None
+    assert configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-tis-opsm").off_policy_mask_threshold == 0.5
+
+
+def test_opsm_start_delta_override(tmp_path):
+    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-tis-opsm", off_policy_mask_threshold=0.9)
+    assert c.off_policy_mask_threshold == 0.9
+
+
+def test_fp16_preset_is_fp16_never_with_bf16_and_keeps_the_control_is_mode(tmp_path):
+    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="fp16-seqmask")
+    assert c.fp16 and not c.bf16
+    assert (c.vllm_importance_sampling_mode, c.vllm_importance_sampling_clip_max) == ("sequence_mask", 3.0)
+
+
+def test_lora_preset_marks_the_config_and_never_passes_the_key_to_trl(tmp_path):
+    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="lora-seqmask")
+    assert c.vllm_lora is True
+    assert "vllm_lora" not in {f.name for f in dataclasses.fields(c)}  # an attribute of ours, not a TRL field
+    assert (c.vllm_importance_sampling_mode, c.vllm_importance_sampling_clip_max) == ("sequence_mask", 3.0)
+
+
+def test_unknown_preset_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="bf16-fp8"):
+        configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-fp8")
