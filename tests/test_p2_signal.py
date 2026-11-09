@@ -507,7 +507,7 @@ def test_gate_a_g1_exact_numbers_on_r5_test_items():
     assert len(rows) == 2200 and len({r["item_id"] for r in rows}) == 2200
     assert len({S.cluster(r["item_id"]) for r in rows}) == 401 and len({r["group_id"] for r in rows}) == 158
     assert all(0 <= r["iou_tc"] <= 1 for r in rows)
-    items = [{"item_id": r["item_id"], **{m: r["iou_tc"] for m in FE.METRICS}} for r in rows]
+    items = [{"item_id": r["item_id"], **{m: r["iou_tc"] for m in (*FE.METRICS, *FE.SELECTION)}} for r in rows]
     exact = GOLD_META == {"numpy": np.__version__, "machine": platform.machine()}
 
     def same(got, want):
@@ -525,14 +525,15 @@ def test_gate_a_g1_exact_numbers_on_r5_test_items():
 
 
 def test_summary_speed_memory_and_two_draw_calls(monkeypatch):
-    """Q01 (A1 part): the golden's 2,200 ids with every metric: one nodule and one patient draw set, reused."""
+    """Q01: the golden's 2,200 ids with the 12 metrics and 6 selection keys: one nodule and one patient draw set,
+    reused by every key, plus the same two on the found subset (iou_found, U10)."""
     import time
     import tracemalloc
 
     from experiments.phase2 import final_eval as FE
 
     rows = gold_rows()
-    items = [{"item_id": r["item_id"], **{m: r["iou_tc"] for m in FE.METRICS}} for r in rows]
+    items = [{"item_id": r["item_id"], **{m: r["iou_tc"] for m in (*FE.METRICS, *FE.SELECTION)}} for r in rows]
     groups = {r["item_id"]: r["group_id"] for r in rows}
     calls = []
     real = S.draws
@@ -543,4 +544,4 @@ def test_summary_speed_memory_and_two_draw_calls(monkeypatch):
     seconds = time.perf_counter() - t
     peak = tracemalloc.get_traced_memory()[1]
     tracemalloc.stop()
-    assert len(calls) == 2 and seconds < 20 and peak < 600e6
+    assert len(calls) == 4 and seconds < 20 and peak < 600e6

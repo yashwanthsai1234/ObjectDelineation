@@ -14,7 +14,10 @@ patients (`group_id`; the gate CI, named by `gate_ci`), `ci95_nodule` resamples 
 (the schema-1 `ci95`). Illegal samples score 0 on every geometric term (the reward's rule).
 - iou_tc: IoU against the doctors' band (the reward's term); f5: the boundary score (calibrated so a new doctor
   scores 0.95); precision / recall / dice: pixels against the doctors' strict-majority outline;
-- miss_rate: the share of items whose K-mean IoU_tc is below 0.1;
+- nsd, boundary_iou (best doctor) and boundary_iou_vote (the majority outline); soft_dice, hm_iou (HM-IoU8) and ged
+  (lower is better) per item: objdel.eval.metrics defines them;
+- miss_rate: the share of items whose K-mean IoU_tc is below 0.1 (not the best of K); iou_found: the mean IoU_tc of
+  the other items, its CIs drawn on that subset;
 - sel_*: one answer chosen per item with no doctor masks (objdel.eval.select; `per_item`), and `paired`: the per-item
   differences medoid - mean of K and vote - mean of K with their patient and nodule CIs. `gate_a` decides Gate A
   from the val patient CI. Run gates keep sel_mean_of_k (= iou_tc).
@@ -33,23 +36,31 @@ import numpy as np
 
 from objdel.eval import select, signal
 
+# name -> (source, higher_is_better): "samples" and "objects" lists are averaged over the K answers, "item" scalars
+# (one per object and item) are copied
 METRICS = {"legal": ("samples", True), "iou_tc": ("samples", True), "f5": ("samples", True),
-           "precision_vote": ("objects", True), "recall_vote": ("objects", True), "dice_vote": ("objects", True)}
+           "precision_vote": ("objects", True), "recall_vote": ("objects", True), "dice_vote": ("objects", True),
+           "nsd": ("objects", True), "boundary_iou": ("objects", True), "boundary_iou_vote": ("objects", True),
+           "soft_dice": ("item", True), "hm_iou": ("item", True), "ged": ("item", False)}
 SELECTION = ("sel_mean_of_k", "sel_legal_mean", "sel_medoid", "sel_medoid_legal", "sel_oracle", "sel_vote")
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
 
 
 def per_item(result: dict, obj: str = "nodule") -> dict:
-    """K-sample means of one item's scores (metrics' output), and the answer choices (A4): the mean of the K IoU_tc,
+    """K-sample means of one item's scores (metrics' output; METRICS), `miss` (the K-mean IoU_tc below signal.MISS),
+    the doctors' vote area, and the answer choices (A4): the mean of the K IoU_tc,
     the mean over legal answers (0 if none), the medoid's (with its legality), the best one (it reads the labels: an
     upper bound, never deployed) and the pixel vote's (analysis only: a mask is not an answer; absent when the
     result has no `pixel_vote_iou_tc`)."""
-    src = {"samples": result["samples"], "objects": result["objects"][obj]}
+    o = result["objects"][obj]
+    src = {"samples": result["samples"], "objects": o, "item": o}
     iou, legal = np.array(result["samples"]["iou_tc"], float), np.array(result["samples"]["legal"]) > 0
     i = select.medoid(select.sample_iou(result["objects"]), legal)
-    vote = src["objects"].get("pixel_vote_iou_tc")
-    return {"item_id": result["item_id"], **{m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()},
+    vote = o.get("pixel_vote_iou_tc")
+    means = {m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()}
+    return {"item_id": result["item_id"], **means, "miss": float(means["iou_tc"] < signal.MISS),
+            "vote_area": o["vote_area"],
             "sel_mean_of_k": float(iou.mean()), "sel_legal_mean": float(iou[legal].mean()) if legal.any() else 0.0,
             "sel_medoid": float(iou[i]), "sel_medoid_legal": float(legal[i]), "sel_oracle": float(iou.max()),
             **({} if vote is None else {"sel_vote": float(vote)})}
@@ -85,6 +96,13 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     iou = np.array([it["iou_tc"] for it in items], float)
     out["iou_tc"]["median"] = float(np.median(iou))
     out["miss_rate"] = cis((iou < signal.MISS).astype(float))
+    found = iou >= signal.MISS
+    fids = [i for i, f in zip(ids, found, strict=True) if f]
+    out["iou_found"] = None if not fids else {
+        "mean": float(iou[found].mean()), "items": len(fids),
+        "ci95_patient": None if groups is None else signal.ci(iou[found], signal.draws(
+            fids, draws, seed, key=groups.__getitem__))[1:],
+        "ci95_nodule": signal.ci(iou[found], signal.draws(fids, draws, seed))[1:]}
 
     def paired(arm: str) -> dict | None:  # the per-item difference arm - sel_mean_of_k under the same draws
         if arm not in out:
@@ -95,6 +113,24 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
 
     out["paired"] = {"medoid_minus_mean": paired("sel_medoid"), "vote_minus_mean": paired("sel_vote")}
     return out
+
+
+def size_terciles(items: list[dict]) -> dict:
+    """Items in three groups by the doctors' vote area (`vote_area`): area <= bounds[0], <= bounds[1], above, with
+    bounds at the 1/3 and 2/3 order statistics, so equal areas share a group; per group the item count and the mean
+    iou_tc and boundary_iou (None when empty). ValueError for fewer than 3 items."""
+    if len(items) < 3:
+        raise ValueError(f"size_terciles: need >= 3 items, got {len(items)}")
+    area = np.array([it["vote_area"] for it in items])
+    a = np.sort(area)
+    bounds = [int(a[-(-len(a) * j // 3) - 1]) for j in (1, 2)]
+    group = np.searchsorted(bounds, area)  # 0: <= bounds[0], 1: <= bounds[1], 2: above
+    terciles = []
+    for g in range(3):
+        its = [it for it, x in zip(items, group, strict=True) if x == g]
+        terciles.append({"items": len(its), **{m: float(np.mean([it[m] for it in its])) if its else None
+                                               for m in ("iou_tc", "boundary_iou")}})
+    return {"bounds": bounds, "terciles": terciles}
 
 
 def gate_a(val: dict, test: dict | None) -> dict:

@@ -4,6 +4,7 @@ from itertools import combinations
 from math import comb
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -11,7 +12,19 @@ from hypothesis import strategies as st
 from oracles import reward_harness as H
 
 from objdel.eval import gates, hack_audit, metrics, select, summarize
-from objdel.eval.metrics import _pairwise_iou, ged, min_mode_retention, pass_at_k, soft_dice, tv_js
+from objdel.eval.metrics import (
+    _ZEROED,
+    BIOU_D,
+    _band_iou,
+    _pairwise_iou,
+    band,
+    boundary_iou,
+    ged,
+    min_mode_retention,
+    pass_at_k,
+    soft_dice,
+    tv_js,
+)
 from objdel.reward import ExpertCache
 from objdel.targets import BuildConfig, build_target
 
@@ -512,3 +525,171 @@ def test_sample_iou_is_averaged_over_the_objects(riga):
     A, B = np.array(o["disc"]["sample_iou"]), np.array(o["cup"]["sample_iou"])
     assert np.array_equal(select.sample_iou(o), (A + B) / 2)
 
+
+def official_band(m, d):
+    """boundary-iou-api `mask_to_boundary` on the full frame: 1 px zero border, 3 x 3 ones, d erosions, crop."""
+    m = m.astype(np.uint8)
+    e = cv2.erode(cv2.copyMakeBorder(m, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0), np.ones((3, 3), np.uint8),
+                  iterations=d)[1:-1, 1:-1]
+    return (m - e).astype(bool)
+
+
+def official_biou(a, b, d, band=official_band):
+    ba, bb = band(a, d), band(b, d)
+    u = int(np.count_nonzero(ba | bb))
+    return np.count_nonzero(ba & bb) / u if u else 1.0
+
+
+def wide_pad_band(m, d):
+    """The same with a d px zero border: proves a 1 px pad is enough."""
+    e = cv2.erode(np.pad(m.astype(np.uint8), d), np.ones((3, 3), np.uint8), iterations=d)[d:-d, d:-d]
+    return m & ~e.astype(bool)
+
+
+def test_band_by_hand():
+    """U17."""
+    m = np.zeros((20, 20), bool)
+    m[5:10, 5:10] = True
+    b = band(m, 1)
+    assert b.sum() == 16 and not b[6:9, 6:9].any()
+    assert (band(m, 2).sum(), band(m, 3).sum()) == (24, 25)
+    one = np.zeros((9, 9), bool)
+    one[4, 4] = True
+    assert all(np.array_equal(band(one, d), one) for d in (1, 2, 16))
+    line = np.zeros((5, 12), bool)
+    line[2, 1:11] = True
+    assert np.array_equal(band(line, 2), line)
+    e = band(np.zeros((6, 7), bool), 2)
+    assert e.dtype == bool and e.shape == (6, 7) and not e.any()
+    assert band(np.ones((8, 8), bool), 1).sum() == 28  # the frame ring: cv2.erode's default border would give 0
+
+
+def test_boundary_iou_degenerate_pairs_and_types():
+    """U18."""
+    a = disk(25, 25, 8)
+    assert boundary_iou(a, a, 2) == 1.0
+    assert boundary_iou(disk(10, 10, 4), disk(40, 40, 4), 2) == 0.0
+    z = np.zeros((S, S), bool)
+    assert boundary_iou(z, z, 2) == 1.0 and boundary_iou(a, z, 2) == 0.0 and boundary_iou(z, a, 2) == 0.0
+    p, q = z.copy(), z.copy()
+    p[5, 5] = q[5, 6] = True
+    assert boundary_iou(p, p, 2) == 1.0 and boundary_iou(p, q, 2) == 0.0
+    before = a.copy()
+    t = np.ascontiguousarray(disk(20, 30, 9)).T
+    assert boundary_iou(a.astype(np.uint8), t, 2) == boundary_iou(a, t.copy(), 2)
+    assert np.array_equal(a, before) and band(a.astype(np.uint8), 2).dtype == bool
+
+
+def edge_masks(rng, H, W):
+    """Masks of P04: random density, blobs, salt and pepper, and every one touching the frame."""
+    m = rng.random((H, W)) < rng.choice([0.02, 0.3, 0.5, 0.98])
+    kind = rng.integers(4)
+    if kind == 0:
+        m = cv2.dilate(m.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    edge = rng.integers(4)
+    if edge == 0:
+        m[:] = True
+    elif edge == 1:
+        m[0] = True
+    elif edge == 2:
+        m[0, 0] = True
+    else:
+        m[:, -1] = True
+    return m
+
+
+def test_boundary_iou_equals_the_official_formula_on_the_full_frame():
+    """P04: == on 500 random pairs touching the frame, d in 1, 2, 9, 16 and above the mask size; also against a
+    d px pad; a corner mask and a 3 px nodule at (0, 0) of a 512 frame."""
+    rng = np.random.default_rng(4)
+    shapes = [(1, 1), (1, 7), (7, 1), (16, 16), (64, 48), (64, 64)]
+    for t in range(500):
+        H, W = shapes[t % len(shapes)]
+        a, b = edge_masks(rng, H, W), edge_masks(rng, H, W)
+        if t % 5 == 0:
+            b = np.roll(a, int(rng.integers(-3, 4)), 1)
+        d = [1, 2, 9, 16, max(H, W) + 3][t % 5]
+        want = official_biou(a, b, d)
+        assert boundary_iou(a, b, d) == want == official_biou(a, b, d, wide_pad_band), (t, H, W, d)
+    corner = np.zeros((512, 512), bool)
+    corner[:5, :5] = True
+    nod = np.zeros((512, 512), bool)
+    nod[:3, :3] = True
+    for d in (2, 16):
+        assert boundary_iou(corner, nod, d) == official_biou(corner, nod, d)
+        assert boundary_iou(corner, np.roll(corner, 1, 0), d) == official_biou(corner, np.roll(corner, 1, 0), d)
+
+
+def test_boundary_iou_algebra():
+    """P05."""
+    rng = np.random.default_rng(5)
+    for _ in range(200):
+        a, b = rng.random((2, 20, 24)) < rng.random()
+        d = int(rng.integers(1, 6))
+        x = boundary_iou(a, b, d)
+        assert x == boundary_iou(b, a, d) and 0.0 <= x <= 1.0 and boundary_iou(a, a, d) == 1.0
+        assert (band(a, d) <= band(a, d + 2)).all()
+        if a.any():
+            assert band(a, d).any()
+        big = np.zeros((40, 50), bool)
+        bb = big.copy()
+        big[3:23, 5:29], bb[3:23, 5:29] = a, b
+        assert boundary_iou(big, bb, d) == x  # the same masks in a larger zero frame, shifted by (3, 5)
+
+
+@pytest.mark.parametrize("k", [2, 3])
+def test_boundary_iou_in_metrics(k):
+    """I02 (A5 part): K values each; the copy scores 1, the shifted answer the max over raters of the reference,
+    `_vote` against the strict-majority vote (k = 2: the intersection), illegal and failed answers 0."""
+    raters, texts = i02_item(k)
+    o = metrics(texts, raters, F, F)["objects"]["nodule"]
+    shifted = np.roll(raters["nodule"][0], 3, 1)
+    vote = ExpertCache.build(raters["nodule"]).vote
+    if k == 2:
+        assert np.array_equal(vote, raters["nodule"][0] & raters["nodule"][1])
+    assert o["boundary_iou"][0] == 1.0 and o["boundary_iou"][2:] == o["boundary_iou_vote"][2:] == [0.0, 0.0]
+    assert o["boundary_iou"][1] == max(official_biou(shifted, r, BIOU_D["nodule"]) for r in raters["nodule"])
+    assert o["boundary_iou_vote"][:2] == [official_biou(m, vote, 2) for m in (raters["nodule"][0], shifted)]
+
+
+def test_boundary_iou_per_structure_and_illegal_answers(riga, nod):
+    """I02 / I03: disc d = 9, cup d = 16; failed, illegal and empty answers score 0; both keys in _ZEROED."""
+    raters, texts = riga
+    o = metrics(texts[:2], raters, 100, 100)["objects"]
+    for n in ("disc", "cup"):
+        assert o[n]["boundary_iou"] == [1.0, 1.0]
+    r = raters["cup"]
+    m = metrics([texts[0], text_of({"disc": raters["disc"][0], "cup": np.roll(r[0], 4, 0)}, ("disc", "cup"), raters)],
+                raters, 100, 100)["objects"]["cup"]
+    assert m["boundary_iou"][1] == max(official_biou(np.roll(r[0], 4, 0), x, 16) for x in r)
+    raters, texts = nod
+    o = metrics([texts[0], "not json", BOWTIE, ""], raters, S, S)["objects"]["nodule"]
+    assert o["boundary_iou"][1:] == o["boundary_iou_vote"][1:] == [0.0] * 3
+    assert {"boundary_iou", "boundary_iou_vote"} <= set(_ZEROED)
+
+
+def test_boundary_iou_is_the_max_over_raters():
+    """I04: an answer equal to rater 2 only scores 1.0, whatever the rater order."""
+    r = np.stack([disk(25, 25, 10), disk(25, 28, 12), disk(22, 24, 7)])
+    text = text_of({"nodule": r[2]}, ("nodule",), {"nodule": r})
+    for p in ([0, 1, 2], [2, 0, 1], [1, 2, 0]):
+        assert metrics([text, text], {"nodule": r[p]}, S, S)["objects"]["nodule"]["boundary_iou"] == [1.0, 1.0]
+
+
+def test_boundary_iou_speed():
+    """Q02: one pair on 512 x 512 at d = 16 under 20 ms; one item (K = 8, 4 raters, the vote: 13 masks of a 40 x 40
+    nodule) under 20 ms and over 3x faster than the same bands on the full frame. Best of 5 runs."""
+    import timeit
+
+    rng = np.random.default_rng(2)
+    ms = np.zeros((13, 512, 512), bool)
+    for i, (y, x) in enumerate(rng.integers(-3, 4, (13, 2))):
+        ms[i, 200 + y:240 + y, 200 + x:240 + x] = True
+    assert np.array_equal(_band_iou(ms, 16), _pairwise_iou(np.stack([official_band(m, 16) for m in ms])))
+
+    def best(f):
+        return min(timeit.repeat(f, number=5, repeat=5)) / 5
+
+    item = best(lambda: _band_iou(ms, 16))
+    full = best(lambda: _pairwise_iou(np.stack([official_band(m, 16) for m in ms])))
+    assert best(lambda: boundary_iou(ms[0], ms[1], 16)) < 0.02 and item < 0.02 and full > 3 * item, (item, full)
