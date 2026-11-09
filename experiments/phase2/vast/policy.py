@@ -44,8 +44,11 @@ import sys
 import time
 from pathlib import Path
 
+from objdel.core.spec import RunSpec, fill, load_spec, to_argv
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
+DATA = "/workspace/data/lidc"  # {data} on the box
 # §4.2 / §4.8: gpu_ram bounds in GB (stock + 2, or >= 79 for the 80 GB A100), price ceilings = 1.5 x snapshot median.
 CARDS = {
     "RTX_3090": {"ram": (None, 26), "ceiling": 0.50},
@@ -68,9 +71,6 @@ SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
 IMPORT_CHECK = "import objdel._gpucheck, experiments.phase1.reward_gates, tests.oracles.reward_harness"
-# the CLIs the bundle must import (test_bundle_imports_standalone)
-LIVE_CLIS = ("experiments.phase2.train_rl", "experiments.phase2.g_probe", "experiments.phase2.select_ckpt",
-             "experiments.phase2.final_eval")  # fmt: skip
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
 # never closes a run younger than this as vanished (it may not be listed yet). PULL_S: added to --cap-hours, as the
 # watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min.
@@ -315,7 +315,7 @@ def launch_refusal(offer: dict, cap_hours: float) -> str:
     bw = {k: offer[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"dph": offer["dph_total"], **bw, "started": now, "deadline": now + int(cap_hours * 3600) + PULL_S}
     committed, worst = spend(committed=True), accrued(run, run["deadline"])
-    if committed + worst > HARD_STOP:
+    if not committed + worst <= HARD_STOP:  # not "> ": a NaN price must refuse too
         return f"hard stop: ${committed:.2f} committed + ${worst:.2f} worst case > ${HARD_STOP} (G10)"
     return ""
 
@@ -466,7 +466,9 @@ def chain(cfg: Path, run_id: str) -> list[list[str]]:
     paths: data /workspace/data/lidc, runs /workspace/runs/<id>."""
     import yaml
 
-    c, data, rd = yaml.safe_load(Path(cfg).read_text()), "/workspace/data/lidc", f"/workspace/runs/{run_id}"
+    c, data, rd = yaml.safe_load(Path(cfg).read_text()), DATA, f"/workspace/runs/{run_id}"
+    if "schema_version" in c:  # a run spec (specs/*.yaml)
+        return [to_argv(s, rd, data) for s in load_spec(Path(cfg)).stages]
     if "steps" in c:
         return [[str(x).format(rd=rd, data=data) for x in s] for s in c["steps"]]
     run, ev, prep = f"{rd}/{c['output_dir']}", f"{data}/eval_views", f"{data}/prepared"
@@ -493,7 +495,16 @@ def vision_refs(cfg: Path, run_id: str) -> list[str]:
     """The G-vision reference JSON a config reads on the box ([] for a number or `vision: off`)."""
     import yaml
 
-    ref = (yaml.safe_load(Path(cfg).read_text()).get("vision") or {}).get("reference")
+    c = yaml.safe_load(Path(cfg).read_text())
+    if "schema_version" in c:  # a run spec: the reference of each sft and select stage, in stage order, once
+        rd, refs = f"/workspace/runs/{run_id}", []
+        for s in load_spec(Path(cfg)).stages:
+            if s.kind == "sft" and s.vision and isinstance(s.vision["reference"], str):
+                refs.append(f"{rd}/{s.vision['reference']}")
+            elif s.kind == "select" and s.vision and isinstance(s.vision.reference, str):
+                refs.append(fill(s.vision.reference, rd, DATA))
+        return list(dict.fromkeys(refs))
+    ref = (c.get("vision") or {}).get("reference")
     return [f"/workspace/runs/{run_id}/{ref}"] if isinstance(ref, str) else []
 
 
@@ -548,21 +559,39 @@ def cmd_pull(a) -> None:
         remote(run, f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK")
 
 
+def push_target(spec: RunSpec, run_id: str) -> tuple[str, str, bool]:
+    """(folder on the box, repo revision, is an rl output) of a spec's last rl or sft stage. For rl the revision is the
+    last part of its out folder; for sft the output_dir."""
+    last = next((s for s in reversed(spec.stages) if s.kind in ("rl", "sft")), None)
+    if last is None:
+        die("nothing to push: the spec has no rl or sft stage")
+    rd = f"/workspace/runs/{run_id}"
+    if last.kind == "rl":
+        path = fill(last.out, rd, DATA)
+        return path, path.rsplit("/", 1)[1], True
+    return f"{rd}/{last.output_dir}", last.output_dir, False
+
+
 def cmd_push_hf(a) -> None:
-    """hf_push on the box for CONFIG's run (repo branch = its output_dir; a config with rows_plan names a train_rl
-    output: --rl); the token is checked here first."""
+    """hf_push on the box for CONFIG's run (CONFIG is a run spec, or an SFT launch config: repo branch = its
+    output_dir; a config with rows_plan names a train_rl output: --rl); the token is checked here first."""
     import yaml
 
     from experiments.phase2 import hf_push
 
     run, c = get_run(a.run_id), yaml.safe_load((ROOT / a.config).read_text())
-    out, kind = c["output_dir"], "--rl" if c.get("rows_plan") else "--run"
+    if "schema_version" in c:
+        path, out, rl = push_target(load_spec(ROOT / a.config), a.run_id)
+        kind = "--rl" if rl else "--run"
+    else:
+        out, kind = c["output_dir"], "--rl" if c.get("rows_plan") else "--run"
+        path = f"/workspace/runs/{a.run_id}/{out}"
     token = secret("objdel-hf-write")
     if bad := hf_push.token_problems(hf_push.whoami(token), hf_push.REPO):
         die(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: {'; '.join(bad)}. Recreate it at "
             f"huggingface.co/settings/tokens as fine-grained with only {hf_push.REPO}: write (no other boxes ticked)")
-    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push {kind} /workspace/runs/"
-           f"{a.run_id}/{out} --repo {hf_push.REPO} --revision {out}")  # fmt: skip
+    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push {kind} {path} "
+           f"--repo {hf_push.REPO} --revision {out}")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.secrets")
 
 
@@ -573,13 +602,15 @@ ROWS_CHECK = ("import hashlib, json, pathlib, sys; d, want = pathlib.Path(sys.ar
 
 
 def rows_pin(revision: str) -> str:
-    """The --rows-manifest-sha256 that the plans in experiments/phase2/configs pin beside --rows-revision REVISION."""
+    """The --rows-manifest-sha256 that the plans in experiments/phase2/configs and specs/ pin beside REVISION."""
     import yaml
 
     plans = sorted((ROOT / "experiments/phase2/configs").glob("*.yaml"))
     pins = {str(s[s.index("--rows-manifest-sha256") + 1]) for p in plans
             for s in (yaml.safe_load(p.read_text()) or {}).get("steps", [])
             if "--rows-revision" in s and str(s[s.index("--rows-revision") + 1]) == revision}
+    pins |= {s.rows_manifest_sha256 for p in sorted((ROOT / "specs").glob("*.yaml")) for s in load_spec(p).stages
+             if s.kind == "rl" and s.rows_revision == revision}
     if len(pins) != 1:
         die(f"--rows {revision}: the plans pin {len(pins)} manifest SHA-256 values for it (need exactly one)")
     return pins.pop()

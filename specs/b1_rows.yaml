@@ -1,0 +1,27 @@
+schema_version: 1
+name: b1_rows
+compute: {gpu: RTX_5090, cap_hours: 3.0}
+bundle_view: views/lidc-bundle-v3
+stages:
+- kind: cmd
+  name: build
+  argv: [bash, -c, 'bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c "import
+      objdel._gpucheck as g; assert g.build() == ''cuda''" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider
+      tests/test_gpu_scoring.py']
+- kind: cmd
+  name: env_check
+  argv: [bash, experiments/phase2/docker/env_check.sh, '{rd}/ckpt', '{rd}/env_check.json']
+- kind: cmd
+  name: gpu_smoke
+  argv: [-m, pytest, -m, gpu, 'tests/test_train_fast.py::test_g02_is_summary_no_sync', 'tests/test_train_fast.py::test_g08a_smoke']
+- {kind: rl, name: train, soft: true, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/rows/lidc-train-b1',
+  out: '{rd}/b1-rows', steps: 260, save_steps: 50, shared_prefix: true, lr: 5.0e-05, rows_revision: '0000000000000000000000000000000000000000',
+  rows_manifest_sha256: '0000000000000000000000000000000000000000000000000000000000000000', budget_usd: 2.05}
+- {kind: rl, name: merge, merge_last: true, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', out: '{rd}/b1-rows'}
+- kind: eval
+  name: eval
+  ckpt: '{rd}/b1-rows/final'
+  train: '{data}/prepared'
+  view: ['{data}/eval_views/lidc-val-shifted', '{data}/eval_views/lidc-val-edge']
+  split: [val, val]
+  out: ['{rd}/eval_b1_val_shifted', '{rd}/eval_b1_val_edge']

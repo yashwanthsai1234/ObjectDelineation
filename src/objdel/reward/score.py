@@ -9,7 +9,9 @@ score_many / score_batch. Per object, against its ExpertCache:
 - F5 = 1 / (1 + (2 D / P) / T5^2): D = depth beyond the egg-yolk band, P = contour length of the union;
 - g_area = min(1, A_max / A) * min(1, A / A_min), A_min / A_max over all raters, zero tolerance (ITERATION4);
   an empty prediction gets 0;
-- the signature and its rater frequency.
+- the signature and its rater frequency;
+- loc_raw (reward v5, Implementation.md B3.2): the location kernel of the mask's centroid (the checker's exact
+  sum_x, sum_y) against the vote's centroid, scaled by the union's radius (ExpertCache.ref_sum, radius2).
 The terms are bit-identical to the host scorer this replaced (tests/oracles/score_numpy.py; the exactness argument is
 in docs/research/notes/gpu_scoring.md).
 
@@ -20,7 +22,9 @@ object (rater r of one object's cache is rater r of the others; caches with diff
 and sig_id identifies the tuple of per-object signatures. This is the lab's rule (t_stack/prod.py score_text);
 for one object it reduces to the per-object terms. iou_min, the smallest per-object IoU_tc, feeds the topology
 validity gate (advantages_v4), so a good disc cannot carry a missed cup past it (B2-7; the eval pass criterion).
-These combinations of the returned per-object numbers are the only host arithmetic.
+The completion's loc is the mean over objects of gated_loc: non-zero only for a missed answer (IoU_tc < miss_iou)
+of doctor-like size (g_area) and a topology some doctor drew (topo_freq > 0). These combinations of the returned
+per-object numbers are the only host arithmetic.
 
 An unparseable or truncated completion has format_ok = legal = 0, every term 0 and sig_id -1. A parsed but
 illegal one keeps its terms for logging; advantages_v4 zeroes them through the legality gate. An empty object
@@ -43,26 +47,53 @@ from objdel.geometry import GRID, parse
 from objdel.geometry.shape import pack_objects
 
 from .cache import ExpertCache, device_many
+from .spec import REWARD_V5
 
-NUMERIC = ("format_ok", "legal", "iou_tc", "iou_min", "f5", "g_area", "topo_any", "topo_freq", "sig_id")
+NUMERIC = ("format_ok", "legal", "iou_tc", "iou_min", "f5", "g_area", "topo_any", "topo_freq", "sig_id", "loc")
 _FAILED = dict.fromkeys(NUMERIC, 0.0) | {"sig_id": -1.0}
 
 
 @dataclass(frozen=True)
 class ObjectTerms:
+    """Per-object reward terms from the device checker: IoU_tc, F5, area term, signature, its voter share and area in
+    pixels.
+    """
     iou_tc: float
     f5: float
     g_area: float
     sig: tuple[int, ...]  # size-filtered signature: holes per component, descending
     topo_freq: float  # share of the voting raters who drew `sig`
     area: int
+    sum_x: int  # sum of the column indices of the mask's pixels
+    sum_y: int  # sum of the row indices
+    loc_raw: float  # location kernel of the centroid (`location`)
 
 
-def _object(r: dict, i: int) -> ObjectTerms:
-    """Object i of a device result."""
+def location(sum_x: int, sum_y: int, area: int, ref_sum: tuple[int, int, int], radius2: float,
+             width: float = REWARD_V5.loc_width) -> float:
+    """exp(-d2 / (2 width^2 radius2)), d2 the squared distance of the mask's centroid to the reference centroid
+    (pixel indices on both sides); 0 for an empty mask or an empty reference."""
+    rx, ry, n = ref_sum
+    if area == 0 or n == 0:
+        return 0.0
+    d2 = (sum_x / area - rx / n) ** 2 + (sum_y / area - ry / n) ** 2
+    return float(np.exp(-d2 / (2 * width**2 * radius2)))
+
+
+def gated_loc(iou_tc: float, g_area: float, topo_freq: float, loc_raw: float,
+              miss_iou: float = REWARD_V5.miss_iou) -> float:
+    """An object's location term: loc_raw on a missed answer, ramped to 0 at IoU_tc = miss_iou (R stays continuous
+    there), times g_area (no specks, no huge outlines) and only for a topology a doctor drew (no blob pairs around
+    the centroid)."""
+    return (iou_tc < miss_iou) * max(0.0, 1 - iou_tc / miss_iou) * g_area * (topo_freq > 0) * loc_raw
+
+
+def _object(r: dict, i: int, cache: ExpertCache) -> ObjectTerms:
+    """Object i of a device result, against its cache."""
     sig = tuple(r["sig"][r["sig_start"][i]:r["sig_start"][i + 1]].tolist())
+    sx, sy, area = int(r["sum_x"][i]), int(r["sum_y"][i]), int(r["area"][i])
     return ObjectTerms(float(r["iou_tc"][i]), float(r["f5"][i]), float(r["g_area"][i]), sig,
-                       float(r["topo_freq"][i]), int(r["area"][i]))
+                       float(r["topo_freq"][i]), area, sx, sy, location(sx, sy, area, cache.ref_sum, cache.radius2))
 
 
 def score_mask(mask: np.ndarray, cache: ExpertCache) -> ObjectTerms:
@@ -74,7 +105,7 @@ def score_mask(mask: np.ndarray, cache: ExpertCache) -> ObjectTerms:
     H, W = m.shape
     r = _gpucheck.score_masks(m.view(np.uint8).reshape(-1), np.array([[H, W]], np.int32),
                               np.array([0, H * W], np.int64), np.array([cache.device()], np.int64))
-    return _object(r, 0)
+    return _object(r, 0, cache)
 
 
 def sig_id(sigs: tuple) -> float:
@@ -98,7 +129,7 @@ def rater_answers(caches: Mapping[str, ExpertCache], names: Sequence[str]) -> di
 
 def score_completion(text: str, truncated: bool, names: Sequence[str], caches: Mapping[str, ExpertCache],
                      W: int, H: int) -> dict:
-    """One completion -> {format_ok, legal, iou_tc, iou_min, f5, g_area, topo_any, topo_freq, sig_id, error,
+    """One completion -> {format_ok, legal, iou_tc, iou_min, f5, g_area, topo_any, topo_freq, sig_id, loc, error,
     defects}."""
     return score_many([(text, truncated, names, caches, W, H)])[0][0]
 
@@ -121,26 +152,28 @@ def score_many(jobs: Sequence[tuple]) -> list[tuple[dict, dict[str, ObjectTerms]
         if not p.ok:
             out.append((_FAILED | {"error": p.error, "defects": {}}, {}))
             continue
-        out.append(_combine(names, a, r, range(i, i + len(names))))
+        out.append(_combine(names, caches, a, r, range(i, i + len(names))))
         i += len(names)
     return out
 
 
-def _combine(names, answers, r: dict, idx) -> tuple[dict, dict[str, ObjectTerms]]:
+def _combine(names, caches, answers, r: dict, idx) -> tuple[dict, dict[str, ObjectTerms]]:
     """A parsed completion's terms from its objects' rows idx of the device result r."""
     legal, defects, terms = True, {}, {}
     for n, i in zip(names, idx, strict=True):
         for d, c in zip(_gpucheck.DEFECTS, r["defects"][i].tolist(), strict=True):
             if c:
                 legal, defects[d] = False, defects.get(d, 0) + c
-        terms[n] = _object(r, i)
+        terms[n] = _object(r, i, caches[n])
     ts = list(terms.values())
     sigs = tuple(t.sig for t in ts)
     joint = len(answers.get(sigs, ())) / sum(map(len, answers.values()))
     return ({"format_ok": 1.0, "legal": float(legal), "iou_tc": float(np.mean([t.iou_tc for t in ts])),
              "iou_min": float(min(t.iou_tc for t in ts)), "f5": float(np.mean([t.f5 for t in ts])),
              "g_area": float(np.mean([t.g_area for t in ts])), "topo_any": float(joint > 0), "topo_freq": joint,
-             "sig_id": sig_id(sigs), "error": "", "defects": defects}, terms)
+             "sig_id": sig_id(sigs),
+             "loc": float(np.mean([gated_loc(t.iou_tc, t.g_area, t.topo_freq, t.loc_raw) for t in ts])),
+             "error": "", "defects": defects}, terms)
 
 
 def score_batch(jobs: Sequence[tuple]) -> dict:

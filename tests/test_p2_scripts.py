@@ -386,7 +386,9 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
     assert gp.returncode == 0, gp.stderr[-4000:]
     res = json.loads((run / "gp/g_probe.json").read_text())
     assert res["verdict"] in ("PASS", "FAIL", "INCONCLUSIVE") and res["steps"] == 20
-    assert res["lr"] == (5e-5 if name == "qwen3-vl-2b" else 5e-6)
+    from objdel.train import configs
+
+    assert res["lr"] == configs.rl_lr(name)
 
 
 # use_vllm off: vLLM needs a GPU (TRL 1.17 refuses use_vllm without it installed); the box's profile arms run vLLM

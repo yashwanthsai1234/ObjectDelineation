@@ -62,6 +62,9 @@ VAL_HALF_RULE = ("deal per lidc_stratum (dis=1 included), seed 'val_half:<s>', f
 
 @dataclass(frozen=True)
 class Patient:
+    """Per-patient counts for the LIDC split strata: multi-reader slices and how many of them have disagreeing
+    topologies.
+    """
     slices: int  # multi-reader slices
     disagree: int  # of which readers' topologies disagree
 
@@ -92,6 +95,7 @@ def deal_weighted(groups, weight, fractions, seed) -> dict:
 
 
 def lidc_stratum(p: Patient) -> str:
+    """The stratum of a patient: `dis=1` when any slice disagrees, else a bin of the multi-reader slice count."""
     if p.disagree:
         return "dis=1"
     s = p.slices
@@ -115,6 +119,8 @@ def lidc_split(patients: dict[str, Patient], seed=0) -> dict[str, str]:
 def val_half_table(records, max_s=1000) -> dict:
     """The val halves of B1.0 from the val view's records (dicts with group_id and disagreement; nothing else is
     read): the first seed s < max_s that balances items and disagreement items (module docstring)."""
+    if not records:
+        raise ValueError("val_half_table: no records")
     items = Counter(r["group_id"] for r in records)
     dis = Counter(r["group_id"] for r in records if r["disagreement"])
     strata = {}

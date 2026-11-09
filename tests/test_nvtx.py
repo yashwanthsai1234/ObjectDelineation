@@ -216,7 +216,10 @@ def test_profiler_window_edges(rec, monkeypatch):
         cb.on_step_end(None, st, None)
     assert [e for e in rec.ev if e[0] == "start"] == [("start",)]
     rec.ev.clear()
-    drive(NvtxSteps((4, 6)), 2, first=5)  # resumed past s: no start, no stop
+    drive(NvtxSteps((4, 6)), 2, first=5)  # resumed inside the window (BR1-rl): train begin starts, step 6 stops
+    assert [e[0] for e in rec.ev if e[0] in ("start", "stop")] == ["start", "stop"]
+    rec.ev.clear()
+    drive(NvtxSteps((4, 6)), 2, first=6)  # resumed past the window: no start, no stop
     assert not any(e[0] in ("start", "stop") for e in rec.ev)
     rec.ev.clear()
     drive(NvtxSteps((4, 6)), 4)  # the run ends at step 4, inside the window: on_train_end stops the capture
@@ -569,7 +572,7 @@ def test_checker_range_opens_on_the_thread_that_scores(monkeypatch):
                         or __import__("contextlib").nullcontext())
     T = {"format_ok": np.ones(8), "legal": np.ones(8), "iou_tc": np.linspace(0, 1, 8), "f5": np.ones(8),
          "g_area": np.ones(8), "topo_any": np.ones(8), "topo_freq": np.ones(8), "sig_id": np.zeros(8),
-         "error": [""] * 8, "defects": [{}] * 8}  # fmt: skip
+         "loc": np.zeros(8), "error": [""] * 8, "defects": [{}] * 8}  # fmt: skip
     monkeypatch.setattr(R, "score_batch", lambda jobs: T)
     rw = R.TRLReward(lambda k: {}, stop_ids={1})
     args = ([[{"content": "x"}]] * 8, [[1]] * 8, ["k"] * 8, [5] * 8, [5] * 8, [["nodule"]] * 8)
@@ -608,8 +611,8 @@ def built(monkeypatch, tmp_path):
     monkeypatch.setattr("transformers.AutoModelForImageTextToText", stub)  # by path: imports above swap the module
     monkeypatch.setattr("transformers.AutoProcessor", stub)
     monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace(
-        fp16=False, off_policy_mask_threshold=k.get("off_policy_mask_threshold"), output_dir="o"))
-    monkeypatch.setattr(rewards, "TRLReward", lambda *a: SimpleNamespace(funcs=lambda: ([], [])))
+        fp16=False, vllm_lora=False, off_policy_mask_threshold=k.get("off_policy_mask_threshold"), output_dir="o"))
+    monkeypatch.setattr(rewards, "TRLReward", lambda *a, **k: SimpleNamespace(funcs=lambda: ([], [])))
     monkeypatch.setattr(rewards, "stop_ids", lambda *a: set())
     monkeypatch.setattr(serve, "loader", lambda *roots: None)
     monkeypatch.setattr(fast, "FastGRPO", Trainer)
@@ -645,6 +648,22 @@ def test_make_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold(
     assert built() == []
     (cb,) = built(grpo='{"off_policy_mask_threshold": 0.5}')
     assert isinstance(cb, OpsmDelta)
+
+
+def test_make_trainer_installs_the_lora_sync_only_under_option_f(built, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from objdel.train import configs, vllm_sync
+
+    calls = []
+    monkeypatch.setattr(vllm_sync, "install",
+                        lambda t, numerics, adapter_dir=None: calls.append((numerics, adapter_dir)) or True)
+    built()
+    assert calls == []
+    monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace(
+        fp16=False, off_policy_mask_threshold=None, output_dir="o", vllm_lora=True))
+    built()
+    assert [c[0] for c in calls] == ["lora-seqmask"] and calls[0][1].is_dir()
 
 
 def test_train_rl_flags():

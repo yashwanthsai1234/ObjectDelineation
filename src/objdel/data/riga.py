@@ -74,6 +74,7 @@ class Photo:
 
     @property
     def image_id(self) -> str:
+        """Image id `<subset>/image<index:03d>`."""
         return f"{self.subset}/image{self.index:03d}"
 
 
@@ -93,6 +94,7 @@ def discover(root) -> list[Photo]:
 
 
 def load(path) -> np.ndarray:
+    """The image file as a uint8 (H, W, 3) RGB array."""
     return np.asarray(Image.open(path).convert("RGB"))
 
 
@@ -124,6 +126,7 @@ def hysteresis(d, low, high) -> np.ndarray:
 
 
 def diff(a, b) -> np.ndarray:
+    """Summed absolute RGB difference of two images, an (H, W) int array (computed in int16)."""
     return np.abs(a.astype(np.int16) - b.astype(np.int16)).sum(axis=2)
 
 

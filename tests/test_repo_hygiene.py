@@ -357,3 +357,40 @@ def test_library_keep_list_adr_matches_pyproject():
     rows = re.split(r"^- ", sec["DEFERRED"], flags=re.M)[1:]
     assert all("Trigger:" in b or re.search(r"phase [A-Z]", b) for b in rows)
     assert path.name in (ADR_DIR / "README.md").read_text()
+
+
+WAVE = 2  # CLEAN11: D3 (the device `trace`) has landed
+RINGS = ("objdel.geom.rings", "objdel.checker.rings")  # first that exists, so E3a needs no edit
+SRC = ROOT / "src" / "objdel"
+
+
+def _functions(path: Path) -> set[str]:
+    return {n.name for n in ast.parse(path.read_text()).body if isinstance(n, ast.FunctionDef)}
+
+
+@pytest.mark.skipif(WAVE < 2, reason="D3 not landed")
+def test_polygonizer_seam_is_device_only():
+    """CLEAN11 steps 1-4: the numpy tracers live only as oracles; the rings module runs on check_masks; certify
+    and RIGA reach it through `trace` and `certify_many`."""
+    oracles = ROOT / "tests" / "oracles"
+    names = set()
+    for o in ("polygonize_oracle", "bitquad_oracle"):
+        assert subprocess.run(["git", "ls-files", "--error-unmatch", f"tests/oracles/{o}.py"], cwd=ROOT,
+                              capture_output=True).returncode == 0
+        names |= _functions(oracles / f"{o}.py")
+    for gone in ("checker/polygonize.py", "checker/bitquad.py", "geom/polygonize.py", "geom/bitquad.py"):
+        assert not (SRC / gone).exists(), gone
+    allowed = {"polygonize", "trace"}
+    for f in SRC.rglob("*.py"):
+        text = f.read_text()
+        assert "tests.oracles" not in text and not re.search(r"^\s*(from|import) oracles", text, re.M), f
+        assert not ((_functions(f) & names) - allowed), f
+    rel = next(m.replace(".", "/") for m in RINGS if (ROOT / "src" / (m.replace(".", "/") + ".py")).exists())
+    rings = ast.parse((ROOT / "src" / f"{rel}.py").read_text())
+    assert any(getattr(n, "attr", getattr(n, "id", None)) == "check_masks" for n in ast.walk(rings))
+    pkg = SRC / "checker" / "__init__.py"
+    assert "polygonize" in pkg.read_text() and "from .rings import" in pkg.read_text()
+    cert = ast.parse((SRC / "checker" / "certify.py").read_text())
+    assert any(isinstance(n, ast.ImportFrom) and any(a.name == "trace" for a in n.names) for n in ast.walk(cert))
+    assert any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "trace" for n in ast.walk(cert))
+    assert "certify_many(" in (SRC / "data" / "riga.py").read_text()

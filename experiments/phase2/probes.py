@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from objdel.eval import probes as P
+from objdel.io import read_jsonl
 
 
 def build(a):
@@ -44,8 +45,7 @@ def build(a):
 
 
 def score(a):
-    with open(a.completions) as fh:
-        rows = [json.loads(line) for line in fh]
+    rows = read_jsonl(a.completions)
     root = a.root or f"data/eval_views/probe-{a.probe}"
     res = (P.score_precision if a.probe == "precision" else P.score_topology)(rows, root)
     text = json.dumps(res, indent=1, default=float)

@@ -34,6 +34,7 @@ MODEL = ("model", "model_all_k", "diff")
 
 
 class LeaveOut(NamedTuple):
+    """One leave-one-out case: the left-out doctor's index, the cache of the remaining doctors and whether k = 2."""
     index: int  # the left-out voting doctor
     cache: ExpertCache  # the other k - 1 doctors ([other, other] at k = 2)
     single: bool  # k = 2: one reference doctor
@@ -66,6 +67,7 @@ def item(cache: ExpertCache, texts: Sequence[str] | None, truncated: Sequence[bo
            "legacy_dmax": dmax, "legacy_loo_dmax_item": float(np.mean(dmax))}
     if texts is None:
         return row | dict.fromkeys(MODEL)
+    truncated = [False] * len(texts) if truncated is None else list(truncated)
     if len(texts) != len(truncated):
         raise ValueError(f"{len(texts)} texts but {len(truncated)} truncated flags")
     refs = [lo.cache for lo in loos] + [cache]  # the LOO caches, then all k doctors (model_all_k)
@@ -91,9 +93,15 @@ def _stratum(rows: Sequence[dict], groups: Mapping[str, str] | None, boot: int, 
             res[m] = None if x is None else [float(x.mean()), None, None] if D is None else signal.ci(x, D)
         return res
 
-    patient = None if groups is None else signal.draws(ids, boot, seed, key=groups.__getitem__)
+    def draws(key):  # None (no CI) for a stratum of one cluster
+        try:
+            return signal.draws(ids, boot, seed, key=key)
+        except ValueError:
+            return None
+
+    patient = None if groups is None else draws(groups.__getitem__)
     pooled = float(np.mean([v for r in rows for v in r["legacy_dmax"]]))
-    return out | line(patient) | {"legacy_loo_dmax_pooled": pooled, "nodule": line(signal.draws(ids, boot, seed))}
+    return out | line(patient) | {"legacy_loo_dmax_pooled": pooled, "nodule": line(draws(signal.cluster))}
 
 
 def summarize(rows: Sequence[dict], groups: Mapping[str, str] | None = None, boot: int = 2000, seed: int = 0) -> dict:
@@ -106,6 +114,8 @@ def summarize(rows: Sequence[dict], groups: Mapping[str, str] | None = None, boo
         raise ValueError("summarize: the answers' CIs need groups ({item_id: group_id}, patient draws)")
     strata = {"all": rows, "k>=3": [r for r in rows if r["k"] >= 3], "k=2": [r for r in rows if r["k"] == 2]}
     if any(answered):
+        if not np.isfinite([[r["model"], r["model_all_k"], r["diff"]] for r in rows]).all():
+            raise ValueError("summarize: model, model_all_k and diff must be finite")
         strata |= {"found": [r for r in rows if r["model_all_k"] >= signal.MISS],
                    "miss": [r for r in rows if r["model_all_k"] < signal.MISS]}
     out = {s: _stratum(v, groups, boot, seed) for s, v in strata.items()}

@@ -31,7 +31,8 @@ def g(iou, f5, legal=(1,) * G, sig=(A,) * G, freq=(1.0,) * G, g_area=None):
     sig = np.asarray(sig, float)
     return {"format_ok": np.ones(G), "legal": np.asarray(legal, float), "iou_tc": np.asarray(iou, float),
             "f5": np.asarray(f5, float), "g_area": np.asarray(g_area if g_area is not None else f5, float) * 0.98,
-            "topo_any": (np.asarray(freq) > 0).astype(float), "topo_freq": np.asarray(freq, float), "sig_id": sig}
+            "topo_any": (np.asarray(freq) > 0).astype(float), "topo_freq": np.asarray(freq, float), "sig_id": sig,
+            "loc": np.zeros(G)}
 
 
 HAND = {  # hand-set reward-v4 terms per prompt (one group each)

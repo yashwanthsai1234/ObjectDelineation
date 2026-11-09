@@ -311,10 +311,9 @@ def _native(x) -> list:
 
 def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H: int,
             names: Sequence[str] | None = None, truncated: Sequence[bool] | None = None,
-            caches: Mapping[str, ExpertCache] | None = None, tokens: Sequence[int] | None = None,
-            nsd_tau: Mapping[str, float] = NSD_TAU) -> dict:
+            caches: Mapping[str, ExpertCache] | None = None, tokens: Sequence[int] | None = None) -> dict:
     """Metrics of one item: K completions (texts) against the rater masks {name: bool (k, H, W)} on a W x H frame;
-    tokens: completion token counts (optional); nsd_tau: NSD tolerance per structure, px. The masks come from one
+    tokens: completion token counts (optional). The masks come from one
     CUDA checker call per item (objdel.reward.score_many).
 
     Returns JSON-native values: per-sample lists under "samples" and "objects"[name], item scalars otherwise
@@ -333,7 +332,7 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
     rows = [distinct[x] for x in keys]
     T = {t: np.array([r["terms"][t] for r in rows]) for t in NUMERIC}  # failed samples: every term 0 (reward rule)
     legal = legal_gate(T)  # the reward's legality gate; legal implies parsed
-    gated = {t: T[t] * legal for t, _ in _GEOMETRIC}  # illegal: 0, as advantages_v4 sees the terms
+    gated = {t: np.where(legal, T[t], 0.0) for t, _ in _GEOMETRIC}  # illegal: 0, as advantages_v4 sees the terms
     passed = topology_valid(T)
     objects = {}
     for n in names:
@@ -351,7 +350,7 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
              "area": area, "a_amax": area / max(a_max, 1), "a_amin": area / a_min if a_min else np.ones(K),
              "m_e": area / max(int(np.count_nonzero(c.union)), 1),
              "components": comps, "extra_components": comps - max(len(s) for s in c.rater_sigs),
-             "nsd": _nsd_best(drawn, c.raters, nsd_tau[n])}
+             "nsd": _nsd_best(drawn, c.raters, NSD_TAU[n])}
         biou = _band_iou(np.concatenate([drawn, c.raters, c.vote[None]]), BIOU_D[n])
         o |= {"boundary_iou": biou[:K, K:K + k].max(1), "boundary_iou_vote": biou[:K, -1]}
         o = {key: np.asarray(v, np.float64) for key, v in o.items()}

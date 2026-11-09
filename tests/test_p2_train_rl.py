@@ -200,10 +200,13 @@ def test_heldout_curve_logs_eval_iou_and_allmiss(tmp_path, rows_run):
 
 # --- CLEAN2: no scoring pool in train_rl; gc.freeze once after the last preload (CT-33 to CT-36) -------------------
 
-OPTIONS = ["-h", "--help", "--model", "--ckpt", "--train", "--out", "--steps", "--save-steps", "--shared-prefix",
-           "--lr", "--resume", "--merge-last", "--rows-revision", "--rows-manifest-sha256", "--budget-usd",
-           "--session-start", "--rate-usd-per-h", "--fixed-usd", "--heldout", "--heldout-items", "--heldout-every",
-           "--procs", "--grpo", "--profile-window", "--trace"]  # pre-CLEAN literal (ap._actions at 08e6455)
+OPTIONS = ["-h", "--help", "--model", "--ckpt", "--train", "--out", "--steps", "--save-steps", "--log-by-prompt",
+           "--shared-prefix", "--fast-sync", "--group-requests", "--no-ckpt-layers", "--lr", "--resume",
+           "--merge-last", "--rows-revision", "--rows-manifest-sha256", "--budget-usd", "--session-start",
+           "--rate-usd-per-h", "--fixed-usd", "--heldout", "--heldout-items", "--heldout-every", "--procs", "--grpo",
+           "--runaway-cap", "--reward", "--numerics", "--opsm-start-delta", "--profile-window", "--trace",
+           "--count-syncs", "--host-meta", "--check-meta-every", "--gpu-pixels",
+           "--allow-cpu-pixels"]  # the pre-CLEAN literal (ap._actions at 08e6455) plus the lanes' flags in parser order
 RL_KEYS = ["beta", "budget_stopped", "ckpt", "eval", "final", "log", "lr", "mask_truncated_completions", "model",
            "numerics", "resumed_from", "rows", "steps", "timing_s", "train_rows"]  # pre-CLEAN literal, same stub
 
@@ -237,7 +240,8 @@ def stub(tmp_path, monkeypatch):
     trainer = SimpleNamespace(train=lambda resume_from_checkpoint=None: calls.append("train"), model=saver,
                               accelerator=SimpleNamespace(unwrap_model=lambda m: m),
                               state=SimpleNamespace(global_step=2, log_history=[{"step": 1, "reward": 0.5}]),
-                              args=SimpleNamespace(beta=0.0, mask_truncated_completions=True))
+                              args=SimpleNamespace(beta=0.0, mask_truncated_completions=True,
+                                         off_policy_mask_threshold=None))
     monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: (trainer, saver, 5e-5))
     (tmp_path / "root").mkdir()
     (tmp_path / "root/manifest.json").write_text("{}")

@@ -1264,3 +1264,72 @@ def test_log_by_prompt_adds_the_per_prompt_rewards_to_train_logs_only(monkeypatc
     t.model.training = False
     t.log({})
     assert seen == [{}, {"rewards/iou_tc/by_prompt": [0.5, 0.25]}, {}]
+
+
+def rope_rows(prompt, answers, pads, W):
+    """Rows laid out as TRL builds them: left pads, the shared prompt, an answer of text tokens, right pads."""
+    ids, mask = torch.zeros(len(answers), W, dtype=torch.long), torch.zeros(len(answers), W, dtype=torch.long)
+    for r, (a, p) in enumerate(zip(answers, pads, strict=True)):
+        row = prompt + a
+        ids[r, p:p + len(row)], mask[r, p:p + len(row)] = torch.tensor(row), 1
+    return ids, mask, (ids == IMG).long() * mask
+
+
+def test_rope_positions_equal_get_rope_index_and_flag_rows_off_the_template():
+    """C2: one get_rope_index call on the bare prompt gives a template; every row's positions follow from its real
+    token count by one cumsum, gather and where. Rows that leave the template set `bad` (no host read inside)."""
+    m, g = tiny_model(), torch.Generator().manual_seed(3)
+    prompt = [5, 6, START, *[IMG] * 4, END, 7, 8, 9]
+    grid = torch.tensor([[1, 4, 4]])
+    ans = lambda n: torch.randint(0, 99, (n,), generator=g).tolist()  # noqa: E731
+    answers, pads = [[], ans(1), ans(13), ans(20), ans(9)], [3, 0, 2, 0, 1]
+    ids, mask, mm = rope_rows(prompt, answers, pads, W=34)
+    mask[4, 1 + len(prompt) + 4] = 0  # a hole in an answer
+    mask[3, len(prompt):] = 0  # a truncated row whose answer is masked
+    mm = mm * mask
+    tmpl = fast.rope_template(m.model, torch.tensor(prompt), (torch.tensor(prompt) == IMG).long(), grid)
+    pos, bad = fast.rope_positions(tmpl, ids, mask, mm)
+    want, _ = m.model.get_rope_index(ids, mm_token_type_ids=mm, image_grid_thw=grid.repeat(5, 1), attention_mask=mask)
+    assert torch.equal(pos, want) and pos.dtype == torch.int64 and not bad.any()
+    odd = ids.clone()
+    odd[0, 3 + 1] = 9  # a prompt token differs
+    mm_odd = mm.clone()
+    mm_odd[2, 2 + len(prompt) + 3] = 1  # an image token in an answer
+    short = mask.clone()
+    short[1, 4:] = 0  # fewer real tokens than the prompt
+    assert fast.rope_positions(tmpl, odd, mask, mm)[1].tolist() == [True, False, False, False, False]
+    assert fast.rope_positions(tmpl, ids, mask, mm_odd)[1].tolist() == [False, False, True, False, False]
+    assert fast.rope_positions(tmpl, ids, short, mm * short)[1].tolist() == [False, True, False, False, False]
+
+
+def test_rope_bad_rows_routes_on_host_data_only():
+    """U-RP7: a prompt off its template, an answer holding the image pad id or the vision start id; a clean row."""
+    tmpl, vision = (1, 2, 3), (IMG, 101, START, END)
+    bad = fast.rope_bad_rows([(1, 2, 3), (1, 2, 4), (1, 2, 3), (1, 2, 3)], [[7, 8], [7], [7, IMG], [START]],
+                             [tmpl] * 4, vision)  # fmt: skip
+    assert bad.dtype == bool and bad.tolist() == [False, True, True, True]
+
+
+def test_vllm_engine_kwargs_follow_the_config_and_default_to_none():
+    from types import SimpleNamespace as NS
+
+    assert fast.vllm_engine_kwargs(NS(fp16=False)) == {}  # the B1 control: TRL's engine untouched
+    assert fast.vllm_engine_kwargs(NS(fp16=True)) == {"dtype": "float16"}
+    assert fast.vllm_engine_kwargs(NS(fp16=False, vllm_lora=True)) == {"enable_lora": True, "max_lora_rank": 16}
+
+
+def test_generate_carries_the_lora_request_only_under_option_f(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace as NS
+
+    monkeypatch.setitem(sys.modules, "vllm", NS())
+    monkeypatch.setitem(sys.modules, "vllm.lora", NS())
+    monkeypatch.setitem(sys.modules, "vllm.lora.request", NS(LoRARequest=lambda *a: ("lora", *a)))
+    for lora_dir, want in ((None, {}), (tmp_path, {"lora_request": ("lora", "policy", 1, str(tmp_path))})):
+        t, _ = vllm_trainer(expand=1)
+        t.lora_dir, seen = lora_dir, []
+        gen = t.vllm_generation.llm.generate
+        t.vllm_generation.llm.generate = lambda p, seen=seen, gen=gen, **kw: seen.append(kw) or gen(p, **kw)
+        fast.FastGRPO.patch_vllm_prompts(t)
+        t.vllm_generation.llm.generate([{"prompt_token_ids": [START, END]}], sampling_params=None)
+        assert seen == [{"sampling_params": None, **want}]

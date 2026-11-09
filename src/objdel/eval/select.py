@@ -25,7 +25,7 @@ def medoid(sample_iou: np.ndarray, legal: Sequence[bool]) -> int:
     if len(eligible) < 2:
         return int(eligible[0]) if len(eligible) else 0
     scores = [np.mean([M[i, j] for j in eligible if j != i]) for i in eligible]
-    return int(eligible[np.argmax(scores)])
+    return int(eligible[np.argmax(np.round(scores, 12))])
 
 
 def vote_mask(masks: np.ndarray, legal: Sequence[bool]) -> np.ndarray:

@@ -28,7 +28,9 @@ from collections.abc import Callable, Sequence
 import numpy as np
 from scipy import stats
 
-WEIGHTS = {"iou_tc": 0.3, "f5": 0.3, "legal": 0.1, "g_area": 0.3}  # REWARD_V4.weights on the raw gated terms
+from objdel.reward.spec import REWARD_V4, TERMS
+
+WEIGHTS = dict(zip(TERMS, REWARD_V4.weights, strict=True))  # REWARD_V4.weights on the raw gated terms
 IOU_OK = 0.5  # legal_wrong: legal and IoU_tc < this (REWARD_V4.iou_gate)
 BOOT, LEVEL, SEED = 2000, 0.95, 0
 VETO_REL = 0.15
@@ -97,6 +99,7 @@ def per_item(groups: Sequence[dict]) -> dict[str, np.ndarray]:
 
 
 def cluster(item_id: str) -> str:
+    """The cluster (nodule) of an item id: the id without its last path part for `lidc/` items, else the id itself."""
     return item_id.rsplit("/", 1)[0] if item_id.startswith("lidc/") else item_id
 
 
@@ -109,14 +112,18 @@ def draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: Callable[
         raise ValueError("draws: no ids to resample")
     nod = [key(i) for i in ids]
     groups = [np.array([j for j, x in enumerate(nod) if x == u]) for u in dict.fromkeys(nod)]
+    if len(groups) < 2:
+        raise ValueError("draws: a bootstrap needs at least 2 clusters")
     rng = np.random.default_rng(seed)
     return [np.concatenate([groups[g] for g in rng.integers(0, len(groups), len(groups))]) for _ in range(boot)]
 
 
 def _ci(f, n: int, D: list[np.ndarray]) -> list[float]:
-    reps = np.array([f(d) for d in D])
+    reps, point = np.array([f(d) for d in D]), float(f(np.arange(n)))
+    if np.isnan(point):  # a NaN item: no finite interval from the draws that missed it
+        return [point, np.nan, np.nan]
     q = (1 - LEVEL) / 2
-    return [float(f(np.arange(n))), float(np.nanquantile(reps, q)), float(np.nanquantile(reps, 1 - q))]
+    return [point, float(np.quantile(reps, q)), float(np.quantile(reps, 1 - q))]
 
 
 def ci(x: np.ndarray, D: list[np.ndarray]) -> list[float]:
@@ -131,9 +138,10 @@ def cluster_t(x, groups: Sequence[str], level: float = LEVEL) -> list[float]:
     Miller 2015, eq. 11-12 at one regressor). The decision interval of a gate on fewer than 50 patients (A1 step 5)."""
     x = np.asarray(x, float)
     _, inv = np.unique(np.asarray(groups), return_inverse=True)
-    S, N, P = np.bincount(inv, x), np.bincount(inv).astype(float), inv.max() + 1
+    P = len(np.unique(inv))
     if P < 2:
         raise ValueError(f"cluster_t: needs at least 2 patients, got {P}")
+    S, N = np.bincount(inv, x), np.bincount(inv).astype(float)
     m = S.sum() / N.sum()
     h = stats.t.ppf((1 + level) / 2, P - 1) * np.sqrt(P / (P - 1) * ((S - m * N) ** 2).sum() / N.sum() ** 2)
     return [float(m), float(m - h), float(m + h)]

@@ -12,7 +12,9 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-LOCAL_ONLY = pytest.mark.skipif(not (REPO / "docs/plan").exists(), reason="planning records are local-only (git-ignored)")
+LOCAL_ONLY = pytest.mark.skipif(
+    not (REPO / "docs/plan").exists(), reason="planning records are local-only (git-ignored)"
+)
 
 # Frozen paths (DOC.spec "Definitions"); experiments/phase1 is live after DOC4, except its lab folder.
 FROZEN_PARTS = ("/lab/", "/impl/")

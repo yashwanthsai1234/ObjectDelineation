@@ -26,6 +26,7 @@ import gc
 import json
 import math
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -71,34 +72,38 @@ def candidates(sel: dict) -> list[str]:
     return [sel["selected"]] + [n for _, n in earlier[-1:]]
 
 
-def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None, calls=(), **over):
+def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None, calls=(), reward=None, **over):
     """(trainer, processor, lr): FastGRPO (or, with a.plain, TRL's GRPOTrainer) on ckpt with configs.grpo_config,
     the model's GRPO sampling, the probe LR (LoRA or full FT; a.lr overrides when set), logging every step, then
     `over` and a.grpo's JSON overrides. check(config) runs before the model loads (train_rl's sampler guards); calls:
-    more callbacks; eval_dataset: rows of the view a.heldout (its caches resolve first). Shared by the G-probe and
-    the full run (train_rl)."""
+    more callbacks; reward: the reward spec (objdel.reward.REWARDS; None: reward v4); eval_dataset: rows of the view
+    a.heldout (its caches resolve first). Shared by the G-probe and the full run (train_rl)."""
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
-    from objdel.train import callbacks, configs, fast, rewards, serve
+    from objdel.reward import REWARD_V4
+    from objdel.train import callbacks, configs, fast, rewards, serve, vllm_sync
 
     peft = configs.lora(a.model)
-    lr = getattr(a, "lr", None) or (G_PROBE["lr_lora"] if peft else G_PROBE["lr_full"])
+    lr = getattr(a, "lr", None) or configs.rl_lr(a.model)
     over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
-    cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
+    reward = reward or REWARD_V4
+    cfg = configs.grpo_config(a.model, str(a.out / "trainer"), reward=reward, **over)
     if check:
         check(cfg)
     model = AutoModelForImageTextToText.from_pretrained(ckpt, **({"dtype": torch.float16} if cfg.fp16 else {}))
     proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
     roots = [a.train] if eval_dataset is None else [a.heldout, a.train]
-    funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc)).funcs()
+    funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc), spec=reward).funcs()
     cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
     win = getattr(a, "profile_window", None)  # train_rl --profile-window S E: NVTX steps and the nsys capture window
     calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])  # raises on S < 2 (TraceStep's wait < 0)
     if getattr(a, "trace", None):  # torch.profiler on step S (the nsys fallback), else on step 3
         calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
+    if getattr(a, "no_ckpt_layers", None):  # C9 arm (a)
+        calls.append(callbacks.NoCkptLayers(a.no_ckpt_layers))
     trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, eval_dataset=eval_dataset,
                   processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
@@ -107,6 +112,20 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     if cfg.off_policy_mask_threshold is not None and cls is fast.FastGRPO:  # bf16-tis-opsm: B2.4 rule 4's live delta
         trainer.opsm_watch = callbacks.OpsmDelta(trainer, cfg.output_dir)
         trainer.add_callback(trainer.opsm_watch)
+    if cfg.vllm_lora and cls is fast.FastGRPO:  # option F: vLLM serves the unmerged adapter from a tmpfs folder
+        shm = "/dev/shm" if Path("/dev/shm").is_dir() else None
+        trainer.lora_dir = Path(tempfile.mkdtemp(prefix="objdel-lora-", dir=shm))
+        if not vllm_sync.install(trainer, "lora-seqmask", trainer.lora_dir):
+            raise ValueError("--numerics lora-seqmask needs a colocate vLLM on one process with a LoRA model")
+    trainer.group_requests = bool(getattr(a, "group_requests", False))  # C6: one n = G vLLM request per prompt
+    if getattr(a, "fast_sync", False) and not vllm_sync.install(trainer):  # C5: one load_weights call per sync
+        raise ValueError("--fast-sync needs a colocate vLLM on one process with a LoRA model")
+    trainer.count_syncs = bool(getattr(a, "count_syncs", False))  # C0
+    trainer.host_meta = bool(getattr(a, "host_meta", False))  # C4
+    trainer.check_meta_every = getattr(a, "check_meta_every", 50)
+    if getattr(a, "gpu_pixels", "off") == "auto":  # C1: 8 training images for the start-up self-check
+        imgs = [train[i]["image"] for i in range(min(8, len(train)))]
+        print(f"gpu_pixels/backend={trainer.use_gpu_pixels(imgs, getattr(a, 'allow_cpu_pixels', False))}")
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
         trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers

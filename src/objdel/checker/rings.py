@@ -22,17 +22,20 @@ from .topology import as_mask
 
 @dataclass(frozen=True)
 class Ring:
+    """One rectilinear ring of a mask: corner vertices in pixel coordinates, signed area and part rank."""
     pts: np.ndarray  # (k, 2) int64 corner vertices (x, y), canonical start first, offset applied
     area: int  # signed: > 0 outer, < 0 hole
     part: int  # raster rank of the bounded 8-component within its mask
 
     @property
     def hole(self):
+        """True for a hole ring (negative signed area)."""
         return self.area < 0
 
 
 @dataclass(frozen=True)
 class MaskRings:
+    """Rings, bit-quad counts and Betti numbers of one mask, as returned by `trace`."""
     rings: list[Ring]
     quads: tuple[int, int, int, int, int]  # bit-quad counts n1, n2, nD, n3, n4
     b0: int  # 8-connected foreground components
@@ -43,9 +46,18 @@ def trace(masks: Sequence, offsets: Sequence[tuple[int, int]] | None = None) -> 
     """Rings, bit-quads and Betti numbers of 2-D masks (any nonzero value is foreground, sides 0..4096; larger raise
     ValueError) in one engine call. offsets[i] (x, y) is added to mask i's corners, e.g. after cropping."""
     ms = [as_mask(m) for m in masks]
-    offs = np.zeros((len(ms), 2), np.int64) if offsets is None else np.asarray(offsets, np.int64).reshape(-1, 2)
-    if len(offs) != len(ms):
-        raise ValueError(f"{len(offs)} offsets for {len(ms)} masks")
+    raw = np.zeros((len(ms), 2), np.int64) if offsets is None else np.asarray(offsets)
+    if raw.size == 0 and not ms:
+        raw = np.zeros((0, 2), np.int64)
+    if raw.dtype.kind not in "iuf":
+        raise ValueError(f"offsets dtype {raw.dtype}, need real numbers")
+    if raw.shape != (len(ms), 2):
+        raise ValueError(f"offsets shape {raw.shape}, need ({len(ms)}, 2)")
+    if raw.size and not (np.issubdtype(raw.dtype, np.integer) or np.array_equal(raw, np.round(raw))):
+        raise ValueError("offsets must be whole numbers")
+    if raw.size and np.abs(raw).max() > 2**62:  # corners (<= 4097) plus offset must fit in int64
+        raise ValueError("offsets out of range")
+    offs = raw.astype(np.int64)
     start = np.zeros(len(ms) + 1, np.int64)
     start[1:] = np.cumsum([m.size for m in ms])
     bits = np.concatenate([m.view(np.uint8).ravel() for m in ms]) if ms else np.zeros(0, np.uint8)

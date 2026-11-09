@@ -36,7 +36,6 @@ from .frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, centred, crowded, p
 
 OPS = ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")
 DATASET_OPS = {"lidc": OPS, "riga": ("id", "fh")}
-INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 LADDER = tuple(d for d in DIVISORS if 50 <= d <= 500)  # 50, 100, 125, 200, 250, 500
 WINDOW_JITTER = ((-300, 60), (1400, 80))  # CT level and width, centre and half-range in HU (D10)
 NOISE_MAX = 10.0  # HU, Gaussian sigma upper bound (D10)
@@ -53,6 +52,7 @@ def apply(a: np.ndarray, op: str) -> np.ndarray:
 
 
 def row_rng(*keys) -> np.random.Generator:
+    """Numpy generator seeded from the first 8 bytes of the SHA-256 of the keys joined by `|`."""
     return np.random.default_rng(int.from_bytes(hashlib.sha256("|".join(map(str, keys)).encode()).digest()[:8]))
 
 
@@ -160,6 +160,7 @@ def write_context(path: Path, item: Item, policy_box) -> None:
 
 
 def load_context(view_dir, item_id: str) -> dict:
+    """The arrays of `<view_dir>/context/<item_id>.npz`, loaded without pickle."""
     with np.load(Path(view_dir, "context", item_id + ".npz"), allow_pickle=False) as z:
         return {k: z[k] for k in z.files}
 
