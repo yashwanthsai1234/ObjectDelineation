@@ -21,6 +21,7 @@ _cuda: bool | None = None  # torch.cuda.is_available(), asked once
 
 
 def enabled() -> bool:
+    """True when NVTX is on (`OBJDEL_NVTX=1`) and CUDA is available; the CUDA query is asked once."""
     global _cuda
     if not _ON:
         return False
@@ -32,6 +33,7 @@ def enabled() -> bool:
 
 
 def push(name: str) -> None:
+    """Push an NVTX range when enabled."""
     if enabled():
         import torch
 
@@ -39,6 +41,7 @@ def push(name: str) -> None:
 
 
 def pop() -> None:
+    """Pop the current NVTX range when enabled."""
     if enabled():
         import torch
 
@@ -61,6 +64,7 @@ def range(name: str):  # noqa: A001 (the plan's name; torch.cuda.nvtx has `range
 
 
 class SyncCount:
+    """Result holder of count_syncs: the number of synchronizing CUDA operations seen in the block."""
     syncs = 0  # synchronizing CUDA operations torch reported inside the block
 
 

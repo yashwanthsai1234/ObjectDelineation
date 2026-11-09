@@ -53,6 +53,7 @@ def apply(a: np.ndarray, op: str) -> np.ndarray:
 
 
 def row_rng(*keys) -> np.random.Generator:
+    """Numpy generator seeded from the first 8 bytes of the SHA-256 of the keys joined by `|`."""
     return np.random.default_rng(int.from_bytes(hashlib.sha256("|".join(map(str, keys)).encode()).digest()[:8]))
 
 
@@ -160,6 +161,7 @@ def write_context(path: Path, item: Item, policy_box) -> None:
 
 
 def load_context(view_dir, item_id: str) -> dict:
+    """The arrays of `<view_dir>/context/<item_id>.npz`, loaded without pickle."""
     with np.load(Path(view_dir, "context", item_id + ".npz"), allow_pickle=False) as z:
         return {k: z[k] for k in z.files}
 

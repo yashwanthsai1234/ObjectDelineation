@@ -65,6 +65,7 @@ CLEARANCE = 2  # px between the rater union and the edge of a moved or resized w
 
 @dataclass(frozen=True)
 class FrameConfig:
+    """Frame policy: largest and smallest side and margins (pixels, percent) and the model image side."""
     max_side: int = 500  # a divisor of 1000
     min_side: int = 50
     margin_px: int = 8
@@ -76,6 +77,7 @@ FRAMES = {"riga": FrameConfig(), "lidc": FrameConfig(image_side=512)}
 
 
 class Frame(NamedTuple):
+    """A framed item: model image, bool masks per structure, side W = H in frame pixels, item-pixel box and scale."""
     image: np.ndarray | None  # uint8 (h, w, 3) model input, or None when the item has no pixels
     masks: dict[str, np.ndarray]  # bool (k, H, W) per structure: the ground truth of targets and reward
     W: int
@@ -172,6 +174,11 @@ def policy_side(box, cfg: FrameConfig) -> tuple[int, int]:
 
 def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: int | None = None,
           window=None) -> Frame:
+    """Frame an item: the window, model image and masks in frame pixels (module docstring).
+
+    Raises ValueError for a `side` that is not a divisor of 1000 in range, or when a moved window leaves the union
+    without clearance or meets another outlined nodule.
+    """
     cfg = cfg or FRAMES[item.dataset]
     stacks = {n: as_mask(s, 3) for n, s in item.masks.items()}
     ux0, uy0, ux1, uy1 = ub = union_box(item)

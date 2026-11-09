@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import tomllib
 import urllib.parse
 from pathlib import Path
 
@@ -206,10 +205,8 @@ def tables(text: str) -> list[tuple[int, list[str]]]:
     """(start line, header cells) of each Markdown table."""
     lines, out = text.splitlines(), []
     for i, ln in enumerate(lines[:-1]):
-        if ln.startswith("|") and re.match(r"\|[\s:|-]+\|\s*$", lines[i + 1]) and (i == 0 or not lines[i - 1].startswith("|")):
+        header = re.match(r"\|[\s:|-]+\|\s*$", lines[i + 1])
+        if ln.startswith("|") and header and (i == 0 or not lines[i - 1].startswith("|")):
             out.append((i + 1, [c.strip() for c in ln.strip().strip("|").split("|")]))
     return out
 
-
-def project_version(root: Path) -> str:
-    return tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]

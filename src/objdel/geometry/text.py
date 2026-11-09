@@ -65,6 +65,9 @@ Objects = dict[str, list[Part]]
 
 
 class Parsed(NamedTuple):
+    """Result of parsing completion text: success flag, the objects (None on failure) and an error code (empty on
+    success).
+    """
     ok: bool
     objs: Objects | None
     error: str  # "" when ok, else a short stable code (see parse)

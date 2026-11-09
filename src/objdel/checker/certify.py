@@ -31,6 +31,11 @@ from .topology import as_mask, bbox, filtered
 
 @dataclass
 class Report:
+    """Result of `certify` for one mask: Betti numbers, rectilinear-ring measures (pixels) and the verdict.
+
+    b0 counts 8-connected foreground components and b1 bounded holes; `certified` is True when the three methods agree
+    and `failures` lists the disagreements.
+    """
     b0: int
     b1: int
     area: int
@@ -61,6 +66,7 @@ def certify_many(masks, min_size=0) -> list[Report]:
 
 
 def certify(mask, min_size=0) -> Report:
+    """`certify_many` of a single mask: the mask's `Report` (`min_size` as there)."""
     return certify_many([mask], min_size)[0]
 
 

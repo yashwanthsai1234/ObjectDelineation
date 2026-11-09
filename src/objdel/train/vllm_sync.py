@@ -19,6 +19,7 @@ LORA_NAME = "policy"  # the vLLM name of the trained adapter ("default" in PEFT)
 
 
 class PushStats(NamedTuple):
+    """What one weight push to vLLM moved: tensor count, bytes and the load seconds."""
     n_tensors: int
     bytes: int
     seconds: float  # the load_weights / add_lora calls alone (the wake has its own timer, time/wake_s)

@@ -27,6 +27,7 @@ TERMS = ("iou_tc", "f5", "legal", "g_area")  # the z-scored terms, in weight / f
 
 @dataclass(frozen=True)
 class CacheSpec:
+    """Parameters of the expert cache: expected expert F5, tau floor (pixels) and tau percentile."""
     expert_score: float = 0.95  # s*: expected F5 of a new expert's mask
     tau_floor: float = 1.0  # px, floor of tau and of the F5 tolerance
     tau_quantile: float = 95.0  # tau = this percentile of pooled rater-pair contour distances
@@ -37,6 +38,7 @@ CACHE_SPEC = CacheSpec()
 
 @dataclass(frozen=True)
 class RewardV4:
+    """Parameters of reward v4: term weights, sigma floors, topology bracket, group size and gates."""
     weights: tuple[float, ...] = (0.3, 0.3, 0.1, 0.3)  # IoU_tc, F5, legal, g_area
     floors: tuple[float, ...] = (0.05, 0.05, 0.25, 0.05)  # sigma floors of the same terms
     c_topo: float = 2.0  # weight of the mean-centred topology reward (advantage units)

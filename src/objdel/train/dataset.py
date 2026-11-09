@@ -157,6 +157,7 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
 
 
 def records(root, dataset: str, split: str) -> list[dict]:
+    """The rows of `<root>/<dataset>/<split>.jsonl` as dicts."""
     with open(Path(root, dataset, f"{split}.jsonl")) as f:
         return [json.loads(line) for line in f]
 
@@ -183,6 +184,7 @@ def _verified(root, recs: list[dict]) -> list[dict]:
 
 
 def target_tokens(tokenizer, text: str) -> int:
+    """Token count of the text under the tokenizer, without special tokens."""
     return len(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 

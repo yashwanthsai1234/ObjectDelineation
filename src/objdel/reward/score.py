@@ -55,6 +55,9 @@ _FAILED = dict.fromkeys(NUMERIC, 0.0) | {"sig_id": -1.0}
 
 @dataclass(frozen=True)
 class ObjectTerms:
+    """Per-object reward terms from the device checker: IoU_tc, F5, area term, signature, its voter share and area in
+    pixels.
+    """
     iou_tc: float
     f5: float
     g_area: float

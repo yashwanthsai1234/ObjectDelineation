@@ -86,10 +86,12 @@ def _from_npy(b: bytes) -> np.ndarray:
 
 
 def encode_masks(stack: np.ndarray) -> bytes:
+    """Pack a bool mask stack along its last axis into `.npy` bytes (`np.packbits`)."""
     return _npy(np.packbits(stack, axis=-1))
 
 
 def decode_masks(bits: bytes, width: int) -> np.ndarray:
+    """Unpack `encode_masks` bytes into a bool stack whose last axis has `width` entries."""
     return np.unpackbits(_from_npy(bits), axis=-1, count=width).astype(bool)
 
 
