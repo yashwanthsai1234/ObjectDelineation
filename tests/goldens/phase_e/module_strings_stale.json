@@ -1,0 +1,8 @@
+[
+ "experiments/phase2/perf/bench_checker.py: objdel.geom",
+ "tests/oracles/bitquad_oracle.py: objdel.checker.bitquad",
+ "tests/oracles/reward_variants.py: objdel.reward.annotators",
+ "tests/test_bench_checker.py: objdel.__file__.startswith",
+ "tests/test_data_coverage.py: objdel.eval.coverage",
+ "tests/test_vast.py: objdel.vast"
+]
