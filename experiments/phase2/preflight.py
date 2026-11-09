@@ -4,7 +4,7 @@
 
 Checks, in order; the stage (DATA / CHECKER / CODE) with a failure is finished, the later stages are not run:
   DATA     bundle integrity (rows.jsonl and context hashes, eval-view file hashes), patients shared between training and
-           any exam (or probe) view, coverage of every exam view by the training view (objdel.eval.coverage), prompt
+           any exam (or probe) view, coverage of every exam view by the training view (objdel.data.coverage), prompt
            text identical, CT window consistent, every training target parses and is legal for the reference checker
   CHECKER  tests/test_cuda_checker*.py when they exist, the scorers on the CUDA checker (tests/test_gpu_scoring.py:
            equal to the host scorer it replaced), then the checker's exactness tests (the slow exact oracles, the
@@ -29,7 +29,7 @@ EXAMS = ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-pre
 CHECKER_TESTS = ["tests/test_checker.py", "tests/test_checker_oracle.py", "tests/test_checker_host.py",
                  "tests/test_topology.py", "tests/test_geometry.py", "tests/test_geometry_mask.py",
                  "tests/test_geometry_oracle.py"]  # fmt: skip
-QUICK_TESTS = ["tests/test_eval_coverage.py", "tests/test_preflight.py", "tests/test_p2_scripts.py",
+QUICK_TESTS = ["tests/test_data_coverage.py", "tests/test_preflight.py", "tests/test_p2_scripts.py",
                "tests/test_train_configs.py", "tests/test_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
 DRY_RUN = "tests/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select on a tiny model, CPU
 HF_RATE = {"lfm2.5-vl-450m": "hf-rate-lfm", "qwen3-vl-2b": "hf-rate-qwen3vl"}  # runs/<run>/<dir>/hf_rate.json (R0)
@@ -140,7 +140,7 @@ def patients(a, cfg) -> list[str]:
 
 
 def exam_props(root: Path, v: str) -> list[dict]:
-    from objdel.eval import coverage as C
+    from objdel.data import coverage as C
 
     out = []
     for r in lines(root / "eval_views" / v / "lidc" / "val.jsonl"):
@@ -149,7 +149,7 @@ def exam_props(root: Path, v: str) -> list[dict]:
 
 
 def coverage(a, cfg) -> list[str]:
-    from objdel.eval import coverage as C
+    from objdel.data import coverage as C
 
     root = Path(a.data_root)
     train = [p for r in lines(root / a.view / "rows.jsonl") if r["epoch"] == 0
