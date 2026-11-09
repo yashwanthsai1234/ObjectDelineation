@@ -39,7 +39,6 @@ from multiprocessing import Pool
 from pathlib import Path
 
 from objdel.data import store
-from objdel.data.windows import offset_of
 from objdel.targets import FRAMES, augment, frame, target_set_hash
 from objdel.targets.frame import rgb, union_box
 
@@ -55,6 +54,7 @@ def _rotated(it, offset, side, op):
 
 
 def _record(job):
+    from objdel.data.windows import offset_of  # lazy: objdel.reward -> scipy fails in the [dev]-only job
     from objdel.train import dataset as D  # lazy: needs the train extra (BK4-2)
     out, it, kind, seed = job
     bare = replace(it, image=None)
