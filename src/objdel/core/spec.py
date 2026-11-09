@@ -32,7 +32,7 @@ TUPLE_FIELDS = {"view", "split", "out", "argv", "branches"}  # YAML lists; stric
 
 
 class Base(BaseModel, frozen=True, extra="forbid"):
-    pass
+    """Strict, frozen model: unknown keys are errors."""
 
 
 class StageBase(Base):
@@ -55,6 +55,8 @@ class TrainerFlags(BaseModel):
 
 
 class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
+    """A train_rl stage."""
+
     kind: CliSuppress[Literal["rl"]] = "rl"
     merge_last: bool = False
     model: str
@@ -88,6 +90,8 @@ class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
 
 
 class SftStage(StageBase, frozen=True, extra="forbid"):  # train_sft, minus the runner-only stages, sampler, rows_plan
+    """A train_sft stage."""
+
     kind: CliSuppress[Literal["sft"]] = "sft"
     model: str
     view: str
@@ -128,11 +132,15 @@ class SftStage(StageBase, frozen=True, extra="forbid"):  # train_sft, minus the 
 
 
 class VisionRef(Base):
+    """A vision check: the prepared file and R0's reference projector distance (number or .json file)."""
+
     prepared: str
     reference: str | float
 
 
 class SelectStage(StageBase, frozen=True, extra="forbid"):  # select_ckpt
+    """A select_ckpt stage."""
+
     kind: CliSuppress[Literal["select"]] = "select"
     run: str
     prepared: str
@@ -163,6 +171,8 @@ class SelectStage(StageBase, frozen=True, extra="forbid"):  # select_ckpt
 
 
 class ProbeStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # g_probe
+    """A g_probe stage."""
+
     kind: CliSuppress[Literal["probe"]] = "probe"
     model: str
     ckpt: str | None = None
@@ -183,6 +193,8 @@ class ProbeStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # g_pro
 
 
 class EvalStage(StageBase, frozen=True, extra="forbid"):  # final_eval
+    """A final_eval stage."""
+
     kind: CliSuppress[Literal["eval"]] = "eval"
     ckpt: str | None = None
     train: str | None = None  # E4 deletes final_eval's --train
@@ -209,6 +221,8 @@ class EvalStage(StageBase, frozen=True, extra="forbid"):  # final_eval
 
 
 class CmdStage(StageBase, frozen=True, extra="forbid"):  # escape hatch: a literal argv (env_check.sh, shell steps)
+    """A literal argv stage."""
+
     kind: CliSuppress[Literal["cmd"]] = "cmd"
     argv: tuple[str, ...] = Field(min_length=1)
 
@@ -235,11 +249,15 @@ FLAG_ORDER = {
 
 
 class ComputeSpec(Base):
+    """The rented GPU and the hour cap of a run."""
+
     gpu: str
     cap_hours: float = Field(gt=0)
 
 
 class RunSpec(Base):
+    """One run: its compute and its ordered stages."""
+
     schema_version: Literal[1]
     name: str
     compute: ComputeSpec
