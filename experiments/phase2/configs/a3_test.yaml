@@ -1,0 +1,19 @@
+# A3 test half (rental V3 item 3, before the one test eval): R5 (HF svenk029/objdel-sft, revision rl-full-3ep) on
+# lidc-test-shifted, built on the Mac before the rental and hashed into runs/a3/pre_rental.json (its
+# view_content_sha256 must equal that record). A-G3 test part: paired TOST with runs/r5/eval/eval_test/items.jsonl.
+# Step 1 is the CUDA build of b1_rows.yaml step 0, because no earlier V3 item is sure to build it. No nsys step.
+#   .venv/bin/python -I -m experiments.phase2.check_series_z     # B1.7 first: no eval view is hashed before it
+#   .venv/bin/python -I -m experiments.phase2.build_eval_views --split test --kinds shifted --out data/eval_views --procs 6
+#   .venv/bin/python -I -m experiments.phase2.final_eval --hash-view data/eval_views/lidc-test-shifted --out runs/a3/pre_rental.json
+#   .venv/bin/python -I -m experiments.phase2.vast.bundle lidc --view lidc-bundle-v3
+#   make preflight CONFIG=experiments/phase2/configs/b1_launch.yaml   # the V3 launch config (front 6.3); never a plan file
+#   # rental V3 item 3; front 6.3 owns the list, minutes and cap
+#   sync_up.sh <run> && fetch_hf.sh <run> rl-full-3ep
+#   run.sh <run> experiments/phase2/configs/a3_test.yaml && pull.sh <run>
+#   # at the end of V3 (also after an error; front 6.4 rule 6):
+#   teardown.sh <run> && sweep_orphans.sh
+# {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
+steps:
+  - [bash, -c, "bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c 'import objdel._gpucheck as g; assert g.build() == \"cuda\"'"]
+  - [-m, experiments.phase2.final_eval, --ckpt, "{rd}/ckpt", --view, "{data}/eval_views/lidc-test-shifted",
+     --split, test, --train, "{data}/prepared", --out, "{rd}/eval_test"]

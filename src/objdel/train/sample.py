@@ -49,7 +49,8 @@ G = REWARD_V4.group
 
 def sample(trainer, rows: Iterable[dict], k: int, items: int = 16) -> list[dict]:
     """k completions (a multiple of G) per row of objdel.train.dataset.grpo_rows (prompt, image, key), `items` rows
-    per generation call (a 450M model on a 4090 is overhead-bound at one row per call)."""
+    per generation call (a 450M model on a 4090 is overhead-bound at one row per call). Each row: item_id, samples,
+    truncated and tokens (each answer's completion id count, as TRL's completion length)."""
     if k <= 0 or k % G:
         raise ValueError(f"k = {k}: sample whole groups of {G}")
     stop = rewards.stop_ids(trainer.model, trainer.processing_class)  # the reward's rule
@@ -66,7 +67,8 @@ def sample(trainer, rows: Iterable[dict], k: int, items: int = 16) -> list[dict]
             for j, r in enumerate(chunk):
                 part = slice(j * k, (j + 1) * k)
                 out.append({"item_id": r["key"], "samples": [rewards._text(c) for c in completions[part]],
-                            "truncated": [rewards.truncated(x, stop) for x in ids[part]]})
+                            "truncated": [rewards.truncated(x, stop) for x in ids[part]],
+                            "tokens": [len(x) for x in ids[part]]})
     finally:
         trainer.model.train(was_training)
     return out

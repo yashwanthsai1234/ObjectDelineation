@@ -202,8 +202,8 @@ def test_pool_scores_equal_serial_on_the_shifted_view():
     serve.preload(view, ("lidc",))
     recs = [json.loads(x) for x in (view / "lidc" / "val.jsonl").read_text().splitlines()[:6]]
     root = str(view.resolve())
-    jobs = [(r["item_id"], (r["targets"] * 8)[:7] + ["garbage"], [False] * 7 + [True], r["W"], r["H"], ["nodule"],
-             root) for r in recs]
+    jobs = [(r["item_id"], (r["targets"] * 8)[:7] + ["garbage"], [False] * 7 + [True], None, r["W"], r["H"],
+             ["nodule"], root) for r in recs]  # None: no token counts
     serial = [json.dumps(SC._score(j)) for j in jobs]
     pool = serve.fork_pool(2)
     try:

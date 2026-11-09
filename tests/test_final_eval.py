@@ -1,11 +1,14 @@
 """experiments.phase2.final_eval: per-item K-sample means and the split summary (schema 2: mean, item, nodule and
 patient bootstrap intervals, median), and --resummarize of a finished run."""
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -33,6 +36,12 @@ def layout(patients, nodules, slices):
     """Ids lidc/p<p>/n<n>/z<s> in that order and their {item_id: patient} map."""
     ids = [f"lidc/p{p}/n{n:03d}/z{s}" for p in range(patients) for n in range(nodules) for s in range(slices)]
     return ids, {i: i.split("/")[1] for i in ids}
+
+
+def git(repo, *args):
+    who = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True,
+                          env=os.environ | who).stdout
 
 
 def walk(x):
@@ -241,12 +250,6 @@ def test_resummarize_is_repeatable_across_processes(tmp_path):
     assert outs[0] == outs[1]
 
 
-def test_cli_needs_a_checkpoint_view_and_training_data(capsys):
-    with pytest.raises(SystemExit):
-        FE.main(["--view", "v", "--train", "t", "--out", "o"])
-    assert "--ckpt" in capsys.readouterr().err
-
-
 def sel_items(ids, mean, medoid, vote=None):
     return [{"item_id": i, "iou_tc": a, "sel_mean_of_k": a, "sel_medoid": b,
              **({} if vote is None else {"sel_vote": vote[j]})}
@@ -413,3 +416,576 @@ def test_size_terciles():
     assert [g["items"] for g in FE.size_terciles(tied)["terciles"]] == [4, 2, 3]
     with pytest.raises(ValueError, match="3 items"):
         FE.size_terciles(items[:2])
+
+
+# A3: saved answers, write order, rescore, code identity, view hashes, noise floor, view identity ----------------------
+
+BOWTIE = '{"nodule":[{"outer":[[100,100],[900,900],[900,100],[100,900]],"holes":[]}]}'  # self-intersecting: illegal
+
+
+@pytest.fixture(scope="module")
+def ev_root(tmp_path_factory, synthetic_items):
+    """A prepared val root of 6 LIDC items in 3 patients (test_ceiling's CLI view)."""
+    from tests.test_ceiling import _view
+
+    return _view(tmp_path_factory.mktemp("fe"), synthetic_items)
+
+
+@pytest.fixture
+def ev(ev_root, clean_store, tmp_path):
+    """A fresh copy of the view per test (tests change its manifest)."""
+    import shutil
+
+    return Path(shutil.copytree(ev_root, tmp_path / "lidc-val-fix"))
+
+
+def answer_texts(rec, K=8):
+    """K texts: the record's targets (legal), one self-intersecting, one unparseable, one empty list; answer 7 is a
+    legal target flagged truncated (fake_sampler)."""
+    good = [t for t in rec["targets"] if t]
+    return ((good * K)[:K - 4] + [BOWTIE, "garbage", "[]", good[0]])[:K] if K >= 4 else (good * K)[:K]
+
+
+def fake_sampler(view, K=8, calls=None):
+    from objdel.train import dataset as D
+
+    recs = {r["item_id"]: r for r in D.records(view, "lidc", "val")}
+
+    def sample_items(trainer, rows, a):
+        if calls is not None:
+            calls.append([r["key"] for r in rows])
+        out = []
+        for r in rows:
+            texts = answer_texts(recs[r["key"]], a.k)
+            out.append({"item_id": r["key"], "samples": texts, "truncated": [i == 7 for i in range(a.k)],
+                        "tokens": [len(t) + 1 for t in texts]})
+        return out
+
+    return sample_items
+
+
+def run_fe(ev, out, monkeypatch, *extra, scorer=None, K=8, loads=None):
+    monkeypatch.setattr(FE, "sample_items", fake_sampler(ev, K))
+    monkeypatch.setattr(FE, "load_trainer", lambda a: loads.append(1) if loads is not None else object())
+    if scorer:
+        monkeypatch.setattr(FE, "score_items", scorer)
+    return FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--train", str(ev), "--out", str(out),
+                    "--k", str(K), *extra])
+
+
+def jsonl(path):
+    return [json.loads(x) for x in Path(path).read_text().splitlines()]
+
+
+RUN_SHA_KEYS = {"ckpt", "view", "split", "K", "seed", "view_manifest_sha256", "view_content_sha256", "code_sha",
+                "checker_build"}
+
+
+def test_answers_are_on_disk_before_scoring_fails(ev, tmp_path, monkeypatch):
+    """I05: the paid sampling survives a scoring crash."""
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    out = tmp_path / "out"
+    with pytest.raises(RuntimeError, match="boom"):
+        run_fe(ev, out, monkeypatch, scorer=boom)
+    lines = jsonl(out / "answers.jsonl")
+    assert len(lines) == 6 and all(set(r) == {"item_id", "group_id", "W", "H", "samples", "truncated", "tokens"}
+                                   for r in lines)
+    assert all(len(r[k]) == 8 for r in lines for k in ("samples", "truncated", "tokens"))
+    fe = json.loads((out / "final_eval.json").read_text())
+    assert fe["partial"] is True and RUN_SHA_KEYS <= set(fe) and set(fe["seconds"]) == {"load_and_sample"}
+    assert not (out / "metrics.jsonl").exists() and not (out / "items.jsonl").exists()
+
+
+def test_final_eval_json_is_never_half_written(ev, tmp_path, monkeypatch):
+    """I06: a crash while writing leaves final_eval.json absent or valid JSON (temp file, then os.replace)."""
+    real, n = Path.write_text, [0]
+
+    def flaky(self, *a, **k):
+        n[0] += 1
+        if n[0] == 2:
+            real(self, '{"half": ')
+            raise OSError("disk full")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", flaky)
+    out = tmp_path / "out"
+    with pytest.raises(OSError):
+        run_fe(ev, out, monkeypatch)
+    monkeypatch.setattr(Path, "write_text", real)
+    f = out / "final_eval.json"
+    assert not f.exists() or json.loads(f.read_text())
+
+
+def test_full_run_replaces_the_partial(ev, tmp_path, monkeypatch):
+    """I07, I10, I21: four files; items.jsonl is per_item of metrics.jsonl; answers keep types and order; the
+    truncated legal answer scores 0; tokens reach metrics."""
+    from objdel import _gpucheck
+    from objdel.train import dataset as D
+
+    out = tmp_path / "out"
+    run_fe(ev, out, monkeypatch)
+    assert sorted(p.name for p in out.iterdir()) == ["answers.jsonl", "final_eval.json", "items.jsonl",
+                                                    "metrics.jsonl"]
+    fe = json.loads((out / "final_eval.json").read_text())
+    assert fe["partial"] is False and fe["schema"] == 2 and RUN_SHA_KEYS <= set(fe)
+    assert (fe["K"], fe["seed"], fe["split"], fe["items"], fe["patients"]) == (8, 11, "val", 6, 3)
+    assert fe["checker_build"] == _gpucheck.build() and set(fe["noise_floor"]) == {"item_sd", "mean_sd"}
+    assert fe["view_manifest_sha256"] == hashlib.sha256((ev / "manifest.json").read_bytes()).hexdigest()
+    assert fe["view_content_sha256"] == FE.view_content_sha256(ev)
+    ans, met, items = jsonl(out / "answers.jsonl"), jsonl(out / "metrics.jsonl"), jsonl(out / "items.jsonl")
+    ids = [r["item_id"] for r in D.records(ev, "lidc", "val") if r["rl"]]
+    assert [r["item_id"] for r in ans] == [r["item_id"] for r in met] == [r["item_id"] for r in items] == ids
+    assert items == [FE.per_item(m) for m in met]
+    for r, m in zip(ans, met, strict=True):
+        assert all(type(t) is int for t in r["tokens"]) and all(type(t) is bool for t in r["truncated"])
+        assert type(r["W"]) is int and type(r["H"]) is int and all(type(s) is str for s in r["samples"])
+        assert m["samples"]["tokens"] == r["tokens"]  # I21: score_items passes tokens to metrics
+        s = m["samples"]
+        assert s["legal"][0] == 1 and s["legal"][4:] == [0, 0, 0, 0]  # bowtie, garbage, [] and truncated: illegal
+        assert s["iou_tc"][7] == 0 and s["iou_tc"][0] > 0  # I10: the truncated copy of a legal answer scores 0
+    assert jsonl(out / "answers.jsonl") == ans
+
+
+def rescore(src, ev, out, split="val"):
+    return FE.main(["--rescore", str(src), "--view", str(ev), "--split", split, "--out", str(out)])
+
+
+def strip_seconds(doc):
+    return {k: v for k, v in doc.items() if k not in ("seconds", "rescored_from")}
+
+
+def test_rescore_is_bit_identical(ev, tmp_path, monkeypatch):
+    """I08, I23: per-sample legal, iou_tc, f5, g_area equal (==); items and metrics lines equal; answers order kept."""
+    src, out = tmp_path / "src", tmp_path / "re"
+    run_fe(ev, src, monkeypatch)
+    assert rescore(src, ev, out) in (None, 0)
+    a, b = jsonl(src / "metrics.jsonl"), jsonl(out / "metrics.jsonl")
+    for x, y in zip(a, b, strict=True):
+        for k in ("legal", "iou_tc", "f5", "g_area"):
+            assert x["samples"][k] == y["samples"][k] and np.array_equal(x["samples"][k], y["samples"][k]), k
+    assert [json.dumps(x, sort_keys=True) for x in a] == [json.dumps(y, sort_keys=True) for y in b]
+    assert (src / "items.jsonl").read_bytes() == (out / "items.jsonl").read_bytes()
+    assert (src / "answers.jsonl").read_bytes() == (out / "answers.jsonl").read_bytes()
+    fa, fb = (json.loads((d / "final_eval.json").read_text()) for d in (src, out))
+    assert strip_seconds(fa) == strip_seconds(fb) and fb["rescored_from"] == str(src)
+
+
+def test_rescore_loads_no_model(ev, tmp_path, monkeypatch):
+    """I08: a rescore in a fresh process imports no torch, vllm, transformers, trl or g_probe."""
+    src = tmp_path / "src"
+    run_fe(ev, src, monkeypatch)
+    code = ("import sys\n"
+            "from experiments.phase2 import final_eval as FE\n"
+            f"FE.main(['--rescore', {str(src)!r}, '--view', {str(ev)!r}, '--split', 'val', '--out', "
+            f"{str(tmp_path / 're')!r}])\n"
+            "print(sorted(m for m in ('torch', 'vllm', 'transformers', 'trl', 'experiments.phase2.g_probe')"
+            " if m in sys.modules))\n")
+    p = subprocess.run([sys.executable, "-I", "-c", code], cwd=ROOT, check=True, capture_output=True, text=True)
+    assert p.stdout.splitlines()[-1] == "[]" and (tmp_path / "re" / "final_eval.json").is_file()
+
+
+def test_rescore_guards_the_view_and_the_source(ev, tmp_path, monkeypatch, capsys):
+    """I09: a one-byte manifest change exits 2 with no output; a partial source is accepted and the result is not
+    partial; a source without final_eval.json or without view_manifest_sha256 exits non-zero with a message."""
+    src, real = tmp_path / "src", FE.score_items
+    with pytest.raises(RuntimeError):
+        run_fe(ev, src, monkeypatch, scorer=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(FE, "score_items", real)
+    assert rescore(src, ev, tmp_path / "ok") in (None, 0)  # a partial source
+    assert json.loads((tmp_path / "ok" / "final_eval.json").read_text())["partial"] is False
+    m = ev / "manifest.json"
+    raw = m.read_bytes()
+    for changed in (raw + b" ", raw.rstrip(b"\n") if raw.endswith(b"\n") else raw + b"\n",
+                    json.dumps(json.loads(raw)).encode()):
+        m.write_bytes(changed)
+        with pytest.raises(SystemExit) as e:
+            rescore(src, ev, tmp_path / "bad")
+        assert e.value.code == 2 and not (tmp_path / "bad").exists()
+    m.write_bytes(raw)
+    for broken in ("missing", "no_sha"):
+        d = tmp_path / broken
+        d.mkdir()
+        (d / "answers.jsonl").write_bytes((src / "answers.jsonl").read_bytes())
+        if broken == "no_sha":
+            (d / "final_eval.json").write_text(json.dumps({"partial": True}))
+        with pytest.raises(SystemExit) as e:
+            rescore(d, ev, tmp_path / f"o_{broken}")
+        assert e.value.code not in (0, None) and "final_eval.json" in str(e.value.code) + capsys.readouterr().err
+        assert not (tmp_path / f"o_{broken}").exists()
+
+
+def test_cli_modes_need_exactly_one_source(capsys):
+    """A3: exactly one of --ckpt and --rescore; --ckpt needs --train; exit 2."""
+    for argv in (["--view", "v", "--train", "t", "--out", "o"],
+                 ["--ckpt", "c", "--rescore", "r", "--view", "v", "--train", "t", "--out", "o"],
+                 ["--ckpt", "c", "--view", "v", "--out", "o"]):
+        with pytest.raises(SystemExit) as e:
+            FE.main(argv)
+        assert e.value.code == 2
+    assert "--ckpt" in capsys.readouterr().err
+
+
+def test_k_follows_the_flag(ev, tmp_path, monkeypatch):
+    """I17 (A3 part): K = 2 gives lists of 2; K = 1 is refused by metrics."""
+    run_fe(ev, tmp_path / "k2", monkeypatch, K=2)
+    assert all(len(r["samples"]["iou_tc"]) == 2 for r in jsonl(tmp_path / "k2" / "metrics.jsonl"))
+    with pytest.raises(ValueError, match=">= 2 samples"):
+        run_fe(ev, tmp_path / "k1", monkeypatch, K=1)
+
+
+def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
+    """U59: one trainer and one preload per root; one folder per view, each equal to a single-view call; flag
+    counts that do not match exit 2 with no output."""
+    import shutil
+
+    from objdel.train import serve
+
+    v2 = Path(shutil.copytree(ev, tmp_path / "lidc-val-two"))
+    loads, roots, calls = [], [], []
+    real = serve.preload
+    monkeypatch.setattr(serve, "preload", lambda root, *a, **k: roots.append(Path(root).resolve()) or real(root, *a,
+                                                                                                          **k))
+    monkeypatch.setattr(FE, "sample_items", fake_sampler(ev, calls=calls))
+    monkeypatch.setattr(FE, "load_trainer", lambda a: loads.append(1))
+    base = ["--ckpt", "c", "--train", str(ev)]
+    FE.main([*base, "--view", str(ev), "--split", "val", "--view", str(v2), "--split", "val",
+             "--out", str(tmp_path / "O")])
+    assert loads == [1] and sorted(roots) == sorted({ev.resolve(), v2.resolve()}) and len(calls) == 2
+    for v in (ev, v2):
+        d = tmp_path / "O" / v.name
+        assert {"answers.jsonl", "items.jsonl", "final_eval.json"} <= {p.name for p in d.iterdir()}
+        assert "load_and_sample" in json.loads((d / "final_eval.json").read_text())["seconds"]
+        serve.STORE.clear()
+        FE.main([*base, "--view", str(v), "--split", "val", "--out", str(tmp_path / "single" / v.name)])
+        assert (d / "items.jsonl").read_bytes() == (tmp_path / "single" / v.name / "items.jsonl").read_bytes()
+    serve.STORE.clear()
+    FE.main([*base, "--view", str(ev), "--split", "val", "--view", str(v2), "--split", "val",
+             "--out", str(tmp_path / "O1"), "--out", str(tmp_path / "O2")])
+    assert (tmp_path / "O1" / "items.jsonl").is_file() and (tmp_path / "O2" / "items.jsonl").is_file()
+    for bad in (["--view", str(ev), "--split", "val", "--view", str(v2), "--out", str(tmp_path / "X")],
+                ["--view", str(ev), "--view", str(v2), "--split", "val", "--split", "val",
+                 "--out", str(tmp_path / "X"), "--out", str(tmp_path / "Y"), "--out", str(tmp_path / "Z")]):
+        with pytest.raises(SystemExit) as e:
+            FE.main([*base, *bad])
+        assert e.value.code == 2 and not any((tmp_path / n).exists() for n in "XYZ")
+
+
+def test_code_sha_precedence(tmp_path, monkeypatch):
+    """U47: CODE_SHA (stripped) wins; an empty one counts as absent; then git rev-parse HEAD with a .git; else None,
+    also when git is missing."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "CODE_SHA").write_text("abc123-dirty-0123456789ab\n")
+    assert FE.code_sha(tmp_path) == "abc123-dirty-0123456789ab"
+    seen = []
+
+    def git(cmd, **k):
+        seen.append(cmd)
+        return SimpleNamespace(stdout="f" * 40 + "\n", returncode=0)
+
+    monkeypatch.setattr(FE.subprocess, "run", git)
+    (tmp_path / "CODE_SHA").write_text("")
+    assert FE.code_sha(tmp_path) == "f" * 40 and seen == [["git", "rev-parse", "HEAD"]]
+    (tmp_path / "CODE_SHA").unlink()
+    assert FE.code_sha(tmp_path) == "f" * 40
+
+    def missing(cmd, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(FE.subprocess, "run", missing)
+    assert FE.code_sha(tmp_path) is None
+    (tmp_path / ".git").rmdir()
+    assert FE.code_sha(tmp_path) is None and json.dumps(FE.code_sha(tmp_path)) == "null"
+
+
+def test_code_sha_of_a_real_repo(tmp_path):
+    """U47 (b): a tmp repo with one commit."""
+    git(tmp_path, "init", "-q")
+    (tmp_path / "a.txt").write_text("a")
+    git(tmp_path, "add", "a.txt")
+    git(tmp_path, "commit", "-qm", "one")
+    assert FE.code_sha(tmp_path) == git(tmp_path, "rev-parse", "HEAD").strip()
+
+
+def test_view_manifest_sha_is_over_the_raw_bytes(tmp_path):
+    """U48: CRLF, unicode and a reformatted manifest each hash as their bytes."""
+    from objdel import _gpucheck
+
+    got = set()
+    for raw in (b'{"a": 1}\n', b'{"a": 1}\r\n', '{"a": "é"}\n'.encode(), b'{"a":1}'):
+        (tmp_path / "manifest.json").write_bytes(raw)
+        assert FE.view_manifest_sha256(tmp_path) == hashlib.sha256(raw).hexdigest()
+        got.add(FE.view_manifest_sha256(tmp_path))
+    assert len(got) == 4 and _gpucheck.build() in ("cuda", "cpu")
+
+
+def content_view(tmp_path, recs, sets=None):
+    v = tmp_path / "view"
+    (v / "lidc").mkdir(parents=True, exist_ok=True)
+    (v / "lidc" / "test.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+    (v / "manifest.json").write_text(json.dumps({"versions": {"python": "3.12"}, "reward_fingerprint": "f",
+                                                 "sets": sets or {"lidc/test": {"target_set_sha256": "t" * 64}}}))
+    return v
+
+
+def test_view_content_hash(tmp_path, monkeypatch, capsys):
+    """U54: SHA-256 of the newline-joined (item_id, offset, side, image_sha256) tuples; manifest versions and the
+    reward fingerprint do not enter it; an offset, an image SHA or the record order does. --hash-view writes its
+    record and exits 0 without a model."""
+    from experiments.phase2 import g_probe
+
+    recs = [{"item_id": f"lidc/p/n000/z{i}", "view": {"offset": [i, 2 * i], "side": 50}, "image_sha256": f"{i:064x}",
+             "W": 50, "H": 50} for i in range(3)]
+    v = content_view(tmp_path, recs)
+    want = hashlib.sha256("\n".join(json.dumps([r["item_id"], r["view"]["offset"], r["view"]["side"],
+                                                r["image_sha256"]]) for r in recs).encode()).hexdigest()
+    assert FE.view_content_sha256(v) == want
+    m = json.loads((v / "manifest.json").read_text())
+    (v / "manifest.json").write_text(json.dumps(m | {"versions": {"python": "3.13"}, "reward_fingerprint": "g"}))
+    assert FE.view_content_sha256(v) == want
+    for change in ("offset", "image", "order"):
+        r2 = [dict(r, view=dict(r["view"])) for r in recs]
+        if change == "offset":
+            r2[1]["view"]["offset"] = [2, 2]
+        elif change == "image":
+            r2[2]["image_sha256"] = "f" * 64
+        else:
+            r2[0], r2[1] = r2[1], r2[0]
+        assert FE.view_content_sha256(content_view(tmp_path / change, r2)) != want, change
+    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model")))
+    out = tmp_path / "pre" / "pre_rental.json"
+    assert FE.main(["--hash-view", str(v), "--out", str(out)]) in (None, 0)
+    doc = json.loads(out.read_text())
+    assert set(doc) == {"view", "items", "content_sha256", "target_set_sha256", "generator_commit", "render_files",
+                        "r5_commit", "note"}
+    assert (doc["items"], doc["content_sha256"], doc["target_set_sha256"], doc["r5_commit"]) == (3, want, "t" * 64,
+                                                                                                None)
+    assert set(doc["render_files"]) == set(FE.RENDER_FILES) and "experiments/phase2/build_eval_views.py" in doc[
+        "render_files"]
+    assert doc["generator_commit"] == doc["render_files"]["experiments/phase2/build_eval_views.py"]
+    assert all(c is None or len(c) == 40 for c in doc["render_files"].values()) and "not recorded" in doc["note"]
+
+
+def halves(first, second, K=8):
+    return [first] * (K // 2) + [second] * (K // 2)
+
+
+def test_noise_floor(tmp_path):
+    """U55: equal halves give 0; the hand case gives sd(d) / sqrt 2 and the patient-draw SD of mean(d) / sqrt 2."""
+    ids = [f"lidc/p{i // 2}/n000/z{i}" for i in range(4)]
+    groups = {i: i.split("/")[1] for i in ids}
+    same = [{"item_id": i, "samples": {"iou_tc": [.3, .5, .7, .1] * 2}} for i in ids]
+    assert FE.noise_floor(same, groups) == {"item_sd": 0.0, "mean_sd": 0.0}
+    pairs = [(.6, .5), (.4, .4), (.7, .5), (.2, .3)]
+    res = [{"item_id": i, "samples": {"iou_tc": halves(*p)}} for i, p in zip(ids, pairs, strict=True)]
+    d = np.array([np.mean(halves(*p)[:4]) - np.mean(halves(*p)[4:]) for p in pairs])
+    assert abs(d.mean() - 0.05) < 1e-12
+    D = S.draws(ids, 2000, 0, key=groups.__getitem__)
+    nf = FE.noise_floor(res, groups)
+    assert nf["item_sd"] == np.std(d, ddof=1) / np.sqrt(2)
+    assert nf["mean_sd"] == np.std([d[x].mean() for x in D], ddof=1) / np.sqrt(2)
+
+
+def identity_fixture(seed=0):
+    """40 items in 8 patients, K = 8 answers around a per-item level."""
+    rng = np.random.default_rng(seed)
+    ids = [f"lidc/p{i % 8}/n{i:03d}/z1" for i in range(40)]
+    level = rng.uniform(.1, .9, 40)
+    res = [{"item_id": i, "samples": {"iou_tc": np.clip(x + rng.normal(0, .08, 8), 0, 1).tolist()}}
+           for i, x in zip(ids, level, strict=True)]
+    return ids, {i: i.split("/")[1] for i in ids}, res
+
+
+def test_view_identity():
+    """U58: r_sh = 2 r_h / (1 + r_h) from the half means; a same-view R5 column passes; the same values shuffled
+    across items fail, and the message names the correlation and the bound."""
+    ids, groups, res = identity_fixture()
+    iou = np.array([r["samples"]["iou_tc"] for r in res])
+    r_h = np.corrcoef(iou[:, :4].mean(1), iou[:, 4:].mean(1))[0, 1]
+    old = {i: float(m + n) for i, m, n in zip(ids, iou.mean(1), np.random.default_rng(1).normal(0, .03, 40),
+                                              strict=True)}
+    v = FE.view_identity(res, old, groups)
+    assert abs(v["r_sh"] - 2 * r_h / (1 + r_h)) < 1e-12 and v["pass"] is True
+    assert abs(v["r_obs"] - np.corrcoef(iou.mean(1), [old[i] for i in ids])[0, 1]) < 1e-12
+    shuffled = dict(zip(ids, np.random.default_rng(2).permutation(list(old.values())).tolist(), strict=True))
+    v = FE.view_identity(res, shuffled, groups)
+    assert v["pass"] is False and f"{v['r_obs']:.4f}" in v["message"] and f"{v['r_sh']:.4f}" in v["message"]
+    with pytest.raises(ValueError, match=ids[0]):
+        FE.view_identity(res, {k: x for k, x in old.items() if k != ids[0]}, groups)
+
+
+def test_tost():
+    """A-G3: the 90 % patient CI of the mean paired difference inside +-bound passes; a wider CI is 'not shown'."""
+    ids, groups, _ = identity_fixture()
+    rng = np.random.default_rng(3)
+    old = {i: float(x) for i, x in zip(ids, rng.uniform(.2, .8, 40), strict=True)}
+    near = {i: x + float(rng.normal(0, .005)) for i, x in old.items()}
+    t = FE.tost(near, old, groups)
+    D = S.draws(ids, 2000, 0, key=groups.__getitem__)
+    d = np.array([near[i] - old[i] for i in ids])
+    assert t["ci90_patient"] == np.quantile([d[x].mean() for x in D], [.05, .95]).tolist()
+    assert t["pass"] is True and (t["items"], t["patients"]) == (40, 8)
+    far = {i: x + float(rng.normal(0, .1)) for i, x in old.items()}
+    assert FE.tost(far, old, groups)["pass"] is False
+    with pytest.raises(ValueError, match=ids[3]):
+        FE.tost({k: x for k, x in near.items() if k != ids[3]}, old, groups)
+
+
+def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
+    """U49: vast sync_up's CODE_SHA text: HEAD when clean; HEAD-dirty-<sha256(D)[:12]> with D = git diff HEAD plus the
+    sorted untracked, not-ignored paths; staged-only changes count; ignored files do not; git failing raises."""
+    from experiments.phase2.vast import policy as P
+
+    git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text("ignored.txt\n")
+    (tmp_path / "a.py").write_text("a = 1\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "one")
+    head = git(tmp_path, "rev-parse", "HEAD").strip()
+    assert P.code_sha_text(tmp_path) == head and len(head) == 40
+    (tmp_path / "ignored.txt").write_text("x")
+    assert P.code_sha_text(tmp_path) == head
+
+    def suffix():
+        d = subprocess.run(["git", "diff", "HEAD"], cwd=tmp_path, capture_output=True, check=True).stdout
+        return hashlib.sha256(d).hexdigest()[:12]
+
+    (tmp_path / "a.py").write_text("a = 2\n")
+    first = P.code_sha_text(tmp_path)
+    assert first == f"{head}-dirty-{suffix()}" and P.code_sha_text(tmp_path) == first
+    (tmp_path / "a.py").write_text("a = 2\n#\n")
+    assert P.code_sha_text(tmp_path) not in (first, head)
+    (tmp_path / "a.py").write_text("a = 1\n")
+    assert P.code_sha_text(tmp_path) == head  # modified, then reverted: clean
+    (tmp_path / "a.py").write_text("a = 3\n")
+    git(tmp_path, "add", "a.py")
+    assert P.code_sha_text(tmp_path) == f"{head}-dirty-{suffix()}"  # staged only
+    git(tmp_path, "reset", "-q", "--hard")
+    (tmp_path / "new.py").write_text("b = 1\n")
+    assert P.code_sha_text(tmp_path) == f"{head}-dirty-{hashlib.sha256(b'new.py\n').hexdigest()[:12]}"
+    with pytest.raises((subprocess.CalledProcessError, OSError)):  # never an empty or garbage CODE_SHA
+        P.code_sha_text(tmp_path / "missing")
+
+
+CONFIGS = ROOT / "experiments" / "phase2" / "configs"
+
+
+def test_a3_plan_files_are_valid_plans(tmp_path, monkeypatch):
+    """I20: a3_measure.yaml holds one final_eval step on lidc-val-edge then lidc-val-shifted (each --split val and
+    its own --out), after the build-if-missing step; a3_test.yaml one final_eval step on lidc-test-shifted; headers
+    in the A3 order; no nsys step, no cap, no plan file after preflight CONFIG=; policy.chain fills every placeholder
+    and the runner adds -I to the -m steps."""
+    import importlib
+    import re
+    import time
+
+    import yaml
+
+    from experiments.phase2.vast import policy as P
+
+    fe_steps, sent = {}, []
+    monkeypatch.setattr(P, "get_run", lambda r: {"deadline": time.time() + 1e5, "instance": 1})
+    monkeypatch.setattr(P, "remote", lambda run, cmd, *a, **k: sent.append(cmd))
+    monkeypatch.setattr(P, "ledger", lambda **k: None)
+    for name in ("a3_measure", "a3_test"):
+        path = CONFIGS / f"{name}.yaml"
+        text = path.read_text()
+        steps = yaml.safe_load(text)["steps"]
+        for s in steps:
+            if s[0] == "-m":
+                importlib.import_module(s[1])
+        fe = [s for s in steps if s[:2] == ["-m", "experiments.phase2.final_eval"]]
+        assert len(fe) == 1, name
+        fe_steps[name] = fe[0]
+        assert "nsys_capture.sh" not in text and "--cap-hours" not in text and "--owner-approved" not in text
+        head = [ln for ln in text.splitlines() if ln.startswith("#   ")]
+        assert "check_series_z" in head[0] and "teardown.sh" in head[-1] and "sweep_orphans.sh" in head[-1]
+        assert all(not re.search(r"preflight CONFIG=\S+(a3_|rl_|_rows)", ln) for ln in head)
+        assert set(re.findall(r"\{(\w*)\}", " ".join(map(str, sum(steps, []))))) <= {"rd", "data"}
+        chained = P.chain(path, "r")
+        assert not any("{" in x or "}" in x for s in chained for x in s), name
+        P.cmd_run(SimpleNamespace(run_id="r", module=f"experiments/phase2/configs/{name}.yaml", args=[], cap_hours=1))
+        assert "/opt/venv/bin/python -I -m experiments.phase2.final_eval" in sent[-1]
+    m = fe_steps["a3_measure"]
+    views = [m[i + 1] for i, x in enumerate(m) if x == "--view"]
+    assert views == ["{data}/eval_views/lidc-val-edge", "{data}/eval_views/lidc-val-shifted"]
+    assert [m[i + 1] for i, x in enumerate(m) if x == "--split"] == ["val", "val"]
+    assert [m[i + 1] for i, x in enumerate(m) if x == "--out"] == ["{rd}/eval_val_edge", "{rd}/eval_val"]
+    steps = [s for s in yaml.safe_load((CONFIGS / "a3_measure.yaml").read_text())["steps"] if s[0] != "~"]
+    assert "build() == \"cuda\"' || (bash experiments/cuda_checker/run_box.sh --build-only" in steps[0][2]
+    assert steps.index(m) == 1
+    t = fe_steps["a3_test"]
+    assert [t[i + 1] for i, x in enumerate(t) if x in ("--view", "--split")] == [
+        "{data}/eval_views/lidc-test-shifted", "test"]
+    planted = tmp_path / "planted.yaml"
+    planted.write_text('steps:\n  - [bash, -c, "{ true; }"]\n')
+    with pytest.raises(KeyError):
+        P.chain(planted, "r")
+
+
+def test_answers_reader_memory(tmp_path):
+    """Q04 (memory): 2,200 items x 8 answers of about 1,000 characters (about 18 MB) read under 200 MB peak."""
+    import tracemalloc
+
+    line = json.dumps({"item_id": "lidc/x", "group_id": "g", "W": 50, "H": 50, "samples": ["9" * 1000] * 8,
+                       "truncated": [False] * 8, "tokens": [400] * 8}) + "\n"
+    f = tmp_path / "answers.jsonl"
+    f.write_text(line * 2200)
+    tracemalloc.start()
+    rows = FE.read_jsonl(f)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert len(rows) == 2200 and peak < 200e6
+
+
+@pytest.mark.slow
+def test_rescore_of_300_items_is_fast(tmp_path, clean_store, monkeypatch, synthetic_items):
+    """Q04 (time): the rescore of 300 synthetic items takes under 60 s."""
+    from objdel.data import Item, store
+    from objdel.train import dataset as D
+
+    y, x = np.ogrid[:100, :100]
+    rng = np.random.default_rng(0)
+    items = [Item(f"lidc/1.2.{i // 6}/n000/z{i:03d}", "lidc", f"LIDC-IDRI-{i // 6:04d}", "val",
+                  rng.integers(-1000, 400, (100, 100), dtype=np.int16),
+                  {"nodule": np.stack([(y - 50) ** 2 + (x - 50 - d) ** 2 <= (8 + i % 7) ** 2 for d in (0, 1)])},
+                  ["1", "2"], {}) for i in range(300)]
+    riga = [it for it in synthetic_items(("val",)) if it.dataset == "riga"]  # prepare builds every dataset
+    store.write(riga + sorted(items, key=lambda it: it.item_id), tmp_path / "store")
+    D.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4)
+    view = tmp_path / "view"
+    run_fe(view, tmp_path / "src", monkeypatch)
+    t = time.time()
+    rescore(tmp_path / "src", view, tmp_path / "re")
+    assert time.time() - t < 60 and len(jsonl(tmp_path / "re" / "items.jsonl")) == 300
+
+
+def test_rescore_is_repeatable_across_processes(ev, tmp_path, monkeypatch):
+    """E02 (A3 part): two fresh processes with other hash seeds and thread counts write the same final_eval.json,
+    apart from seconds and code_sha."""
+    src = tmp_path / "src"
+    run_fe(ev, src, monkeypatch)
+    docs = []
+    for seed, threads in (("1", "1"), ("2", "4")):
+        out = tmp_path / f"re{seed}"
+        env = os.environ | {"PYTHONHASHSEED": seed, "OMP_NUM_THREADS": threads}
+        subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.final_eval", "--rescore", str(src), "--view",
+                        str(ev), "--split", "val", "--out", str(out)], cwd=ROOT, env=env, check=True,
+                       capture_output=True)
+        doc = json.loads((out / "final_eval.json").read_text())
+        docs.append({k: v for k, v in doc.items() if k not in ("seconds", "code_sha")})
+    assert docs[0] == docs[1]
+
+
+def test_a_cuda_build_scores_on_one_worker(monkeypatch):
+    """A3: on the CUDA build final_eval forks one scoring worker (no forked CUDA context), else serve.pool_size()."""
+    from objdel.train import serve
+
+    sizes = []
+    monkeypatch.setattr(serve, "fork_pool", lambda n, *a: sizes.append(n))
+    monkeypatch.setattr(serve, "pool_size", lambda: 5)
+    for build in ("cuda", "cpu"):
+        monkeypatch.setattr(FE._gpucheck, "build", lambda b=build: b)
+        FE._pool()
+    assert sizes == [1, 5]
