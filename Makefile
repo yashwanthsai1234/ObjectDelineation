@@ -29,8 +29,9 @@ CONFIG ?= experiments/phase2/configs/r1_qwen3vl2b.yaml
 preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=...); launch needs its stamp
 	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG)
 
-lint:             ## lint library, tests and experiments
+lint:             ## lint library, tests and experiments, then the import-layer contracts
 	$(PY) -m ruff check src tests experiments
+	.venv/bin/lint-imports --no-logo
 
 dead:             ## list unused code (vulture, [tool.vulture] in pyproject.toml)
 	$(PY) -m vulture

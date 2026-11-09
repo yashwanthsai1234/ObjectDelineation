@@ -29,6 +29,7 @@ jobs:
       - run: uv venv --python 3.12
       - run: uv pip install -e ".[dev]"  # builds objdel._gpucheck (CPU build) with scikit-build-core + nanobind
       - run: .venv/bin/python -m ruff check src tests experiments
+      - run: .venv/bin/lint-imports --no-logo
       - run: .venv/bin/python -m pytest -q -m "not slow"
 
   train:
