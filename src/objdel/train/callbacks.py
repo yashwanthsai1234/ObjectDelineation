@@ -116,8 +116,8 @@ class BudgetStop(TrainerCallback):
         if not all(map(math.isfinite, (rate_usd_per_h, cap_usd, session_start, fixed_usd))):
             raise ValueError(f"budget stop: rate, cap, start and fixed must be finite numbers, got {rate_usd_per_h}, "
                              f"{cap_usd}, {session_start}, {fixed_usd}")
-        if rate_usd_per_h <= 0 or cap_usd <= 0:
-            raise ValueError(f"budget stop: rate {rate_usd_per_h} $/h and cap ${cap_usd} must be > 0")
+        if rate_usd_per_h <= 0 or cap_usd < 0:
+            raise ValueError(f"budget stop: rate {rate_usd_per_h} $/h must be > 0 and cap ${cap_usd} >= 0")
         if session_start > clock() + 60:
             raise ValueError(f"budget stop: session start {session_start} is in the future (ms? wrong clock?)")
         self.rate, self.cap, self.start, self.fixed = rate_usd_per_h, cap_usd, session_start, fixed_usd
