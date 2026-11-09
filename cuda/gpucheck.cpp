@@ -1905,16 +1905,17 @@ struct Filter {
 };
 
 // A hole's first raster pixel is its root; the pixel above it is foreground of the enclosing component (an island
-// inside the hole lies strictly below the hole's top row): aux[foreground root] += 1 (aux zeroed).
+// inside the hole lies strictly below the hole's top row): to[foreground root] += 1 (to: per crop pixel, zeroed).
 struct Holes {
   Crops c;
+  i32* to;
   HD void operator()(i64 r) const {
     i32 y = 0;
     const Plane& b = c.pl[c.row(r, y)];
     const i32 cw = b.bw + 2;
     for (i32 p = y * cw; p < (y + 1) * cw; ++p)
       if (p != 0 && c.img[b.crop + p] == 0 && c.bg[b.crop + p] == p)
-        atomic_add(c.aux + b.crop + c.fg[b.crop + p - cw], 1);
+        atomic_add(to + b.crop + c.fg[b.crop + p - cw], 1);
   }
 };
 
@@ -2029,8 +2030,7 @@ CropLayout boxes(Lane& L, std::vector<Plane>& pl, const u32* words, std::vector<
 }
 
 // Queues the chain on the crops: fill them from the words, label, size-filter the foreground then the background
-// (topology.size_filter), label again; then each plane's signature: hole counts per component, sorted descending, at
-// the head of its crop in bg (ncomp of them). Stages "label", "count", "filter" and "score" (the signature).
+// (topology.size_filter), label again. Stages "label", "count" and "filter".
 void label_chain(Stream st, const Crops& c, i64 crows, i64 crop, const u32* words, Timer& t) {
   auto label = [&](int which) {
     t.stage("label", st, [&] {
@@ -2051,9 +2051,14 @@ void label_chain(Stream st, const Crops& c, i64 crows, i64 crop, const u32* word
   label(1), count(1), filter(1);
   label(0), count(0), filter(0);
   label(1), label(0);
+}
+
+// After label_chain, each plane's signature: hole counts per component, sorted descending, at the head of its crop
+// in bg (ncomp of them; the labels in bg are gone).
+void sig_lists(Stream st, const Crops& c, i64 crows, i64 crop, Timer& t) {
   t.stage("score", st, [&] {
     zero(c.aux, sizeof(i32) * size_t(crop), st);
-    for_each(st, crows, Holes{c});
+    for_each(st, crows, Holes{c, c.aux});
     for_each(st, crows, Gather{c});
     for_each(st, c.n, SortList{c});
   });
@@ -2226,6 +2231,7 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
   to_device(d, h, up, st);
   const Crops c = cl.at(d);
   label_chain(st, c, crows, cl.crop, words, t);
+  sig_lists(st, c, crows, cl.crop, t);
   t.stage("score", st, [&] {  // row partials and the terms
     for_each(st, rows, ScoreRows{ptr<Obj>(d, o_obj), c.pl, ptr<i64>(d, o_rows), n, words, ptr<i64>(d, o_parts)});
     for_each(st, n, ObjTerms{ptr<Obj>(d, o_obj), c, ptr<i64>(d, o_parts), ptr<ObjOut>(d, o_out)});
@@ -2291,6 +2297,65 @@ struct AndNot {  // per row of a pair plane
     const Diff& f = q[k];
     const i64 y = (i - row_start[k]) * f.wpr;
     for (i32 w = 0; w < f.wpr; ++w) words[f.out + y + w] = words[f.a + y + w] & ~words[f.b + y + w];
+  }
+};
+
+// ===================================================================== topology
+// topology: objdel.checker.topology on the label chain. After the filter and the final labels, the components and
+// holes of every crop are ranked in raster order of their roots (first pixels) by a scan over crop rows.
+
+// Per crop row: its foreground roots (components) and hole roots (bounded background components, not root 0).
+struct RootCount {
+  Crops c;
+  i32 *comps, *holes;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Plane& b = c.pl[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    i32 nc = 0, nh = 0;
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p) {
+      const i64 q = b.crop + p;
+      nc += c.img[q] == 1 && c.fg[q] == p;
+      nh += p != 0 && c.img[q] == 0 && c.bg[q] == p;
+    }
+    comps[r] = nc, holes[r] = nh;
+  }
+};
+
+// Per crop row: each component's area (aux) and hole count (cnt) at its rank; cnt[root] becomes the rank.
+struct CompEmit {
+  Crops c;
+  const i32* rank;  // exclusive scan of RootCount's comps
+  i32 *cnt, *area, *nholes;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Plane& b = c.pl[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    i32 k = rank[r];
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p) {
+      const i64 q = b.crop + p;
+      if (c.img[q] != 1 || c.fg[q] != p) continue;
+      area[k] = c.aux[q], nholes[k] = cnt[q], cnt[q] = k, ++k;
+    }
+  }
+};
+
+// Per crop row: each hole's area and the rank of the component above its root, at the hole's rank.
+struct HoleEmit {
+  Crops c;
+  const i32* rank;  // exclusive scan of RootCount's holes
+  const i32* cnt;   // component ranks at their roots (CompEmit)
+  i32 *area, *comp;
+  HD void operator()(i64 r) const {
+    i32 y = 0;
+    const Plane& b = c.pl[c.row(r, y)];
+    const i32 cw = b.bw + 2;
+    i32 h = rank[r];
+    for (i32 p = y * cw; p < (y + 1) * cw; ++p) {
+      const i64 q = b.crop + p;
+      if (p == 0 || c.img[q] != 0 || c.bg[q] != p) continue;
+      area[h] = c.aux[q], comp[h] = cnt[b.crop + c.fg[q - cw]], ++h;
+    }
   }
 };
 
@@ -2630,6 +2695,7 @@ Certified certify_polygons(const Polygons& in, const Masks& ref, const i32* ref_
   to_device(ds, L.in.p, up, st);
   const Crops cr = cl.at(ds);
   label_chain(st, cr, crow_start.back(), cl.crop, words, t);
+  sig_lists(st, cr, crow_start.back(), cl.crop, t);
   compact_sigs(st, cr, ptr<i64>(ds, o_ss), t);
   const size_t ov = sizeof(i64) * size_t(3 * n), ov_pad = (ov + 255) / 256 * 256;
   u8* ho = L.out.get(ov_pad + sizeof(i64) * size_t(np + 1));
@@ -2648,6 +2714,110 @@ Certified certify_polygons(const Polygons& in, const Masks& ref, const i32* ref_
   for (i64 s = 0; s < n; ++s) put(s, out.sig_start, out.sig), put(ref_plane[size_t(s)], out.ref_sig_start, out.ref_sig);
   for (i64 p = 0; p < P; ++p)
     put(q0 + p, out.pair_sig_start, out.pair_sig), put(q0 + P + p, out.pair_ref_sig_start, out.pair_ref_sig);
+  return out;
+}
+
+
+Topology topology(const Masks& in, const i64* min_area, bool want_masks) {
+  GC_RANGE("topology");
+  const i64 n = in.n;
+  Topology out;
+  out.comp_start = out.hole_start = out.sig_start = {0};
+  if (want_masks) out.masks.assign(size_t(in.start[n]), 0);
+  if (n == 0) return out;
+  std::vector<i64> word_start(size_t(n + 1), 0);
+  for (i64 k = 0; k < n; ++k) word_start[size_t(k + 1)] = word_start[size_t(k)] + i64(in.H[k]) * words_per_row(in.W[k]);
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  clear_error();
+  Drain drain{e};
+  Timer t{nullptr, {}};
+  e.start();
+  Lane& L = e.lanes[0];
+  const Stream st = L.stream;
+  const size_t bytes = sizeof(u32) * size_t(word_start[size_t(n)]);
+  u8* h = L.in.get(bytes);
+  std::fill_n(h, bytes, u8(0));
+  for (i64 k = 0; k < n; ++k)
+    pack_plane(in.bits + in.start[k], in.H[k], in.W[k], ptr<u32>(h, 0) + word_start[size_t(k)]);
+  const u32* words = ptr<u32>(L.dev.get(bytes), 0);
+  to_device(L.dev.p, h, bytes, st);
+  wait(st);
+  std::vector<Plane> pl;
+  for (i64 k = 0; k < n; ++k) pl.push_back(Plane{word_start[size_t(k)], min_area[k], 0, 0, in.W[k], in.H[k]});
+  std::vector<i64> crow_start;
+  CropLayout cl = boxes(L, pl, words, crow_start, t);
+  if (cl.crop > INT_MAX) throw std::invalid_argument("topology: more than 2^31 - 1 crop pixels in one call");
+  const i64 crows = crow_start.back();
+  i64 fgpx = 0;
+  for (const Plane& b : pl) fgpx += b.area;  // bounds the components; the other crop pixels bound the holes
+  Layout l;
+  cl.front(l);
+  const size_t up = l.size;
+  cl.back(l);
+  const size_t o_cnt = l.put<i32>(cl.crop), o_rc = l.put<i32>(crows + 1), o_rh = l.put<i32>(crows + 1),
+               o_kc = l.put<i32>(crows + 1), o_kh = l.put<i32>(crows + 1), o_ca = l.put<i32>(fgpx),
+               o_ch = l.put<i32>(fgpx), o_ha = l.put<i32>(cl.crop - fgpx), o_hc = l.put<i32>(cl.crop - fgpx);
+  u8* d = L.score.get(l.size);
+  cl.stage(L.in.get(up), pl, crow_start);
+  to_device(d, L.in.p, up, st);
+  const Crops c = cl.at(d);
+  label_chain(st, c, crows, cl.crop, words, t);
+  i32 *cnt = ptr<i32>(d, o_cnt), *rc = ptr<i32>(d, o_rc), *rh = ptr<i32>(d, o_rh), *kc = ptr<i32>(d, o_kc),
+      *kh = ptr<i32>(d, o_kh);
+  t.stage("topology", st, [&] {  // areas, hole counts and ranks in raster order
+    zero(c.aux, sizeof(i32) * size_t(cl.crop), st);
+    for_each(st, crows, Count{c, 1});
+    for_each(st, crows, Count{c, 0});
+    zero(cnt, sizeof(i32) * size_t(cl.crop), st);
+    for_each(st, crows, Holes{c, cnt});
+    zero(rc + crows, sizeof(i32), st), zero(rh + crows, sizeof(i32), st);  // each scan's trailing zero
+    for_each(st, crows, RootCount{c, rc, rh});
+    scan(st, rc, kc, crows + 1, L.scan);
+    scan(st, rh, kh, crows + 1, L.scan);
+    for_each(st, crows, CompEmit{c, kc, cnt, ptr<i32>(d, o_ca), ptr<i32>(d, o_ch)});
+    for_each(st, crows, HoleEmit{c, kh, cnt, ptr<i32>(d, o_ha), ptr<i32>(d, o_hc)});
+  });
+  // The ranks of each plane's first crop row, then the per-component and per-hole numbers (and the crops).
+  const size_t kb = sizeof(i32) * size_t(crows + 1), kb_pad = (kb + 255) / 256 * 256;
+  u8* hk = L.out.get(kb_pad + kb);
+  to_host(hk, kc, kb, st);
+  to_host(hk + kb_pad, kh, kb, st);
+  wait(st);
+  const std::vector<i32> rk(ptr<i32>(hk, 0), ptr<i32>(hk, 0) + crows + 1),
+      rhk(ptr<i32>(hk + kb_pad, 0), ptr<i32>(hk + kb_pad, 0) + crows + 1);
+  const i64 C = rk.back(), Hn = rhk.back();
+  Layout o;
+  const size_t g_ca = o.put<i32>(C), g_ch = o.put<i32>(C), g_ha = o.put<i32>(Hn), g_hc = o.put<i32>(Hn),
+               g_img = o.put<u8>(want_masks ? cl.crop : 0);
+  u8* ho = L.out.get(o.size);
+  to_host(ho + g_ca, d + o_ca, sizeof(i32) * size_t(C), st);
+  to_host(ho + g_ch, d + o_ch, sizeof(i32) * size_t(C), st);
+  to_host(ho + g_ha, d + o_ha, sizeof(i32) * size_t(Hn), st);
+  to_host(ho + g_hc, d + o_hc, sizeof(i32) * size_t(Hn), st);
+  if (want_masks) to_host(ho + g_img, c.img, size_t(cl.crop), st);
+  wait(st);
+  const i32 *ca = ptr<i32>(ho, g_ca), *ch = ptr<i32>(ho, g_ch), *ha = ptr<i32>(ho, g_ha), *hc = ptr<i32>(ho, g_hc);
+  out.comp_area.assign(ca, ca + C);
+  out.comp_holes.assign(ch, ch + C);
+  for (i64 k = 0; k < C; ++k) out.hole_start.push_back(out.hole_start.back() + ch[k]);
+  out.hole_area.resize(size_t(Hn));
+  std::vector<i64> at(out.hole_start.begin(), out.hole_start.end() - 1);
+  for (i64 j = 0; j < Hn; ++j) out.hole_area[size_t(at[size_t(hc[j])]++)] = ha[j];  // per component, raster order
+  for (i64 k = 0; k < n; ++k) {
+    const i64 a = rk[size_t(crow_start[size_t(k)])], b = rk[size_t(crow_start[size_t(k + 1)])];
+    out.comp_start.push_back(b);
+    std::vector<i32> s(ch + a, ch + b);
+    std::sort(s.begin(), s.end(), [](i32 x, i32 y) { return x > y; });
+    out.sig.insert(out.sig.end(), s.begin(), s.end());
+    out.sig_start.push_back(i64(out.sig.size()));
+    const Plane& p = pl[size_t(k)];
+    if (!want_masks || !p.area) continue;
+    const u8* img = ptr<u8>(ho, g_img) + p.crop;
+    for (i32 y = 0; y < p.bh; ++y)
+      std::copy_n(img + i64(y + 1) * (p.bw + 2) + 1, p.bw,
+                  out.masks.data() + in.start[k] + i64(p.by + y) * p.W + p.bx);
+  }
   return out;
 }
 

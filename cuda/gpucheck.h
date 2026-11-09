@@ -168,6 +168,17 @@ struct Certified {                 // an illegal shape draws nothing (empty rast
   std::vector<i32> sig, ref_sig, pair_sig, pair_ref_sig;  // holes per component, descending
 };
 
+// objdel.checker.topology of many masks (topology): each mask size-filtered at min_area[m] (0 = none), then its
+// 8-components in raster order of their first pixel and the bounded 4-background components (holes).
+struct Topology {
+  std::vector<i64> comp_start, comp_area;  // (n + 1): mask m = components [comp_start[m], comp_start[m + 1]); areas
+  std::vector<i32> comp_holes;             // holes per component
+  std::vector<i64> hole_start, hole_area;  // (C + 1): component c's hole areas, in raster order of their first pixels
+  std::vector<i64> sig_start;              // (n + 1)
+  std::vector<i32> sig;                    // holes per component, descending (topology.signature)
+  std::vector<u8> masks;                   // want_masks only: the filtered masks, laid out as the input (0 / 1)
+};
+
 // Per-stage device time of one call in milliseconds, stages in the order they first ran (timing=True in the binding).
 // Read after the call's last wait: asking for it adds no host wait.
 using Times = std::vector<std::pair<std::string, double>>;
@@ -205,5 +216,7 @@ Scores score_masks(const Masks& in, const i64* tables, Times* times = nullptr);
 // and each pair's two planes of one frame.
 Certified certify_polygons(const Polygons& in, const Masks& refs, const i32* ref_of, const i64* min_area,
                            const Pairs& pairs = {});
+// min_area >= 0 per mask (checked by the binding); std::invalid_argument beyond 2^31 - 1 crop pixels in one call.
+Topology topology(const Masks& in, const i64* min_area, bool want_masks = false);
 
 }  // namespace gpucheck

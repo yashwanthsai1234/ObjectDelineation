@@ -86,7 +86,7 @@ import numpy as np
 from scipy import integrate, ndimage, stats
 
 from objdel import _gpucheck
-from objdel.checker.topology import min_area, signature
+from objdel.checker.topology import min_area, signatures
 
 from .spec import REWARD_V4, fingerprint
 
@@ -227,7 +227,7 @@ class ExpertCache:
         self.n_vote = int(np.count_nonzero(self.vote))
         self.rater_areas = tuple(int(np.count_nonzero(m)) for m in raters)
         self.min_area = min_area(int(np.count_nonzero(self.union)))
-        self.rater_sigs = tuple(signature(m, self.min_area) for m in raters)
+        self.rater_sigs = tuple(signatures(raters, self.min_area))  # one engine call
         self.voters = voters(self.rater_sigs)
         same = defaultdict(list)
         for i in self.voters:

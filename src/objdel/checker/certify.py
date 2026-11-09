@@ -2,10 +2,10 @@
 
 The three measurements: Gray's bit-quad counts and the rectilinear rings, both from one CUDA engine call
 (checker.rings.trace: the bit-quads count 2x2 windows of the packed words, the rings come from run labelling and
-crack tracing), and the labeled topology (checker.topology, OpenCV Spaghetti labeling: a second labeller, so the ring
-count is never checked against the rings' own labeller). They must agree on the Euler number chi8 = b0 - b1
-(Euler-Poincare formula for 8-connected foreground, 4-connected background), on the number of outer rings and holes,
-on the area and on the ring vertices. From the bit-quads (n1, n2, nD, n3, n4) [Gray 1971; Pratt]:
+crack tracing), and the labeled topology (checker.topology: the engine's pixel union-find label chain, a second
+labeller, so the ring count is never checked against the rings' own run labeller). They must agree on the Euler
+number chi8 = b0 - b1 (Euler-Poincare formula for 8-connected foreground, 4-connected background), on the number of
+outer rings and holes, on the area and on the ring vertices. From the bit-quads (n1, n2, nD, n3, n4) [Gray 1971; Pratt]:
 
     chi8      = (n1 - n3 - 2 nD) / 4
     area      = (n1 + 2 n2 + 3 n3 + 4 n4 + 2 nD) / 4
@@ -26,7 +26,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .rings import trace
-from .topology import as_mask, bbox, betti, size_filter
+from .topology import as_mask, bbox, filtered
 
 
 @dataclass
@@ -50,23 +50,24 @@ def crop(mask):
 
 
 def certify_many(masks, min_size=0) -> list[Report]:
-    """certify of each mask, the rings and bit-quads of all in one engine call. min_size: one value, or one per mask."""
+    """certify of each mask: the size filter and Betti numbers of all in one topology call, the rings and bit-quads of
+    all in one trace call. min_size: one value, or one per mask (<= 1: no filter)."""
     sizes = [min_size] * len(masks) if np.ndim(min_size) == 0 else list(min_size)
     if len(sizes) != len(masks):
         raise ValueError(f"{len(sizes)} min_size values for {len(masks)} masks")
-    ms = [crop(size_filter(m, s) if s > 1 else m)[0] for m, s in zip(masks, sizes, strict=True)]
-    return [_report(m, t) for m, t in zip(ms, trace(ms), strict=True)]
+    fb = filtered(masks, [max(int(s), 0) for s in sizes])
+    ms = [crop(f)[0] for f, _, _ in fb]
+    return [_report(m, t, b0, b1) for m, t, (_, b0, b1) in zip(ms, trace(ms), fb, strict=True)]
 
 
 def certify(mask, min_size=0) -> Report:
     return certify_many([mask], min_size)[0]
 
 
-def _report(m, t) -> Report:
+def _report(m, t, b0: int, b1: int) -> Report:
     n1, n2, nd, n3, n4 = t.quads
     chi4, area4 = n1 - n3 - 2 * nd, n1 + 2 * n2 + 3 * n3 + 4 * n4 + 2 * nd  # 4 chi8 and 4 area
     corners = n1 + n3 + 2 * nd
-    b0, b1 = betti(m)
     outer = sum(1 for r in t.rings if not r.hole)
     holes = len(t.rings) - outer
     ring_area, ring_corners, pixels = sum(r.area for r in t.rings), sum(len(r.pts) for r in t.rings), int(m.sum())

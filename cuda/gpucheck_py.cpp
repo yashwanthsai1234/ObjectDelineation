@@ -274,6 +274,35 @@ NB_MODULE(_gpucheck, m) {
       nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert(),
       nb::arg("tables").noconvert(), nb::kw_only(), nb::arg("timing") = false);
 
+  // objdel.checker.topology on the engine (gpucheck.h Topology): per-component numbers; pixels only with want_masks.
+  m.def(
+      "topology",
+      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start, const In<i64, 1>& min_area, bool want_masks) {
+        const MasksIn k(bits, hw, start);
+        const i64 n = k.in.n;
+        if (i64(min_area.shape(0)) != n) throw std::invalid_argument("min_area must have one entry per mask");
+        for (i64 i = 0; i < n; ++i)
+          if (min_area(i) < 0) throw std::invalid_argument("min_area must be >= 0");
+        gpucheck::Topology r;
+        {
+          nb::gil_scoped_release release;
+          r = gpucheck::topology(k.in, min_area.data(), want_masks);
+        }
+        const size_t C = r.comp_area.size(), Hn = r.hole_area.size(), S = r.sig.size(), N = r.masks.size();
+        nb::dict d;
+        d["comp_start"] = to_numpy(std::move(r.comp_start), {size_t(n + 1)});
+        d["comp_area"] = to_numpy(std::move(r.comp_area), {C});
+        d["comp_holes"] = to_numpy(std::move(r.comp_holes), {C});
+        d["hole_start"] = to_numpy(std::move(r.hole_start), {C + 1});
+        d["hole_area"] = to_numpy(std::move(r.hole_area), {Hn});
+        d["sig_start"] = to_numpy(std::move(r.sig_start), {size_t(n + 1)});
+        d["sig"] = to_numpy(std::move(r.sig), {S});
+        if (want_masks) d["masks"] = to_numpy(std::move(r.masks), {N});
+        return d;
+      },
+      nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert(),
+      nb::arg("min_area").noconvert(), nb::arg("want_masks") = false);
+
   // The target builder's ladder: every rung of one name against its reference mask in one call (gpucheck.h).
   m.def(
       "certify_polygons",

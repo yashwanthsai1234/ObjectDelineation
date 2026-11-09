@@ -4,10 +4,20 @@ validate) and the reward's scoring are the CUDA checker's, objdel._gpucheck (cud
 objdel.reward.score)."""
 from .certify import certify, certify_many
 from .rings import MaskRings, Ring, polygonize, trace
-from .topology import InstanceTopology, as_mask, betti, instance_topology, min_area, signature, size_filter
+from .topology import (
+    InstanceTopology,
+    as_mask,
+    betti,
+    instance_topology,
+    min_area,
+    signature,
+    signatures,
+    size_filter,
+    topologies,
+)
 from .volume import betti3d
 
 __all__ = [
     "InstanceTopology", "MaskRings", "Ring", "as_mask", "betti", "betti3d", "certify", "certify_many",
-    "instance_topology", "min_area", "polygonize", "signature", "size_filter", "trace",
+    "instance_topology", "min_area", "polygonize", "signature", "signatures", "size_filter", "topologies", "trace",
 ]

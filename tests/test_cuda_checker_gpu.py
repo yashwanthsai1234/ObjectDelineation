@@ -127,3 +127,38 @@ def test_arena_reuse_is_exact():
 
 def test_two_stream_chunks_equal_one_call():
     assert two_stream_chunks()
+
+
+def test_topology_large_batch_matches_the_cv2_oracle_and_repeats():
+    """D4b, D-G3/G5 GPU half: gc.topology of 3,000 fuzz masks and two large noise masks (deep union-find chains) at
+    mixed rules in one call equals the OpenCV oracle field by field, and a second call is identical."""
+    from oracles.topology_oracle import cv2_components
+
+    rng = np.random.default_rng(14)
+    masks = [m for _, m in C.fuzz_masks(3000, seed=14)] + [rng.random((512, 512)) < .5, rng.random((2048, 2048)) < .4]
+    ma = rng.choice([0, 1, 3, 10, 100], len(masks)).astype(np.int64)
+    p = C.pack_masks(masks)
+    a, b = (gc.topology(p["bits"], p["hw"], p["start"], ma, True) for _ in range(2))
+    assert all(np.array_equal(a[k], b[k]) for k in a)
+    cs, hs = a["comp_start"], a["hole_start"]
+    for i, m in enumerate(masks):
+        got = [(int(a["comp_area"][c]), int(a["comp_holes"][c]), a["hole_area"][hs[c]:hs[c + 1]].tolist())
+               for c in range(cs[i], cs[i + 1])]
+        assert got == cv2_components(m, int(ma[i])), i
+
+
+def test_certify_polygons_on_own_rasters_matches_the_oracle_and_repeats():
+    """D4, D-G3/G5 GPU half: certify_polygons of the 326 fuzz polygons at G = 1000 against their own oracle rasters in
+    one call: a legal shape's inter and union equal its raster area and its signature equals the reference's; a
+    second call is identical (tests/test_certify_polygons.py runs the full algebra on the same build)."""
+    from tests.test_certify_polygons import fuzz_objects, legal, raster, run
+
+    objs = [(parts, W, H) for parts, W, H, G in fuzz_objects(3000, seed=15) if G == 1000]
+    refs = [raster(*o) for o in objs]
+    n = len(objs)
+    a, b = (run(objs, refs, np.arange(n), np.full(n, 5)) for _ in range(2))
+    assert all(np.array_equal(a[k], b[k]) for k in a)
+    ok = np.array(legal(objs))
+    area = np.array([r.sum() for r in refs])
+    assert n == 326 and ok.sum() == 65 and (a["legal"] == ok).all()
+    assert (a["inter"][ok] == area[ok]).all() and (a["union"][ok] == area[ok]).all() and a["equal"][ok].all()
