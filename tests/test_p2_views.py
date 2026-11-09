@@ -567,7 +567,7 @@ def test_bundle_covers_every_eval_view():
     """D10 revision: no category (side, nodule extent as share of the frame, position) that an eval view has at >= 5 %
     is under 1 % of training rows (epoch 0), and each such share is at least a third of the eval view's (R1 bundle:
     nodules under 10 % of the frame 0.5 % of rows vs 27.1 % of the rescaled val)."""
-    from objdel.eval import coverage
+    from objdel.data import coverage
     kinds = ("shifted", "rescaled", "rotated")
     _need(BUNDLE / "rows.jsonl", *(EVAL_VIEWS / f"lidc-val-{k}" / "lidc" / "val.jsonl" for k in kinds))
     keys = ("W", "ext", "pos")
