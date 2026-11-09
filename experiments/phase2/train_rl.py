@@ -89,6 +89,9 @@ def parse(argv=None) -> argparse.Namespace:
                     help="C4: row lengths, image ids and groups from vLLM's host lists in the batch (host_meta)")
     ap.add_argument("--check-meta-every", type=int, default=50, metavar="N",
                     help="with --host-meta: compare host_meta with the device masks on steps 1, N+1, ... (0: never)")
+    ap.add_argument("--check-rope-every", type=int, default=50, metavar="N",
+                    help="C2, with --host-meta: compare the template rope positions with HF on steps 1, N+1, ... "
+                         "(0: never)")
     ap.add_argument("--prompt-memo", action="store_true",
                     help="C2: tokenize one prompt per (rendered text, image sizes) before vLLM, not every row")
     ap.add_argument("--gpu-pixels", choices=("off", "auto"), default="off",

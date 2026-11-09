@@ -139,3 +139,38 @@ def test_check_meta_every_compares_the_device_derivation(monkeypatch, every, ste
             t._generate_and_score_completions(inputs)
     else:
         t._generate_and_score_completions(inputs)
+
+
+def test_row_meta_gives_prompt_layouts_and_the_hosts_rope_routing():
+    """C2: rows with the same prompt ids and image size share a dense layout id; an answer holding a vision id is
+    marked rope_bad."""
+    prompt = [[1, 2], [1, 2], [1, 2], [3, 4]]
+    comp = [[5, EOS], [100, EOS], [6, EOS], [7, EOS]]
+    meta = fast.row_meta(prompt, comp, [0, 0, 1, 2], 2, True, [EOS, PAD], sizes=[(8, 8), (8, 8), (16, 8), (8, 8)],
+                         vision_ids=(100, 102))  # fmt: skip
+    assert meta.layout.tolist() == [0, 0, 1, 2] and meta.rope_bad.tolist() == [0, 1, 0, 0]
+
+
+@pytest.mark.parametrize(("every", "step", "checks"), [(1, 7, True), (50, 50, True), (50, 1, False), (0, 0, False)])
+def test_generate_marks_vision_answers_and_check_rope_steps(monkeypatch, every, step, checks):
+    """C2: _generate's RowMeta routes an answer holding a vision id (here EOS stands in for it) to HF (rope_bad);
+    --check-rope-every N sets rope_check on steps 1, N+1, ... for the generation batch's forwards."""
+    t, inputs, _ = generation_trainer(monkeypatch, 0, step)
+    t.check_rope_every = every
+    t.model.config = type("C", (), {"image_token_id": EOS, "video_token_id": 78, "vision_start_token_id": 79,
+                                    "vision_end_token_id": 80})()  # fmt: skip
+    host = t._generate_and_score_completions(inputs)["host_meta"]
+    assert [r.rope_bad for r in host] == [int(EOS in c) for c in rows(5)[1]]
+    assert t.rope_check is checks
+
+
+def test_train_rl_and_g_probe_carry_check_rope_every(capsys):
+    from pathlib import Path
+
+    from experiments.phase2 import train_rl
+
+    with pytest.raises(SystemExit):
+        train_rl.main(["--help"])
+    assert "--check-rope-every" in capsys.readouterr().out
+    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
+    assert 'trainer.check_rope_every = getattr(a, "check_rope_every", 50)' in src

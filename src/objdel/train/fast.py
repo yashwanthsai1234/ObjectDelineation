@@ -57,16 +57,19 @@ def window(attention_mask: torch.Tensor, logits_to_keep: int, buckets=BUCKETS) -
 class RowMeta:
     """Host facts of a generation batch's rows (C4), int32 arrays of shape (B,): real prompt tokens, real answer
     tokens (0 for a truncated row under mask_truncated_completions, as TRL zeroes its completion_mask), the row's
-    distinct image (first-appearance index) and its group of G answers."""
+    distinct image (first-appearance index), its group of G answers, its prompt layout (dense id of prompt ids and
+    image size: one rope template each, C2) and the host's rope routing (1: the HF path, rope_bad_rows)."""
 
     prompt_len: np.ndarray
     completion_len: np.ndarray
     image_id: np.ndarray
     group: np.ndarray
+    layout: np.ndarray
+    rope_bad: np.ndarray
 
 
 def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_truncated: bool,
-             eos_and_pad_ids) -> RowMeta:  # fmt: skip
+             eos_and_pad_ids, sizes=None, vision_ids=()) -> RowMeta:  # fmt: skip
     """RowMeta from the host lists TRL already holds. A row is truncated when its last id is not in eos_and_pad_ids
     (TRL's own rule, grpo_trainer.py 2604-2606, with TRL's list)."""
     if any(not c for c in completion_ids_list):
@@ -74,8 +77,12 @@ def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_trunc
     ends = set(eos_and_pad_ids)
     clen = [0 if mask_truncated and c[-1] not in ends else len(c) for c in completion_ids_list]
     i32 = functools.partial(np.asarray, dtype=np.int32)
+    seen: dict[tuple, int] = {}
+    layout = [seen.setdefault((tuple(p), z), len(seen))
+              for p, z in zip(prompt_ids_list, sizes or [None] * len(clen), strict=True)]  # fmt: skip
+    bad = rope_bad_rows(prompt_ids_list, completion_ids_list, prompt_ids_list, vision_ids)
     return RowMeta(i32([len(p) for p in prompt_ids_list]), i32(clen), i32(image_ids),
-                   i32([i // G for i in range(len(clen))]))  # fmt: skip
+                   i32([i // G for i in range(len(clen))]), i32(layout), i32(bad))  # fmt: skip
 
 
 class MetaRow(typing.NamedTuple):
@@ -85,6 +92,8 @@ class MetaRow(typing.NamedTuple):
     completion_len: int
     image_id: int
     group: int
+    layout: int
+    rope_bad: int
 
 
 def host_rows(meta: RowMeta) -> list[MetaRow]:
@@ -206,8 +215,14 @@ class FastForward:
         rows = grid.prod(-1).tolist() if grid is not None else None  # pixel rows per image (one host read)
         P = input_ids.size(1) - logits_to_keep
         rope = getattr(self, "rope", None)
-        pos = (rope.positions(input_ids, attention_mask, kw["mm_token_type_ids"], grid, nimg)
-               if rope is not None and grid is not None and kw.get("mm_token_type_ids") is not None else None)
+        pos = None
+        if rope is not None and grid is not None and kw.get("mm_token_type_ids") is not None:
+            if meta is None:
+                pos = rope.positions(input_ids, attention_mask, kw["mm_token_type_ids"], grid, nimg)
+            else:  # C2: templates per prompt layout, the host's bad rows on HF's path
+                pos, nbad = rope.template_positions(input_ids, attention_mask, kw["mm_token_type_ids"], grid, nimg, P,
+                                                    meta, getattr(self, "rope_check", False))  # fmt: skip
+                self._metrics["train" if self.model.training else "eval"]["rope/fallback_rows"].append(nbad)
         lps, ents, auxs = [], [], []
         img = row = 0
         for s in range(0, n, size):
@@ -453,6 +468,42 @@ class RopeCache:
                 for j, i in enumerate(miss):
                     self.store[keys[i]] = pos[:, j]
             return torch.stack([self.store[k] for k in keys], dim=1)
+
+
+    def template_positions(self, input_ids, attention_mask, mm_token_type_ids, grid, nimg, P: int, meta: RowMeta,
+                           check: bool) -> tuple[torch.Tensor, int]:  # fmt: skip
+        """C2: (positions (3, rows, width), bad row count). One rope_template per new prompt layout (built from
+        its first row's real prompt), rope_positions for the rows meta marks good, HF's path (positions) for the
+        rest. With `check` (--check-rope-every) every row is compared with HF and the device `bad` with the host."""
+        with nvtx.range("rope_template"):
+            first = np.cumsum([0, *nimg])
+            bad = meta.rope_bad.astype(bool)
+            out = torch.zeros(3, *input_ids.shape, dtype=torch.long, device=input_ids.device)
+            for lay in np.unique(meta.layout[~bad]):
+                rows = np.flatnonzero((meta.layout == lay) & ~bad)
+                key = ("layout", int(lay))
+                if key not in self.store:
+                    i, f = rows[0], P - int(meta.prompt_len[rows[0]])
+                    self.store[key] = rope_template(self.base, input_ids[i, f:P], mm_token_type_ids[i, f:P],
+                                                    grid[first[i]:first[i + 1]])  # fmt: skip
+                r = torch.as_tensor(rows, device=input_ids.device)
+                out[:, r], dev_bad = rope_positions(self.store[key], input_ids[r], attention_mask[r],
+                                                    mm_token_type_ids[r])  # fmt: skip
+                if check and dev_bad.any():
+                    raise AssertionError(f"rope rows {rows[dev_bad.cpu().numpy()].tolist()} bad on the device, "
+                                         "good on the host")  # fmt: skip
+            rows = np.arange(len(nimg)) if check else np.flatnonzero(bad)
+            if rows.size:
+                r = torch.as_tensor(rows, device=input_ids.device)
+                g = torch.cat([grid[first[i]:first[i + 1]] for i in rows])
+                hf = self.positions(input_ids[r], attention_mask[r], mm_token_type_ids[r], g, [nimg[i] for i in rows])
+                if check:
+                    real, good = attention_mask.bool(), torch.as_tensor(~bad, device=input_ids.device)
+                    if not torch.equal(torch.where(real, out, 0)[:, good], torch.where(real, hf, 0)[:, good]):
+                        raise AssertionError("rope positions differ from HF")
+                    hf = hf[:, torch.as_tensor(bad, device=input_ids.device)]
+                out[:, torch.as_tensor(np.flatnonzero(bad), device=input_ids.device)] = hf
+            return out, int(bad.sum())
 
 
 class RopeTemplate(typing.NamedTuple):
@@ -834,6 +885,8 @@ class FastGRPO(FastForward, GRPOTrainer):
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
     host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
     check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
+    check_rope_every = 50  # C2, train_rl --check-rope-every N: compare template rope positions with HF (0: never)
+    rope_check = False  # this generation batch's forwards run the rope check (FastForward reads it)
     meta = None  # the generation batch's RowMeta, from _generate to the batch
     prompt_memo = False  # C2, train_rl --prompt-memo: _tokenize_prompts tokenizes one row per prompt layout
     count_syncs = False  # C0, train_rl --count-syncs: perf/host_syncs/<phase> per timed phase
@@ -908,6 +961,8 @@ class FastGRPO(FastForward, GRPOTrainer):
                 n = self.check_meta_every
                 if n and self.state.global_step % n == 0:  # steps 1, N + 1, 2N + 1, ...
                     check_meta(batch)
+                n = self.check_rope_every
+                self.rope_check = bool(n) and self.state.global_step % n == 0
             return batch
         finally:
             self.rows, self.meta = None, None
@@ -1053,8 +1108,13 @@ class FastGRPO(FastForward, GRPOTrainer):
             out = super()._generate(prompts)
         if self.host_meta and self.rows is not None and len(self.rows) == len(out[1]):
             eos_and_pad = [*self.eos_token_ids, self._tokenizer.pad_token_id]  # TRL's truncation list
+            cfg = getattr(self.model, "config", None)
+            vision = [getattr(cfg, k, None) for k in ("image_token_id", "video_token_id", "vision_start_token_id",
+                                                      "vision_end_token_id")]  # fmt: skip
             self.meta = row_meta(out[0], out[1], image_ids(self.rows), self.num_generations,
-                                 self.mask_truncated_completions, eos_and_pad)  # fmt: skip
+                                 self.mask_truncated_completions, eos_and_pad,
+                                 [getattr(r.get("image"), "size", None) for r in self.rows],
+                                 [v for v in vision if v is not None])  # fmt: skip
         self.prefetch_rewards(out[3], out[1])
         return out
 
