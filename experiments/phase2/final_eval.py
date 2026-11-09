@@ -14,7 +14,10 @@ patients (`group_id`; the gate CI, named by `gate_ci`), `ci95_nodule` resamples 
 (the schema-1 `ci95`). Illegal samples score 0 on every geometric term (the reward's rule).
 - iou_tc: IoU against the doctors' band (the reward's term); f5: the boundary score (calibrated so a new doctor
   scores 0.95); precision / recall / dice: pixels against the doctors' strict-majority outline;
-- miss_rate: the share of items whose K-mean IoU_tc is below 0.1.
+- miss_rate: the share of items whose K-mean IoU_tc is below 0.1;
+- sel_*: one answer chosen per item with no doctor masks (objdel.eval.select; `per_item`), and `paired`: the per-item
+  differences medoid - mean of K and vote - mean of K with their patient and nodule CIs. `gate_a` decides Gate A
+  from the val patient CI. Run gates keep sel_mean_of_k (= iou_tc).
 --resummarize DIR: the schema-2 summary of a finished run's items.jsonl (no model, no scoring), with group_id joined
 from the LIDC store of the run's split; written to --out, never into DIR; exit 2 when an item has no group_id.
 Reads untrusted data: run with python -I.
@@ -28,17 +31,28 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.eval import signal
+from objdel.eval import select, signal
 
 METRICS = {"legal": ("samples", True), "iou_tc": ("samples", True), "f5": ("samples", True),
            "precision_vote": ("objects", True), "recall_vote": ("objects", True), "dice_vote": ("objects", True)}
+SELECTION = ("sel_mean_of_k", "sel_legal_mean", "sel_medoid", "sel_medoid_legal", "sel_oracle", "sel_vote")
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
+GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
 
 
 def per_item(result: dict, obj: str = "nodule") -> dict:
-    """K-sample means of one item's scores (metrics' output)."""
+    """K-sample means of one item's scores (metrics' output), and the answer choices (A4): the mean of the K IoU_tc,
+    the mean over legal answers (0 if none), the medoid's (with its legality), the best one (it reads the labels: an
+    upper bound, never deployed) and the pixel vote's (analysis only: a mask is not an answer; absent when the
+    result has no `pixel_vote_iou_tc`)."""
     src = {"samples": result["samples"], "objects": result["objects"][obj]}
-    return {"item_id": result["item_id"], **{m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()}}
+    iou, legal = np.array(result["samples"]["iou_tc"], float), np.array(result["samples"]["legal"]) > 0
+    i = select.medoid(select.sample_iou(result["objects"]), legal)
+    vote = src["objects"].get("pixel_vote_iou_tc")
+    return {"item_id": result["item_id"], **{m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()},
+            "sel_mean_of_k": float(iou.mean()), "sel_legal_mean": float(iou[legal].mean()) if legal.any() else 0.0,
+            "sel_medoid": float(iou[i]), "sel_medoid_legal": float(legal[i]), "sel_oracle": float(iou.max()),
+            **({} if vote is None else {"sel_vote": float(vote)})}
 
 
 def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: int = 2000, seed: int = 0) -> dict:
@@ -57,7 +71,7 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     out = {"schema": 2, "items": len(items), "nodules": len(set(map(signal.cluster, ids))),
            "patients": None if groups is None else len({groups[i] for i in ids}), "ci_level": 0.95, "boot": draws,
            "gate_ci": "ci95_patient"}
-    for m, (_, higher) in METRICS.items():
+    for m, higher in [(m, h) for m, (_, h) in METRICS.items()] + [(m, True) for m in SELECTION]:
         held = [m in it for it in items]
         if not any(held):
             continue
@@ -71,7 +85,40 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     iou = np.array([it["iou_tc"] for it in items], float)
     out["iou_tc"]["median"] = float(np.median(iou))
     out["miss_rate"] = cis((iou < signal.MISS).astype(float))
+
+    def paired(arm: str) -> dict | None:  # the per-item difference arm - sel_mean_of_k under the same draws
+        if arm not in out:
+            return None
+        d = np.array([it[arm] - it["sel_mean_of_k"] for it in items])
+        return {"mean": float(d.mean()), "ci95_patient": None if D["ci95_patient"] is None
+                else signal.ci(d, D["ci95_patient"])[1:], "ci95_nodule": signal.ci(d, D["ci95_nodule"])[1:]}
+
+    out["paired"] = {"medoid_minus_mean": paired("sel_medoid"), "vote_minus_mean": paired("sel_vote")}
     return out
+
+
+def gate_a(val: dict, test: dict | None) -> dict:
+    """Gate A (A4): the medoid becomes the default answer choice when its val mean gain over sel_mean_of_k is
+    >= GATE_A_GAIN and the lower end of its paired gate CI (patients) is > 0. The vote passing the same rule is
+    reported, but it is no default before Phase D ships the CUDA polygonizer. `test_same_sign` (the medoid's test
+    difference has the val sign; None without a test summary) is a direction line only: test never chooses."""
+    def passes(arm: str) -> bool:
+        p = val["paired"][arm]
+        if p is None:
+            return False
+        ci = p[val["gate_ci"]]
+        if ci is None:
+            raise ValueError(f"gate_a: {arm}.{val['gate_ci']} is null (a summary built without groups)")
+        return round(p["mean"], signal.DIGITS) >= GATE_A_GAIN and ci[0] > 0
+
+    medoid, vote = passes("medoid_minus_mean"), passes("vote_minus_mean")
+    reason = "medoid passes on val" if medoid else "medoid does not pass on val"
+    if vote:
+        reason += "; the vote passes on val but needs the Phase D CUDA polygonizer to be an answer"
+    same = None if test is None else bool(
+        np.sign(test["paired"]["medoid_minus_mean"]["mean"]) == np.sign(val["paired"]["medoid_minus_mean"]["mean"]))
+    return {"method": "medoid" if medoid else "mean_of_k", "change_default": medoid, "test_same_sign": same,
+            "reason": reason}
 
 
 def view_groups(view: Path, split: str) -> dict[str, str]:

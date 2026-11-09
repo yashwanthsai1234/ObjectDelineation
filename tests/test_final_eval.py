@@ -17,9 +17,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CI_KEYS = {"mean", "ci95_nodule", "ci95_patient", "ci95_item", "higher_is_better"}
 
 
-def result(item, legal, iou, f5, p, r, d):
+def result(item, legal, iou, f5, p, r, d, sample_iou=None):
+    K = len(legal)
     return {"item_id": item, "samples": {"legal": legal, "iou_tc": iou, "f5": f5},
-            "objects": {"nodule": {"precision_vote": p, "recall_vote": r, "dice_vote": d}}}
+            "objects": {"nodule": {"precision_vote": p, "recall_vote": r, "dice_vote": d,
+                                   "sample_iou": np.eye(K).tolist() if sample_iou is None else sample_iou}}}
 
 
 def items_of(ids, values):
@@ -44,8 +46,27 @@ def walk(x):
 
 def test_per_item_takes_the_k_sample_means():
     it = FE.per_item(result("lidc/a", [1, 0], [0.8, 0.0], [0.9, 0.0], [0.6, 0.0], [1.0, 0.0], [0.75, 0.0]))
-    assert it == {"item_id": "lidc/a", "legal": 0.5, "iou_tc": 0.4, "f5": 0.45, "precision_vote": 0.3,
-                  "recall_vote": 0.5, "dice_vote": 0.375}
+    assert {k: it[k] for k in ("item_id", *FE.METRICS)} == {
+        "item_id": "lidc/a", "legal": 0.5, "iou_tc": 0.4, "f5": 0.45, "precision_vote": 0.3, "recall_vote": 0.5,
+        "dice_vote": 0.375}
+
+
+def test_per_item_selection_keys():
+    """U07: K = 4; medoid scores .45, .5, .15 over the legal answers 0-2 -> answer 1; the illegal answer 3 is never
+    the medoid although its row has IoU 1 with itself."""
+    M = [[1, .8, .1, 0], [.8, 1, .2, 0], [.1, .2, 1, 0], [0, 0, 0, 1]]
+    it = FE.per_item(result("lidc/a", [1, 1, 1, 0], [.9, .8, .1, 0], [0] * 4, [0] * 4, [0] * 4, [0] * 4, M))
+    assert {k: it[k] for k in FE.SELECTION if k != "sel_vote"} == pytest.approx({
+        "sel_mean_of_k": .45, "sel_legal_mean": 0.6, "sel_medoid": .8, "sel_medoid_legal": 1.0, "sel_oracle": .9},
+        rel=0, abs=1e-15)
+    assert (it["sel_medoid"], it["sel_medoid_legal"], it["sel_oracle"]) == (.8, 1.0, .9)
+    assert "sel_vote" not in it  # absent, not None, without its input (9.8 rule 2)
+    it = FE.per_item(result("lidc/a", [0] * 4, [0] * 4, [0] * 4, [0] * 4, [0] * 4, [0] * 4, M))
+    assert (it["sel_legal_mean"], it["sel_medoid_legal"], it["sel_medoid"]) == (0.0, 0.0, 0.0)
+    r = result("lidc/a", [1, 1, 1, 0], [.9, .8, .1, 0], [0] * 4, [0] * 4, [0] * 4, [0] * 4, M)
+    r["objects"]["nodule"]["pixel_vote_iou_tc"] = 0.7
+    assert FE.per_item(r)["sel_vote"] == 0.7
+    assert all(type(v) is float for k, v in FE.per_item(r).items() if k != "item_id")
 
 
 def test_summary_schema_2():
@@ -230,3 +251,82 @@ def test_cli_needs_a_checkpoint_view_and_training_data(capsys):
     with pytest.raises(SystemExit):
         FE.main(["--view", "v", "--train", "t", "--out", "o"])
     assert "--ckpt" in capsys.readouterr().err
+
+
+def sel_items(ids, mean, medoid, vote=None):
+    return [{"item_id": i, "iou_tc": a, "sel_mean_of_k": a, "sel_medoid": b,
+             **({} if vote is None else {"sel_vote": vote[j]})}
+            for j, (i, a, b) in enumerate(zip(ids, mean, medoid, strict=True))]
+
+
+def test_paired_differences():
+    """U11: mean and both CIs of the per-item differences under the summary's draws; the unit is not swapped."""
+    s = FE.summarize(sel_items([f"x{i}" for i in range(4)], [.5, .5, .5, .5], [.6, .6, .45, .5]))
+    p = s["paired"]["medoid_minus_mean"]
+    assert set(p) == {"mean", "ci95_patient", "ci95_nodule"} and abs(p["mean"] - 0.0375) < 1e-12
+    assert s["paired"]["vote_minus_mean"] is None
+    ids, groups = layout(3, 2, 2)
+    diff = np.array([.1, .1, 0, 0, .05, .05, -.05, -.05, .2, .2, .1, .1])
+    s = FE.summarize(sel_items(ids, [.5] * 12, .5 + diff), groups)["paired"]["medoid_minus_mean"]
+    want = {k: S.ci(.5 + diff - .5, D)[1:] for k, D in (
+        ("ci95_patient", S.draws(ids, 2000, 0, key=groups.__getitem__)), ("ci95_nodule", S.draws(ids, 2000, 0)))}
+    for k, w in want.items():
+        assert np.allclose(s[k], w, rtol=0, atol=1e-12) and s[k][0] <= s["mean"] <= s[k][1], k
+    assert abs(s["ci95_nodule"][1] - 0.1333) < 1e-4 and abs(s["ci95_patient"][1] - 0.15) < 1e-12
+    v = np.random.default_rng(0).random(12)
+    s = FE.summarize(sel_items(ids, v, v + 0.05, v), groups)["paired"]
+    assert abs(s["medoid_minus_mean"]["mean"] - 0.05) < 1e-12
+    assert all(abs(x - 0.05) < 1e-12 for k in ("ci95_patient", "ci95_nodule") for x in s["medoid_minus_mean"][k])
+    assert set(s["vote_minus_mean"]) == {"mean", "ci95_patient", "ci95_nodule"}
+    items = sel_items(ids, v, v, v)
+    del items[3]["sel_vote"]
+    with pytest.raises(ValueError, match=ids[3]):
+        FE.summarize(items, groups)
+
+
+def test_paired_ci_is_narrower_than_the_unpaired_one_on_correlated_arms():
+    ids, groups = layout(6, 3, 2)
+    base = np.random.default_rng(1).random(len(ids))
+    s = FE.summarize(sel_items(ids, base, base + 0.02), groups)
+    paired = np.diff(s["paired"]["medoid_minus_mean"]["ci95_patient"])[0]
+    unpaired = np.diff(s["sel_medoid"]["ci95_patient"])[0] + np.diff(s["sel_mean_of_k"]["ci95_patient"])[0]
+    assert paired < unpaired
+
+
+def summary(mean, patient, nodule=(0.0, 0.1), vote=None):
+    pair = {"mean": mean, "ci95_patient": None if patient is None else list(patient), "ci95_nodule": list(nodule)}
+    return {"gate_ci": "ci95_patient", "paired": {"medoid_minus_mean": pair, "vote_minus_mean": vote}}
+
+
+def test_gate_a_rule():
+    """U51: the val patient CI decides; the nodule CI and the test summary never do."""
+    assert FE.gate_a(summary(0.015, (0.002, 0.03)), None)["change_default"] is True
+    assert FE.gate_a(summary(0.015, (0.002, 0.03)), None)["method"] == "medoid"
+    assert FE.gate_a(summary(0.0149, (0.002, 0.03)), None)["change_default"] is False
+    assert FE.gate_a(summary(0.02, (0.0, 0.04)), None)["change_default"] is False
+    g = FE.gate_a(summary(0.02, (-0.003, 0.043), nodule=(0.004, 0.036)), None)
+    assert (g["method"], g["change_default"]) == ("mean_of_k", False)
+    with pytest.raises(ValueError, match="ci95_patient"):
+        FE.gate_a(summary(0.02, None, nodule=(0.004, 0.036)), None)
+    vote = {"mean": 0.05, "ci95_patient": [0.03, 0.07], "ci95_nodule": [0.03, 0.07]}
+    g = FE.gate_a(summary(0.0, (-0.01, 0.01), vote=vote), None)
+    assert g["change_default"] is False and g["method"] == "mean_of_k" and "Phase D" in g["reason"]
+    val, test = summary(0.02, (0.005, 0.035)), summary(-0.01, (-0.02, 0.0))
+    a, b = FE.gate_a(val, None), FE.gate_a(val, test)
+    assert a["method"] == b["method"] == "medoid" and a["test_same_sign"] is None and b["test_same_sign"] is False
+    assert FE.gate_a(val, summary(0.01, (0.0, 0.02)))["test_same_sign"] is True
+
+
+def test_selection_key_invariants():
+    """P08: 200 random items, K = 8."""
+    rng = np.random.default_rng(8)
+    for _ in range(200):
+        legal = (rng.random(8) < 0.7).astype(float)
+        iou = (rng.random(8) * legal).tolist()
+        a = rng.random((8, 8))
+        M = (np.triu(a) + np.triu(a, 1).T).tolist()
+        it = FE.per_item(result("lidc/a", legal.tolist(), iou, iou, iou, iou, iou, M))
+        assert it["sel_oracle"] >= it["sel_medoid"] >= 0 and it["sel_oracle"] >= it["sel_legal_mean"]
+        assert it["sel_oracle"] >= it["sel_mean_of_k"] and it["sel_legal_mean"] >= it["sel_mean_of_k"]
+        assert it["sel_medoid_legal"] in (0.0, 1.0) and all(0 <= it[k] <= 1 for k in FE.SELECTION if k in it)
+
