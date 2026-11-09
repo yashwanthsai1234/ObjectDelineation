@@ -11,7 +11,7 @@ from oracles import reward_harness as H
 from objdel.eval import gates, hack_audit, metrics, summarize
 from objdel.eval.metrics import _pairwise_iou, ged, min_mode_retention, pass_at_k, soft_dice, tv_js
 from objdel.reward import ExpertCache
-from objdel.targets import BuildConfig, build_target
+from objdel.targets import BuildConfig, build_target, min_areas
 
 S = 50  # frame side (divides 1000)
 
@@ -35,13 +35,13 @@ def riga_raters():
 
 
 def targets(raters, names):
-    ma = {n: ExpertCache.build(raters[n]).min_area for n in names}
+    ma = min_areas({n: raters[n] for n in names})  # with the rim's rule for RIGA
     k = len(raters[names[0]])
     return [build_target({n: raters[n][r] for n in names}, names, min_area=ma).text for r in range(k)]
 
 
 def text_of(masks: dict, names, raters):
-    ma = {n: ExpertCache.build(raters[n]).min_area for n in names}
+    ma = min_areas({n: raters[n] for n in names})
     return build_target(masks, names, min_area=ma).text
 
 

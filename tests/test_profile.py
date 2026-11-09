@@ -120,7 +120,8 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     from experiments.phase2.vast import policy
 
     box = (policy.ROOT / "experiments/cuda_checker/run_box.sh").read_text()
-    assert '"cuda-toolkit[nvcc,cccl]==13.0.3" "nvidia-cuda-sanitizer-api==13.4.92"' in box and "sanitizer]" not in box
+    assert '"cuda-toolkit[nvcc,cccl,nvtx]==13.0.3" "nvidia-cuda-sanitizer-api==13.4.92"' in box
+    assert "sanitizer]" not in box
     mem = " ".join(policy.chain(policy.ROOT / "experiments/phase2/configs/p1_rl.yaml", "p1")[3])
     assert "--error-exitcode 1" in mem and "no compute-sanitizer" in mem
     # torch's caching allocator hides out-of-bounds accesses from memcheck; arena reuse is initcheck's case
