@@ -60,6 +60,8 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
             if missing := [n for n in LIDC_EVAL if not (data / kind / n).is_dir()]:
                 die(f"eval views missing: {missing}")
             names |= set(LIDC_EVAL)
+        if kind == "eval_views":  # held-out test views never ride in a train bundle (plan B1 rental 4c)
+            names = {n for n in names if not n.startswith(f"{ds}-test-")}
         if not names:
             die(f"no {ds} {kind} under {data / kind}")
         picked += [f for n in sorted(names) for f in walk(data, data / kind / n, f"{kind}/{n}")]
