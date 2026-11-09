@@ -92,11 +92,11 @@ def test_smoke_node_ids_collect_exactly_two_tests():
 
 
 def test_rl_shifted_is_archived_with_its_readme_row():
-    assert not (CONFIGS / "rl_shifted.yaml").exists()
-    assert (ROOT / "archive/phase2_runs/configs/rl_shifted.yaml").exists()
+    name = "rl_shifted" + ".yaml"  # built, so this file does not match its own scan below
+    assert not (CONFIGS / name).exists()
+    assert (ROOT / "archive/phase2_runs/configs" / name).exists()
     readme = (ROOT / "archive/phase2_runs/configs/README.md").read_text()
-    assert "| Was | Replaced by | Commit |" in readme and "| rl_shifted.yaml | b1_rows.yaml |" in readme
-    name = "rl_shifted" + ".yaml"
+    assert "| Was | Replaced by | Commit |" in readme and f"| {name} | b1_rows.yaml |" in readme
     files = subprocess.run(["git", "ls-files", "experiments", "src", "tests", "Makefile"], cwd=ROOT,
                            capture_output=True, text=True, check=True).stdout.split()
     assert [f for f in files if (ROOT / f).is_file() and name in (ROOT / f).read_text(errors="ignore")] == []
