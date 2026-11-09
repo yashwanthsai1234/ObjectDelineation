@@ -226,3 +226,30 @@ def test_one_stated_rl_learning_rate():
     from objdel.train import configs
 
     assert "prereg.G_PROBE" in configs.__doc__ and "1e-6 full, 1e-5 LoRA" not in configs.__doc__
+
+
+# --- CLEAN12: dead-code gate and dependency direction ----------------------------------------------------------------
+
+
+def test_no_dead_code():
+    """Fails (no skip) when vulture is missing: a skip would let the gate pass silently."""
+    try:
+        import vulture  # noqa: F401
+    except ImportError:
+        pytest.fail("vulture is not installed: install the dev extra (uv pip install -e '.[dev]')")
+    r = subprocess.run([sys.executable, "-m", "vulture"], cwd=ROOT, capture_output=True, text=True)
+    assert (r.returncode, r.stdout) == (0, "")
+
+
+def test_vulture_is_pinned_and_configured():
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert "vulture==2.16" in cfg["project"]["optional-dependencies"]["dev"]
+    assert cfg["tool"]["vulture"]["paths"] == ["src", "experiments", "tests"]
+    assert not (ROOT / "tests" / "vulture_whitelist.py").exists()
+    assert re.search(r"^dead:.*\n\t\$\(PY\) -m vulture$", (ROOT / "Makefile").read_text(), re.M)
+
+
+@pytest.mark.xfail(strict=True, reason="CLEAN7 (another lane) removes SmolVLM from src; drop this marker at the merge")
+def test_retired_models_absent():
+    hits = [str(p.relative_to(ROOT)) for p in (ROOT / "src").rglob("*.py") if "smolvlm" in p.read_text().lower()]
+    assert hits == []
