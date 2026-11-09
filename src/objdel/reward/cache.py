@@ -223,6 +223,8 @@ def _rater_stack(stack) -> np.ndarray:
     stack = np.ascontiguousarray(stack, dtype=bool)
     if stack.ndim != 3 or not rl_eligible(stack):
         raise ValueError(f"need a (k >= 2, H, W) rater stack, got shape {stack.shape}")
+    if len(stack) > 32:  # the engine's tables hold at most 32 raters
+        raise ValueError(f"at most 32 raters, got {len(stack)}")
     return stack
 
 
