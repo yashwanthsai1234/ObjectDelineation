@@ -169,11 +169,11 @@ def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at:
         "remove_unused_columns": False, "report_to": "none", "seed": 0, "data_seed": 0} | overrides)
 
 
-def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
-    g = REWARD_V4.group
+def grpo_config(model: str, output_dir: str, reward=REWARD_V4, **overrides) -> GRPOConfig:
+    g = reward.group
     for k in ("num_generations", "num_generations_eval"):
         if overrides.get(k) not in (None, g):
-            raise ValueError(f"{k}={overrides[k]}: reward v4 scores groups of exactly {g} (REWARD_V4.group)")
+            raise ValueError(f"{k}={overrides[k]}: {reward.name} scores groups of exactly {g} (its group)")
     return GRPOConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
         # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM
