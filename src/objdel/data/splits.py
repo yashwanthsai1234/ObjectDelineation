@@ -62,6 +62,9 @@ VAL_HALF_RULE = ("deal per lidc_stratum (dis=1 included), seed 'val_half:<s>', f
 
 @dataclass(frozen=True)
 class Patient:
+    """Per-patient counts for the LIDC split strata: multi-reader slices and how many of them have disagreeing
+    topologies.
+    """
     slices: int  # multi-reader slices
     disagree: int  # of which readers' topologies disagree
 
@@ -92,6 +95,7 @@ def deal_weighted(groups, weight, fractions, seed) -> dict:
 
 
 def lidc_stratum(p: Patient) -> str:
+    """The stratum of a patient: `dis=1` when any slice disagrees, else a bin of the multi-reader slice count."""
     if p.disagree:
         return "dis=1"
     s = p.slices

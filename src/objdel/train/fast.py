@@ -259,9 +259,11 @@ class VisionCache:
         return cls(visual) if visual is not None else None
 
     def clear(self):
+        """Empty the cache."""
         self.store.clear()
 
     def keys(self, pixel_values, grid_thw) -> list[tuple]:
+        """Exact integer hash and (t, h, w) grid of each image: one tuple per image, with one host read per call."""
         rows = grid_thw.prod(-1)
         image = torch.repeat_interleave(torch.arange(len(rows), device=rows.device), rows)
         first = torch.cumsum(rows, 0) - rows
@@ -274,6 +276,9 @@ class VisionCache:
         return list(zip(h.tolist(), map(tuple, grid_thw.tolist()), strict=True))  # one host read per call
 
     def forward(self, pixel_values, grid_thw=None, **kw):
+        """Vision tower forward that encodes only images missing from the cache and returns the pooled and deepstack
+        features of all, in order.
+        """
         with nvtx.range("vision_cache"):
             keys = self.keys(pixel_values, grid_thw)
             rows = grid_thw.prod(-1).tolist()
@@ -313,9 +318,11 @@ class RopeCache:
         return cls(base) if base is not None else None
 
     def clear(self):
+        """Empty the cache."""
         self.store.clear()
 
     def inject(self, module, args, kwargs):
+        """Forward pre-hook: give the pending rope positions as `position_ids` when the call has none."""
         if self.pending is not None and kwargs.get("position_ids") is None:
             kwargs["position_ids"] = self.pending
         return args, kwargs
@@ -607,9 +614,13 @@ class ImageMemo:
         return copy.deepcopy(self.inner, memo)
 
     def clear(self) -> None:
+        """Empty the memo."""
         self.memo.clear()
 
     def __call__(self, images, **kwargs):
+        """Image processor call that processes only images not yet in the memo and returns pixel values and grids of
+        all, in order.
+        """
         with nvtx.range("image_memo"):
             from transformers.feature_extraction_utils import BatchFeature
             from transformers.image_utils import make_flat_list_of_images
@@ -724,10 +735,12 @@ class FastGRPO(FastForward, GRPOTrainer):
             trl_grpo.shuffle_sequence_dict = shuffle
 
     def training_step(self, *args, **kwargs):
+        """Run the micro-batch step inside the `micro` NVTX range."""
         with nvtx.range("micro"):  # the micro-batch's forward and backward (the first one also generates: `batch`)
             return super().training_step(*args, **kwargs)
 
     def get_batch_samples(self, *args, **kwargs):
+        """Fetch batch samples inside the `loader` NVTX range."""
         with nvtx.range("loader"):  # transformers fetches the step's 16 micro-batches before on_step_begin
             return super().get_batch_samples(*args, **kwargs)
 
@@ -889,6 +902,7 @@ class FastGRPO(FastForward, GRPOTrainer):
         llm.generate = one_pad
 
     def floating_point_ops(self, inputs):
+        """FLOP count: always 0, which skips the Trainer's per-micro-batch module walk."""
         return 0  # perf F3: the Trainer default walks ~2.5k PEFT modules per micro-batch
 
 

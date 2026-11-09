@@ -34,6 +34,7 @@ MODEL = ("model", "model_all_k", "diff")
 
 
 class LeaveOut(NamedTuple):
+    """One leave-one-out case: the left-out doctor's index, the cache of the remaining doctors and whether k = 2."""
     index: int  # the left-out voting doctor
     cache: ExpertCache  # the other k - 1 doctors ([other, other] at k = 2)
     single: bool  # k = 2: one reference doctor

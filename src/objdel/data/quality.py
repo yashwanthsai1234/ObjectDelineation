@@ -61,6 +61,7 @@ KNOWN_0396 = ("LIDC-IDRI-0396", 1420.0)  # TCIA known issue 6: patient, contour 
 
 
 def file_sha256(path) -> str:
+    """SHA-256 hex digest of the file's bytes."""
     with open(path, "rb") as fh:
         return hashlib.file_digest(fh, "sha256").hexdigest()
 
@@ -161,6 +162,7 @@ NULL_DRAWS = 500  # DG16 null: random train-patient subsamples
 
 @dataclass(frozen=True)
 class Gate:
+    """One quality gate: its measured value, the limit as text, whether it is hard and whether it passed."""
     name: str
     value: float
     limit: str
@@ -169,10 +171,12 @@ class Gate:
 
 
 def image_sha256(image: np.ndarray) -> str:  # as objdel.train.dataset._pixels_sha (that module needs `datasets`)
+    """SHA-256 hex digest of an image's shape and raw bytes."""
     return hashlib.sha256(repr(image.shape).encode() + image.tobytes()).hexdigest()
 
 
 def records(rows_root) -> list[dict]:
+    """SHA-256 hex digest of an image's shape and raw bytes."""
     """The rows root's records (lidc/train.jsonl), in schedule order."""
     return [json.loads(x) for x in Path(rows_root, "lidc", "train.jsonl").read_text().splitlines()]
 
@@ -472,6 +476,7 @@ def view_content_sha256(view_dir) -> str:
 
 
 def target_set_sha256(view_dir) -> str:
+    """The `target_set_sha256` of the one set listed in the view directory's `manifest.json`."""
     (s,) = json.loads(Path(view_dir, "manifest.json").read_text())["sets"].values()
     return s["target_set_sha256"]
 
@@ -541,4 +546,5 @@ def gates(report: Mapping) -> list[Gate]:
 
 
 def failures(gs: Sequence[Gate]) -> list[Gate]:
+    """The hard gates that failed."""
     return [g for g in gs if g.hard and not g.ok]

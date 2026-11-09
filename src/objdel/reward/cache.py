@@ -277,6 +277,7 @@ class ExpertCache:
 
     @property
     def voters(self) -> tuple[int, ...]:
+        """Raters with a topology vote (`voters` of the signatures)."""
         return voters(self.rater_sigs)
 
     @property
@@ -289,10 +290,12 @@ class ExpertCache:
 
     @cached_property
     def dist_out_union(self) -> np.ndarray:
+        """Distance in pixels (float32) from each pixel outside the union to the union."""
         return edt(~self.union)
 
     @cached_property
     def dist_in_core(self) -> np.ndarray:
+        """Distance in pixels (float32) from each core pixel to the nearest non-core pixel."""
         return edt(self.core)
 
     def table_args(self) -> tuple:
@@ -310,6 +313,7 @@ class ExpertCache:
 
     @classmethod
     def build(cls, stack) -> "ExpertCache":
+        """Build the cache from a rater mask stack, computing tau and the F5 tolerance from it."""
         stack = _rater_stack(stack)
         return cls(stack, rater_tau(stack), f5_tolerance(stack))
 

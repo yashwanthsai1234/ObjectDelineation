@@ -26,6 +26,7 @@ class TraceStep(TrainerCallback):
         self.out, self.wait = Path(out), wait
 
     def on_train_begin(self, args, state, control, **kw):
+        """Start the profiler."""
         from torch.profiler import ProfilerActivity, profile, schedule
 
         acts = [ProfilerActivity.CPU] + [ProfilerActivity.CUDA] * torch.cuda.is_available()
@@ -34,12 +35,15 @@ class TraceStep(TrainerCallback):
         self.prof.start()
 
     def on_step_end(self, args, state, control, **kw):
+        """Advance the profiler one step."""
         self.prof.step()
 
     def on_train_end(self, args, state, control, **kw):
+        """Stop the profiler."""
         self.prof.stop()
 
     def write(self, prof):
+        """Write the Chrome trace and the top-op tables to `out` when the profiler trace is ready."""
         self.out.mkdir(parents=True, exist_ok=True)
         prof.export_chrome_trace(str(self.out / "trace.json.gz"))
         ops = prof.key_averages()
@@ -62,19 +66,23 @@ class NvtxSteps(TrainerCallback):
         self.window, self.open, self.opt_open, self.capturing, self.done = window, False, False, False, False
 
     def on_train_begin(self, args, state, control, **kw):
+        """Open the `step` range."""
         nvtx.push("step")
         self.open = True
 
     def on_pre_optimizer_step(self, args, state, control, **kw):
+        """Open the `optimizer` range."""
         nvtx.push("optimizer")
         self.opt_open = True
 
     def on_optimizer_step(self, args, state, control, **kw):
+        """Close the `optimizer` range."""
         if self.opt_open:
             nvtx.pop()
             self.opt_open = False
 
     def on_step_end(self, args, state, control, **kw):
+        """Close the `step` range, start or stop the CUDA capture at the window ends, and open the next `step` range."""
         if self.open:
             nvtx.pop()
         if self.window and not self.done and torch.cuda.is_available():
@@ -87,6 +95,7 @@ class NvtxSteps(TrainerCallback):
         self.open = True
 
     def on_train_end(self, args, state, control, **kw):
+        """Close any open range and stop a running capture."""
         if self.open:
             nvtx.pop()
             self.open = False
@@ -112,9 +121,11 @@ class BudgetStop(TrainerCallback):
         self.clock, self.tripped = clock, False
 
     def spend(self) -> float:
+        """Session spend so far in USD."""
         return self.fixed + max(0.0, self.clock() - self.start) / 3600 * self.rate
 
     def on_step_end(self, args, state, control, **kw):
+        """After each step, trip the guard once spend reaches the cap; once tripped, request a stop with a save."""
         self.tripped = self.tripped or self.spend() >= self.cap
         if self.tripped:
             control.should_training_stop = control.should_save = True

@@ -97,6 +97,7 @@ def per_item(groups: Sequence[dict]) -> dict[str, np.ndarray]:
 
 
 def cluster(item_id: str) -> str:
+    """The cluster (nodule) of an item id: the id without its last path part for `lidc/` items, else the id itself."""
     return item_id.rsplit("/", 1)[0] if item_id.startswith("lidc/") else item_id
 
 

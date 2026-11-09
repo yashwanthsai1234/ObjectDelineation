@@ -64,17 +64,22 @@ MAX_SIDE = 500  # crop policy; beyond it the exact-ring fallback is no longer gu
 
 @dataclass(frozen=True)
 class BuildConfig:
+    """Target build settings: largest tolerance and ladder step (grid units, 0-1000), minimum IoU and the objects that
+    must be exact.
+    """
     tau: float = 3.0  # largest L-inf tolerance, grid units
     step: float = 0.25  # ladder step down to lossless
     iou_min: float = 0.99
     exact: tuple = ("nodule",)  # objects whose target must rasterize to the mask pixel for pixel (step 4)
 
     def ladder(self) -> list:
+        """Tolerances to try, from `tau` down to 0 in steps of `step`, then None (exact rings)."""
         k = round(self.tau / self.step)
         return [self.step * i for i in range(k, -1, -1)] + [None]  # ..., 0 = lossless, None = exact rings
 
 
 class Target(NamedTuple):
+    """A built target: the text, its objects parsed back, and per-object build info."""
     text: str
     objs: Objects  # canonical, as parsed back from text
     info: dict  # per object: tau (None = exact rings), vertices, iou; "time" (CPU s)

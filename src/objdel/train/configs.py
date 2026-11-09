@@ -170,6 +170,9 @@ def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at:
 
 
 def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
+    """GRPO config for the model with reward v4's group size; `overrides` replace defaults, a different generation count
+    raises ValueError.
+    """
     g = REWARD_V4.group
     for k in ("num_generations", "num_generations_eval"):
         if overrides.get(k) not in (None, g):

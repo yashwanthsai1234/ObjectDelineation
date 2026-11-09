@@ -21,6 +21,7 @@ _cuda: bool | None = None  # torch.cuda.is_available(), asked once
 
 
 def enabled() -> bool:
+    """True when NVTX is on (`OBJDEL_NVTX=1`) and CUDA is available; the CUDA query is asked once."""
     global _cuda
     if not _ON:
         return False
@@ -32,6 +33,7 @@ def enabled() -> bool:
 
 
 def push(name: str) -> None:
+    """Push an NVTX range when enabled."""
     if enabled():
         import torch
 
@@ -39,6 +41,7 @@ def push(name: str) -> None:
 
 
 def pop() -> None:
+    """Pop the current NVTX range when enabled."""
     if enabled():
         import torch
 

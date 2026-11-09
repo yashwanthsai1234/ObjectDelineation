@@ -89,12 +89,16 @@ target-version = "py312"
 extend-exclude = ["archive"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "D100", "D101", "D102", "D103", "D104", "D106"]
 ignore = ["E731", "E741"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 # Phase scripts are frozen records of what produced the published numbers: lint lightly.
-"experiments/**" = ["E501", "B023", "B905"]
+"experiments/**" = ["E501", "B023", "B905", "D"]
+"tests/**" = ["D"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["objdel", "experiments"]
