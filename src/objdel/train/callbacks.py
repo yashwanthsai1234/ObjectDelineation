@@ -1,5 +1,6 @@
 """TrainerCallbacks of the live runs: TraceStep (one torch.profiler step), NvtxSteps (NVTX step ranges and the
-nsys capture window) and BudgetStop (stop and save at a session spend).
+nsys capture window), BudgetStop (stop and save at a session spend) and NoCkptLayers (C9: no checkpointing on K
+layers).
 
 The Phase 2 hack-audit callback (audit of held-out evaluation, best-checkpoint rollback, live guard switches) is
 archived in archive/controller/ (CLEAN6): no live run attached it. The held-out curve is train_rl --heldout (TRL's own
@@ -118,3 +119,21 @@ class BudgetStop(TrainerCallback):
         self.tripped = self.tripped or self.spend() >= self.cap
         if self.tripped:
             control.should_training_stop = control.should_save = True
+
+
+class NoCkptLayers(TrainerCallback):
+    """C9 arm (a), train_rl --no-ckpt-layers K: gradient checkpointing off on the last K text decoder layers (their
+    activations kept: less recompute, more memory). At train begin, because Trainer.train re-enables checkpointing
+    on every layer just before it."""
+
+    def __init__(self, k: int):
+        self.k = k
+
+    def on_train_begin(self, args, state, control, model=None, **kw):
+        from transformers.modeling_layers import GradientCheckpointingLayer
+
+        layers = next(m for n, m in model.named_modules() if n.endswith("language_model.layers"))
+        if not 0 < self.k <= len(layers) or not all(isinstance(x, GradientCheckpointingLayer) for x in layers):
+            raise ValueError(f"--no-ckpt-layers {self.k}: needs 1..{len(layers)} checkpointable decoder layers")
+        for layer in list(layers)[-self.k:]:
+            layer.gradient_checkpointing = False
