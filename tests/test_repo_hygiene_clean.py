@@ -297,7 +297,9 @@ def test_library_keep_list_adr_matches_pyproject():
     flat = sum(names.values(), [])
     assert len(flat) == len(set(flat)) and all(names.values())  # one section per library
     deps = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-    declared = {_norm(re.split(r"[<>=!~\[ ;]", d)[0]) for d in deps["dependencies"] + sum(deps["optional-dependencies"].values(), [])}
+    every = deps["dependencies"] + sum(deps["optional-dependencies"].values(), [])
+    declared = {_norm(re.split(r"[<>=!~\[ ;]", d)[0]) for d in every}
     assert not declared & set(names["NOT ADOPTED"])
-    assert all(("Trigger:" in b or re.search(r"phase [A-Z]", b)) for b in re.split(r"^- ", sec["DEFERRED"], flags=re.M)[1:])
+    rows = re.split(r"^- ", sec["DEFERRED"], flags=re.M)[1:]
+    assert all("Trigger:" in b or re.search(r"phase [A-Z]", b) for b in rows)
     assert path.name in (ADR_DIR / "README.md").read_text()
