@@ -114,9 +114,11 @@ def draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: Callable[
 
 
 def _ci(f, n: int, D: list[np.ndarray]) -> list[float]:
-    reps = np.array([f(d) for d in D])
+    reps, point = np.array([f(d) for d in D]), float(f(np.arange(n)))
+    if np.isnan(point):  # a NaN item: no finite interval from the draws that missed it
+        return [point, np.nan, np.nan]
     q = (1 - LEVEL) / 2
-    return [float(f(np.arange(n))), float(np.nanquantile(reps, q)), float(np.nanquantile(reps, 1 - q))]
+    return [point, float(np.nanquantile(reps, q)), float(np.nanquantile(reps, 1 - q))]
 
 
 def ci(x: np.ndarray, D: list[np.ndarray]) -> list[float]:
@@ -131,9 +133,10 @@ def cluster_t(x, groups: Sequence[str], level: float = LEVEL) -> list[float]:
     Miller 2015, eq. 11-12 at one regressor). The decision interval of a gate on fewer than 50 patients (A1 step 5)."""
     x = np.asarray(x, float)
     _, inv = np.unique(np.asarray(groups), return_inverse=True)
-    S, N, P = np.bincount(inv, x), np.bincount(inv).astype(float), inv.max() + 1
+    P = len(np.unique(inv))
     if P < 2:
         raise ValueError(f"cluster_t: needs at least 2 patients, got {P}")
+    S, N = np.bincount(inv, x), np.bincount(inv).astype(float)
     m = S.sum() / N.sum()
     h = stats.t.ppf((1 + level) / 2, P - 1) * np.sqrt(P / (P - 1) * ((S - m * N) ** 2).sum() / N.sum() ** 2)
     return [float(m), float(m - h), float(m + h)]
