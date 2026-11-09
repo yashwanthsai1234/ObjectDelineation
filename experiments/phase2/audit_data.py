@@ -37,10 +37,11 @@ def _json(path: Path) -> dict:
 def audit(rows, store_root=ROOT / "data/store", eval_views=ROOT / "data/eval_views", val_view=None,
           exclusions=REF / "train_exclusions.json", review=REF / "neardup_review.json",
           frozen=REF / "frozen_views.json", series_z=ROOT / "runs/b1/series_z.json", model="qwen3-vl-2b",
-          out=ROOT / "runs/b1/audit") -> dict:
-    """The report that quality.gates reads, for the rows root `rows` (module docstring)."""
+          out=ROOT / "runs/b1/audit", plan=None) -> dict:
+    """The report that quality.gates reads, for the rows root `rows` (module docstring). `plan`: the schedule dict
+    (build_rl_rows passes it before the manifest exists); default the manifest's `schedule`."""
     rows, store_root, eval_views, exclusions = Path(rows), Path(store_root), Path(eval_views), Path(exclusions)
-    plan = json.loads((rows / "manifest.json").read_text())["schedule"]
+    plan = plan or json.loads((rows / "manifest.json").read_text())["schedule"]
     ex = _json(exclusions)
     pool = windows.pool(store.load("lidc", "train", store_root), plan["draws"], plan["seed"],
                         frozenset(plan["excluded_ids"]))
