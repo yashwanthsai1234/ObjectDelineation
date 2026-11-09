@@ -1,4 +1,6 @@
 [
+ "core/test_move_invariance.py",
+ "infra/test_chain.py",
  "test_a_gpu.py",
  "test_b1_plans.py",
  "test_b2_attribution.py",

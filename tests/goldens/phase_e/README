@@ -14,3 +14,6 @@ invariance.<platform>.json goldens 3 (score_batch bits) and 4 (one FastGRPO upda
 host_syncs.json            count of .item()/.cpu()/.tolist()/.numpy() per torch-importing module (test_layers.py).
 tests_import_experiments.json  test files that import `experiments` (the list only shrinks; 0 at E8).
 module_strings_stale.json  dotted objdel names in strings that already point nowhere (the list only shrinks).
+old_names.json             E-G16 baseline: top-level definitions of each old module (OLD_MODULES in test_layers.py).
+                           Re-record after a merge that changes one of them:
+                           .venv/bin/python -I -c "import sys; sys.path.insert(0, '.'); import tests.core.test_layers as t; t.record_old_names()"

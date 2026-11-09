@@ -183,3 +183,28 @@ def test_g_probe_lr_not_read():
                     and isinstance(node.slice, ast.Constant) and node.slice.value in {"lr_full", "lr_lora"}):
                 bad.append(f"{p.relative_to(ROOT).as_posix()}:{node.lineno}")
     assert bad == []
+
+
+# E-G16 baseline (U10): the old modules whose top-level names must each find a home after the E moves. A listed
+# module that does not exist yet (an A-D module of another lane) is recorded once it lands.
+OLD_MODULES = [*(f"src/objdel/train/{m}.py" for m in ("dataset", "configs", "fast", "rewards", "callbacks", "sample",
+                                                       "serve", "nvtx", "trl_adapter", "gpu_pixels", "vllm_sync",
+                                                       "vllm_requests")),
+               *(f"src/objdel/{m}.py" for m in ("eval/ceiling", "eval/select", "eval/device", "checker/rings",
+                                                "geometry/box")),
+               *(f"experiments/phase2/{m}.py" for m in ("select_ckpt", "train_sft", "g_probe", "train_rl",
+                                                        "final_eval", "vast/policy", "vast/bundle", "preflight",
+                                                        "hf_push", "hf_pull"))]
+
+
+def old_names() -> dict[str, list[str]]:
+    return {m: sorted(top_level_names(ROOT / m)) for m in OLD_MODULES if (ROOT / m).exists()}
+
+
+def record_old_names():
+    (GOLDENS / "old_names.json").write_text(json.dumps(old_names(), indent=1) + "\n")
+
+
+def test_old_names_recorded_on_this_tree():
+    """Re-record after a merge that changes an old module: record_old_names() (goldens README)."""
+    assert json.loads((GOLDENS / "old_names.json").read_text()) == old_names()
