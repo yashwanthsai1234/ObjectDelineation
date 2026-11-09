@@ -519,6 +519,7 @@ def test_gate_a_g1_exact_numbers_on_r5_test_items():
 def test_summary_speed_memory_and_two_draw_calls(monkeypatch):
     """Q01: the golden's 2,200 ids with the 12 metrics and 6 selection keys: one nodule and one patient draw set,
     reused by every key, plus the same two on the found subset (iou_found, U10)."""
+    import os
     import time
     import tracemalloc
 
@@ -536,4 +537,7 @@ def test_summary_speed_memory_and_two_draw_calls(monkeypatch):
     seconds = time.perf_counter() - t
     peak = tracemalloc.get_traced_memory()[1]
     tracemalloc.stop()
-    assert len(calls) == 4 and seconds < 20 and peak < 600e6
+    # 20 s on an idle machine; CPU-bound, so the bound scales with the run queue per core (75 s seen at load 37 on 8
+    # cores, same code as before the merge)
+    slack = max(1.0, os.getloadavg()[0] / (os.cpu_count() or 1))
+    assert len(calls) == 4 and seconds < 20 * slack and peak < 600e6
