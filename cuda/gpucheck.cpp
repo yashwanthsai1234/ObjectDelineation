@@ -1878,11 +1878,10 @@ struct TableView {  // device view of resident tables: bit planes of H rows of w
   i32 H, W, k, min_area;
 };
 
-struct Registry {  // resident tables; handle = index (reused once dropped)
+struct Registry {  // resident tables; handle = index, never reused (a stale handle raises)
   std::vector<u8*> block;
   std::vector<size_t> bytes;
   std::vector<TableView> view;
-  std::vector<i64> free;
   i64 live = 0;
 };
 
@@ -2485,14 +2484,8 @@ i64 register_tables(u8* b, const Placed& q, i32 H, i32 W, i32 k, i64 n_vote, i64
   const TableView v{ptr<u32>(b, q.r), ptr<u32>(b, q.u), ptr<u32>(b, q.c),  ptr<u32>(b, q.v), ptr<float>(b, q.d),
                     ptr<i64>(b, q.a), ptr<i64>(b, q.ss), ptr<i32>(b, q.s), ptr<u8>(b, q.vt), n_vote, perimeter,
                     t5,               H,                W,                k,                min_area};
-  i64 handle = i64(r.block.size());
-  if (r.free.empty()) {
-    r.block.push_back(b), r.bytes.push_back(q.size), r.view.push_back(v);
-  } else {
-    handle = r.free.back();
-    r.free.pop_back();
-    r.block[size_t(handle)] = b, r.bytes[size_t(handle)] = q.size, r.view[size_t(handle)] = v;
-  }
+  const i64 handle = i64(r.block.size());
+  r.block.push_back(b), r.bytes.push_back(q.size), r.view.push_back(v);
   ++r.live;
   counters().table_bytes += i64(q.size);
   return handle;
@@ -3144,7 +3137,6 @@ void drop_tables(i64 handle) {
   release(true, r.block[size_t(handle)], r.bytes[size_t(handle)], e.lanes[0].stream);
   counters().table_bytes -= i64(r.bytes[size_t(handle)]);
   r.block[size_t(handle)] = nullptr;
-  r.free.push_back(handle);
   --r.live;
 }
 
