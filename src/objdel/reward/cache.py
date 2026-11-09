@@ -288,6 +288,18 @@ class ExpertCache:
         return dict(same)
 
     @cached_property
+    def ref_sum(self) -> tuple[int, int, int]:
+        """(sum of column indices, sum of row indices, pixel count) of the vote mask, or of the union when the vote is
+        empty: the location term's reference centroid times its area (Implementation.md B3.2)."""
+        ys, xs = np.nonzero(self.vote if self.n_vote > 0 else self.union)
+        return int(xs.sum()), int(ys.sum()), int(xs.size)
+
+    @cached_property
+    def radius2(self) -> float:
+        """|union| / pi: the squared radius of a disc of the union's area (the location kernel's scale)."""
+        return int(np.count_nonzero(self.union)) / np.pi
+
+    @cached_property
     def dist_out_union(self) -> np.ndarray:
         return edt(~self.union)
 
