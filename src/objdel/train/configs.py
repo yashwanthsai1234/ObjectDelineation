@@ -169,12 +169,35 @@ def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at:
         "remove_unused_columns": False, "report_to": "none", "seed": 0, "data_seed": 0} | overrides)
 
 
-def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
+# Numerics presets (B2.2, ADR-0013): the importance-sampling mode and dtype of a run. The shared parts are named first
+# (a literal cannot refer to itself). Only the keys a preset changes are listed; vllm_lora is ours (see grpo_config).
+_SEQMASK = {"vllm_importance_sampling_mode": "sequence_mask", "vllm_importance_sampling_clip_max": 3.0,
+            "vllm_importance_sampling_clip_min": None}  # TRL's defaults, written out
+_TIS = {"vllm_importance_sampling_mode": "token_truncate", "vllm_importance_sampling_clip_max": 2.0,
+        "vllm_importance_sampling_clip_min": None}  # C = 2, SkyRL's token default
+NUMERICS = {
+    "bf16-seqmask": _SEQMASK,  # ADR option C: the control (B1 and B3)
+    "bf16-tis": _TIS,  # option B
+    "bf16-tis-opsm": {**_TIS, "off_policy_mask_threshold": 0.5},  # option E; train_rl --opsm-start-delta overrides 0.5
+    "fp16-seqmask": {**_SEQMASK, "bf16": False, "fp16": True},  # option A numerics, the control's IS mode
+    "lora-seqmask": {**_SEQMASK, "vllm_lora": True},  # option F, the control's IS mode
+}
+DEFAULT_NUMERICS = "bf16-seqmask"
+
+
+def grpo_config(model: str, output_dir: str, numerics: str = DEFAULT_NUMERICS, **overrides) -> GRPOConfig:
+    """numerics: a key of NUMERICS; explicit overrides win over the preset. vllm_lora is not a TRL field: it is set
+    as an attribute of the returned config, for FastGRPO to read (False elsewhere)."""
+    if numerics not in NUMERICS:
+        raise ValueError(f"numerics {numerics!r}: not one of {sorted(NUMERICS)}")
+    preset = dict(NUMERICS[numerics])
+    lora = preset.pop("vllm_lora", False)
+    overrides = preset | overrides
     g = REWARD_V4.group
     for k in ("num_generations", "num_generations_eval"):
         if overrides.get(k) not in (None, g):
             raise ValueError(f"{k}={overrides[k]}: reward v4 scores groups of exactly {g} (REWARD_V4.group)")
-    return GRPOConfig(**{
+    cfg = GRPOConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
         # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM
         "per_device_train_batch_size": 2 * g, "gradient_accumulation_steps": 16, "per_device_eval_batch_size": 2 * g,
@@ -188,4 +211,6 @@ def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
         "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
+    cfg.vllm_lora = lora
+    return cfg
 
