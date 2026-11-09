@@ -57,7 +57,7 @@ def test_all_items_is_the_one_count_of_the_contract():
 
 def test_no_live_python_file_says_trl_1_16():
     stale = [p for d in ("src", "experiments") for p in (ROOT / d).rglob("*.py")
-             if "lab" not in p.relative_to(ROOT).parts and "TRL 1.16" in p.read_text()]  # fmt: skip
+             if "lab" not in p.relative_to(ROOT).parts and "TRL " + "1.16" in p.read_text()]  # fmt: skip
     assert stale == []
 
 

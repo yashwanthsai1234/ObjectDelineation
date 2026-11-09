@@ -19,8 +19,9 @@ import pytest
 from experiments.phase2 import train_sft as TS
 
 ROOT = Path(__file__).resolve().parents[1]
+# train_sft configs: not a step list for run.sh (r0.yaml) nor an RL launch config (b1_launch.yaml, test_b1_plans.py)
 CONFIGS = sorted(c for c in (ROOT / "experiments/phase2/configs").glob("*.yaml")
-                 if "\nsteps:" not in c.read_text())  # r0.yaml is a step list for run.sh, not a train_sft config
+                 if not any(k in c.read_text() for k in ("\nsteps:", "\nrows_plan:")))
 CPU_SFT = {"per_device_train_batch_size": 1, "gradient_accumulation_steps": 1, "use_cpu": True, "bf16": False,
            "logging_steps": 1, "dataloader_num_workers": 0, "dataloader_persistent_workers": False,
            "dataloader_prefetch_factor": None}  # tiny CPU runs of train_sft
@@ -52,8 +53,7 @@ def test_configs_parse_as_run_args(path):
 def test_config_set_complete():
     yaml = pytest.importorskip("yaml")
     names = {p.stem for p in CONFIGS}
-    assert names == {"r1_lfm", "r1_qwen3vl2b", "r0_qwen3vl_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1",
-                     "b1_launch"}
+    assert names == {"r1_lfm", "r1_qwen3vl2b", "r0_qwen3vl_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1"}
     assert yaml.safe_load((ROOT / "experiments/phase2/configs/c2_a0_seed1.yaml").read_text())["a0"] is True
 
 
