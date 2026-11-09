@@ -250,6 +250,8 @@ def fake_trainer(**attrs):
 
     t = object.__new__(fast.FastGRPO)
     t.model, t._metrics = SimpleNamespace(training=True), {"train": defaultdict(list), "eval": defaultdict(list)}
+    t.off_policy_mask_threshold = None  # TRL's attribute
+    t.accelerator = SimpleNamespace(is_main_process=False)  # log writes no seq_gaps file
     for k, v in attrs.items():
         setattr(t, k, v)
     return t
@@ -445,7 +447,8 @@ def test_log_writes_the_shares_from_one_read(monkeypatch):
                      vllm_importance_sampling_clip_max=3.0)  # fmt: skip
     gaps = torch.log(RAW[:, None]).nan_to_num(neginf=-200.0)  # sequence gaps whose exp is RAW (0: underflow)
     for rows in (slice(0, 5), slice(5, 8)):  # two micro-batches
-        inputs = {"sampling_per_token_logps": -gaps[rows], "completion_mask": torch.ones_like(gaps[rows])}
+        inputs = {"sampling_per_token_logps": -gaps[rows], "completion_mask": torch.ones_like(gaps[rows]),
+                  "advantages": torch.ones(len(gaps[rows]))}
         t.set_is_ratio(torch.zeros_like(gaps[rows]), inputs)
     t.log({})
     m = logged[0]
@@ -482,7 +485,8 @@ def test_log_adds_no_host_read(monkeypatch):
     monkeypatch.setattr(torch.cuda, "synchronize", lambda *a: reads.append("sync"))
     t = fake_trainer(vllm_importance_sampling_mode="token_mask", vllm_importance_sampling_clip_min=None,
                      vllm_importance_sampling_clip_max=3.0)  # fmt: skip
-    inputs = {"sampling_per_token_logps": torch.zeros(2, 3), "completion_mask": torch.ones(2, 3)}
+    inputs = {"sampling_per_token_logps": torch.zeros(2, 3), "completion_mask": torch.ones(2, 3),
+              "advantages": torch.ones(2)}
     t.set_is_ratio(torch.zeros(2, 3), inputs)
     assert reads == []
     t.log({})
