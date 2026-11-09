@@ -30,8 +30,9 @@ OBJDEL_FIXED_USD from the active run, the flags' defaults.
 Held-out curve (off by default): --heldout VIEW evaluates --heldout-items val-shape items (splits.val_half) of that
 eval view every --heldout-every steps, 8 answers each; rl.json "eval" holds eval/iou_tc and eval/allmiss_share.
 
-<out>/rl.json: steps, LR, numerics, beta, reward (name, fingerprint, c_topo, loc_width, area_gate), rows provenance,
-timing and TRL's log. --reward v5 trains on reward v5 and adds callbacks.LocGuard (stop and save; loc_guard_stopped).
+<out>/rl.json: steps, LR, numerics, opsm_start_delta (None outside bf16-tis-opsm), beta, reward (name, fingerprint,
+c_topo, loc_width, area_gate), rows provenance, timing and TRL's log. --reward v5 trains on reward v5 and adds
+callbacks.LocGuard (stop and save; loc_guard_stopped).
 """
 import argparse
 import gc
@@ -43,7 +44,8 @@ import sys
 import time
 from pathlib import Path
 
-NUMERICS = "bf16-seqmask"  # today's values (bf16, sequence_mask, cap 3) until B2.2 adds --numerics
+# fp16-seqmask needs fp16 weights and vLLM dtype, lora-seqmask needs LoRA serving: both are FastGRPO plumbing (B2.2)
+NEEDS_FASTGRPO = ("fp16-seqmask", "lora-seqmask")
 
 
 def _hex(n: int):
@@ -55,6 +57,8 @@ def _hex(n: int):
 
 
 def parse(argv=None) -> argparse.Namespace:
+    from objdel.train import configs
+
     env = os.environ.get
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     ap.add_argument("--model", required=True, help="configs.MODELS key")
@@ -92,6 +96,10 @@ def parse(argv=None) -> argparse.Namespace:
                          "(0 = off); needs mask_truncated_completions false in --grpo")
     ap.add_argument("--reward", choices=("v4", "v5"), default="v4",
                     help="reward spec (objdel.reward.REWARDS); v5 adds callbacks.LocGuard (default v4)")
+    ap.add_argument("--numerics", choices=sorted(configs.NUMERICS), default=configs.DEFAULT_NUMERICS,
+                    help="configs.NUMERICS preset (default: the B1 control)")
+    ap.add_argument("--opsm-start-delta", type=float,
+                    help="off_policy_mask_threshold of steps 1-20; only with --numerics bf16-tis-opsm (B2.4 rule 4)")
     ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
                     help="NVTX step ranges and a cudaProfilerApi capture of steps S..E (nsys_capture.sh; S >= 2)")
     ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
@@ -108,6 +116,12 @@ def parse(argv=None) -> argparse.Namespace:
         ap.error("--budget-usd needs a session start: --session-start or OBJDEL_SESSION_START (run.sh exports it)")
     if a.budget_usd is not None and a.rate_usd_per_h is None:
         ap.error("--budget-usd needs a rate: --rate-usd-per-h or OBJDEL_RATE_USD_PER_H (run.sh exports it)")
+    if a.numerics in NEEDS_FASTGRPO:
+        ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM dtype or LoRA serving, B2.2), not built yet")
+    if a.opsm_start_delta is not None and (a.numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
+        ap.error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
+    if "off_policy_mask_threshold" in json.loads(a.grpo):
+        ap.error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     if a.profile_window and not 2 <= a.profile_window[0] <= a.profile_window[1]:
         ap.error(f"--profile-window {a.profile_window}: needs 2 <= S <= E")
     return a
@@ -125,6 +139,12 @@ def check_flags(a) -> None:
         raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
     if a.runaway_cap and over.get("mask_truncated_completions", True):
         raise ValueError("--runaway-cap needs --grpo '{\"mask_truncated_completions\": false}'")
+
+
+def numerics_overrides(a) -> dict:
+    """The grpo_config arguments of --numerics and --opsm-start-delta (absent: the preset's own threshold)."""
+    return {"numerics": a.numerics} | ({} if a.opsm_start_delta is None
+                                       else {"off_policy_mask_threshold": a.opsm_start_delta})
 
 
 def budget_stop(a):
@@ -257,7 +277,7 @@ def main(argv=None) -> int:
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
-    over = {"save_strategy": "steps", "save_steps": a.save_steps}
+    over = {"save_strategy": "steps", "save_steps": a.save_steps} | numerics_overrides(a)
     over |= {"shuffle_dataset": False} if schedule else {}
     over |= {"eval_strategy": "steps", "eval_steps": a.heldout_every, "num_generations_eval": 8} if a.heldout else {}
     check = (lambda cfg: check_sampler(cfg, schedule, a.steps)) if schedule else None
@@ -279,7 +299,9 @@ def main(argv=None) -> int:
     return save_json(a.out / "rl.json", {
         "model": a.model, "steps": done, "lr": lr, "ckpt": str(a.ckpt), "resumed_from": last,
         "final": str(a.out / "final"),
-        "numerics": NUMERICS, "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
+        "numerics": a.numerics,
+        "opsm_start_delta": a.opsm_start_delta if a.opsm_start_delta is not None else cfg.off_policy_mask_threshold,
+        "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
         "max_completion_length": cfg.max_completion_length,
         "loss_scale": configs.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L (C7)
         "reward": {"name": spec.name, "fingerprint": reward_fingerprint(spec), "c_topo": spec.c_topo,
