@@ -90,7 +90,10 @@ def make_trainer(a, ckpt: Path, train, steps: int, **over):
     roots = [a.train, *getattr(a, "train_views", [])]  # train_rl --train-views: rows tagged per root
     funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc)).funcs()
     cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
-    calls = [callbacks.TraceStep(a.trace, wait=1)] if getattr(a, "trace", None) else []
+    win = getattr(a, "profile_window", None)  # train_rl --profile-window S E: NVTX steps and the nsys capture window
+    calls = [callbacks.NvtxSteps(tuple(win))] if win else []  # raises on S < 2 (TraceStep's wait would be < 0)
+    if getattr(a, "trace", None):  # torch.profiler on step S (the nsys fallback), else on step 3
+        calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
     trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, processing_class=proc,
                   peft_config=peft, callbacks=calls)  # fmt: skip
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)

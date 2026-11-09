@@ -74,6 +74,18 @@ def summary(log: list[dict]) -> dict:
     return out
 
 
+def covered(intervals, t0: float, t1: float) -> float:
+    """The length of the union of the (start, end) intervals clipped to [t0, t1] (0.0 when t1 <= t0; an interval
+    with end <= start counts nothing). busy here and nsys_baseline share it."""
+    total, end = 0.0, t0
+    for a, b in sorted((max(a, t0), min(b, t1)) for a, b in intervals):
+        a = max(a, end)
+        if b > a:
+            total += b - a
+            end = b
+    return total
+
+
 def busy(trace: dict) -> dict:
     """The traced optimizer step (ProfilerStep#N span): wall ms, GPU busy share (union of GPU intervals in the span),
     kernel launches, CUDA runtime API ms, host-sync calls by name, top kernels by total ms."""
@@ -83,19 +95,14 @@ def busy(trace: dict) -> dict:
         raise ValueError("no ProfilerStep span in the trace")
     t0 = min(e["ts"] for e in steps)
     t1 = max(e["ts"] + e["dur"] for e in steps)
-    gpu = sorted((max(e["ts"], t0), min(e["ts"] + e["dur"], t1)) for e in ev if e.get("cat") in GPU_CATS)
-    covered, end = 0.0, t0
-    for a, b in gpu:
-        if b > end:
-            covered += b - max(a, end)
-            end = b
+    gpu = covered(((e["ts"], e["ts"] + e["dur"]) for e in ev if e.get("cat") in GPU_CATS), t0, t1)
     kernels = [e for e in ev if e.get("cat") == "kernel"]
     top: dict[str, float] = {}
     for e in kernels:
         top[e["name"]] = top.get(e["name"], 0.0) + e["dur"] / 1e3
     api = sum(e["dur"] for e in ev if e.get("cat") == "cuda_runtime") / 1e3
     syncs = {n: sum(e.get("name") == n for e in ev) for n in SYNCS}
-    return {"step_ms": (t1 - t0) / 1e3, "gpu_busy": covered / (t1 - t0), "kernels": len(kernels),
+    return {"step_ms": (t1 - t0) / 1e3, "gpu_busy": gpu / (t1 - t0), "kernels": len(kernels),
             "cuda_api_ms": api, "syncs": syncs, "top_kernels_ms": dict(sorted(top.items(), key=lambda x: -x[1])[:10])}
 
 

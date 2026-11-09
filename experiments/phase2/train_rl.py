@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 
-def main(argv=None) -> int:
+def parse(argv=None) -> argparse.Namespace:
     from objdel.train import serve
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -34,7 +34,20 @@ def main(argv=None) -> int:
     ap.add_argument("--resume", action="store_true", help="continue from the last <out>/trainer/checkpoint-N")
     ap.add_argument("--procs", type=int, default=serve.pool_size(), help="scoring workers (default: usable CPUs - 1)")
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config")
+    ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
+                    help="NVTX step ranges and a cudaProfilerApi capture of steps S..E (nsys_capture.sh; S >= 2)")
+    ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
+                                    "else step 3 (the nsys fallback)")
     a = ap.parse_args(argv)
+    if a.profile_window and not 2 <= a.profile_window[0] <= a.profile_window[1]:
+        ap.error(f"--profile-window {a.profile_window}: needs 2 <= S <= E")
+    return a
+
+
+def main(argv=None) -> int:
+    from objdel.train import serve
+
+    a = parse(argv)
 
     from transformers.trainer_utils import get_last_checkpoint
 

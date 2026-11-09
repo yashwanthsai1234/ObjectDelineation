@@ -61,6 +61,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from objdel._gpucheck import DEFECTS
 from objdel.reward import REWARD_V4, ExpertCache, advantages_v4, legal_gate, score_batch, topology_reward
+from objdel.train import nvtx
 
 LOGGED = ("format_ok", "legal", "iou_tc", "f5", "g_area", "topo_any", "r_topo")
 GATED = ("iou_tc", "f5", "g_area")  # logged times legal_gate: 0 for an illegal rollout, as advantages_v4 sees them
@@ -77,6 +78,13 @@ def stop_ids(model, processing_class) -> set[int]:
 def truncated(ids, stop) -> bool:
     """TRL's rule: a completion is truncated when its last id is not a stop id (an empty one has no end either)."""
     return not ids or ids[-1] not in stop
+
+
+def _score(jobs) -> dict:
+    """score_batch inside the NVTX range `checker`, on whichever thread scores (the prefetch thread or the reward
+    call). The range lives here, not in objdel.reward, which never imports objdel.train (S12)."""
+    with nvtx.range("checker"):
+        return score_batch(jobs)
 
 
 def _text(completion) -> str:
@@ -118,7 +126,7 @@ class TRLReward:
         jobs = self._jobs(completions, completion_ids, keys, W, H, names)
         if self._thread is None:
             self._thread = ThreadPoolExecutor(1, thread_name_prefix="reward-prefetch")
-        self._ahead = (self._signature(keys, jobs), self._thread.submit(score_batch, jobs))
+        self._ahead = (self._signature(keys, jobs), self._thread.submit(_score, jobs))
 
     def _jobs(self, completions, completion_ids, keys, W, H, names) -> list[tuple]:
         return [(_text(c), truncated(ids, self.stop), tuple(n), self.caches(k), w, h)
@@ -142,7 +150,7 @@ class TRLReward:
             self.recorded += [(k, t, tr, w, h, n) for k, (t, tr, n, _, w, h) in zip(keys, jobs, strict=True)]
         ahead, self._ahead = self._ahead, None
         same = ahead is not None and ahead[0] == self._signature(keys, jobs)
-        T = ahead[1].result() if same else score_batch(jobs)
+        T = ahead[1].result() if same else _score(jobs)
         legal = legal_gate(T)
         out = {n: (T[n] * legal if n in GATED else T[n]).tolist() for n in LOGGED[:-1]}
         out["r_topo"] = topology_reward(T).tolist()

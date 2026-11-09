@@ -63,6 +63,7 @@ from transformers import Trainer, TrainerCallback
 
 from objdel.eval import alarms_for
 from objdel.reward import REWARD_V4
+from objdel.train import nvtx
 
 FIRED = "eval_audit/fired"
 
@@ -236,3 +237,54 @@ class TraceStep(TrainerCallback):
         ops = prof.key_averages()
         (self.out / "ops.txt").write_text("\n\n".join(ops.table(sort_by=k, row_limit=40) for k in
                                                        ("self_device_time_total", "self_cpu_time_total")))
+
+
+class NvtxSteps(TrainerCallback):
+    """NVTX range `step` over each step period (one on_step_end to the next: the previous step's log, this step's
+    loader, micro-batches, grad clip and optimizer) and `optimizer` from on_pre_optimizer_step to on_optimizer_step
+    (objdel.train.nvtx: no-ops unless OBJDEL_NVTX=1 and CUDA). With window = (s, e) and CUDA, the cudaProfilerApi
+    capture (nsys --capture-range=cudaProfilerApi, nsys_capture.sh) holds exactly the step ranges of steps s..e: it
+    starts at the end of step s - 1, between the pop and the next push, and stops at the end of step e after the pop
+    (or at on_train_end, when the run ends inside the window). train_rl --profile-window S E."""
+
+    def __init__(self, window: tuple[int, int] | None):
+        if window is not None and not 2 <= window[0] <= window[1]:
+            raise ValueError(f"profile window {window}: needs 2 <= start <= end (the capture starts at the end of "
+                             "step start - 1, and TraceStep's wait is start - 2)")
+        self.window, self.open, self.opt_open, self.capturing, self.done = window, False, False, False, False
+
+    def on_train_begin(self, args, state, control, **kw):
+        nvtx.push("step")
+        self.open = True
+
+    def on_pre_optimizer_step(self, args, state, control, **kw):
+        nvtx.push("optimizer")
+        self.opt_open = True
+
+    def on_optimizer_step(self, args, state, control, **kw):
+        if self.opt_open:
+            nvtx.pop()
+            self.opt_open = False
+
+    def on_step_end(self, args, state, control, **kw):
+        if self.open:
+            nvtx.pop()
+        if self.window and not self.done and torch.cuda.is_available():
+            if state.global_step == self.window[0] - 1 and not self.capturing:
+                torch.cuda.profiler.start()
+                self.capturing = True
+            elif state.global_step == self.window[1] and self.capturing:
+                self._stop()
+        nvtx.push("step")
+        self.open = True
+
+    def on_train_end(self, args, state, control, **kw):
+        if self.open:
+            nvtx.pop()
+            self.open = False
+        if self.capturing:
+            self._stop()
+
+    def _stop(self):
+        torch.cuda.profiler.stop()
+        self.capturing, self.done = False, True
