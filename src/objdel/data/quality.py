@@ -282,10 +282,13 @@ def rows_leakage(rows_root, store_root, view_hashes: set[str], excluded: frozens
 
 
 def _contrast(it) -> float:
-    """Grey levels (lung window) between the doctors' union and the ring 1-4 px around it."""
-    m = np.logical_or.reduce(it.masks["nodule"], axis=0)
+    """Grey levels (lung window) between the doctors' union and the ring 1-4 px around it (on the union box + 5 px:
+    the same pixels as on the whole slice, 14 -> 1 ms)."""
+    x0, y0, x1, y1 = union_box(it)
+    box = slice(max(y0 - 5, 0), y1 + 5), slice(max(x0 - 5, 0), x1 + 5)
+    m = np.logical_or.reduce(it.masks["nodule"], axis=0)[box]
     ring = ndi.binary_dilation(m, iterations=4) & ~ndi.binary_dilation(m, iterations=1)
-    g = hu_window(it.image)
+    g = hu_window(it.image[box])
     return float(g[m].mean() - g[ring].mean()) if ring.any() else float("nan")
 
 
