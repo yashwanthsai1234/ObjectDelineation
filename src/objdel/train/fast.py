@@ -16,11 +16,13 @@ image once per generation batch. Valid because LoRA leaves the tower and project
 """
 
 import contextlib
+import dataclasses
 import functools
 import math
 import sys
 import time
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
@@ -48,6 +50,51 @@ def window(attention_mask: torch.Tensor, logits_to_keep: int, buckets=BUCKETS) -
     keep = min(logits_to_keep, width - prompt)
     return P + keep - width, keep
 
+
+
+@dataclasses.dataclass(frozen=True)
+class RowMeta:
+    """Host facts of a generation batch's rows (C4), int32 arrays of shape (B,): real prompt tokens, real answer
+    tokens (0 for a truncated row under mask_truncated_completions, as TRL zeroes its completion_mask), the row's
+    distinct image (first-appearance index) and its group of G answers."""
+
+    prompt_len: np.ndarray
+    completion_len: np.ndarray
+    image_id: np.ndarray
+    group: np.ndarray
+
+
+def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_truncated: bool,
+             eos_and_pad_ids) -> RowMeta:  # fmt: skip
+    """RowMeta from the host lists TRL already holds. A row is truncated when its last id is not in eos_and_pad_ids
+    (TRL's own rule, grpo_trainer.py 2604-2606, with TRL's list)."""
+    if any(not c for c in completion_ids_list):
+        raise ValueError("an empty answer: TRL's truncation rule reads its last id")
+    ends = set(eos_and_pad_ids)
+    clen = [0 if mask_truncated and c[-1] not in ends else len(c) for c in completion_ids_list]
+    i32 = functools.partial(np.asarray, dtype=np.int32)
+    return RowMeta(i32([len(p) for p in prompt_ids_list]), i32(clen), i32(image_ids),
+                   i32([i // G for i in range(len(clen))]))  # fmt: skip
+
+
+def window_from_meta(meta: RowMeta, rows, P: int, logits_to_keep: int, buckets=BUCKETS) -> tuple[int, int]:
+    """window() of the chunk `rows` (indices into meta) without a device read; P is the padded prompt width."""
+    prompt, longest = int(meta.prompt_len[rows].max()), max(int(meta.completion_len[rows].max()), 1)
+    W = P + logits_to_keep
+    width = min(next((b for b in buckets if b >= prompt + longest), W), W)
+    keep = min(logits_to_keep, width - prompt)
+    return P + keep - width, keep
+
+
+def length_order(meta: RowMeta) -> np.ndarray:
+    """by_length's order: real prompt + answer tokens, longest first, stable."""
+    return np.argsort(-(meta.prompt_len.astype(np.int64) + meta.completion_len), kind="stable")
+
+
+def group_order(meta: RowMeta, G: int) -> np.ndarray:
+    """by_group_length's order: groups of G by their longest member, longest first, stable; rows kept in place."""
+    n = (meta.prompt_len.astype(np.int64) + meta.completion_len).reshape(-1, G).max(1)
+    return (np.argsort(-n, kind="stable")[:, None] * G + np.arange(G)).ravel()
 
 def per_row(pv, rows, nimg) -> list | None:
     """Each row's pixel rows (its images' slices of the chunk's pixel_values), or None without images."""
@@ -581,8 +628,13 @@ class ImageMemo:
 
     KEYS = {"pixel_values", "image_grid_thw"}  # Qwen-VL image processors: patch rows and one (t, h, w) row per image
 
-    def __init__(self, inner):
-        self.inner = inner
+    hits = misses = fallback_calls = 0  # C1 counters: rows served from the memo, images prepared, CPU fallbacks
+
+    def __init__(self, inner, gpu: tuple[str, str] | None = None, per_image: bool = False):
+        """gpu: (gpu_pixels backend, device) to prepare missed images with gpu_pixels.patchify (C1), or None for the
+        processor itself (the B1 control). per_image (--encoder-once, C3): pixel_values holds each distinct image of
+        the call once (first-appearance order) instead of once per row; image_grid_thw stays one row per row."""
+        self.inner, self.gpu, self.per_image = inner, gpu, per_image
         self.memo: dict[tuple, tuple] = {}  # (id(image), kwargs) -> (image, its patch rows, its grid row)
 
     @classmethod
@@ -607,7 +659,30 @@ class ImageMemo:
         return copy.deepcopy(self.inner, memo)
 
     def clear(self) -> None:
+        """Drop the cached images and zero the counters (one generation batch: 32 misses, 256 hits expected)."""
         self.memo.clear()
+        self.hits = self.misses = self.fallback_calls = 0
+
+    def prefill(self, images, **kwargs) -> None:
+        """Prepare the distinct images of a generation batch before TRL's processor calls (C1: on the GPU)."""
+        self(images, **kwargs)
+
+    def prepare(self, miss: list, kwargs: dict):
+        """(pixel_values, image_grid_thw) of the missed images: gpu_pixels.patchify when self.gpu is set and every
+        call kwarg is the processor's own value (else the processor: a counted fallback), or the processor."""
+        if self.gpu is not None:
+            from objdel.train import gpu_pixels
+
+            own = all(v is None or getattr(self.inner, k, object()) == v for k, v in kwargs.items()
+                      if k != "return_tensors")  # fmt: skip
+            try:
+                if own:
+                    return gpu_pixels.patchify(miss, self.inner, device=self.gpu[1], backend=self.gpu[0])
+            except gpu_pixels.UnsupportedImage:
+                pass
+            self.fallback_calls += 1
+        out = self.inner(miss, **kwargs)
+        return None if set(out.keys()) != self.KEYS else (out["pixel_values"], out["image_grid_thw"])
 
     def __call__(self, images, **kwargs):
         with nvtx.range("image_memo"):
@@ -616,16 +691,18 @@ class ImageMemo:
 
             flat, kw = make_flat_list_of_images(images), repr(sorted(kwargs.items()))
             miss = list({id(x): x for x in flat if (id(x), kw) not in self.memo}.values())
+            self.misses, self.hits = self.misses + len(miss), self.hits + len(flat) - len(miss)
             if miss:
-                out = self.inner(miss, **kwargs)
-                if set(out.keys()) != self.KEYS:  # another processor family: no memo
+                out = self.prepare(miss, kwargs)
+                if out is None:  # another processor family: no memo
                     return self.inner(images, **kwargs)
-                grid = out["image_grid_thw"]
-                rows = torch.split(out["pixel_values"], grid.prod(-1).tolist())
+                pv, grid = out
+                rows = torch.split(pv, grid.prod(-1).tolist())
                 for x, r, g in zip(miss, rows, grid, strict=True):
                     self.memo[(id(x), kw)] = (x, r, g)
             parts = [self.memo[(id(x), kw)] for x in flat]
-            data = {"pixel_values": torch.cat([r for _, r, _ in parts]),
+            once = {id(x): p for x, p in zip(flat, parts, strict=True)}.values() if self.per_image else parts
+            data = {"pixel_values": torch.cat([r for _, r, _ in once]),
                     "image_grid_thw": torch.stack([g for *_, g in parts])}
             return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
 
@@ -640,6 +717,7 @@ class FastGRPO(FastForward, GRPOTrainer):
     seq_gaps = []  # B2.1: the step's per-sequence (seq_kl, advantage, valid tokens) rows (train mode), on the device
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
+    count_syncs = False  # C0, train_rl --count-syncs: perf/host_syncs/<phase> per timed phase
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
     group_requests = False  # C6, train_rl --group-requests: vLLM gets one n = G request per prompt (vllm_requests)
@@ -651,6 +729,21 @@ class FastGRPO(FastForward, GRPOTrainer):
         self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
         self.sync_without_merge()
+
+    def use_gpu_pixels(self, images, allow_cpu: bool = False) -> str:
+        """C1 start-up self-check (train_rl --gpu-pixels auto): the first gpu_pixels backend equal to the CPU
+        processor on `images` (training views) plus an in-memory digit image prepares the memo's misses on CUDA.
+        None passing raises, unless allow_cpu (then the CPU processor stays: returns "cpu")."""
+        from objdel.train import gpu_pixels
+
+        if self.images is None or not torch.cuda.is_available():
+            raise RuntimeError("--gpu-pixels auto needs CUDA and a Qwen-VL image processor")
+        digit = (np.arange(64 * 64 * 3) & 255).astype(np.uint8).reshape(64, 64, 3)
+        backend = gpu_pixels.pick_backend([*images, digit], self.images.inner, "cuda")
+        if backend is None and not allow_cpu:
+            raise RuntimeError("no GPU pixel backend equals the CPU processor (pass --allow-cpu-pixels to run on it)")
+        self.images.gpu = None if backend is None else (backend, "cuda")
+        return backend or "cpu"
 
     def sync_without_merge(self) -> bool:
         """vLLM weight sync through lora_merged_params (the base weights are never written), on one process; FSDP and
@@ -826,6 +919,24 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     @contextlib.contextmanager
     def timed(self, phase: str):
+        """phase_clock(phase); with count_syncs (train_rl --count-syncs, C0) also perf/host_syncs/<phase>, torch's
+        synchronizing operations inside the phase and outside its nested phases (nvtx.count_syncs). The vLLM range
+        (`generate`) logs perf/host_syncs_vllm instead, for information only."""
+        if not self.count_syncs:
+            with self.phase_clock(phase):
+                yield
+            return
+        n = None
+        try:
+            with nvtx.count_syncs() as n, self.phase_clock(phase):
+                yield
+        finally:
+            if n is not None:
+                key = "perf/host_syncs_vllm" if phase == "generate" else f"perf/host_syncs/{phase}"
+                self._metrics["train" if self.model.training else "eval"][key].append(n.syncs)
+
+    @contextlib.contextmanager
+    def phase_clock(self, phase: str):
         """time/<phase>_s in TRL's metrics (logged as the mean per logging step), inside the NVTX range `phase`, also
         when the phase raises. By default one device sync at the end, so queued GPU work is charged to the phase that
         queued it (a few per step: negligible). With OBJDEL_NVTX_SYNC=0 and CUDA: no sync, a CUDA event pair on the

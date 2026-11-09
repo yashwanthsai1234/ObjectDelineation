@@ -90,6 +90,11 @@ def parse(argv=None) -> argparse.Namespace:
                     help="NVTX step ranges and a cudaProfilerApi capture of steps S..E (nsys_capture.sh; S >= 2)")
     ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
                                     "else step 3 (the nsys fallback)")
+    ap.add_argument("--count-syncs", action="store_true", help="C0: log perf/host_syncs/<phase> (torch sync warnings)")
+    ap.add_argument("--gpu-pixels", choices=("off", "auto"), default="off",
+                    help="C1: prepare pixel values on the GPU after a start-up self-check (default off: the CPU path)")
+    ap.add_argument("--allow-cpu-pixels", action="store_true",
+                    help="with --gpu-pixels auto: keep the CPU processor when no GPU backend passes, instead of failing")
     a = ap.parse_args(argv)
     if not a.merge_last and (a.train is None or a.steps is None):
         ap.error("--train and --steps are required (except with --merge-last)")
