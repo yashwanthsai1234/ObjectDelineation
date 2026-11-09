@@ -3,7 +3,7 @@ PY := .venv/bin/python
 EXT_SRC := CMakeLists.txt cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
 EXT_STAMP := build/.gpucheck-stamp
 
-.PHONY: setup build test test-all cov lint dead fmt wheels cuda preflight
+.PHONY: setup build test test-all cov lint dead sweep fmt wheels cuda preflight
 
 setup:            ## create .venv and install the package (editable, all extras); builds the C++ extension
 	uv venv --python 3.12
@@ -34,6 +34,9 @@ lint:             ## lint library, tests and experiments
 
 dead:             ## list unused code (vulture, [tool.vulture] in pyproject.toml)
 	$(PY) -m vulture
+
+sweep:            ## final sweep: stale names, orphans, doc links, docstrings, dead code (exit 1 on a hard finding)
+	$(PY) -I -m experiments.phase2.tools.final_sweep
 
 fmt:              ## auto-fix lint issues
 	$(PY) -m ruff check src tests experiments --fix
