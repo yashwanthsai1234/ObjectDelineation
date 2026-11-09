@@ -8,6 +8,7 @@ evaluation, logged to rl.json).
 References:
 - transformers TrainerCallback / TrainerControl: https://huggingface.co/docs/transformers/main_classes/callback
 """
+import math
 import time
 from pathlib import Path
 
@@ -106,8 +107,9 @@ class BudgetStop(TrainerCallback):
 
     def __init__(self, rate_usd_per_h: float, cap_usd: float, session_start: float, fixed_usd: float = 0.0,
                  clock=time.time):
-        if rate_usd_per_h <= 0:
-            raise ValueError(f"budget stop: rate {rate_usd_per_h} $/h must be > 0")
+        nums = (rate_usd_per_h, cap_usd, session_start, fixed_usd)
+        if not all(math.isfinite(x) for x in nums) or rate_usd_per_h <= 0:
+            raise ValueError(f"budget stop: rate {rate_usd_per_h} $/h must be > 0, and every number finite")
         self.rate, self.cap, self.start, self.fixed = rate_usd_per_h, cap_usd, session_start, fixed_usd
         self.clock, self.tripped = clock, False
 

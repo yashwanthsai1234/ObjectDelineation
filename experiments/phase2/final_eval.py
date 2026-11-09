@@ -104,6 +104,8 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     """Schema 2: per METRICS key the items hold, the mean and its item, nodule and patient (with `groups`,
     {item_id: group_id}) 95 % bootstrap intervals; the median of iou_tc; the miss rate. One draw set per unit."""
     ids = [it["item_id"] for it in items]
+    if len(set(ids)) != len(ids):
+        raise ValueError("summarize: duplicate item_id")
     D = {"ci95_nodule": signal.draws(ids, draws, seed),
          "ci95_patient": None if groups is None else signal.draws(ids, draws, seed, key=groups.__getitem__)}
     idx = np.random.default_rng(seed).integers(0, len(items), (draws, len(items)))
@@ -276,9 +278,10 @@ def check_view(view: Path, split: str) -> None:
     sets = json.loads((view / "manifest.json").read_text())["sets"]
     if f"lidc/{split}" not in sets:
         sys.exit(f"final_eval: {view} holds {sorted(sets)}, not lidc/{split} (the test view needs --split test)")
-    if view.name not in Q.FROZEN:
+    name = view.resolve().name  # an alias (symlink) of a frozen view is that view
+    if name not in Q.FROZEN:
         return
-    if (e := frozen_entry(view.name)) is None:
+    if (e := frozen_entry(name)) is None:
         sys.exit(f"final_eval: {view.name} is a frozen view with no frozen_views.json entry (looked in {FROZEN_VIEWS})")
     for key, got in (("content_sha256", Q.view_content_sha256(view)), ("target_set_sha256", Q.target_set_sha256(view))):
         if got != e[key]:
@@ -460,7 +463,11 @@ def main(argv=None) -> None:
     outs = a.out if len(a.out) == len(views) else [a.out[0] / v.name for v in views]
     for view, split in zip(views, splits, strict=True):
         check_view(view, split)
+    if len({o.resolve() for o in outs}) != len(outs):
+        ap.error("two views write the same --out folder: give distinct --view directory names or one --out each")
     if a.rescore:
+        if outs[0].resolve() == a.rescore.resolve():
+            ap.error("--out must not be the --rescore folder")
         if len(views) != 1:
             ap.error("--rescore takes one --view")
         return rescore(a.rescore, views[0], splits[0], outs[0])

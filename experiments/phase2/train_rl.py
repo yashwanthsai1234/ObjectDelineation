@@ -45,6 +45,14 @@ from pathlib import Path
 NUMERICS = "bf16-seqmask"  # today's values (bf16, sequence_mask, cap 3) until B2.2 adds --numerics
 
 
+def _finite(lo_open: bool):
+    def check(s: str) -> float:
+        if not (0 < (x := float(s)) if lo_open else 0 <= (x := float(s))) or x == float("inf"):
+            raise argparse.ArgumentTypeError(f"{s!r}: needs a finite number {'> 0' if lo_open else '>= 0'}")
+        return x
+    return check
+
+
 def _hex(n: int):
     def check(s: str) -> str:
         if not re.fullmatch(f"[0-9a-f]{{{n}}}", s):
@@ -69,12 +77,12 @@ def parse(argv=None) -> argparse.Namespace:
                     help="no training: merge the last checkpoint into --ckpt as <out>/final unless it exists")
     ap.add_argument("--rows-revision", type=_hex(40), help="HF commit of the rows root (provenance in rl.json)")
     ap.add_argument("--rows-manifest-sha256", type=_hex(64), help="SHA-256 of the rows root's manifest.json")
-    ap.add_argument("--budget-usd", type=float, help="stop and save when the session spend reaches this")
-    ap.add_argument("--session-start", type=float, default=env("OBJDEL_SESSION_START"),
+    ap.add_argument("--budget-usd", type=_finite(True), help="stop and save when the session spend reaches this")
+    ap.add_argument("--session-start", type=_finite(False), default=env("OBJDEL_SESSION_START"),
                     help="unix time the rental started (default: $OBJDEL_SESSION_START)")
-    ap.add_argument("--rate-usd-per-h", type=float, default=env("OBJDEL_RATE_USD_PER_H"),
+    ap.add_argument("--rate-usd-per-h", type=_finite(True), default=env("OBJDEL_RATE_USD_PER_H"),
                     help="USD per hour, bandwidth included (default: $OBJDEL_RATE_USD_PER_H)")
-    ap.add_argument("--fixed-usd", type=float, default=env("OBJDEL_FIXED_USD", "0"),
+    ap.add_argument("--fixed-usd", type=_finite(False), default=env("OBJDEL_FIXED_USD", "0"),
                     help="one-off USD of the session (default: $OBJDEL_FIXED_USD, else 0)")
     ap.add_argument("--heldout", type=Path, help="eval view for the held-out curve (val-shape items only)")
     ap.add_argument("--heldout-items", type=int, default=64)
@@ -142,6 +150,8 @@ def check_sampler(cfg, schedule: dict, steps: int) -> None:
                          f"{cfg.gradient_accumulation_steps}: one generation batch must be one optimizer step")
     if cfg.num_iterations != 1:
         raise ValueError(f"num_iterations {cfg.num_iterations}: the schedule gives each step its own prompts")
+    if steps < 1:
+        raise ValueError(f"--steps {steps} must be positive")
     if steps > schedule["steps"]:
         raise ValueError(f"--steps {steps} > the schedule's {schedule['steps']} steps")
     if steps % schedule["block_steps"]:
