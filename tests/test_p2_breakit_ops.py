@@ -12,6 +12,7 @@ import sys
 import time
 from pathlib import Path, PurePosixPath
 
+import numpy as np
 import pytest
 
 from experiments.phase2.vast import policy as P
@@ -298,6 +299,25 @@ def test_code_snapshot_has_no_riga_derived_results():
     leaks = [f for f in P.code_files() if "riga" in f.lower() and f.endswith((".csv", ".json", ".jsonl"))]
     leaks += [f for f in P.code_files() if f.startswith("experiments/phase0/results/vlm_")]
     assert not leaks, leaks[:5]
+
+
+def golden_leaks(folder):
+    """Arrays in a golden that could hold a mask: more than one dimension, or bool (polycore.npz is the exception)."""
+    leaks = []
+    for f in sorted(folder.glob("*.npz")):
+        if f.name != "polycore.npz":
+            z = np.load(f, allow_pickle=False)
+            leaks += [f"{f.name}:{k}" for k in z.files if z[k].ndim > 1 or z[k].dtype == bool]
+    return leaks
+
+
+def test_goldens_hold_no_masks(tmp_path):
+    """CLEAN4 licence rule: RIGA terms forbid copying masks, and tests/ ships in every bundle."""
+    assert (ROOT / "tests" / "goldens" / "polycore.npz").exists() and golden_leaks(ROOT / "tests" / "goldens") == []
+    np.savez(tmp_path / "a.npz", m=np.zeros((2, 2), np.uint8), v=np.zeros(3, bool), ok=np.zeros(3, np.uint8))
+    assert golden_leaks(tmp_path) == ["a.npz:m", "a.npz:v"]
+    np.savez(tmp_path / "polycore.npz", m=np.zeros((2, 2)))
+    assert golden_leaks(tmp_path) == ["a.npz:m", "a.npz:v"]  # polycore.npz alone is exempt
 
 
 def test_bundle_refuses_a_symlinked_view_directory(tmp_path):
