@@ -61,6 +61,12 @@ BEHAVIOURS = {  # C10: TRL skips the old-logprob pass when the IS correction is 
         (_GASC,), "self.use_vllm and self.vllm_importance_sampling_correction", "FastGRPO.skip_old_logps"),
     "IS ratio block": ((_GASC,), "per_token_logps_diff = (old_per_token_logps - sampling_per_token_logps) * mask",
                        "fast.is_ratio"),
+    "log_metric to reward functions": (("GRPOTrainer._calculate_rewards",), 'reward_kwargs["log_metric"]',
+                                       "TRLReward.funcs"),
+    "log_extra to reward functions": (("GRPOTrainer._calculate_rewards",), 'reward_kwargs["log_extra"]',
+                                      "TRLReward.funcs"),
+    "completion_ids to reward functions": (("GRPOTrainer._calculate_rewards",), "completion_ids=completion_ids_list",
+                                           "TRLReward.funcs"),
 }  # fmt: skip
 _SIGNED = {"method": METHODS, "global": GLOBALS, "VLLMGeneration method": VLLM_METHODS}
 _TEXT = {"private attribute": PRIVATE_ATTRS, "attribute": ATTRS, "key": KEYS, "behaviour": BEHAVIOURS}

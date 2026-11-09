@@ -27,9 +27,7 @@ def cfg(**kw):
 
 # ---------------------------------------------------------------- train_rl
 
-@pytest.mark.xfail(strict=True, reason="BR1-wire-1: check_sampler accepts --steps 0 and negative steps "
-                                       "(0 % block_steps == 0 and -20 % 20 == 0), so a run trains nothing and then "
-                                       "merges and saves an untuned 'final'")
+# BR1-wire-1 (fixed by BR1-rl): check_sampler refused --steps 0 and negative steps
 @pytest.mark.parametrize("steps", [0, -20])
 def test_check_sampler_refuses_non_positive_steps(steps):
     with pytest.raises(ValueError):
