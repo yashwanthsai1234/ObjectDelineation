@@ -23,8 +23,10 @@ from objdel.data import quality as Q
 ROOT = Path(__file__).resolve().parents[2]
 RENDER_FILES = ("src/objdel/targets/augment.py", "src/objdel/targets/frame.py", "src/objdel/targets/build.py",
                 "src/objdel/targets/simplify.py", "src/objdel/train/dataset.py", "experiments/phase2/build_eval_views.py")
-R5_IDENTITY = {"lidc-test-shifted": "equal to the R5 box view by code identity (generator files unchanged since commit "
-                                    "734b1ec; render files as listed), not measured"}
+R5_IDENTITY = {"lidc-test-shifted": (
+    "equal to the R5 box view by code identity, not measured: targets/frame.py unchanged since 734b1ec; augment.py and "
+    "build_eval_views.py changed in B1.6 without moving a window (their Mac rebuild of the R5 val shifted, rescaled and "
+    "rotated views gives the stored content and target-set hashes); other render files as listed")}
 
 
 def _git(*args, root=ROOT) -> str:
