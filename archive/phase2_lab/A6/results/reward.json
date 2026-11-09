@@ -175,7 +175,7 @@
     2.202,
     2.202,
     256,
-    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py:344:raw_decode"
+    "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py:344:raw_decode"
    ],
    [
     2.134,
@@ -218,10 +218,10 @@
    "numpy/_core/_methods.py": 3.813,
    "objdel/geometry/shape.py": 3.782,
    "objdel/geometry/text.py": 2.961,
-   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 2.79,
+   "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 2.79,
    "numpy/_core/numeric.py": 1.218,
    "<string>": 0.704,
-   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.355,
+   "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.355,
    "numpy/_core/getlimits.py": 0.279,
    "numpy/_core/multiarray.py": 0.191
   },
@@ -383,7 +383,7 @@
     4.356,
     4.356,
     256,
-    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py:344:raw_decode"
+    "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py:344:raw_decode"
    ],
    [
     4.353,
@@ -442,12 +442,12 @@
    "objdel/checker/topology.py": 15.161,
    "numpy/_core/fromnumeric.py": 7.477,
    "objdel/geometry/shape.py": 6.0,
-   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 4.946,
+   "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 4.946,
    "numpy/_core/_methods.py": 4.429,
    "objdel/geometry/text.py": 3.865,
    "numpy/_core/numeric.py": 2.097,
    "<string>": 1.021,
-   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.454,
+   "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.454,
    "numpy/_core/getlimits.py": 0.316,
    "numpy/_core/multiarray.py": 0.291
   },
@@ -670,10 +670,10 @@
    "numpy/_core/_methods.py": 4.641,
    "objdel/reward/cache.py": 4.157,
    "objdel/geometry/text.py": 2.937,
-   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 1.861,
+   "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py": 1.861,
    "<string>": 1.7,
    "numpy/_core/numeric.py": 0.865,
-   "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.536,
+   "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py": 0.536,
    "numpy/_core/getlimits.py": 0.187,
    "numpy/_core/multiarray.py": 0.145
   },

@@ -164,23 +164,25 @@ log-probability passes. Scoring now also runs in that one checker call, on the d
 ## 🗂️ Repository layout
 
 ```
-cuda/              the CUDA checker and scorer (gpucheck.cpp, one source for CPU and GPU)
-archive/           retired code, not built: the CPU checker polycore (archive/cpu_checker)
+cuda/              the CUDA checker and scorer (gpucheck.cpp: one source for the CPU and the nvcc build)
 src/objdel/
-  checker/         bit-quads, Betti numbers, instance topology, polygonize, certificates
-  geometry/        output spec: strict parser, serializer, canonical rings, polygon to mask (on the checker)
-  targets/         model frame (crop and scale) and certified SFT polygon targets
-  reward/          per-item expert caches (resident on the device), per-rollout terms, group advantages
-  data/            RIGA extractor, LIDC parser, group-aware splits, Parquet store
-  train/           TRL integration, reward functions, callbacks, configs, fast forwards
-  eval/            metrics, hack audit, entry gates
-tests/             pytest suite, with oracles in tests/oracles/
-experiments/       one folder per phase: plan, scripts, results
-docs/              research reports and notes, figures
-data/              downloaded datasets (git-ignored, never committed)
+  checker/         rings (polygonizer seam), Betti topology, certificates, 3D volume checks
+  geometry/        output spec: strict parser, serializer, canonical rings, boxes
+  targets/         model frame (crop, shift, rescale, edge views) and certified polygon targets
+  reward/          cache spec and expert caches (resident on the device), per-rollout scores, group advantages
+  data/            RIGA and LIDC readers, group-aware splits, Parquet store, training windows and schedule,
+                   coverage, data-quality gates
+  train/           TRL integration (FastGRPO, TRL contract check), rewards, callbacks, configs, NVTX ranges
+  eval/            metrics, cluster bootstrap signal, fair ceiling, answer selection, audit and gates
+tests/             pytest suite (runs on all cores), with oracles in tests/oracles/ and goldens in tests/goldens/
+experiments/       scripts per phase, run as modules: phase1 data builders, phase2 training, evaluation, Vast tools
+docs/              documentation site, architecture decisions, reference, runbooks, research, the 2.0 plan
+archive/           retired code and lab evidence, never imported or built (see archive/README.md)
+data/  runs/       downloaded data and run outputs (git-ignored, never committed)
 ```
 
-Plan: [ROADMAP.md](ROADMAP.md). Phase results:
+Plan: [ROADMAP.md](ROADMAP.md); the current build follows
+[implementation 2.0](docs/implementation2.0/Implementation.md). Phase results:
 [Phase 0](docs/research/records/phase0/RESULTS.md), [Phase 1](experiments/phase1/RESULTS.md),
 [Phase 2](experiments/phase2/RESULTS.md), [CUDA checker](experiments/cuda_checker/RESULTS.md).
 Speed work: [issues](experiments/phase2/perf/issues.md), [implementation](experiments/phase2/perf/implementation.md).
@@ -189,8 +191,9 @@ Speed work: [issues](experiments/phase2/perf/issues.md), [implementation](experi
 
 ```bash
 make setup        # .venv with Python 3.12 (uv), editable install, builds the checker (its CPU build)
-make test         # fast test suite; make test-all adds the slow gates
+make test         # fast test suite on all cores (pytest-xdist); make test-all adds the slow gates
 make lint
+make dead         # unused-code check (vulture)
 make cuda         # build the CUDA checker (needs nvcc)
 make preflight    # prove data, checker and code before any GPU is rented
 ```
@@ -235,6 +238,7 @@ All in `docs/research/reports/`:
 
 Engineering documentation is in [docs/README.md](docs/README.md): getting started, architecture and decision records,
 reference pages (package, CUDA engine, reward, output format, data, configs), guides, runbooks, testing, glossary and changelog.
+Repository rules (tests, lint, data handling, commits) are in [docs/contributing.md](docs/contributing.md).
 
 ## 📄 Licence and data
 

@@ -18,7 +18,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-REPO = Path("/Users/sreeyashwanthsaivenkatesh/Workspace/projects/CUDA/ObjectDelineation")
+REPO = Path(__file__).resolve().parents[4]
 sys.path[:0] = [str(REPO), str(REPO / "src"), str(Path(__file__).parent)]
 
 import numpy as np  # noqa: E402

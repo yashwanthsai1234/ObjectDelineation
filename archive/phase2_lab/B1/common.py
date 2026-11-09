@@ -37,9 +37,8 @@ from objdel.targets.frame import FRAMES, LUNG_WINDOW, _crop
 from objdel.train import configs, rewards
 from objdel.train import dataset as D
 
-ROOT = Path(__file__).resolve().parents[4]
-SCRATCH = Path("/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/"
-               "a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase2/B1")
+ROOT = Path(__file__).resolve().parents[3]
+SCRATCH = ROOT / "runs/scratch/phase2/B1"  # was a temporary folder of the session that ran it
 PREPARED, STORE = ROOT / "data/prepared", ROOT / "data/store"
 PRIOR = json.loads((ROOT / "experiments/phase2/lab/A4/null_prior.json").read_text())
 ARMS = {

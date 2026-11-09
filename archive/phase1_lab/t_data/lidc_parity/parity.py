@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-REPO = Path("/Users/sreeyashwanthsaivenkatesh/Workspace/projects/CUDA/ObjectDelineation")
+REPO = Path(__file__).resolve().parents[4]
 sys.path[:0] = [str(REPO), str(REPO / "src")]
 OUT = Path(__file__).resolve().parent
 XML_ROOT = REPO / "data/raw/lidc_xml"

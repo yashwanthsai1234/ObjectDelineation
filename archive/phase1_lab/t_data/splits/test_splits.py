@@ -13,7 +13,7 @@ import pytest
 
 HERE = Path(__file__).parent
 TD = HERE.parent
-REPO = Path("/Users/sreeyashwanthsaivenkatesh/Workspace/projects/CUDA/ObjectDelineation")
+REPO = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(HERE))
 import build_splits  # noqa: E402
 

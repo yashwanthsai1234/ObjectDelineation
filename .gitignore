@@ -27,6 +27,15 @@ docs/research/*.pdf
 
 # Editor / OS
 .DS_Store
+.vscode/
+.idea/
+
+# Local AI-assistant settings and build-agent records (kept on the owner's machine, never published)
+CLAUDE.md
+/.claude/
+/docs/implementation2.0/TASK_GRAPH.md
+/docs/implementation2.0/IMPL_LOG.md
+/docs/implementation2.0/impl-log/
 /runs/
 
 # Vast session state (experiments/phase2/vast): local records, never shipped to a host by sync_up
@@ -54,4 +63,3 @@ docs/research/*.pdf
 /archive/phase1_lab/t_reward/results/advantage_groups.json
 /archive/phase1_lab/t_reward/results/iter3_r5_raw.json
 /archive/phase1_lab/t_stack/results/t[24]_*.json
-/.claude/worktrees/

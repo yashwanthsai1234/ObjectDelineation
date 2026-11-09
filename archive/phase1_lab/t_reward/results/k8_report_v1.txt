@@ -1,9 +1,9 @@
 size priors (c, alpha) per fold: [(0.7572283383156029, 0.5540179759430284), (0.41281852777339434, 0.9357828284740244)]
-/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase1_lab/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3862: RuntimeWarning: Mean of empty slice
+<scratch>//phase1_lab/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3862: RuntimeWarning: Mean of empty slice
   return _methods._mean(a, axis=axis, dtype=dtype,
-/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase1_lab/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
+<scratch>//phase1_lab/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
   ret = ret.dtype.type(ret / rcount)
-/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase1_lab/t_reward/scripts/k8_band.py:129: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+<scratch>//phase1_lab/t_reward/scripts/k8_band.py:129: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
   cells.append(f"{lv}: {np.median(v):.2f} (rho {stats.spearmanr(v, a).statistic:+.2f})")
 LOO cases: 4369; tau median 7.62 px, share at floor 0.12
 

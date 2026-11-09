@@ -15,10 +15,10 @@
     "~": 21944.8,
     "scipy/ndimage/_morphology.py": 968.3,
     "objdel/reward/cache.py": 368.5,
-    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/zipfile/__init__.py": 302.9,
+    "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/zipfile/__init__.py": 302.9,
     "objdel/checker/topology.py": 201.0,
     "numpy/lib/_format_impl.py": 178.6,
-    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/pathlib.py": 156.8,
+    "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/pathlib.py": 156.8,
     "numpy/_core/numeric.py": 153.1,
     "<frozen posixpath>": 122.9,
     "objdel/train/dataset.py": 108.7

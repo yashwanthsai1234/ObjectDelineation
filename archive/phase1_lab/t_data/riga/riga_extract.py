@@ -27,7 +27,7 @@ from collections import Counter, defaultdict
 from multiprocessing import Pool
 from pathlib import Path
 
-REPO = Path("/Users/sreeyashwanthsaivenkatesh/Workspace/projects/CUDA/ObjectDelineation")
+REPO = Path(__file__).resolve().parents[4]
 sys.path[:0] = [str(REPO), str(REPO / "src")]
 
 import numpy as np  # noqa: E402

@@ -181,25 +181,25 @@
     0.033,
     0.084,
     1,
-    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/zipfile/__init__.py:1413:_RealGetContents"
+    "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/zipfile/__init__.py:1413:_RealGetContents"
    ],
    [
     0.032,
     0.064,
     40,
-    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/dataclasses.py:1413:_astuple_inner"
+    "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/dataclasses.py:1413:_astuple_inner"
    ],
    [
     0.032,
     0.12,
     5,
-    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/zipfile/__init__.py:1574:open"
+    "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/zipfile/__init__.py:1574:open"
    ],
    [
     0.03,
     0.038,
     38,
-    "/Users/sreeyashwanthsaivenkatesh/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/ast.py:86:_convert"
+    "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/ast.py:86:_convert"
    ]
   ]
  },

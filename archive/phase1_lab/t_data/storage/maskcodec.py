@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-REPO = Path("/Users/sreeyashwanthsaivenkatesh/Workspace/projects/CUDA/ObjectDelineation")
+REPO = Path(__file__).resolve().parents[4]
 sys.path[:0] = [str(REPO / "src")]
 from objdel.checker import polygonize  # noqa: E402
 from objdel.checker.certify import crop  # noqa: E402

@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 from scipy import ndimage
 O = Path(__file__).parent
-R = Path("/Users/sreeyashwanthsaivenkatesh/Workspace/projects/CUDA/ObjectDelineation/data/raw/riga")
+R = Path(__file__).resolve().parents[4] / "data/raw/riga"
 tiles = []
 for spec in sys.argv[2:]:
     sub, idx, e = spec.split(":")

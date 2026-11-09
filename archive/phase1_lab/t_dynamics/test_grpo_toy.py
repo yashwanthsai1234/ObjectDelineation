@@ -7,7 +7,7 @@ from hypothesis.extra.numpy import arrays
 
 import grpo_toy as gt
 
-REPO = "/Users/sreeyashwanthsaivenkatesh/Workspace/projects/CUDA/ObjectDelineation/src"
+REPO = str(__import__("pathlib").Path(__file__).resolve().parents[3] / "src")
 
 
 @given(arrays(float, (3, 4, 8), elements=st.floats(-5, 5)), st.sampled_from(["std", "mean"]))

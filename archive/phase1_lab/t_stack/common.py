@@ -21,7 +21,7 @@ sys.path.insert(0, str(HERE))  # -I drops the script dir; re-add it explicitly (
 os.environ.setdefault("HF_HOME", str(HERE / "hf"))
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-REPO = Path("/Users/sreeyashwanthsaivenkatesh/Workspace/projects/CUDA/ObjectDelineation")
+REPO = Path(__file__).resolve().parents[3]
 RAW, TRUE_DIR = REPO / "data/raw/riga", REPO / "data/riga_true"
 QWEN3VL_LOCAL = Path.home() / ".cache/huggingface/hub/models--Qwen--Qwen3-VL-2B-Instruct/snapshots"
 

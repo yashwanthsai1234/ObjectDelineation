@@ -1,6 +1,6 @@
 {
  "args": {
-  "init": "/private/tmp/claude-501/-Users-sreeyashwanthsaivenkatesh-Workspace-projects-CUDA-ObjectDelineation/a7b21ead-acef-47ee-86e8-9b88a7bc677b/scratchpad/phase1_lab/t_stack/runs/sft_smolvlm-256m_full",
+  "init": "<scratch>//phase1_lab/t_stack/runs/sft_smolvlm-256m_full",
   "steps": 3,
   "temperature": 1.0,
   "max_completion": 1536,
