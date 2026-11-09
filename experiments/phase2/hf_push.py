@@ -12,6 +12,8 @@ not private, a run trained on anything but LIDC (RIGA's licence forbids redistri
 branch (select_ckpt: none passed D12). One commit on branch `revision` (created if missing): the files of
 <run>/branches/<selected>, the base model's LICENSE (LFM Open License v1.0 §4(a); Apache-2.0 for Qwen) and a model
 card stating the change (§4(b)), the base model, the selection and the LIDC-IDRI attribution (CC BY 3.0).
+--card-only --headline docs/results/headline.json (no --run or --rl): the card's Evaluation and Limitations sections
+at <revision>, written by card_update; the weights stay. The full-push card() is unchanged.
 --rl (a train_rl output, always LIDC): <out>/final at the revision's root (the plain model folder fetch_hf.sh and
 final_eval --ckpt read) and <out>/final_adapter as final_adapter/ (the unmerged LoRA), with the licence and a card;
 refused without either folder.
@@ -21,6 +23,7 @@ Reference: https://huggingface.co/docs/huggingface_hub/guides/upload#upload-file
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -133,11 +136,60 @@ def rl_ops(out: Path, hub, repo: str) -> list:
                                                                            CommitOperationAdd("README.md", card)]
 
 
+METRIC_NAMES = {"iou_tc": "IoU (against the expert band)", "f5": "boundary F-score", "precision_vote": "precision",
+                "recall_vote": "recall", "dice_vote": "Dice", "legal": "legal outlines"}  # fmt: skip
+
+
+def card_sections(h: dict) -> str:
+    """The '## Evaluation' and '## Limitations' sections of the model card, from docs/results/headline.json."""
+    t, v = h["test"], h["val"]
+    rows = "\n".join(f"| {name} | {t['metrics'][k]['mean']:.3f} ({t['metrics'][k]['ci95'][0]:.3f} to "
+                     f"{t['metrics'][k]['ci95'][1]:.3f}) | {v['metrics'][k]['mean']:.3f} |" for k, name in METRIC_NAMES.items())
+    return (f"## Evaluation\n\nRun {h['run']}, seed {h['seed']}, K = {h['K']} answers per image, 95 % intervals "
+            f"({h['ci_unit']}-level bootstrap). Test: {t['items']} items on `{t['view']}`. Validation: {v['items']} "
+            f"items on `{v['view']}`.\n\n| Metric | Test (95 % CI) | Validation |\n|---|---|---|\n{rows}\n\n"
+            f"Sources: `{t['source']}`, `{v['source']}`.\n\n"
+            "## Limitations\n\n"
+            "- The test uses shifted views from one synthetic shift law, and training matches that law.\n"
+            "- An image counts as a miss when its mean IoU over the K answers is below 0.1.\n"
+            "- The test split informed the diagnosis of the plateau.\n"
+            "- 128 validation shifted items chose this checkpoint over checkpoint-250, so its validation numbers "
+            "are slightly optimistic.\n"
+            "- Training-seed variance is not measured: a gain is a single-run result. The intervals hold only the "
+            "K = 8 answer noise and the image sample.\n"
+            "- LIDC-IDRI only: RIGA is not redistributed.\n")  # fmt: skip
+
+
+def card_update(old: str, h: dict) -> str:
+    """Replace the Evaluation and Limitations sections of `old` (or append them); every other line is kept."""
+    kept = re.sub(r"^## (?:Evaluation|Limitations)\n.*?(?=^## |\Z)", "", old, flags=re.M | re.S).rstrip("\n")
+    return f"{kept}\n\n{card_sections(h)}"
+
+
+def card_only(a, token: str) -> int:
+    """--card-only: replace the card's evaluation sections at one revision. No weights, no GPU."""
+    from huggingface_hub import hf_hub_download
+
+    if problems := token_problems(whoami(token), a.repo):
+        sys.exit(f"hf_push: the token may not be used here: {'; '.join(problems)}")
+    hub = api(token)
+    if not hub.repo_info(a.repo, repo_type="model").private:
+        sys.exit(f"hf_push: {a.repo} is not private")
+    old = Path(hf_hub_download(a.repo, "README.md", revision=a.revision, token=token)).read_text()
+    new = card_update(old, json.loads(a.headline.read_text()))
+    hub.upload_file(path_or_fileobj=new.encode(), path_in_repo="README.md", repo_id=a.repo, revision=a.revision,
+                    repo_type="model", commit_message="card: headline from docs/results/headline.json")
+    print(f"hf_push: card of {a.repo}@{a.revision} updated")
+    return 0
+
+
 def main(argv=None) -> int:
     from objdel.train import configs
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--card-only", action="store_true", help="replace the card's Evaluation and Limitations only")
+    ap.add_argument("--headline", type=Path, help="with --card-only: docs/results/headline.json")
     src.add_argument("--run", type=Path, help="train_sft output dir (select/ inside)")
     src.add_argument("--rl", type=Path, help="train_rl output dir (final/ and final_adapter/ inside)")
     ap.add_argument("--repo", required=True)
@@ -145,6 +197,8 @@ def main(argv=None) -> int:
     ap.add_argument("--view", type=Path, help="local copy of the training view (default: the manifest's path)")
     a = ap.parse_args(argv)
     token = sys.stdin.readline().strip() or sys.exit("hf_push: no token on stdin")
+    if a.card_only:
+        return card_only(a, token) if a.headline else sys.exit("hf_push: --card-only needs --headline")
     if a.rl:
         hub = api(token)
         ops = rl_ops(a.rl, hub, a.repo)

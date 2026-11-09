@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tomllib
 import urllib.parse
 from pathlib import Path
 
@@ -210,3 +211,7 @@ def tables(text: str) -> list[tuple[int, list[str]]]:
             out.append((i + 1, [c.strip() for c in ln.strip().strip("|").split("|")]))
     return out
 
+
+def project_version(root: Path) -> str:
+    """The [project] version in pyproject.toml (CITATION.cff must match it)."""
+    return tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
