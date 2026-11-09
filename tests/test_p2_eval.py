@@ -3,14 +3,13 @@
 paths (I45)."""
 import json
 import math
-from itertools import product
 
 import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from scipy import ndimage
-from scipy.optimize import linear_sum_assignment
+from scipy.optimize import linear_sum_assignment, linprog
 
 from objdel.eval import gates, metrics, summarize
 from objdel.eval.metrics import NSD_TAU, hm_iou, min_mode_retention, nsd, tv_js
@@ -34,25 +33,39 @@ def raters_and_targets():
 
 # ---------------------------------------------------------------- HM-IoU
 
-def brute_hm_iou(iou: np.ndarray) -> float:
-    """Every map samples -> raters in which each rater gets floor(K/k) or ceil(K/k) samples; max mean IoU."""
+def transport_hm_iou(iou: np.ndarray) -> float:
+    """The LCM protocol as a transport LP (math-stats §4): sample i sends L / K units, rater j takes L / k units,
+    maximise the matched IoU; the transport polytope has integer vertices, so the LP optimum / L is the duplicated
+    sets' Hungarian optimum."""
     K, k = iou.shape
-    lo, hi = K // k, -(-K // k)
-    maps = np.array(list(product(range(k), repeat=K)))
-    counts = (maps[:, :, None] == np.arange(k)).sum(1)
-    ok = ((counts >= lo) & (counts <= hi)).all(1)
-    return float(iou[np.arange(K), maps[ok]].sum(1).max() / K)
+    L = math.lcm(K, k)
+    rows = np.kron(np.eye(K), np.ones(k))  # sum_j x_ij = L / K
+    cols = np.kron(np.ones(K), np.eye(k))  # sum_i x_ij = L / k
+    r = linprog(-iou.ravel(), A_eq=np.vstack([rows, cols]),
+                b_eq=np.r_[np.full(K, L // K), np.full(k, L // k)], bounds=(0, None), method="highs")
+    return -r.fun / L
 
 
 @settings(max_examples=150, deadline=None)
-@given(st.integers(1, 4).flatmap(lambda k: st.tuples(st.just(k), st.integers(max(k, 2), 8))), st.integers(0, 2**31))
-def test_hm_iou_equals_brute_force_assignment(kK, seed):
+@given(st.integers(1, 5).flatmap(lambda k: st.tuples(st.just(k), st.integers(max(k, 2), 8))), st.integers(0, 2**31))
+def test_hm_iou_is_the_lcm_protocol(kK, seed):
+    """HPU-Net App. B.1: "duplicate both sets so that their number of elements matches their least common
+    multiple" (math-stats §11 item 3)."""
     k, K = kK
     rng = np.random.default_rng(seed)
     iou = rng.random((K, k))
     if seed % 3 == 0:
         iou = np.round(iou, 1)  # ties
-    assert hm_iou(iou) == pytest.approx(brute_hm_iou(iou), abs=1e-12)
+    assert hm_iou(iou) == pytest.approx(transport_hm_iou(iou), abs=1e-9)
+
+
+def test_hm_iou_k3_is_not_the_floor_ceil_tiling():
+    """K = 8, k = 3: each sample may split over the raters in thirds. Two samples near rater 0, six near rater 1:
+    rater 0 takes both (0.9) and 2/3 of one other (0.6), raters 1 and 2 take 8/3 each (0.8, 0.5): 17/24. The old
+    floor / ceil tiling (each rater 2 or 3 whole samples) read 0.725 here."""
+    iou = np.array([[.9, .5, .1]] * 2 + [[.6, .8, .5]] * 6)
+    assert hm_iou(iou) == pytest.approx((2 * .9 + 2 / 3 * .6 + 8 / 3 * .8 + 8 / 3 * .5) / 8, abs=1e-12)
+    assert hm_iou(iou) == pytest.approx(17 / 24, abs=1e-12)
 
 
 @settings(max_examples=50, deadline=None)

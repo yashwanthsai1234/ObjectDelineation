@@ -171,8 +171,8 @@ def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: flo
 
 def _score(job) -> dict:
     """One item's metrics on the preloaded caches (runs in a pool worker)."""
-    item_id, texts, truncated, W, H, names, root = job
-    m = metrics(texts, {}, W, H, names, truncated, caches=serve.CacheRef(item_id, root))
+    item_id, texts, truncated, tokens, W, H, names, root = job
+    m = metrics(texts, {}, W, H, names, truncated, caches=serve.CacheRef(item_id, root), tokens=tokens)
     return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
 
 
@@ -221,12 +221,12 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
 
 
 def score_items(pool, rows: list[dict], done: dict, root: Path) -> tuple[list[dict], list[dict]]:
-    """_score on the pool for every row (done: {key: completions row}) -> (per-item metrics, signal groups); one CUDA
-    checker call per item."""
+    """_score on the pool for every row (done: {key: completions row with samples, truncated and tokens}) ->
+    (per-item metrics, signal groups); one CUDA checker call per item."""
     from objdel.eval import signal
 
-    jobs = [(r["key"], done[r["key"]]["samples"], done[r["key"]]["truncated"], r["W"], r["H"], r["names"], str(root))
-            for r in rows]  # fmt: skip
+    jobs = [(r["key"], *(done[r["key"]][k] for k in ("samples", "truncated", "tokens")), r["W"], r["H"], r["names"],
+             str(root)) for r in rows]  # fmt: skip
     results = list(pool.map(_score, jobs, chunksize=4))
     return results, [signal.group(r["item_id"], done[r["item_id"]]["samples"], r) for r in results]
 
