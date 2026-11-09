@@ -114,7 +114,7 @@ known-first-party = ["objdel", "experiments"]
 # Dead-code gate (`make dead`, tests/test_repo_hygiene.py). Each group below is used by name from outside the code.
 paths = ["src", "experiments", "tests"]
 min_confidence = 60
-ignore_decorators = ["@pytest.fixture"]  # autouse fixtures (_no_real_secrets, clean_store)
+ignore_decorators = ["@pytest.fixture", "@model_validator"]  # autouse fixtures (_no_real_secrets, clean_store); pydantic validators (core/spec.py)
 ignore_names = [
   "on_*", "should_save", "should_training_stop",  # transformers TrainerCallback hooks and control flags
   "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes
@@ -126,6 +126,8 @@ ignore_names = [
   "repo_id", "trial", "stream", "num_images", "pixel_attention_mask", "image_sizes", "num_tiles", "spatial_shapes", "token_type_ids", "image_position_ids", "_save_checkpoint",  # fakes of library signatures
   "current_gradient_accumulation_steps",  # Trainer attribute that the code under test reads
   "TransferSyntaxUID", "MediaStorageSOPInstanceUID", "MediaStorageSOPClassUID",  # pydicom file-meta that save_as reads
+  "schema_version", "compute",  # RunSpec fields that pydantic validates from the spec YAML (core/spec.py)
+  "record_old_names",  # run by hand to re-record tests/goldens/phase_e/old_names.json (goldens README)
 ]
 
 [tool.importlinter]
