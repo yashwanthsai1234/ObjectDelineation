@@ -47,6 +47,7 @@ ATTRS = {
     "llm": (("VLLMGeneration",), "self.llm =", "FastGRPO.time_vllm_phases, FastGRPO.patch_vllm_prompts"),
     "model": (("VLLMGeneration",), "self.model =", "FastGRPO.sync_without_merge"),
     "sync_weights": (("VLLMGeneration",), "def sync_weights", "FastGRPO.time_vllm_phases"),
+    "_llm_weights_sleeping": (("VLLMGeneration",), "self._llm_weights_sleeping =", "vllm_sync.push_weights, sync_lora"),
 }  # fmt: skip
 _GASC = "GRPOTrainer._generate_and_score_completions"
 KEYS = {
