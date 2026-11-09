@@ -115,6 +115,8 @@ def lidc_split(patients: dict[str, Patient], seed=0) -> dict[str, str]:
 def val_half_table(records, max_s=1000) -> dict:
     """The val halves of B1.0 from the val view's records (dicts with group_id and disagreement; nothing else is
     read): the first seed s < max_s that balances items and disagreement items (module docstring)."""
+    if not records:
+        raise ValueError("val_half_table: no records")
     items = Counter(r["group_id"] for r in records)
     dis = Counter(r["group_id"] for r in records if r["disagreement"])
     strata = {}

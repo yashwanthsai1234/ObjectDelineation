@@ -50,6 +50,8 @@ DROPS = ("excluded", "not_rl", "shifted_none", "rescaled_none", "padded", "centr
 
 
 def cell(apparent_px: float, offset: float) -> tuple[int, int]:
+    if not (np.isfinite(apparent_px) and np.isfinite(offset)):
+        raise ValueError(f"cell: apparent_px and offset must be finite, got {apparent_px}, {offset}")
     return bisect_right(SIZE_EDGES, float(apparent_px)), bisect_right(OFFSET_EDGES, float(offset))
 
 
@@ -141,14 +143,15 @@ def _windows(item, draws: int, seed: int, dropped: dict) -> list[Window]:
 
 def pool(items: Iterable, draws: int, seed: int = 0, exclude: frozenset[str] = frozenset()) -> WindowPool:
     """The windows of every RL item not in `exclude` (module docstring), sorted by window_id."""
-    dropped, out = dict.fromkeys(DROPS, 0), []
+    dropped, out, seen = dict.fromkeys(DROPS, 0), [], set()
     for it in items:
-        if it.item_id in exclude:
+        if it.item_id in exclude or it.item_id in seen:  # a repeated item counts as excluded
             dropped["excluded"] += 1
         elif not rl_eligible(it.raters):
             dropped["not_rl"] += 1
         else:
             out += _windows(it, draws, seed, dropped)
+        seen.add(it.item_id)
     return WindowPool(tuple(sorted(out, key=attrgetter("window_id"))), dropped)
 
 
