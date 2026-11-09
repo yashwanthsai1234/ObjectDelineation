@@ -576,6 +576,59 @@ def test_rsync_never_sends_data_raw(E):
     assert all(not f.startswith("data/") for f in P.code_files())
 
 
+SHIPPED = ("docs/reference/frozen_views.json", "docs/reference/val_halves.json")
+
+
+def _child(cwd: Path, code: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-I", "-c", code], cwd=cwd, capture_output=True, text=True, timeout=120)
+
+
+def test_frozen_views_ship(tmp_path, monkeypatch):
+    """I50: the code snapshot keeps the two docs/reference records the box reads (final_eval's frozen check, the
+    held-out val_half) and drops the rest of docs/; on a copy of the snapshot both lookups find their file."""
+    repo = tmp_path / "repo"
+    for f in (*SHIPPED, "docs/a.md", "docs/reference/data.md", "tests/oracles/o.py"):
+        (repo / f).parent.mkdir(parents=True, exist_ok=True)
+        (repo / f).write_text("{}")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    with monkeypatch.context() as m:
+        m.setattr(P, "ROOT", repo)
+        assert sorted(P.code_files()) == sorted([*SHIPPED, "tests/oracles/o.py"])
+    files = P.code_files()  # (b) the real repo
+    assert set(SHIPPED) <= set(files) and not [f for f in files if f.startswith("docs/") and f not in SHIPPED]
+
+    box = tmp_path / "box"  # (c) the box's /workspace/src
+    for f in files:
+        if (ROOT / f).is_file():
+            (box / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / f, box / f)
+    view = box / "views" / "lidc-val-edge"
+    (view / "lidc").mkdir(parents=True)
+    (view / "lidc" / "val.jsonl").write_text("")
+    (view / "manifest.json").write_text(json.dumps({"sets": {"lidc/val": {"target_set_sha256": "0"}}}))
+    fe = (f"import sys, json; sys.path.insert(0, {str(box)!r}); from experiments.phase2 import final_eval as FE; "
+          f"assert FE.__file__.startswith({str(box)!r}), FE.__file__; "
+          "print(json.dumps(FE.frozen_entry('lidc-val-edge')), flush=True); "
+          f"FE.check_view(FE.Path({str(view)!r}), 'val')")
+    p = _child(box, fe)
+    assert p.returncode != 0 and "content_sha256" in json.loads(p.stdout.splitlines()[0])  # the entry, then E05
+    assert "content_sha256" in p.stderr
+    (box / SHIPPED[0]).unlink()
+    p = _child(box, fe)
+    assert p.stdout.splitlines()[0] == "null" and p.returncode != 0 and "frozen_views.json" in p.stderr
+
+    # (d) objdel from the copy (the box installs /workspace/src; here the worktree's editable finder steps aside)
+    vh = (f"import sys; sys.path.insert(0, {str(box / 'src')!r}); "
+          "sys.meta_path[:] = [f for f in sys.meta_path if 'ScikitBuild' not in type(f).__name__]; "
+          f"from objdel.data import splits; assert splits.__file__.startswith({str(box)!r}), splits.__file__; "
+          "print(splits.val_half('LIDC-IDRI-0026'))")
+    p = _child(box, vh)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == json.loads((ROOT / SHIPPED[1]).read_text())["halves"]["LIDC-IDRI-0026"]
+    (box / SHIPPED[1]).unlink()
+    assert _child(box, vh).returncode != 0
+
+
 # --- cost guard (G10) and orphans (G6) -----------------------------------------------------------------------------
 
 

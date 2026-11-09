@@ -85,7 +85,7 @@ def world(tmp_path_factory):
     views = tmp / "eval_views"
     B.build(st, views, split="val", procs=1)
     B.build(st, views, split="test", procs=1)
-    shutil.copytree(views / "lidc-val-shifted", views / "lidc-val-edge")  # B1.6 builds the edge view
+    B.build(st, views, split="val", procs=1, kinds=("edge",))
     return types.SimpleNamespace(tmp=tmp, store=st, rows=rows, train=train, pool=P, sched=sched, views=views)
 
 
@@ -421,9 +421,13 @@ def test_frozen_views_need_equal_content_and_target_set_hashes(world, tmp_path):
     assert Q.frozen(views, entries) == {}
     path = views / "lidc-val-shifted/lidc/val.jsonl"
     recs = [json.loads(x) for x in path.read_text().splitlines()]
-    recs[0]["view"]["offset"][0] += 1
-    path.write_text("".join(json.dumps(r) + "\n" for r in recs))
-    assert list(Q.frozen(views, entries)) == ["lidc-val-shifted"]
+    for edit in (lambda r: r[0]["view"]["offset"].__setitem__(0, r[0]["view"]["offset"][0] + 1),  # I05: +1 px
+                 lambda r: r.__setitem__(slice(0, 2), r[1::-1]),  # two records reordered
+                 lambda r: r[0].__setitem__("image_sha256", "0" * 64)):  # one image changed
+        bad = [json.loads(json.dumps(r)) for r in recs]
+        edit(bad)
+        path.write_text("".join(json.dumps(r) + "\n" for r in bad))
+        assert Q.frozen(views, entries) == {"lidc-val-shifted": "content_sha256 differs"}
 
 
 # ----------------------------------------------------------------------------------- gates (U19, U21)
