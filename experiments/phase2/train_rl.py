@@ -139,6 +139,8 @@ def check_flags(a) -> None:
         raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
     if a.runaway_cap and over.get("mask_truncated_completions", True):
         raise ValueError("--runaway-cap needs --grpo '{\"mask_truncated_completions\": false}'")
+    if a.runaway_cap and a.group_requests:
+        raise ValueError("--runaway-cap and --group-requests exclude each other: one n = G request has one max_tokens")
 
 
 def numerics_overrides(a) -> dict:
@@ -253,6 +255,19 @@ def merge_last(a) -> int:
     }, keys=("steps", "partial", "merged_from"))
 
 
+def with_caps(train, a):
+    """C11: the rows plus a `cap` column (FastGRPO sends it as each prompt's max_tokens); T_i from the row's own record."""
+    from transformers import AutoProcessor
+
+    from objdel.train import configs, dataset, runaway
+
+    tok = AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs(a.model, "lidc")).tokenizer
+    caps = runaway.row_caps(train["key"], dataset.records(a.train, "lidc", "train"),
+                            lambda text: dataset.target_tokens(tok, text), json.loads(a.grpo).get("max_completion_length", configs.MAX_COMPLETION[a.model]),
+                            a.runaway_cap, runaway.MARGIN)
+    return train.add_column("cap", caps)
+
+
 def main(argv=None) -> int:
     a = parse(argv)
     if a.merge_last:
@@ -263,13 +278,13 @@ def main(argv=None) -> int:
     from objdel.train import configs, dataset, serve
 
     check_flags(a)
-    if a.runaway_cap:
-        raise SystemExit("--runaway-cap: FastGRPO does not read the `cap` column yet (C11 fast.py step; handoff)")
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
     stop = budget_stop(a)
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule else dataset.DISAGREEMENT_OVERSAMPLE)
     if schedule:
         check_rows(train["key"], schedule)
+    if a.runaway_cap:
+        train = with_caps(train, a)
     heldout = heldout_rows(a.heldout, a.heldout_items) if a.heldout else None
     last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
     if a.resume and last is None:

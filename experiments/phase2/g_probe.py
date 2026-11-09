@@ -107,6 +107,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
     trainer.group_requests = bool(getattr(a, "group_requests", False))  # C6: one n = G vLLM request per prompt
+    trainer.runaway_cap = bool(getattr(a, "runaway_cap", 0))  # C11: each prompt's max_tokens from the rows' `cap`
     if getattr(a, "fast_sync", False) and not vllm_sync.install(trainer):  # C5: one load_weights call per sync
         raise ValueError("--fast-sync needs a colocate vLLM on one process with a LoRA model")
     trainer.count_syncs = bool(getattr(a, "count_syncs", False))  # C0
