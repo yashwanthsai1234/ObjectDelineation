@@ -1,0 +1,86 @@
+{
+ "lidc-test-shifted": {
+  "content_sha256": "8077a9a8a1684496a32a79a82ea391fee2deb4ac05527ce2a5cab3202367a043",
+  "fallback": 0,
+  "generator_commit": "edc37f49cb89c3387d31b4bb68cded01cb6ac105",
+  "items": 2200,
+  "kinds": [
+   "shifted"
+  ],
+  "known_label_issues": [
+   "lidc/1.3.6.1.4.1.14519.5.2.1.6279.6001.130036599816889919308975074972/n003/z117",
+   "lidc/1.3.6.1.4.1.14519.5.2.1.6279.6001.130036599816889919308975074972/n003/z118",
+   "lidc/1.3.6.1.4.1.14519.5.2.1.6279.6001.130036599816889919308975074972/n003/z119",
+   "lidc/1.3.6.1.4.1.14519.5.2.1.6279.6001.130036599816889919308975074972/n003/z120"
+  ],
+  "padded": 0,
+  "r5_code_commit": null,
+  "r5_identity": "equal to the R5 box view by code identity, not measured: targets/frame.py unchanged since 734b1ec; augment.py and build_eval_views.py changed in B1.6 without moving a window (their Mac rebuild of the R5 val shifted, rescaled and rotated views gives the stored content and target-set hashes); other render files as listed",
+  "render_files": {
+   "experiments/phase2/build_eval_views.py": "16401de5b14f06b905a150ded2fd264fa717730b",
+   "src/objdel/targets/augment.py": "a252faab5fce4da477daf5d0a612d02ca75442a4",
+   "src/objdel/targets/build.py": "9c5dd2e3d80d66845234c5e9877ab9011c34631a",
+   "src/objdel/targets/frame.py": "734b1ecbb4672ce11abfd39e08d033c4b8e7751e",
+   "src/objdel/targets/simplify.py": "9c5dd2e3d80d66845234c5e9877ab9011c34631a",
+   "src/objdel/train/dataset.py": "be52b1cd840b75b5369210e0e18bf08004b0617f"
+  },
+  "seed": 0,
+  "store_manifest_sha256": "37fe7665e43423333681390c597ea265ab0fda6c00e708f4aacbc7c138dc7707",
+  "target_set_sha256": "9fd777a7095bccd1c85c8e5ef91e22eddcd73b7bff6a40fcf8a2d1c51f3fb516",
+  "view": "lidc-test-shifted"
+ },
+ "lidc-val-edge": {
+  "content_sha256": "d7b42294b40ac2ed7f20144634a78c770a7633a341c0044baba14ad2e7b8c9bf",
+  "fallback": 0,
+  "generator_commit": "edc37f49cb89c3387d31b4bb68cded01cb6ac105",
+  "items": 1084,
+  "kinds": [
+   "shifted",
+   "rescaled",
+   "rotated",
+   "edge"
+  ],
+  "known_label_issues": [],
+  "padded": 6,
+  "r5_code_commit": null,
+  "render_files": {
+   "experiments/phase2/build_eval_views.py": "16401de5b14f06b905a150ded2fd264fa717730b",
+   "src/objdel/targets/augment.py": "a252faab5fce4da477daf5d0a612d02ca75442a4",
+   "src/objdel/targets/build.py": "9c5dd2e3d80d66845234c5e9877ab9011c34631a",
+   "src/objdel/targets/frame.py": "734b1ecbb4672ce11abfd39e08d033c4b8e7751e",
+   "src/objdel/targets/simplify.py": "9c5dd2e3d80d66845234c5e9877ab9011c34631a",
+   "src/objdel/train/dataset.py": "be52b1cd840b75b5369210e0e18bf08004b0617f"
+  },
+  "seed": 0,
+  "store_manifest_sha256": "37fe7665e43423333681390c597ea265ab0fda6c00e708f4aacbc7c138dc7707",
+  "target_set_sha256": "2b71163b2bc3568a19edd0a24b2c5ff5a67496f3f88f8fa22055ed4bfd87d67c",
+  "view": "lidc-val-edge"
+ },
+ "lidc-val-shifted": {
+  "content_sha256": "405b3b978c6b753ef7928eb8308cdc6dfc42e6f5399b6e3a2ef7a410d99faa10",
+  "fallback": 0,
+  "generator_commit": "edc37f49cb89c3387d31b4bb68cded01cb6ac105",
+  "items": 1084,
+  "kinds": [
+   "shifted",
+   "rescaled",
+   "rotated",
+   "edge"
+  ],
+  "known_label_issues": [],
+  "padded": 5,
+  "r5_code_commit": null,
+  "render_files": {
+   "experiments/phase2/build_eval_views.py": "16401de5b14f06b905a150ded2fd264fa717730b",
+   "src/objdel/targets/augment.py": "a252faab5fce4da477daf5d0a612d02ca75442a4",
+   "src/objdel/targets/build.py": "9c5dd2e3d80d66845234c5e9877ab9011c34631a",
+   "src/objdel/targets/frame.py": "734b1ecbb4672ce11abfd39e08d033c4b8e7751e",
+   "src/objdel/targets/simplify.py": "9c5dd2e3d80d66845234c5e9877ab9011c34631a",
+   "src/objdel/train/dataset.py": "be52b1cd840b75b5369210e0e18bf08004b0617f"
+  },
+  "seed": 0,
+  "store_manifest_sha256": "37fe7665e43423333681390c597ea265ab0fda6c00e708f4aacbc7c138dc7707",
+  "target_set_sha256": "2da645bfdea8d290b6f5c3859a1b98fbc0d9984f9c30f166751f08573e96cbeb",
+  "view": "lidc-val-shifted"
+ }
+}
