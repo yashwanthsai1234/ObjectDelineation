@@ -89,7 +89,7 @@ def test_b3_5_tampered_prepared_image_is_detected(tmp_path):
     swap(a, b)  # the two model inputs
     from PIL import Image as PILImage  # the swapped file really holds other pixels than its record pins
     pixels = np.asarray(PILImage.open(a).convert("RGB"))
-    assert D._pixels_sha(pixels) != D.records(out, "lidc", "train")[0]["image_sha256"]
+    assert D.pixels_sha256(pixels) != D.records(out, "lidc", "train")[0]["image_sha256"]
     with pytest.raises(ValueError, match="image_sha256"):  # building rows checks the pinned image hash
         D.grpo_rows(out, "lidc", "train")
     with pytest.raises(ValueError, match="image_sha256"):

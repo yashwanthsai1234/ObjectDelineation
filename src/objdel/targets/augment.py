@@ -36,7 +36,6 @@ from .frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, centred, crowded, p
 
 OPS = ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")
 DATASET_OPS = {"lidc": OPS, "riga": ("id", "fh")}
-INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 LADDER = tuple(d for d in DIVISORS if 50 <= d <= 500)  # 50, 100, 125, 200, 250, 500
 WINDOW_JITTER = ((-300, 60), (1400, 80))  # CT level and width, centre and half-range in HU (D10)
 NOISE_MAX = 10.0  # HU, Gaussian sigma upper bound (D10)

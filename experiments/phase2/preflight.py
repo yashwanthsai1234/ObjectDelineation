@@ -29,6 +29,8 @@ import sys
 import time
 from pathlib import Path
 
+from objdel.hashing import file_sha256
+
 ROOT = Path(__file__).resolve().parents[2]
 # the exam views policy.chain passes to select_ckpt (gates: shifted, rescaled; report: rotated; probes)
 EXAMS = ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-precision", "probe-topology")
@@ -46,10 +48,6 @@ def ceiling(gpu: str) -> float:
     from experiments.phase2.vast import policy
 
     return policy.CARDS[gpu]["ceiling"]
-
-
-def sha(path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def load(cfg: Path):
@@ -71,12 +69,12 @@ def hashes(cfg: Path) -> dict:
     a, _ = load(cfg)
     root = Path(a.data_root)
     view = json.loads((root / a.view / "manifest.json").read_text())["view_hash"]
-    exams = [sha(root / "eval_views" / v / "manifest.json") for v in EXAMS] + [sha(root / "checker_eval" / "manifest.json")]
+    exams = [file_sha256(root / "eval_views" / v / "manifest.json") for v in EXAMS] + [file_sha256(root / "checker_eval" / "manifest.json")]
     rows = ""
     if a.rows_plan:  # B1.3: an edited rows root refuses the launch
         with contextlib.suppress(OSError, ValueError, KeyError, StopIteration):
-            rows = sha(rows_plan(a)[0] / "manifest.json")
-    return {"code": TS.code_hashes()["objdel_and_script_sha256"], "config": sha(cfg),
+            rows = file_sha256(rows_plan(a)[0] / "manifest.json")
+    return {"code": TS.code_hashes()["objdel_and_script_sha256"], "config": file_sha256(cfg),
             "data": hashlib.sha256((view + "".join(exams) + rows).encode()).hexdigest()}  # fmt: skip
 
 
@@ -114,7 +112,7 @@ def view_integrity(a, cfg) -> list[str]:
     root, vdir = Path(a.data_root), Path(a.data_root) / a.view
     man, rows = json.loads((vdir / "manifest.json").read_text()), lines(vdir / "rows.jsonl")
     bad = []
-    if sha(vdir / "rows.jsonl") != man["view_hash"]:
+    if file_sha256(vdir / "rows.jsonl") != man["view_hash"]:
         bad.append(f"{vdir}/rows.jsonl does not match the manifest's view_hash")
     try:
         D._contexts(vdir, man, {r["item_id"] for r in rows})
@@ -123,7 +121,7 @@ def view_integrity(a, cfg) -> list[str]:
     for v in EXAMS:
         d = root / "eval_views" / v
         for name, f in json.loads((d / "manifest.json").read_text())["files"].items():
-            if not (d / name).is_file() or sha(d / name) != f["sha256"]:
+            if not (d / name).is_file() or file_sha256(d / name) != f["sha256"]:
                 bad.append(f"{d / name} does not match its manifest")
     return bad
 
@@ -237,7 +235,7 @@ def rows_root(a, cfg) -> list[str]:
     root, want, _ = rows_plan(a)
     if not (root / "manifest.json").is_file():
         return [f"{root}: no manifest.json (build_rl_rows writes it only after the gates pass)"]
-    if (got := sha(root / "manifest.json")) != want:
+    if (got := file_sha256(root / "manifest.json")) != want:
         return [f"{root}/manifest.json SHA-256 {got} is not the plan's --rows-manifest-sha256 {want}"]
     data = Path(a.data_root)
     report = audit_data.audit(root, data / "store", data / "eval_views", model=a.model)
@@ -261,7 +259,7 @@ def rows_revision(a, cfg) -> list[str]:
     local = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
     bad = [] if remote == local else [f"{REPO}@{rev} {prefix}: {len(remote)} files, local root {len(local)}; "
                                       f"differ in {sorted(set(local) ^ set(remote))[:3]}"]
-    got = sha(hub.hf_hub_download(REPO, prefix + "manifest.json", revision=rev, token=token))
+    got = file_sha256(hub.hf_hub_download(REPO, prefix + "manifest.json", revision=rev, token=token))
     return bad + ([] if got == want else [f"{REPO}@{rev} {prefix}manifest.json SHA-256 {got} is not {want}"])
 
 

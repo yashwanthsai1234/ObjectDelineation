@@ -29,7 +29,6 @@ from trl import GRPOTrainer
 
 from objdel.train import fast
 
-WAYS = ("a", "b", "c", "d")
 PAIRS = (("a", "d"), ("b", "d"), ("c", "d"), ("a", "b"), ("c", "b"))
 BIN = 64
 RUN = Path("runs/rl/train_rl/trainer")

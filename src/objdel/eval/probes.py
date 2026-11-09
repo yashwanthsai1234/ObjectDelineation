@@ -48,6 +48,8 @@ from scipy import ndimage, stats
 from objdel.checker import signature, size_filter
 from objdel.checker.topology import min_area
 from objdel.geometry import GRID, canonicalize, parse, serialize, to_mask
+from objdel.hashing import pixels_sha256
+from objdel.io import read_jsonl
 from objdel.reward.cache import boundary  # foreground pixels with a 4-adjacent background pixel
 from objdel.targets import build_target
 from objdel.targets.frame import DIVISORS, LUNG_WINDOW
@@ -368,10 +370,6 @@ def render(gt, patch, rng, image_side=512):
     return np.asarray(img)
 
 
-def _pixels_sha(image):  # as objdel.train.dataset._pixels_sha (not imported: that module needs `datasets`)
-    return hashlib.sha256(repr(image.shape).encode() + image.tobytes()).hexdigest()
-
-
 def _write(out, name, split, items, patch_list, seed, meta):
     out, rng, recs = Path(out), np.random.default_rng(seed + 1), []
     for k, it in enumerate(items):
@@ -396,7 +394,7 @@ def _write(out, name, split, items, patch_list, seed, meta):
                 "targets": [it["text"]],
                 "rl": False,
                 "disagreement": False,
-                "image_sha256": _pixels_sha(img),
+                "image_sha256": pixels_sha256(img),
                 "caches": {},
                 "errors": [],
                 "view": {"offset": [0, 0], "side": S},
@@ -468,8 +466,7 @@ def build_topology(out, patch_list, holes, multis, diams, seed=2027, per_bin=120
 
 # ------------------------------------------------------------------------------------------------- scoring
 def records(root, split="val"):
-    with open(Path(root, "lidc", f"{split}.jsonl")) as fh:
-        return [json.loads(line) for line in fh]
+    return read_jsonl(Path(root, "lidc", f"{split}.jsonl"))
 
 
 def gt_mask(rec):

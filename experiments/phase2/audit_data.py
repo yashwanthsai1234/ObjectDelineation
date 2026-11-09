@@ -2,7 +2,7 @@
 failure (report gates DG9b, DG14, DG14b, DG16 never change the exit code). Implementation.md B1.3.
 
     .venv/bin/python -I -m experiments.phase2.audit_data --rows data/views/lidc-train-b1 [--store data/store]
-        [--target-law train-shifted] [--val-view data/eval_views/lidc-val-shifted] [--json out.json]
+        [--val-view data/eval_views/lidc-val-shifted] [--json out.json]
 
 The rows root's manifest.schedule gives the pool (draws, seed, excluded_ids) and the schedule arguments; the target
 is the train shifted law of that pool. The val view feeds only the DG16 report (val-shape, val-select, whole val).
@@ -71,7 +71,6 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--rows", type=Path, required=True)
     ap.add_argument("--store", type=Path, default=ROOT / "data/store")
-    ap.add_argument("--target-law", choices=["train-shifted"], default="train-shifted")
     ap.add_argument("--eval-views", type=Path, default=ROOT / "data/eval_views", help="val and test views (DG1b, DG15)")
     ap.add_argument("--val-view", type=Path, default=None, help="DG16 only (default <eval-views>/lidc-val-shifted)")
     ap.add_argument("--exclusions", type=Path, default=REF / "train_exclusions.json")

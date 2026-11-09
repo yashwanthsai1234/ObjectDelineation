@@ -36,6 +36,7 @@ from typing import NamedTuple
 import numpy as np
 
 from objdel.eval import signal
+from objdel.io import read_jsonl
 
 K = 8
 MISS = signal.MISS
@@ -201,8 +202,7 @@ def load(items_path: Path, view: Path, store_root: Path, halves_path: Path) -> I
     from objdel.data import store
     from objdel.targets.frame import union_box
 
-    with open(items_path) as f:
-        rows = [json.loads(line) for line in f]
+    rows = read_jsonl(items_path)
     with open(view / "lidc" / "val.jsonl") as f:
         recs = {r["item_id"]: r for r in map(json.loads, f)}
     extent = {}

@@ -31,7 +31,6 @@ References:
   https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetFile.html
 - COCO RLE, the alternative considered: https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/mask.py
 """
-import hashlib
 import io
 import json
 from collections.abc import Iterable, Iterator
@@ -41,6 +40,8 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+from objdel.hashing import file_sha256
 
 DATASETS = ("riga", "lidc")
 SPLITS = ("train", "val", "test")
@@ -122,11 +123,6 @@ def _row(it: Item) -> dict:
             "meta": json.dumps(it.meta, sort_keys=True)}
 
 
-def _sha256(path: Path) -> str:
-    with open(path, "rb") as fh:
-        return hashlib.file_digest(fh, "sha256").hexdigest()
-
-
 def write(items: Iterable[Item], root) -> dict:
     """Write items (ascending item_id within each dataset/split) and the manifest; returns the manifest."""
     root = Path(root)
@@ -162,14 +158,14 @@ def write(items: Iterable[Item], root) -> dict:
         for w in writers.values():
             w.close()
     manifest = {"format": 1, "versions": {"numpy": np.__version__, "pyarrow": pa.__version__},
-                "files": {rel: {"sha256": _sha256(root / rel), "rows": rows[rel], "bytes": (root / rel).stat().st_size}
-                          for rel in sorted(rows)}}
+                "files": {rel: {"sha256": file_sha256(root / rel), "rows": rows[rel],
+                                "bytes": (root / rel).stat().st_size} for rel in sorted(rows)}}
     (root / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
     return manifest
 
 
 def _verified(root: Path, rel: str, entry: dict) -> None:
-    if _sha256(root / rel) != entry["sha256"] or pq.ParquetFile(root / rel).metadata.num_rows != entry["rows"]:
+    if file_sha256(root / rel) != entry["sha256"] or pq.ParquetFile(root / rel).metadata.num_rows != entry["rows"]:
         raise ValueError(f"{rel}: SHA-256 or row count differs from the manifest")
 
 

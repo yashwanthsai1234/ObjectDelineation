@@ -26,6 +26,7 @@ import numpy as np
 from scipy.stats import binomtest
 
 from objdel.geometry import SCHEMAS, parse, to_mask
+from objdel.io import read_jsonl
 from objdel.reward import ExpertCache, score_mask
 
 MEDSAM, SAM2 = "flaviagiammarino/medsam-vit-base", "facebook/sam2.1-hiera-tiny"
@@ -33,8 +34,7 @@ MARGIN = {"lidc": 1, "riga": 5}
 
 
 def _records(root, dataset, split):
-    with open(Path(root, dataset, f"{split}.jsonl")) as fh:
-        return [json.loads(line) for line in fh]
+    return read_jsonl(Path(root, dataset, f"{split}.jsonl"))
 
 
 def _caches(root, rec):

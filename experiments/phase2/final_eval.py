@@ -49,10 +49,7 @@ Reads untrusted data: run with python -I.
 """
 
 import argparse
-import hashlib
 import json
-import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -63,6 +60,9 @@ from experiments.phase2.select_ckpt import score_items  # imported before the po
 from objdel import _gpucheck
 from objdel.data import quality as Q
 from objdel.eval import select, signal
+from objdel.hashing import file_sha256
+from objdel.io import git, read_jsonl
+from objdel.io import write_atomic as _write
 
 ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VIEWS = ROOT / "docs/reference/frozen_views.json"  # /workspace/src on the box
@@ -259,7 +259,7 @@ def view_groups(view: Path, split: str) -> dict[str, str]:
 
 def view_manifest_sha256(view: Path) -> str:
     """SHA-256 of the view's manifest.json bytes (it changes with harmless rebuild details: versions, fingerprint)."""
-    return hashlib.sha256((Path(view) / "manifest.json").read_bytes()).hexdigest()
+    return file_sha256(Path(view) / "manifest.json")
 
 
 def _view_records(view: Path) -> list[dict]:
@@ -285,29 +285,19 @@ def check_view(view: Path, split: str) -> None:
             sys.exit(f"final_eval: {view.name} {key} {got} differs from frozen_views.json {e[key]}: refusing to score")
 
 
-def _git(*args: str, root: Path = ROOT) -> str | None:
-    """git's stdout in root, or None without git (the box gets the code by rsync, with no .git)."""
-    if not (root / ".git").exists():
-        return None
-    try:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
-
-
 def code_sha(root: Path = ROOT) -> str | None:
     """The code identity of a run: <root>/CODE_SHA stripped (written by vast sync_up on the box; empty = absent), else
     git rev-parse HEAD, else None."""
     f = Path(root) / "CODE_SHA"
     text = f.read_text().strip() if f.exists() else ""
-    return text or _git("rev-parse", "HEAD", root=Path(root))
+    return text or git("rev-parse", "HEAD", root=root, required=False)
 
 
 def hash_view(view: Path, out: Path) -> None:
     """--hash-view: the view's identity record (the pre-rental record of A3 step 1)."""
     sets = json.loads((view / "manifest.json").read_text())["sets"]
     (target_set,) = [s["target_set_sha256"] for k, s in sets.items() if k.startswith("lidc/")]
-    commits = {f: _git("log", "-1", "--format=%H", "--", f) or None for f in RENDER_FILES}
+    commits = {f: git("log", "-1", "--format=%H", "--", f, root=ROOT, required=False) or None for f in RENDER_FILES}
     _write(out, json.dumps({
         "view": str(view), "items": len(_view_records(view)), "content_sha256": Q.view_content_sha256(view),
         "target_set_sha256": target_set, "generator_commit": commits["experiments/phase2/build_eval_views.py"],
@@ -316,18 +306,6 @@ def hash_view(view: Path, out: Path) -> None:
                 "code identity, not measured"}, indent=1))
 
 
-def _write(path: Path, text: str) -> None:
-    """Write through a temp file and os.replace: a crash leaves the old file or none, never half a file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
-
-
-def read_jsonl(path: Path) -> list[dict]:
-    """One dict per line, read line by line (a 2,200-item answers.jsonl is about 18 MB)."""
-    with open(path) as f:
-        return [json.loads(line) for line in f]
 
 
 def _lines(rows: list[dict]) -> str:
@@ -339,8 +317,7 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
     import pyarrow.parquet as pq
 
     doc = json.loads((run / "final_eval.json").read_text())
-    with open(run / "items.jsonl") as f:
-        items = [json.loads(line) for line in f]
+    items = read_jsonl(run / "items.jsonl")
     table = pq.read_table(store / "lidc" / f"{doc['split']}.parquet", columns=["item_id", "group_id"])
     found = {i: g for i, g in zip(*table.to_pydict().values(), strict=True) if g}
     lost = [it["item_id"] for it in items if it["item_id"] not in found]
