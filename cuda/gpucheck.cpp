@@ -846,42 +846,100 @@ struct EdgePairs {
   }
 };
 
-// Ring-ring counts, winding and containment of one shape (polycore detail::validate_geometry, second half).
-struct ShapeTotals {
+// ---------------------------------------------------------------- warp helpers (K2-draft k2score.inc)
+// for_each_warp runs one item per warp of 32 lanes on the GPU and one item per "warp of one lane" on the CPU build, so
+// lane loops (for i = lane; i < n; i += size) become plain loops there and the collectives the identity. Every lane of
+// the warp must reach each collective (warp-uniform control flow up to the call; CUDA C++ guide, warp intrinsics).
+struct Warp {
+  int lane, size;  // GPU: lane in [0, 32), size 32. CPU build: lane 0, size 1
+};
+
+#ifdef __CUDACC__
+template <class F>
+__global__ void warp_kernel(i64 n, F f) {
+  const i64 i = (i64(blockIdx.x) * blockDim.x + threadIdx.x) >> 5;  // warp-uniform: whole warps return together
+  if (i < n) f(i, Warp{int(threadIdx.x & 31), 32});
+}
+
+template <class F>
+void for_each_warp(Stream st, i64 n, const F& f) {
+  constexpr int kThreads = 128;  // 4 warps per block
+  if (n <= 0) return;
+  warp_kernel<<<unsigned((n * 32 + kThreads - 1) / kThreads), kThreads, 0, st>>>(n, f);
+  cuda_check(cudaGetLastError());
+}
+#else
+template <class F>
+void for_each_warp(Stream, i64 n, const F& f) {
+  for (i64 k = 0; k < n; ++k) f(K1_ORDER == 0 ? k : K1_ORDER == 1 ? n - 1 - k : (k * 2147483647LL) % n, Warp{0, 1});
+}
+#endif
+
+HD inline u32 wballot(bool b) {
+#ifdef __CUDA_ARCH__
+  return __ballot_sync(0xFFFFFFFFu, b);
+#else
+  return b ? 1u : 0u;
+#endif
+}
+HD inline bool wany(bool b) { return wballot(b) != 0; }
+HD inline bool wodd(bool b) { return (popc(wballot(b)) & 1) != 0; }  // parity of the lanes' flags
+HD inline i64 wsum(i64 v) {  // integers: the same value in any order (__reduce_add_sync takes 32-bit values only)
+#ifdef __CUDA_ARCH__
+  for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xFFFFFFFFu, v, o);
+#endif
+  return v;
+}
+HD inline void wsync() {  // orders the lanes' global-memory writes before the next phase's reads
+#ifdef __CUDA_ARCH__
+  __syncwarp();
+#endif
+}
+
+// Winding and containment of one shape, one warp per shape (polycore detail::validate_geometry, second half; K2-draft
+// ShapeTotalsWarp): the 13 totals, written whole. Phase 1, one lane per ring: wrong winding. Phase 2, the whole warp
+// per containment test: many witnesses take one lane each (the serial locate), 32 at a time, leaving at the first
+// chunk with a hit; a single witness splits the ring's edges over the lanes. Phase 3: totals by warp sums. Every
+// result is an integer or a flag, so the lane split and the order do not change it.
+struct ShapeTotalsWarp {
   Shapes s;
   Rings r;
   const u8* validate_wide;
   i64* defects;
 
-  // Point in doubled coordinates against clean ring g: -1 strictly outside, 0 on the boundary, 1 inside.
-  template <class T>
-  HD int locate2(i64 g, i64 qx, i64 qy) const {
+  // Point in doubled coordinates against clean ring g: -1 strictly outside, 0 on the boundary, 1 inside. The ring's
+  // edges are split over w's lanes; kWarp combines their flags (on = any lane, inside = parity of the crossings), else
+  // one lane (w = {0, 1}) runs every edge.
+  template <class T, bool kWarp>
+  HD int locate(i64 g, i64 qx, i64 qy, Warp w) const {
     const i32* box = r.box + 4 * g;
     if (qx < 2 * i64(box[0]) || qx > 2 * i64(box[1]) || qy < 2 * i64(box[2]) || qy > 2 * i64(box[3])) return -1;
     const i32* c = r.cxy + 2 * s.ring_start[g];
     const i32 n = r.len[g];
-    bool in = false;
-    for (i32 k = 0; k < n; ++k) {
+    bool on = false, in = false;
+    for (i32 k = w.lane; k < n; k += w.size) {
       const i32 k1 = k + 1 == n ? 0 : k + 1;
       const i64 ax = 2 * i64(c[2 * k]), ay = 2 * i64(c[2 * k + 1]), bx = 2 * i64(c[2 * k1]), by = 2 * i64(c[2 * k1 + 1]);
-      if (in_box(ax, ay, bx, by, qx, qy) && orient<T>(ax, ay, bx, by, qx, qy) == 0) return 0;
-      if ((ay <= qy && qy < by) || (by <= qy && qy < ay)) {
+      if (in_box(ax, ay, bx, by, qx, qy) && orient<T>(ax, ay, bx, by, qx, qy) == 0) {
+        on = true;
+      } else if ((ay <= qy && qy < by) || (by <= qy && qy < ay)) {
         const T num = T(ax - qx) * T(by - ay) + T(qy - ay) * T(bx - ax);
         if (by > ay ? num > 0 : num < 0) in = !in;
       }
     }
-    return in ? 1 : -1;
+    if (kWarp) on = wany(on), in = wodd(in);
+    return on ? 0 : in ? 1 : -1;
   }
 
   // Region of outer ring o (local) with its holes, even-odd over all of them.
-  template <class T>
-  HD int locate2_region(i64 r0, i32 R, i32 o, i64 qx, i64 qy) const {
-    const int loc = locate2<T>(r0 + o, qx, qy);
+  template <class T, bool kWarp>
+  HD int locate_region(i64 r0, i32 R, i32 o, i64 qx, i64 qy, Warp w) const {
+    const int loc = locate<T, kWarp>(r0 + o, qx, qy, w);
     if (loc == 0) return 0;
     bool in = loc > 0;
     for (i32 h = 0; h < R; ++h) {
       if (s.roles[r0 + h] != o || r.fewer[r0 + h]) continue;
-      const int lh = locate2<T>(r0 + h, qx, qy);
+      const int lh = locate<T, kWarp>(r0 + h, qx, qy, w);
       if (lh == 0) return 0;
       if (lh > 0) in = !in;
     }
@@ -891,21 +949,31 @@ struct ShapeTotals {
   // Does a witness of ring a (vertex or edge midpoint) locate to `want` against ring b (or b's region)?
   // single: a neither crosses nor touches that boundary, so its first vertex decides.
   template <class T>
-  HD bool any_witness(i64 r0, i32 R, i32 a, int want, bool single, i32 b, bool region) const {
+  HD bool any_witness(i64 r0, i32 R, i32 a, int want, bool single, i32 b, bool region, Warp w) const {
     const i32* c = r.cxy + 2 * s.ring_start[r0 + a];
     const i32 n = r.len[r0 + a];
-    auto loc = [&](i64 x, i64 y) { return region ? locate2_region<T>(r0, R, b, x, y) : locate2<T>(r0 + b, x, y); };
-    if (single) return n > 0 && loc(2 * i64(c[0]), 2 * i64(c[1])) == want;
-    for (i32 k = 0; k < n; ++k) {
-      const i32 k1 = k + 1 == n ? 0 : k + 1;
-      if (loc(2 * i64(c[2 * k]), 2 * i64(c[2 * k + 1])) == want) return true;
-      if (loc(i64(c[2 * k]) + c[2 * k1], i64(c[2 * k + 1]) + c[2 * k1 + 1]) == want) return true;
+    if (single) {
+      if (n <= 0) return false;
+      const i64 x = 2 * i64(c[0]), y = 2 * i64(c[1]);
+      return (region ? locate_region<T, true>(r0, R, b, x, y, w) : locate<T, true>(r0 + b, x, y, w)) == want;
+    }
+    const Warp one{0, 1};
+    for (i32 base = 0; base < 2 * n; base += w.size) {  // warp-uniform trip count
+      const i32 i = base + w.lane;
+      bool hit = false;
+      if (i < 2 * n) {
+        const i32 k = i >> 1, k1 = k + 1 == n ? 0 : k + 1;
+        const i64 x = (i & 1) ? i64(c[2 * k]) + c[2 * k1] : 2 * i64(c[2 * k]);
+        const i64 y = (i & 1) ? i64(c[2 * k + 1]) + c[2 * k1 + 1] : 2 * i64(c[2 * k + 1]);
+        hit = (region ? locate_region<T, false>(r0, R, b, x, y, one) : locate<T, false>(r0 + b, x, y, one)) == want;
+      }
+      if (wany(hit)) return true;
     }
     return false;
   }
 
   template <class T>
-  HD void run(i64 sh) const {
+  HD void run(i64 sh, Warp w) const {
     const i64 r0 = s.shape_start[sh];
     const i32 R = i32(s.shape_start[sh + 1] - r0);
     const i32* roles = s.roles + r0;
@@ -919,21 +987,16 @@ struct ShapeTotals {
         if (roles[h] == o && !apart(a, h)) return false;
       return true;
     };
-    i64* tot = defects + sh * kNumDefects;
-    for (i32 a = 0; a < R; ++a)
-      for (i32 b = 0; b < R; ++b) {
-        at(a, kRingRingCrossing) += pcross[a * kMaxRings + b];
-        at(a, kRingRingTouching) += ptouch[a * kMaxRings + b];
-      }
-    for (i32 a = 0; a < R; ++a) {
+    for (i32 a = w.lane; a < R; a += w.size) {  // phase 1
       if (fewer(a)) continue;
       const i64 a2 = r.area2[r0 + a];
       if ((roles[a] < 0 && a2 < 0) || (roles[a] >= 0 && a2 > 0)) at(a, kWrongWinding) = 1;
     }
+    i64 nested_h = 0, nested_o = 0;  // phase 2: uniform loops, lane 0 writes
     for (i32 h = 0; h < R; ++h) {
       const i32 p = roles[h];
       if (p < 0 || fewer(h) || fewer(p)) continue;
-      if (any_witness<T>(r0, R, h, -1, apart(h, p), p, false)) at(h, kHoleOutsideOuter) = 1;
+      if (any_witness<T>(r0, R, h, -1, apart(h, p), p, false, w) && w.lane == 0) at(h, kHoleOutsideOuter) = 1;
     }
     for (i32 a = 0; a < R; ++a) {
       if (fewer(a)) continue;
@@ -941,34 +1004,36 @@ struct ShapeTotals {
         if (fewer(b)) continue;
         if (roles[a] >= 0 && roles[a] == roles[b]) {  // sibling holes
           const bool single = apart(a, b);
-          if (any_witness<T>(r0, R, b, 1, single, a, false) || any_witness<T>(r0, R, a, 1, single, b, false)) {
-            at(a, kNestedHoles) += 1, at(b, kNestedHoles) += 1;
-            tot[kNestedHoles] += 1;
-          }
+          if (any_witness<T>(r0, R, b, 1, single, a, false, w) || any_witness<T>(r0, R, a, 1, single, b, false, w))
+            ++nested_h;
         } else if (roles[a] < 0 && roles[b] < 0) {  // two outers
-          if (any_witness<T>(r0, R, b, 1, apart_region(b, a), a, true) ||
-              any_witness<T>(r0, R, a, 1, apart_region(a, b), b, true)) {
-            at(a, kNestedOuters) += 1, at(b, kNestedOuters) += 1;
-            tot[kNestedOuters] += 1;
-          }
+          if (any_witness<T>(r0, R, b, 1, apart_region(b, a), a, true, w) ||
+              any_witness<T>(r0, R, a, 1, apart_region(a, b), b, true, w))
+            ++nested_o;
         }
       }
     }
-    for (i32 a = 0; a < R; ++a)
-      for (int d = 0; d < kNumDefects; ++d)
-        if (d != kRingRingCrossing && d != kRingRingTouching && d != kNestedHoles &&
-            d != kNestedOuters)
-          tot[d] += at(a, d);
-    for (i32 a = 0; a < R; ++a)
-      for (i32 b = a + 1; b < R; ++b) {
-        tot[kRingRingCrossing] += pcross[a * kMaxRings + b];
-        tot[kRingRingTouching] += ptouch[a * kMaxRings + b];
+    wsync();
+    i64* tot = defects + sh * kNumDefects;  // phase 3
+    for (int d = 0; d < kNumDefects; ++d) {
+      i64 v = 0;
+      if (d == kRingRingCrossing || d == kRingRingTouching) {
+        const i32* m = d == kRingRingCrossing ? pcross : ptouch;
+        for (i32 q = w.lane; q < R * R; q += w.size)
+          if (q / R < q % R) v += m[(q / R) * kMaxRings + q % R];
+      } else if (d == kNestedHoles || d == kNestedOuters) {
+        v = w.lane == 0 ? (d == kNestedHoles ? nested_h : nested_o) : 0;
+      } else {
+        for (i32 a = w.lane; a < R; a += w.size) v += at(a, d);
       }
+      v = wsum(v);
+      if (w.lane == 0) tot[d] = v;
+    }
   }
 
-  HD void operator()(i64 sh) const {
-    if (validate_wide[sh]) run<i128>(sh);
-    else run<i64>(sh);
+  HD void operator()(i64 sh, Warp w) const {
+    if (validate_wide[sh]) run<i128>(sh, w);
+    else run<i64>(sh, w);
   }
 };
 
@@ -1769,7 +1834,7 @@ void launch(const PolyChunk& c, i64 G, Lane& L, bool masks, Timer& t) {
   t.stage("validity", st, [&] {
     for_each(st, c.nr, CleanRings{s, r});
     for_each(st, c.nv, EdgePairs{s, r, validate_wide});
-    for_each(st, c.n, ShapeTotals{s, r, validate_wide, ptr<i64>(d, c.defects)});
+    for_each_warp(st, c.n, ShapeTotalsWarp{s, r, validate_wide, ptr<i64>(d, c.defects)});
   });
   to_host(L.out.p, d + c.defects, (masks ? c.size : c.words) - c.defects, st);
 }

@@ -83,6 +83,47 @@ def test_every_defect_class_is_exercised():
     assert (seen > 0).all(), dict(zip(gc.DEFECTS, seen.tolist(), strict=True))
 
 
+def _strips(k, holes, span=(100, 900)):
+    """k strips side by side sharing their long edges: k outers, or k holes of one outer (touching each other, and
+    the outer too when they span it)."""
+    w = 800 // k
+    rects = [[(100 + i * w, span[0]), (100 + (i + 1) * w, span[0]), (100 + (i + 1) * w, span[1]),
+              (100 + i * w, span[1])] for i in range(k)]
+    if not holes:
+        return rects, None
+    return [[(100, 50), (100 + k * w, 50), (100 + k * w, 950), (100, 950)]] + [r[::-1] for r in rects], [-1] + [0] * k
+
+
+def test_validity_adversarial_families():
+    """I17 (D6): touching strips (ring-ring touching, nested holes and outers), corner-touching squares, +-2^31
+    coordinates, the 10 x 1,000-vertex caps, and a straggler batch (cap shapes among small rollouts): the 13 defect
+    totals equal polycore's recorded results or the exact oracles, and each shape of the batch equals its run alone."""
+    lo, hi = -2**31, 2**31 - 1
+    big = [(lo, lo), (hi, lo), (hi, hi), (lo, hi)]
+    cases = [("strips", *_strips(k, False), 64, 64, 1000) for k in (2, 5, 10)]
+    cases += [("strip_holes", *_strips(k, True, span), 64, 64, 1000) for k in (2, 5, 9) for span in ((100, 900),
+                                                                                                    (50, 950))]
+    cases += [("corners", [[(x, y), (x + 100, y), (x + 100, y + 100), (x, y + 100)] for x, y in
+                           ((100, 100), (200, 200), (300, 100), (400, 200))], None, 32, 32, 1000),
+              ("int32", [big, [(0, 0), (0, 10), (10, 10), (10, 0)]], [-1, 0], 9, 9, 2**30),
+              ("int32", [big, big], None, 3, 3, 1)]
+    sq = [[(500 - r, 500 - r), (500 + r, 500 - r), (500 + r, 500 + r), (500 - r, 500 + r)] for r in range(450, 0, -45)]
+    cases += [("nested_outers", sq, None, 64, 64, 1000),                          # 45 nested pairs
+              ("nested_holes", [sq[0]] + [r[::-1] for r in sq[1:]], [-1] + [0] * 9, 64, 64, 1000),  # 36 pairs
+              ("hole_outside", [sq[5], sq[0][::-1]], [-1, 0], 64, 64, 1000)]
+    assert polygon_mismatches(cases) == []
+    caps = [c for c in C.fuzz_polygons(150, seed=1) if c[0] == "caps"]
+    assert {c[3] for c in caps} == {64, 512, 4096}
+    small = [c for c in C.fuzz_polygons(60, seed=3) if c[0] == "rollout"]
+    batch = small[:30] + caps + small[30:]
+    p = C.pack_polygons([(r, rl, W, H) for _, r, rl, W, H, _ in batch])
+    whole = C.run_polygons(p)
+    for s in range(len(batch)):
+        q = C.pack_polygons([C.shape_of(p, s)])
+        one, g = C.gpu_polygon(C.run_polygons(q), q, 0), C.gpu_polygon(whole, p, s)
+        assert np.array_equal(one["defects"], g["defects"]) and np.array_equal(one["evenodd"], g["evenodd"]), s
+
+
 @pytest.mark.parametrize("rings, roles, W, H", [
     ([], None, 5, 4),                       # no rings: empty mask, legal
     ([[]], None, 3, 3),                     # one empty ring
@@ -477,6 +518,18 @@ def test_slot_polygonizer_is_archived():
     src = (root / "cuda" / "gpucheck.cpp").read_text()
     assert not [s for s in ("InitSlots", "LabelRound", "RankRound", "check_mask_chunk", "jump_rounds", "kChunkSlots")
                 if s in src]
+
+
+def test_shape_totals_is_archived():
+    """S04 (D6 part): the one-thread-per-shape validity totals live in archive/ only; the engine runs ShapeTotalsWarp."""
+    root = Path(__file__).resolve().parents[1]
+    arch = root / "archive" / "cuda_validity"
+    assert "struct ShapeTotals {" in (arch / "shape_totals.cpp").read_text()
+    readme = (arch / "README.md").read_text()
+    assert re.search(r"\b[0-9a-f]{7,40}\b", readme) and "ShapeTotalsWarp" in readme
+    src = (root / "cuda" / "gpucheck.cpp").read_text()
+    assert "struct ShapeTotals {" not in src and "ShapeTotals{" not in src
+    assert "for_each_warp(st, c.n, ShapeTotalsWarp{" in src
 
 
 @pytest.mark.data

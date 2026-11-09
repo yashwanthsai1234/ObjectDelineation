@@ -184,3 +184,9 @@ def test_engine_pool_is_used_and_the_default_pool_is_not():
     gc.trim(0)
     got = gc.score_polygons(*args)
     assert all(got[k].tobytes() == want[k].tobytes() for k in want)
+
+
+def test_validity_warp_totals_on_adversarial_families():
+    """D6: ShapeTotalsWarp with 32 lanes (the CPU build runs one) on the I17 families and the straggler batch."""
+    from tests.test_cuda_checker import test_validity_adversarial_families
+    test_validity_adversarial_families()
