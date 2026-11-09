@@ -521,7 +521,7 @@ def test_slot_polygonizer_is_archived():
 
 
 def test_shape_totals_is_archived():
-    """S04 (D6 part): the one-thread-per-shape validity totals live in archive/ only; the engine runs ShapeTotalsWarp."""
+    """S04 (D6 part): the one-thread-per-shape validity totals live in archive/ only; the engine runs the warp form."""
     root = Path(__file__).resolve().parents[1]
     arch = root / "archive" / "cuda_validity"
     assert "struct ShapeTotals {" in (arch / "shape_totals.cpp").read_text()
