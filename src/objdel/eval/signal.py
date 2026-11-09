@@ -32,6 +32,7 @@ WEIGHTS = {"iou_tc": 0.3, "f5": 0.3, "legal": 0.1, "g_area": 0.3}  # REWARD_V4.w
 IOU_OK = 0.5  # legal_wrong: legal and IoU_tc < this (REWARD_V4.iou_gate)
 BOOT, LEVEL, SEED = 2000, 0.95, 0
 VETO_REL = 0.15
+MISS = 0.1  # an item is a miss when its K-mean IoU_tc is below this (final_eval, ceiling)
 DIGITS = 12  # decision values are rounded to 12 decimals before a >= / <= line (BK2-4, BK2-7): float sums of exact
 #              shares land 1e-16 off (0.345 / 0.30 - 1 = 0.1499999...), real differences are far above 1e-12
 VETO_STAT, ALT_STAT = "sd_geom", "r_std"

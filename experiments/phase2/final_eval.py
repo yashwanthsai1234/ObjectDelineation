@@ -32,7 +32,6 @@ from objdel.eval import signal
 
 METRICS = {"legal": ("samples", True), "iou_tc": ("samples", True), "f5": ("samples", True),
            "precision_vote": ("objects", True), "recall_vote": ("objects", True), "dice_vote": ("objects", True)}
-MISS = 0.1  # an item is a miss when its K-mean IoU_tc is below this
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 
 
@@ -71,7 +70,7 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
         out[m] = cis(v) | {"higher_is_better": higher}
     iou = np.array([it["iou_tc"] for it in items], float)
     out["iou_tc"]["median"] = float(np.median(iou))
-    out["miss_rate"] = cis((iou < MISS).astype(float))
+    out["miss_rate"] = cis((iou < signal.MISS).astype(float))
     return out
 
 

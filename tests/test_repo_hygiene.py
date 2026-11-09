@@ -20,3 +20,28 @@ def test_r5_test_golden_is_committed_and_holds_only_its_three_keys():
     assert len(rows) == 2200 and all(list(r) == ["item_id", "group_id", "iou_tc"] for r in rows)
     assert all(re.fullmatch(r"LIDC-IDRI-\d{4}", r["group_id"]) for r in rows)
     assert set(json.loads((GOLDENS / "r5_test_items.meta.json").read_text())) == {"numpy", "machine"}
+
+
+CLIS = ("final_eval", "ceiling")  # A3, A6 and A8 add nsys_baseline and outline_lengths with their modules
+
+
+def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
+    """S02: python -I -m <cli> --help never imports a json.py planted in the working directory."""
+    import sys
+
+    (tmp_path / "json.py").write_text("raise SystemExit('planted json.py ran')\n")
+    for name in CLIS:
+        r = subprocess.run([sys.executable, "-I", "-m", f"experiments.phase2.{name}", "--help"], cwd=tmp_path,
+                           capture_output=True, text=True)
+        assert r.returncode == 0 and "usage" in r.stdout, (name, r.stderr)
+
+
+def test_the_old_ceiling_is_archived_and_not_imported():
+    """S05: rater_ceiling moved to archive/phase2_lab/A4 (replaced by objdel.eval.ceiling); nothing imports it."""
+    old, new = ROOT / "experiments/phase2/lab/A4", ROOT / "archive/phase2_lab/A4"
+    assert (new / "rater_ceiling.py").is_file() and (new / "rater_ceiling.json").is_file()
+    assert not (old / "rater_ceiling.py").exists()
+    assert "replaced by objdel.eval.ceiling (Phase A2)" in (ROOT / "archive/README.md").read_text()
+    for top in ("src", "experiments", "tests"):
+        for p in (ROOT / top).rglob("*.py"):
+            assert not re.search(r"^\s*(from|import)\s.*rater_ceiling", p.read_text(), re.M), p
