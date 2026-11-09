@@ -68,7 +68,7 @@ def _record(job):
         got = got or augment.draw(bare, rng, side=S0)
     (dx, dy), S = got or ((0, 0), S0)
     f = _rotated(it, (dx, dy), S, ROTATION[it.dataset]) if kind == "rotated" else frame(it, offset=(dx, dy), side=S)
-    rec = D._prepare((out, it.item_id, it.dataset, it.group_id, it.raters, f))  # S1-2: needs a public helper (FX-T)
+    rec = D.window_record(out, it, f=f)
     H, W = next(iter(it.masks.values())).shape[-2:]
     x0, y0, x1, y1 = f.box
     rec["view"] = {"offset": [dx, dy], "side": S, "kept_side": kept and kind == "rescaled", "fallback": got is None,
