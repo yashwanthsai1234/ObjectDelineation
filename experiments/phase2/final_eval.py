@@ -56,6 +56,7 @@ from pathlib import Path
 
 import numpy as np
 
+from experiments.phase2.freeze_views import render_files
 from experiments.phase2.select_ckpt import score_items  # imported before the pool forks (no import in a child)
 from objdel import _gpucheck
 from objdel.data import quality as Q
@@ -76,14 +77,11 @@ METRICS = {"legal": ("samples", True), "iou_tc": ("samples", True), "f5": ("samp
 SELECTION = ("sel_mean_of_k", "sel_legal_mean", "sel_medoid", "sel_medoid_legal", "sel_oracle", "sel_vote")
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
-RENDER_FILES = ("src/objdel/targets/augment.py", "src/objdel/targets/frame.py", "src/objdel/targets/build.py",
-                "src/objdel/targets/simplify.py", "src/objdel/train/dataset.py",
-                "experiments/phase2/build_eval_views.py")  # the files that shape a view's images and targets
 
 
 def per_item(result: dict, obj: str = "nodule") -> dict:
     """K-sample means of one item's scores (metrics' output; METRICS), `miss` (the K-mean IoU_tc below signal.MISS),
-    the doctors' vote area, and the answer choices (A4): the mean of the K IoU_tc,
+    and the answer choices (A4): the mean of the K IoU_tc,
     the mean over legal answers (0 if none), the medoid's (with its legality), the best one (it reads the labels: an
     upper bound, never deployed) and the pixel vote's (analysis only: a mask is not an answer; absent when the
     result has no `pixel_vote_iou_tc`)."""
@@ -94,7 +92,6 @@ def per_item(result: dict, obj: str = "nodule") -> dict:
     vote = o.get("pixel_vote_iou_tc")
     means = {m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()}
     return {"item_id": result["item_id"], **means, "miss": float(means["iou_tc"] < signal.MISS),
-            "vote_area": o["vote_area"],
             "sel_mean_of_k": float(iou.mean()), "sel_legal_mean": float(iou[legal].mean()) if legal.any() else 0.0,
             "sel_medoid": float(iou[i]), "sel_medoid_legal": float(legal[i]), "sel_oracle": float(iou.max()),
             **({} if vote is None else {"sel_vote": float(vote)})}
@@ -147,24 +144,6 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
 
     out["paired"] = {"medoid_minus_mean": paired("sel_medoid"), "vote_minus_mean": paired("sel_vote")}
     return out
-
-
-def size_terciles(items: list[dict]) -> dict:
-    """Items in three groups by the doctors' vote area (`vote_area`): area <= bounds[0], <= bounds[1], above, with
-    bounds at the 1/3 and 2/3 order statistics, so equal areas share a group; per group the item count and the mean
-    iou_tc and boundary_iou (None when empty). ValueError for fewer than 3 items."""
-    if len(items) < 3:
-        raise ValueError(f"size_terciles: need >= 3 items, got {len(items)}")
-    area = np.array([it["vote_area"] for it in items])
-    a = np.sort(area)
-    bounds = [int(a[-(-len(a) * j // 3) - 1]) for j in (1, 2)]
-    group = np.searchsorted(bounds, area)  # 0: <= bounds[0], 1: <= bounds[1], 2: above
-    terciles = []
-    for g in range(3):
-        its = [it for it, x in zip(items, group, strict=True) if x == g]
-        terciles.append({"items": len(its), **{m: float(np.mean([it[m] for it in its])) if its else None
-                                               for m in ("iou_tc", "boundary_iou")}})
-    return {"bounds": bounds, "terciles": terciles}
 
 
 def gate_a(val: dict, test: dict | None) -> dict:
@@ -297,7 +276,7 @@ def hash_view(view: Path, out: Path) -> None:
     """--hash-view: the view's identity record (the pre-rental record of A3 step 1)."""
     sets = json.loads((view / "manifest.json").read_text())["sets"]
     (target_set,) = [s["target_set_sha256"] for k, s in sets.items() if k.startswith("lidc/")]
-    commits = {f: git("log", "-1", "--format=%H", "--", f, root=ROOT, required=False) or None for f in RENDER_FILES}
+    commits = render_files()
     _write(out, json.dumps({
         "view": str(view), "items": len(_view_records(view)), "content_sha256": Q.view_content_sha256(view),
         "target_set_sha256": target_set, "generator_commit": commits["experiments/phase2/build_eval_views.py"],
