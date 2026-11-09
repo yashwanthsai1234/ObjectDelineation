@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from objdel.checker import betti, bitquads, certify, polygonize
+from objdel.checker import betti, bitquads, certify
+from tests.oracles.polygonize_oracle import polygonize
 
 N4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
 N8 = N4 + [(1, 1), (1, -1), (-1, 1), (-1, -1)]

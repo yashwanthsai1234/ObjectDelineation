@@ -1,7 +1,7 @@
 """One call that measures a mask three independent ways and checks they agree.
 
 The three measurements: Gray's bit-quad counts (checker.bitquad), the labeled topology (checker.topology, OpenCV
-Spaghetti labeling) and the rectilinear rings (checker.polygonize). They must agree on the Euler number
+Spaghetti labeling) and the rectilinear rings (checker.rings, the CUDA engine). They must agree on the Euler number
 chi8 = b0 - b1 (Euler-Poincare formula for 8-connected foreground, 4-connected background), on the number of outer
 rings and holes, on the area and on the ring vertices.
 
@@ -10,12 +10,13 @@ References:
   https://doi.org/10.1109/T-C.1971.223289
 - T. Y. Kong, A. Rosenfeld, "Digital topology: introduction and survey", CVGIP 48(3):357-393, 1989 (the (8, 4)
   pairing and the Euler number). https://doi.org/10.1016/0734-189X(89)90147-3
-- Sources of the three methods: the References lists of checker.bitquad, checker.topology and checker.polygonize.
+- Sources of the three methods: the References lists of checker.bitquad, checker.topology and of the rings'
+  numpy reference, tests/oracles/polygonize_oracle.py.
 """
 from dataclasses import dataclass
 
 from .bitquad import bitquads
-from .polygonize import polygonize
+from .rings import polygonize
 from .topology import as_mask, bbox, betti, size_filter
 
 

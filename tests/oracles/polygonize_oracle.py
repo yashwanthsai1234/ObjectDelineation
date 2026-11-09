@@ -1,4 +1,5 @@
-"""Exact mask -> rectilinear rings, linked with array operations only.
+"""Exact mask -> rectilinear rings, linked with array operations only: the numpy reference (oracle) of the engine's
+rings, objdel.checker.rings.polygonize (B1.4a moved it here from objdel.checker.polygonize; same signature and Ring).
 
 This mirrors the planned GPU linker: emit unit boundary edges, link each edge to
 its successor, find rings by min-label pointer jumping, order each ring by list
@@ -31,23 +32,13 @@ References:
 - Pointer jumping (list ranking, root finding): https://en.wikipedia.org/wiki/Pointer_jumping
 - Shoelace formula: https://en.wikipedia.org/wiki/Shoelace_formula
 """
-from dataclasses import dataclass
-
 import numpy as np
+
+from objdel.checker.rings import Ring
 
 # Directions: 0 east, 1 south, 2 west, 3 north.
 DX = np.array([1, 0, -1, 0])
 DY = np.array([0, 1, 0, -1])
-
-
-@dataclass
-class Ring:
-    pts: np.ndarray  # (k, 2) int64 corner vertices (x, y), canonical start first
-    area: int  # signed: > 0 outer, < 0 hole
-
-    @property
-    def hole(self):
-        return self.area < 0
 
 
 def boundary_edges(mask):

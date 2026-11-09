@@ -42,13 +42,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from objdel.checker import betti, instance_topology, min_area, polygonize, signature, size_filter
+from objdel.checker import betti, instance_topology, min_area, signature, size_filter
 from objdel.data import Item, splits
 from objdel.data import riga as riga_mod
 from objdel.eval import metrics
 from objdel.geometry import SCHEMAS, parse, serialize, to_masks
 from objdel.reward import ExpertCache, advantages_v4, fingerprint, score_batch, topology_reward
 from objdel.targets import BuildConfig, build_target, frame, target_set_hash
+from tests.oracles.polygonize_oracle import polygonize
 
 SEED = 20261019
 # Accepted across architectures (coordinator, 2026-10-19: F4 skipped): raw split scores, whose decisions (ncc_pairs,

@@ -24,7 +24,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-from objdel.checker.polygonize import polygonize
+from tests.oracles.polygonize_oracle import polygonize  # B1.4a moved the numpy polygonizer to the test oracles
 from objdel.checker.bitquad import bitquads
 from objdel.checker.certify import crop as _crop
 

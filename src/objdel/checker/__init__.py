@@ -3,7 +3,7 @@ volumes (`volume`: 3-D Betti numbers of stacked slices). Integer polygons (raste
 scoring are the CUDA checker's, objdel._gpucheck (cuda/; objdel.geometry.to_masks, objdel.reward.score)."""
 from .bitquad import bitquads
 from .certify import certify
-from .polygonize import polygonize
+from .rings import polygonize
 from .topology import InstanceTopology, as_mask, betti, instance_topology, min_area, signature, size_filter
 from .volume import betti3d
 

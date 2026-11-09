@@ -11,10 +11,11 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from scipy import ndimage
 
-from objdel.checker import instance_topology, min_area, polygonize, signature, size_filter
+from objdel.checker import instance_topology, min_area, signature, size_filter
 from objdel.geometry import MAX_RINGS, canonicalize, parse, serialize, to_mask
 from objdel.targets import BuildConfig, build_target, min_areas, target_set_hash
 from objdel.targets.build import _kept
+from tests.oracles.polygonize_oracle import polygonize
 
 
 def check(masks, names, ma=None, cfg=None):
