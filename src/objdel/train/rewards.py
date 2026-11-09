@@ -9,9 +9,9 @@ The aggregator (weight 1) returns objdel.reward.advantages_v4, whose group means
 (weight 0) return one term each, so A = advantages_v4 to float32 precision (R2, tests/test_train_trl.py) and every
 term is logged as rewards/<term>/mean. The geometric loggers (GATED: iou_tc, f5, g_area) return the term times
 objdel.reward.legal_gate, as advantages_v4 sees it: an illegal rollout logs 0, so neither the curves nor the
-Controller's best-checkpoint metric (eval_rewards/iou_tc/mean) credit illegal output (R2 follow-up). A weight-0
-logger adds 0 * value = 0 to TRL's sum, so the advantages do not depend on what the loggers return. A guard switch
-that gives a logger weight w adds w (term - group mean) (objdel.train.callbacks), with the gated term. TRL's own
+held-out eval_rewards/iou_tc/mean credit illegal output (R2 follow-up). A weight-0 logger adds 0 * value = 0 to
+TRL's sum, so the advantages do not depend on what the loggers return. A logger given weight w (GRPOConfig
+reward_weights) adds w (term - group mean), with the gated term. TRL's own
 `reward` metric is then the mean advantage, about 0: dashboards use the per-term logs.
 
 All functions share one computation per batch: the first call scores the batch (objdel.reward.score_batch: one CUDA
@@ -39,10 +39,7 @@ objdel.train.sample.export can turn it into eval_run JSONL (break-it B4-3), and 
 
 Group size: TRL's num_generations must be REWARD_V4.group, or v4 would silently score each TRL group as several
 independent groups (break-it B2-5). The keys cannot show it (an oversampled item drawn twice in a row gives 16
-equal keys), so objdel.train.configs.grpo_config and callbacks.Controller refuse any other value.
-
-Held-out audit: when `recorded` is a list (callbacks.Controller sets it), every scored completion is appended as
-(key, text, truncated, W, H, names); the controller audits the held-out evaluation's completions with it.
+equal keys), so objdel.train.configs.grpo_config refuses any other value.
 
 References:
 - TRL GRPOTrainer docs (reward function kwargs, log_metric / log_extra, multi_objective_aggregation,
@@ -109,7 +106,6 @@ class TRLReward:
     def __init__(self, caches: Callable[[str], Mapping[str, ExpertCache]], stop_ids: Iterable[int]):
         self.caches, self.stop = caches, frozenset(stop_ids)
         self.codes: set[str] = set()
-        self.recorded: list[tuple] | None = None
         self._last = (None, None)
         self._ahead, self._thread = None, None
 
@@ -121,7 +117,7 @@ class TRLReward:
                 return self._terms(completions, completion_ids, key, W, H, names, log_metric, log_extra, kind,
                                    cell)[name]
             f.__name__ = name
-            f.trl_reward = self  # lets callbacks.Controller find the reward among trainer.reward_funcs
+            f.trl_reward = self  # lets FastGRPO.prefetch_rewards find the reward among trainer.reward_funcs
             return f
         return [make(n) for n in (*LOGGED, AGGREGATOR)], [0.0] * len(LOGGED) + [1.0]
 
@@ -154,8 +150,6 @@ class TRLReward:
                              f"{len(keys)} completions (per_device_train_batch_size * steps_per_generation and "
                              f"per_device_eval_batch_size must be multiples of {g})")
         jobs = self._jobs(completions, completion_ids, keys, W, H, names)
-        if self.recorded is not None:
-            self.recorded += [(k, t, tr, w, h, n) for k, (t, tr, n, _, w, h) in zip(keys, jobs, strict=True)]
         ahead, self._ahead = self._ahead, None
         same = ahead is not None and ahead[0] == self._signature(keys, jobs)
         T = ahead[1].result() if same else _score(jobs)

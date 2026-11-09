@@ -203,3 +203,48 @@ def test_allmiss_counts_whole_groups():
 def test_no_kind_or_cell_logs_without_the_columns():
     m = view_logs([[MISS] * G])
     assert m["allmiss_share"] == 1.0 and not [k for k in m if k.startswith(("kind/", "cell/"))]
+
+
+# CLEAN6 (CT-09): the reward without the Controller's record list; pre-CLEAN literals captured at 08e6455
+ADVANTAGE_PRE_CLEAN = [1.6219269363403064, -2.92319357363354, -2.92319357363354, 1.6219269363403064,
+                       -2.2632475344344516, 1.6219269363403064, 1.6219269363403064, 1.6219269363403064,
+                       0.6228655995292476, 0.8391300385069551, 0.6228655995292476, -1.5441340302455195,
+                       -0.46553721920509716, 0.8460784426014387, 0.6228655995292476, -1.5441340302455195]
+IOU_PRE_CLEAN = [1.0, 0.0, 0.0, 1.0, 0.3025, 1.0, 1.0, 1.0, 0.37267080745341613, 0.4666666666666667,
+                 0.37267080745341613, 0.0, 0.3025, 0.42857142857142855, 0.37267080745341613, 0.0]
+
+
+def test_values_equal_the_pre_clean_literal_and_nothing_is_recorded():
+    kw, _, _ = batch(truncate=(1,))
+    rw = reward()
+    size = len(vars(rw))
+    got = call_all(rw, kw)
+    assert got[R.AGGREGATOR] == ADVANTAGE_PRE_CLEAN and got["iou_tc"] == IOU_PRE_CLEAN  # bit-equal
+    assert not hasattr(rw, "recorded")
+    for _ in range(1000):  # a new completions list each time: a full reward computation per call
+        call_all(rw, kw | {"completions": list(kw["completions"])})
+    assert not hasattr(rw, "recorded") and len(vars(rw)) == size
+
+
+def test_every_function_points_back_to_its_own_reward():
+    import copy
+
+    r1, r2 = reward(), reward()
+    assert all(f.trl_reward is r1 for f in r1.funcs()[0]) and all(f.trl_reward is r2 for f in r2.funcs()[0])
+    assert all(copy.copy(f).trl_reward is r1 for f in r1.funcs()[0])
+
+
+def test_fastgrpo_prefetch_finds_the_reward_through_the_back_reference():
+    """FastGRPO.prefetch_rewards reaches TRLReward.prefetch through f.trl_reward; without it prefetch would be off
+    with no error."""
+    pytest.importorskip("trl")
+    from objdel.train.fast import FastGRPO
+
+    kw, _, _ = batch()
+    rw = reward()
+    rows = [dict(zip(("key", "W", "H", "names"), c, strict=True))
+            for c in zip(kw["key"], kw["W"], kw["H"], kw["names"], strict=True)]
+    FastGRPO.prefetch_rewards(SimpleNamespace(reward_funcs=rw.funcs()[0], rows=rows), kw["completions"],
+                              kw["completion_ids"])
+    assert rw._ahead is not None
+    assert call_all(rw, kw)[R.AGGREGATOR] == call_all(reward(), kw)[R.AGGREGATOR]

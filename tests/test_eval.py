@@ -355,18 +355,6 @@ def test_area_tail_is_relative_to_the_baseline(nod):
     assert hedged["alarms"]["area_tail"]["fired"] is True
 
 
-def test_alarms_for_training_evaluations(nod):
-    """B4-4: alarms_for audits what a training evaluation holds (per completion: key, text, truncated, W, H, names;
-    a cache loader) exactly as hack_audit audits eval.metrics items; the baseline is a previous alarms_for result."""
-    from objdel.eval import alarms_for
-    raters, texts = nod
-    caches = {"nodule": ExpertCache.build(raters["nodule"])}
-    union = text_of({"nodule": caches["nodule"].union}, ("nodule",), raters)
-    base = alarms_for([("lidc/a", t, False, S, S, ["nodule"]) for t in texts * 2], {"lidc/a": caches}.__getitem__)
-    assert base == hack_audit([{"item_id": "lidc/a", "dataset": "lidc", **metrics(texts * 2, raters, S, S)}])
-    assert base["fired"] == []
-    a = alarms_for([("lidc/a", union, False, S, S, ["nodule"])] * 8, {"lidc/a": caches}.__getitem__, baseline=base)
-    assert {"duplicates", "inflation"} <= set(a["fired"])
 
 
 # ---------------------------------------------------------------- summary and Phase 2 entry gates

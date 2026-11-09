@@ -4,8 +4,8 @@ The unmarked end-to-end test runs the whole chain without data in ~15 s: a synth
 -> objdel.train.dataset.prepare (targets.frame, targets.build_target, reward.ExpertCache) -> grpo_rows (RIGA and LIDC
 rows mixed) -> the production TRLReward on the prepared caches inside a real TRL GRPOTrainer (configs.grpo_config,
 tiny offline Llama, char-level tokenizer, a scripted policy that emits rater targets, a truncated target, junk and
-an empty answer) -> callbacks.Controller on TRL's held-out evaluation -> the same completions through
-experiments/phase1/eval_run.py (store frames, eval.metrics) -> eval.gates.phase2_entry.
+an empty answer) -> TRL's held-out evaluation -> the same completions through experiments/phase1/eval_run.py
+(store frames, eval.metrics) -> eval.gates.phase2_entry.
 Tests `b4_<n>` reproduce the confirmed breakdowns, now fixed (experiments/phase1/impl/breakit/B4_wiring.md).
 """
 import ast
@@ -48,7 +48,6 @@ def chain(tmp_path_factory, synthetic_items, char_model):
     from objdel.train import configs
     from objdel.train import dataset as D
     from objdel.train import rewards as R
-    from objdel.train.callbacks import Controller
 
     work = tmp_path_factory.mktemp("b4")
     store.write(synthetic_items(("train", "val"), unanimous=True), work / "store")
@@ -90,12 +89,9 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 
     trainer._generate_and_score_completions = hook
     trainer._generate_single_turn = scripted
-    alarm_inputs = []
-    ctl = Controller(trainer, alarm=lambda m: alarm_inputs.append(dict(m)) and None)
-    trainer.add_callback(ctl)
     trainer.train()
-    return {"work": work, "recs": recs, "script": script, "calls": calls, "ctl": ctl, "trainer": trainer,
-            "alarm_inputs": alarm_inputs, "val_keys": list(val["key"])}
+    return {"work": work, "recs": recs, "script": script, "calls": calls, "trainer": trainer,
+            "val_keys": list(val["key"])}
 
 
 def _reference_advantages(chain, keys):
@@ -111,13 +107,14 @@ def _reference_advantages(chain, keys):
     return advantages_v4(score_batch(jobs)), score_batch(jobs)
 
 
-def test_e2e_store_to_trl_to_controller_to_eval_and_gates(chain):
+def test_e2e_store_to_trl_to_eval_and_gates(chain):
     from experiments.phase1 import eval_run
     train_calls = [c for c in chain["calls"] if c["train"]]
     eval_calls = [c for c in chain["calls"] if not c["train"]]
     assert len(train_calls) == 2 and len(eval_calls) == 2
     for c in chain["calls"]:  # R2 on the production path: TRL advantages = advantages_v4 of the real reward
         ref, T = _reference_advantages(chain, c["keys"])
+        assert len(c["adv"]) == len(c["keys"])  # one reward per completion
         assert np.abs(c["adv"] - ref).max() <= 1e-5
         by_key = {k: c["adv"][i:i + G] for i, k in zip(range(0, len(c["keys"]), G), c["keys"][::G], strict=True)}
         assert {k.split("/")[0] for k in by_key} == {"riga", "lidc"}  # mixed datasets in one reward call
@@ -134,9 +131,7 @@ def test_e2e_store_to_trl_to_controller_to_eval_and_gates(chain):
     assert {"error/truncated", "error/incomplete", "rewards/advantage_v4/mean", "rewards/iou_tc/mean"} <= set(train_log)
     assert not any(isinstance(v, float) and np.isnan(v) for h in logs for v in h.values())
     evals = [h for h in logs if "eval_rewards/iou_tc/mean" in h]
-    best = [e for e in chain["ctl"].events if e["kind"] == "best"]
-    assert evals and best and best[0]["value"] == pytest.approx(evals[0]["eval_rewards/iou_tc/mean"])
-    assert len(chain["alarm_inputs"]) == len(evals)
+    assert [h["step"] for h in evals] == [1, 2]  # TRL's held-out evaluation at every step
     # the same held-out completions through the eval runner: store frames, eval.metrics, report, gates
     rows = [{"item_id": k, "samples": [t for t, _ in chain["script"][k]],
              "truncated": [not e for _, e in chain["script"][k]]} for k in chain["val_keys"]]
@@ -164,9 +159,6 @@ def test_b4_3_logged_completions_carry_item_key_and_truncation(chain):
     assert "key" in cols and "truncated" in cols
 
 
-def test_b4_4_alarm_receives_hack_audit_statistics(chain):
-    m = chain["alarm_inputs"][0]
-    assert any(re.search(r"a_amax|above_tail|components|dup", k) for k in m)
 
 
 def test_eval_runner_edges(chain):
