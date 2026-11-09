@@ -49,6 +49,14 @@ from pathlib import Path
 NEEDS_FASTGRPO = ("fp16-seqmask", "lora-seqmask")
 
 
+def _finite(lo_open: bool):
+    def check(s: str) -> float:
+        if not (0 < (x := float(s)) if lo_open else 0 <= (x := float(s))) or x == float("inf"):
+            raise argparse.ArgumentTypeError(f"{s!r}: needs a finite number {'> 0' if lo_open else '>= 0'}")
+        return x
+    return check
+
+
 def _hex(n: int):
     def check(s: str) -> str:
         if not re.fullmatch(f"[0-9a-f]{{{n}}}", s):
@@ -81,12 +89,12 @@ def parse(argv=None) -> argparse.Namespace:
                     help="no training: merge the last checkpoint into --ckpt as <out>/final unless it exists")
     ap.add_argument("--rows-revision", type=_hex(40), help="HF commit of the rows root (provenance in rl.json)")
     ap.add_argument("--rows-manifest-sha256", type=_hex(64), help="SHA-256 of the rows root's manifest.json")
-    ap.add_argument("--budget-usd", type=float, help="stop and save when the session spend reaches this")
-    ap.add_argument("--session-start", type=float, default=env("OBJDEL_SESSION_START"),
+    ap.add_argument("--budget-usd", type=_finite(True), help="stop and save when the session spend reaches this")
+    ap.add_argument("--session-start", type=_finite(False), default=env("OBJDEL_SESSION_START"),
                     help="unix time the rental started (default: $OBJDEL_SESSION_START)")
-    ap.add_argument("--rate-usd-per-h", type=float, default=env("OBJDEL_RATE_USD_PER_H"),
+    ap.add_argument("--rate-usd-per-h", type=_finite(True), default=env("OBJDEL_RATE_USD_PER_H"),
                     help="USD per hour, bandwidth included (default: $OBJDEL_RATE_USD_PER_H)")
-    ap.add_argument("--fixed-usd", type=float, default=env("OBJDEL_FIXED_USD", "0"),
+    ap.add_argument("--fixed-usd", type=_finite(False), default=env("OBJDEL_FIXED_USD", "0"),
                     help="one-off USD of the session (default: $OBJDEL_FIXED_USD, else 0)")
     ap.add_argument("--heldout", type=Path, help="eval view for the held-out curve (val-shape items only)")
     ap.add_argument("--heldout-items", type=int, default=64)

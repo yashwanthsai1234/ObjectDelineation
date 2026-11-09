@@ -318,7 +318,7 @@ def launch_refusal(offer: dict, cap_hours: float) -> str:
     bw = {k: offer[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"dph": offer["dph_total"], **bw, "started": now, "deadline": now + int(cap_hours * 3600) + PULL_S}
     committed, worst = spend(committed=True), accrued(run, run["deadline"])
-    if committed + worst > HARD_STOP:
+    if not committed + worst <= HARD_STOP:  # not "> ": a NaN price must refuse too
         return f"hard stop: ${committed:.2f} committed + ${worst:.2f} worst case > ${HARD_STOP} (G10)"
     return ""
 
