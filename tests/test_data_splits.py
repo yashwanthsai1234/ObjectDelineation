@@ -1,6 +1,7 @@
-"""K11 split tests (ported from lab/t_data/splits/test_splits.py): group integrity, no cross-split near-duplicates,
-determinism, stratification, and injected-leak negative controls. Synthetic populations; the real store is checked
-by the data-backed tests at the end."""
+"""K11 split tests (ported from archive/phase1_lab/t_data/splits/test_splits.py): group integrity,
+no cross-split near-duplicates, determinism, stratification, and
+injected-leak negative controls. Synthetic populations; the real store is checked by the data-backed tests at
+the end."""
 import csv
 import json
 from collections import Counter

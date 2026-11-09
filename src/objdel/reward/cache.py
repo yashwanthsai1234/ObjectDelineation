@@ -71,7 +71,7 @@ References:
 - Missing labels in annotator models (only observed labels enter the likelihood): Stan User's Guide, "Data coding
   models" (Dawid-Skene), https://mc-stan.org/docs/2_32/stan-users-guide/data-coding-models.html ; R. Passonneau,
   B. Carpenter, "The benefits of a model of annotation", TACL 2014, https://aclanthology.org/Q14-1025/
-- Lab derivation and evidence: experiments/phase1/lab/t_reward/rewardcore/band.py, results/ITERATION3.md (R5).
+- Lab derivation and evidence: archive/phase1_lab/t_reward/rewardcore/band.py, results/ITERATION3.md (R5).
 """
 import hashlib
 import os

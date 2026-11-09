@@ -82,8 +82,8 @@ source_pkgs = ["objdel"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-# Lab prototypes are frozen evidence for experiments/phase1/PLAN.md; production code is linted when promoted.
-extend-exclude = ["experiments/phase1/lab"]
+# Archived code is frozen evidence (archive/*/README.md); it is never linted.
+extend-exclude = ["archive"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

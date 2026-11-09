@@ -10,7 +10,7 @@ variants live in tests/oracles/reward_harness.py and reward_variants.py.
 
 References:
 - Gate definitions: experiments/phase1/PLAN.md §7 (K3, K4, K8, K8b, K9, K10, R3, R4, R5); reward v4:
-  objdel.reward (its module references); lab protocol: experiments/phase1/lab/t_reward/results/ITERATION4.md.
+  objdel.reward (its module references); lab protocol: archive/phase1_lab/t_reward/results/ITERATION4.md.
 - Spearman rho (K8): https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.spearmanr.html
 - Cluster (item-level) percentile bootstrap CIs (K8, K9, R3, R4): C. A. Field, A. H. Welsh, "Bootstrapping clustered
   data", JRSS B 69(3), 2007, https://doi.org/10.1111/j.1467-9868.2007.00593.x

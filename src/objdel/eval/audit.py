@@ -41,7 +41,7 @@ References:
 - VLM-R1 over-prediction hack (§5.3.1) and its length guard min(1, L_gt / L_pred) (§4.3, Eq. 7) (area inflation
   analogue): https://arxiv.org/abs/2504.07615
 - A. G. Cohn, N. M. Gotts, egg-yolk regions: https://www.researchgate.net/publication/2526626
-- Plan §9 alarm lines; R3 adversaries: experiments/phase1/lab/t_reward/scripts/iter4_adversaries.py
+- Plan §9 alarm lines; R3 adversaries: archive/phase1_lab/t_reward/scripts/iter4_adversaries.py
 - Thresholds re-checked on the M8 demo models (experiments/phase1/impl/fixes/F2.md, I17 / I18).
 
 `alarms_for` runs the audit on what a training evaluation holds (per completion: item key, text, truncation flag, W, H,

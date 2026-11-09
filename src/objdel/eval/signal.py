@@ -1,5 +1,5 @@
 """GRPO-signal panel of K = 8 sampled groups per item, D12 checkpoint rule R-B and the per-item Spearman (PLAN §5.1
-G-signal / G-probe, D12, M11; promoted from experiments/phase2/lab/B2 score.py, analyze.py, posthoc.py `parts`).
+G-signal / G-probe, D12, M11; promoted from archive/phase2_lab/B2 score.py, analyze.py, posthoc.py `parts`).
 
 Per item (one GRPO group of G = 8 samples at T = 1), from `objdel.eval.metrics` output (`group`):
 - R = 0.3 IoU_tc + 0.3 F5 + 0.1 legal + 0.3 g_area, the G-probe raw composite on the legality-gated terms

@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
 import numpy as np
@@ -297,8 +298,59 @@ def test_destroy_never_stop(E):
 
 def test_code_snapshot_has_no_riga_derived_results():
     leaks = [f for f in P.code_files() if "riga" in f.lower() and f.endswith((".csv", ".json", ".jsonl"))]
-    leaks += [f for f in P.code_files() if f.startswith("experiments/phase0/results/vlm_")]
+    leaks += [f for f in P.code_files() if f.startswith("docs/research/records/phase0/results/vlm_")]
     assert not leaks, leaks[:5]
+
+
+RIGA_BLOCK = """/docs/research/records/phase0/results/medsam_riga.csv
+/docs/research/records/phase0/results/riga/
+/docs/research/records/phase0/results/riga_outlines/
+/docs/research/records/phase0/results/vlm_box/
+/docs/research/records/phase0/results/vlm_polygon/
+/archive/phase1_lab/t_reward/results/h5_items.csv
+/archive/phase1_lab/t_data/riga/out_maxrg_check/
+/archive/phase1_lab/t_data/riga/maxrg_vs_prime.json
+/archive/phase1_lab/t_data/splits/out/riga_images.csv
+/archive/phase1_lab/t_reward/results/advantage_groups.json
+/archive/phase1_lab/t_reward/results/iter3_r5_raw.json
+/archive/phase1_lab/t_stack/results/t[24]_*.json""".splitlines()
+RIGA_TABLES = {"archive/phase1_lab/t_data/riga/inventory.json", "archive/phase1_lab/t_data/riga/repo_parity.json"}
+
+
+def riga_block_hits(paths, block=RIGA_BLOCK):
+    """Paths that a line of the RIGA block of .gitignore covers (file line, folder line, or the t[24] glob)."""
+    return [p for p in paths if any(p.startswith(b[1:]) if b.endswith("/") else fnmatchcase(p, b[1:]) for b in block)]
+
+
+def riga_named(paths):
+    return [p for p in paths if "riga" in p.lower() and p.lower().endswith((".csv", ".json", ".jsonl"))
+            and p not in RIGA_TABLES]  # fmt: skip
+
+
+def committable(root):
+    out = subprocess.run(["git", "ls-files", "-z", "-co", "--exclude-standard"], cwd=root, capture_output=True,
+                         text=True, check=True).stdout  # what `git add -A` stages
+    return [f for f in out.split("\0") if f]
+
+
+def test_no_riga_derived_file_is_committable(tmp_path):
+    """CLEAN5 step 0: the RIGA block of .gitignore follows the moved trees (RIGA terms: results stay local)."""
+    assert (ROOT / ".gitignore").read_text().count("\n".join(RIGA_BLOCK)) == 1  # the constant is the real block
+    files = committable(ROOT)
+    assert files and riga_block_hits(files) == [] and riga_named(files) == []
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    new = ["docs/research/records/phase0/results/riga/masks.csv", "archive/phase1_lab/t_stack/results/t2_x.json",
+           "docs/x/riga/a.csv"]  # fmt: skip
+    for n in new:
+        (tmp_path / n).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / n).write_text("x")
+    gi = tmp_path / ".gitignore"
+    gi.write_text((ROOT / ".gitignore").read_text())
+    got = committable(tmp_path)
+    assert riga_named(got) == ["docs/x/riga/a.csv"] and riga_block_hits(got) == []
+    gi.write_text("")
+    got = committable(tmp_path)
+    assert set(riga_block_hits(got)) == set(new[:2])
 
 
 def golden_leaks(folder):

@@ -5,8 +5,8 @@
     build_topology(out, patches("data/store", "val"), stats["holes"], stats["multis"], stats["diams"], seed=2027)
     score_precision(rows, out); score_topology(rows, out)             # rows: {"item_id", "samples": [text, ...]}
 
-Promoted from lab/B3 (probe_lib, precision_probe, probe_rule, topo_probe_v3 = generator v3e, hole_census,
-power_c2) and lab/A4/probe_proto; REPORT.md P2 and Addendum A hold the evidence.
+Promoted from archive/phase2_lab/B3 (probe_lib, precision_probe, probe_rule, topo_probe_v3 = generator v3e, hole_census,
+power_c2) and archive/phase2_lab/A4/probe_proto; REPORT.md P2 and Addendum A hold the evidence.
 
 Generator 2 (D19): star polygons r(t) = r0 (1 + E e cos(2t + p2) + A sum_{k=3..12} c_k cos(kt + pk)), E = 0.2,
 A = 0.15 (calibrated: centroid-disc IoU 0.822 vs real 0.806), spicules with p = 0.3, rasterized on the 0-1000 grid by
@@ -295,7 +295,8 @@ def fidelity(holes, multis, seed, n_holes=300, n_two=200):
 # ------------------------------------------------------------------------------------------------- real data
 def lidc_stats(store_root):
     """Train diameters of the voting raters (>= 2.5 px), the median per frame side, and the hole / multi-part
-    geometry records of the non-simple targets after the size rule (lab/B3 census + hole_census, same order)."""
+    geometry records of the non-simple targets after the size rule
+    (archive/phase2_lab/B3 census + hole_census, same order)."""
     from objdel.data import store
     from objdel.reward.cache import voters
     from objdel.targets import frame
@@ -325,7 +326,8 @@ def lidc_stats(store_root):
 
 
 def patches(store_root, split, n=200, side=125, per_patient=3, seed=11):
-    """[(group_id, HU patch)]: lung-parenchyma windows away from the nodules (lab/B3 background_patches)."""
+    """[(group_id, HU patch)]: lung-parenchyma windows away from the nodules
+    (archive/phase2_lab/B3 background_patches)."""
     from objdel.data import store
 
     rng, out, count = np.random.default_rng(seed), [], {}
@@ -449,7 +451,8 @@ def build_topology(out, patch_list, holes, multis, diams, seed=2027, per_bin=120
     ]
     items += _draw(multis, n_two, make_two, rng)
     ctrl = []
-    while len(ctrl) < n_simple:  # generator-2 controls, fourier / lobulated alternating (lab/B3 topo_probe_v3)
+    # generator-2 controls, fourier / lobulated alternating (archive/phase2_lab/B3 topo_probe_v3)
+    while len(ctrl) < n_simple:
         if (it := make_item(("fourier", "lobulated")[len(ctrl) % 2], float(rng.choice(diams)), rng)) is not None:
             ctrl.append(it | {"family": "simple"})
     return _write(
@@ -549,9 +552,10 @@ def score_precision(rows, root="data/eval_views/probe-precision", split="val", r
 
 
 def stratified_ci(per_bin, weights, rng, B=2000):
-    """Weighted mean of the bin means and its within-bin percentile bootstrap 95 % CI (lab/B3 power_c2.pooled; also
-    c2_analyze's pooled CI). Rounded to 12 decimals: an exact 288 / 960 hits sums to 0.29999999999999993 in floats and
-    would miss the C2 floor 0.30 (BK2-4; the same tolerance as objdel.eval.signal.DIGITS)."""
+    """Weighted mean of the bin means and its within-bin percentile bootstrap 95 % CI
+    (archive/phase2_lab/B3 power_c2.pooled; also c2_analyze's pooled CI).
+    Rounded to 12 decimals: an exact 288 / 960 hits sums to 0.29999999999999993 in floats and would miss the
+    C2 floor 0.30 (BK2-4; the same tolerance as objdel.eval.signal.DIGITS)."""
     per_bin = [np.asarray(x, float) for x in per_bin]
     est = sum(w * x[rng.integers(0, len(x), (B, len(x)))].mean(1) for w, x in zip(weights, per_bin, strict=True))
     lo, hi = np.percentile(est, [2.5, 97.5])

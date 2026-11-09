@@ -12,7 +12,7 @@ from objdel.geometry import GRID, MAX_CHARS, MAX_RINGS, MAX_VERTICES, SCHEMAS, c
 
 RIGA, LIDC = SCHEMAS["riga"], SCHEMAS["lidc"]
 
-# Canonical texts produced by the lab target builder (experiments/phase1/lab/t_targets, BuildConfig() and the
+# Canonical texts produced by the lab target builder (archive/phase1_lab/t_targets, BuildConfig() and the
 # lossless mode give the same text here) for hand-made masks of 25 x 20 px, serialized in the lab grammar.
 LAB_TARGETS = [
     (LIDC, '{"nodule":[{"outer":[[240,200],[600,200],[600,400],[800,400],[800,800],[400,800],[400,600],[240,600]],'

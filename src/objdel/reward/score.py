@@ -27,7 +27,7 @@ illegal one keeps its terms for logging; advantages_v4 zeroes them through the l
 list is a legal empty mask, scored like any other mask.
 
 References:
-- Reward v4 definition: experiments/phase1/lab/t_reward/results/ITERATION4.md; plan §3.2, §4.3.
+- Reward v4 definition: archive/phase1_lab/t_reward/results/ITERATION4.md; plan §3.2, §4.3.
 - VLM-R1's count guard s_ovd = min(1, L_gt / L_pred) multiplying the detection reward against over-prediction
   (§4.3, Eq. 7-8; the hack it removes: §5.3.1), the analogue of g_area: https://arxiv.org/abs/2504.07615 (full text
   https://arxiv.org/html/2504.07615)

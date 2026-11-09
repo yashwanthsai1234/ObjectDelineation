@@ -81,7 +81,7 @@ References:
 - NSD: S. Nikolov et al., https://arxiv.org/abs/1809.04430 ; reference code:
   https://github.com/google-deepmind/surface-distance (metrics.py, lookup_tables.py) ; Metrics Reloaded:
   https://arxiv.org/abs/2206.01653
-- Per-image TV / JS and minimum-mode retention: experiments/phase1/lab/t_dynamics/REPORT.md, grpo_toy.py
+- Per-image TV / JS and minimum-mode retention: archive/phase1_lab/t_dynamics/REPORT.md, grpo_toy.py
 - Duplicate hash on packed rasters (numpy.packbits):
   https://numpy.org/doc/stable/reference/generated/numpy.packbits.html ; identical rewards give a zero-signal group
   (DAPO dynamic sampling): https://arxiv.org/abs/2503.14476

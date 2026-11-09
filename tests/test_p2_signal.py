@@ -16,6 +16,7 @@ from objdel.eval import signal as S
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = json.loads((Path(__file__).parent / "p2_signal_fixture.json").read_text())  # B2 shifted LFM, 10 items
+LAB = json.loads((Path(__file__).parent / "goldens" / "p2_lab_refs.json").read_text())  # lab outputs, seeded inputs
 SHALLOW, DEEP = "lfm2.5-vl-450m_s0", "lfm2.5-vl-450m_s0_n150"
 
 
@@ -89,19 +90,14 @@ def test_paired_equals_b2():
 
 
 def test_live_b2_functions_and_group_scoring():
-    """B2's score / analyze / posthoc imported live (they pull torch through lab B1) on fresh random groups, and
-    S.group = B2's score_view on synthetic items scored through objdel.eval.metrics."""
-    pytest.importorskip("torch")
-    from experiments.phase2.lab.B2 import analyze as A
-    from experiments.phase2.lab.B2 import posthoc as PH
-    from experiments.phase2.lab.B2.score import score_view
+    """Live per_item and group against the lab B2 outputs recorded in tests/goldens/p2_lab_refs.json
+    (record_p2_lab_refs.py in archive/phase2_lab); group is checked on synthetic items scored through metrics."""
     from objdel.reward import ExpertCache
     from objdel.targets import build_target
 
     g = rand_groups(np.random.default_rng(3))
-    v = {k: [x[k] for x in g] for k in g[0]}
     got = S.per_item(g)
-    for k, x in (A.group_metrics(v) | PH.parts(v)).items():
+    for k, x in LAB["group"].items():
         np.testing.assert_allclose(got[k], x, atol=1e-12, err_msg=k)
 
     yy, xx = np.ogrid[:50, :50]
@@ -112,13 +108,12 @@ def test_live_b2_functions_and_group_scoring():
     samples = texts + ["garbage", texts[0], "{"]
     caches = {"nodule": ExpertCache.build(raters["nodule"])}
     item = {"item_id": "lidc/x/n000/z001", "caches": caches, "W": 50, "H": 50, "names": ("nodule",)}
-    raw = score_view([{"item_id": item["item_id"], "samples": samples, "truncated": [False] * 8}], [item])
     from objdel.eval import metrics
 
     m = metrics(samples, {"nodule": raters["nodule"]}, 50, 50, ("nodule",), [False] * 8, caches)
     mine = S.group(item["item_id"], samples, m)
-    for k in ("R", "legal", "iou_tc", "advantage", "sigma", "dup", "distinct"):
-        assert mine[k] == raw[k][0], k
+    for k, x in LAB["score_view_row0"].items():
+        assert mine[k] == x, k
 
 
 # ---------------------------------------------------------------- R-B
@@ -187,13 +182,10 @@ def test_spearman_equals_scipy():
 
 
 def test_c2_stratified_bootstrap_equals_power_c2():
-    from experiments.phase2.lab.B3 import power_c2
-
     rng = np.random.default_rng(11)
     bins = [rng.random(120) for _ in range(3)]
-    ref = power_c2.pooled(bins, np.random.default_rng(0))
-    assert C2.pooled_ci(bins, seed=0) == pytest.approx(ref, abs=1e-12)  # rounded to 12 decimals (BK2-4)
-    assert C2.WEIGHTS == tuple(power_c2.W)
+    assert C2.pooled_ci(bins, seed=0) == pytest.approx(LAB["c2_pooled"], abs=1e-12)  # rounded to 12 decimals (BK2-4)
+    assert C2.WEIGHTS == tuple(LAB["W"])
 
 
 def fake_seed(rng, level, legal=0.95, fns=0.01):

@@ -19,7 +19,7 @@ with nvcc, which /opt/vllm does not have (R0 sampled with --logprobs, another pa
 the same distribution (top_k 0, top_p 1: the full softmax).
 
 References: https://docs.vllm.ai/en/latest/serving/offline_inference.html ,
-https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html , experiments/phase2/lab/B5/vllm_parity.py and REPORT.md
+https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html , archive/phase2_lab/B5/vllm_parity.py and REPORT.md
 """
 import argparse
 import hashlib

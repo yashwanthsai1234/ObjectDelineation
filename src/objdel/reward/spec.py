@@ -1,10 +1,10 @@
-"""REWARD_V4: the frozen constants of reward v4 (plan §4.3; lab/t_reward/results/ITERATION4.md).
+"""REWARD_V4: the frozen constants of reward v4 (plan §4.3; archive/phase1_lab/t_reward/results/ITERATION4.md).
 
 Changing any value is a change of the reward definition, not of its implementation: it needs a new lab
 round, and it invalidates every stored ExpertCache (their fingerprint includes these values).
 
 References:
-- Values: experiments/phase1/PLAN.md §4.3 and experiments/phase1/lab/t_reward/results/ITERATION4.md (weights, floors,
+- Values: experiments/phase1/PLAN.md §4.3 and archive/phase1_lab/t_reward/results/ITERATION4.md (weights, floors,
   c_topo, lam, eps, iou_gate), ITERATION3.md (debias, clip, no batch z).
 - Frozen dataclass, astuple for the fingerprint: https://docs.python.org/3/library/dataclasses.html ; SHA-256:
   https://docs.python.org/3/library/hashlib.html

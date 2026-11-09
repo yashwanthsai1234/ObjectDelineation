@@ -28,7 +28,7 @@ from experiments.phase2.vast import policy as P
 ROOT = Path(__file__).resolve().parents[1]
 VAST = ROOT / "experiments" / "phase2" / "vast"
 DOCKER = ROOT / "experiments" / "phase2" / "docker"
-SNAP = ROOT / "experiments" / "phase2" / "lab" / "A3" / "vast_snapshot.json"
+SNAP = ROOT / "tests" / "fixtures" / "vast_snapshot.json"
 IDENTITY = "AGE-SECRET-KEY-1FAKEIDENTITYFORTESTSQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
 API_KEY = "fakevastscopedkey0123456789abcdef"
 PAT = "ghp_fakeGHCRreadPAT0123456789"
@@ -783,14 +783,15 @@ def test_image_check_python_compiles():
     assert [w for w in words if w not in text] == []
 
 
+BASE_DIGEST = "python:3.12-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
+
+
 def test_dockerfile_phase2():
     text = (DOCKER / "Dockerfile.phase2").read_text()
-    lab = (ROOT / "experiments/phase2/lab/B5/Dockerfile.phase2").read_text()
-    digest = re.search(r"python:3\.12-slim-trixie@sha256:[0-9a-f]{64}", lab).group(0)
-    words = ("/opt/venv", "/opt/vllm", "train.txt", "vllm.txt", " age ", "openssh-server", "rsync", "tmux", digest)
+    words = ("/opt/venv", "/opt/vllm", "train.txt", "vllm.txt", " age ", "openssh-server", "rsync", "tmux", BASE_DIGEST)
     assert [w for w in words if w not in text] == []
     assert "COPY src" not in text and "COPY . " not in text  # code is never baked in
-    assert digest in (DOCKER / "Dockerfile.vllm_native").read_text()
+    assert BASE_DIGEST in (DOCKER / "Dockerfile.vllm_native").read_text()
 
 
 # --- bundle builder (§4.4) ------------------------------------------------------------------------------------------
