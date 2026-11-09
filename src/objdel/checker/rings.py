@@ -47,6 +47,10 @@ def trace(masks: Sequence, offsets: Sequence[tuple[int, int]] | None = None) -> 
     ValueError) in one engine call. offsets[i] (x, y) is added to mask i's corners, e.g. after cropping."""
     ms = [as_mask(m) for m in masks]
     raw = np.zeros((len(ms), 2), np.int64) if offsets is None else np.asarray(offsets)
+    if raw.size == 0 and not ms:
+        raw = np.zeros((0, 2), np.int64)
+    if raw.dtype.kind not in "iuf":
+        raise ValueError(f"offsets dtype {raw.dtype}, need real numbers")
     if raw.shape != (len(ms), 2):
         raise ValueError(f"offsets shape {raw.shape}, need ({len(ms)}, 2)")
     if raw.size and not (np.issubdtype(raw.dtype, np.integer) or np.array_equal(raw, np.round(raw))):
