@@ -10,17 +10,42 @@ g_probe.make_trainer and objdel.train.sample (T = 1, as the G-probe), scores wit
 over items with a 95 % item bootstrap interval. Illegal samples score 0 on every geometric term (the reward's rule).
 - iou_tc: IoU against the doctors' band (the reward's term); f5: the boundary score (calibrated so a new doctor
   scores 0.95); precision / recall / dice: pixels against the doctors' strict-majority outline.
+A frozen view (objdel.data.quality.FROZEN) runs only when its content hash and target-set hash equal its entry in
+docs/reference/frozen_views.json (B1.6; shipped to the box by vast.policy.code_files), and --split must name a set of
+the view (the test view is read only with --split test). Both checks run before any model load.
 Reads untrusted data: run with python -I.
 """
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
 TERMS = ("iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote")
+FROZEN_VIEWS = Path(__file__).resolve().parents[2] / "docs/reference/frozen_views.json"  # /workspace/src on the box
+
+
+def frozen_entry(view_name: str) -> dict | None:
+    """The view's frozen_views.json entry, or None (no entry, or no file)."""
+    return json.loads(FROZEN_VIEWS.read_text()).get(view_name) if FROZEN_VIEWS.is_file() else None
+
+
+def check_view(view: Path, split: str) -> None:
+    """Exit unless `split` is a set of the view and a frozen view's hashes equal its frozen_views.json entry."""
+    from objdel.data import quality as Q
+    sets = json.loads((view / "manifest.json").read_text())["sets"]
+    if f"lidc/{split}" not in sets:
+        sys.exit(f"final_eval: {view} holds {sorted(sets)}, not lidc/{split} (the test view needs --split test)")
+    if view.name not in Q.FROZEN:
+        return
+    if (e := frozen_entry(view.name)) is None:
+        sys.exit(f"final_eval: {view.name} is a frozen view with no frozen_views.json entry (looked in {FROZEN_VIEWS})")
+    for key, got in (("content_sha256", Q.view_content_sha256(view)), ("target_set_sha256", Q.target_set_sha256(view))):
+        if got != e[key]:
+            sys.exit(f"final_eval: {view.name} {key} {got} differs from frozen_views.json {e[key]}: refusing to score")
 
 
 def per_item(result: dict, obj: str = "nodule") -> dict:
@@ -55,6 +80,7 @@ def main(argv=None) -> None:
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--per-call", type=int, default=64, help="items per vLLM generation call")
     a = ap.parse_args(argv)
+    check_view(a.view, a.split)
 
     import torch
     from PIL import Image
