@@ -1,8 +1,11 @@
 """SFT targets (plan D11, gates K5-K7, R1 target part): every target parses, is canonical and legal, keeps the
 rater mask's topology (raw and size-filtered signature), has IoU >= 0.99 with it, and is deterministic."""
+import hashlib
 import json
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -15,6 +18,7 @@ from objdel.checker import instance_topology, min_area, polygonize, signature, s
 from objdel.geometry import MAX_RINGS, canonicalize, parse, serialize, to_mask
 from objdel.targets import BuildConfig, build_target, min_areas, target_set_hash
 from objdel.targets.build import _kept
+from tests.oracles.crops_oracle import mask_sha, pad_div
 
 
 def check(masks, names, ma=None, cfg=None):
@@ -378,37 +382,45 @@ def test_target_set_hash():
     assert h != target_set_hash([rows[0], ("b", "3", '{"nodule":[]}')])
 
 
+GOLDEN = Path(__file__).parent / "goldens" / "targets_lab.npz"
+
+
+def test_targets_lab_golden_holds_no_masks():
+    """CLEAN4 licence rule: per-case LIDC records, RIGA only as three totals, nothing 2-D, no bool, no pickle."""
+    z = np.load(GOLDEN, allow_pickle=False)
+    lidc = [k for k in z.files if k.startswith("lidc/")]
+    assert len(lidc) == 329 and all(re.fullmatch(r"lidc/[^/]+/[^/]+", k) for k in lidc)
+    assert sorted(set(z.files) - set(lidc)) == ["riga_cases", "riga_sha", "riga_vertices"]
+    assert all(z[k].ndim <= 1 and z[k].dtype != bool and z[k].size <= 4096 for k in z.files)
+    assert GOLDEN.stat().st_size < 1_000_000
+
+
 @pytest.mark.data
-def test_fixtures_differential_vs_lab_builder(fixtures_dir):
-    """R1 target part on fixture crops, and agreement with the lab builder (lab/t_targets): LIDC texts identical
-    except where a pinch is bevelled along its crack edges (3 / 1,969 on all fixtures, same vertex count); RIGA objects
-    never longer in total."""
-    from pathlib import Path
-    lab = Path(__file__).resolve().parents[1] / "experiments/phase1/lab/t_targets"
-    sys.path.insert(0, str(lab))
-    try:
-        from targets.builder import RIGA_DERIVED
-        from targets.builder import BuildConfig as LabConfig
-        from targets.builder import build_target as lab_build
-        from targets.crops import apply_crop
-    finally:
-        sys.path.remove(str(lab))
-    lab_v = prod_v = same = lidc = 0
+def test_fixtures_differential_vs_lab_golden(fixtures_dir):
+    """R1 target part on fixture crops against what the lab builder recorded (tests/goldens/targets_lab.npz): the
+    crop hashes match, LIDC vertex counts are equal and texts identical except where a pinch is bevelled along its
+    crack edges (1 of 329 here), and RIGA objects are never longer in total."""
+    z = np.load(GOLDEN, allow_pickle=False)
+    seen, same, prod_v, riga_n, riga_h = set(), 0, 0, 0, hashlib.sha256()
     for ds, step in (("riga", 20), ("lidc", 6)):
-        z = np.load(fixtures_dir / f"{ds}_experts.npz")
+        zf = np.load(fixtures_dir / f"{ds}_experts.npz")
         names = ("disc", "cup") if ds == "riga" else ("nodule",)
-        items = sorted({k.rsplit("__", 1)[0] for k in z.files})[::step]
-        for it in items:
-            st_ = {n: z[f"{it}__{n}"].astype(bool) for n in names}
+        for it in sorted({k.rsplit("__", 1)[0] for k in zf.files})[::step]:
+            st_ = {n: zf[f"{it}__{n}"].astype(bool) for n in names}
             for r in range(st_[names[0]].shape[0]):
-                m = apply_crop({n: st_[n][r] for n in names}, "pad_div")[0]
+                m = pad_div({n: st_[n][r] for n in names})
                 t, _ = check(m, names)
-                _, lo, _ = lab_build(m, {n: "parts" for n in names}, LabConfig(), RIGA_DERIVED if ds == "riga" else ())
-                if ds == "lidc":
-                    lidc += 1
-                    same += t.text == serialize(canonicalize({n: lo[n].parts for n in names}), names)
-                    assert t.info["nodule"]["vertices"] == lo["nodule"].vertices
-                else:
-                    lab_v += sum(lo[n].vertices for n in names)
+                if ds == "riga":
+                    riga_n += 1
+                    riga_h.update(mask_sha(m).encode())
                     prod_v += sum(t.info[n]["vertices"] for n in names)
-    assert prod_v <= lab_v and same >= 0.99 * lidc
+                    continue
+                key = f"lidc/{it}/{r}"
+                seen.add(key)
+                assert mask_sha(m) == z[key]["crop_sha"], f"{key}: the ported crop differs from the lab crop"
+                assert t.info["nodule"]["vertices"] == z[key]["vertices"], key
+                same += hashlib.sha256(t.text.encode()).hexdigest() == z[key]["text_sha"]
+    assert seen == {k for k in z.files if k.startswith("lidc/")}
+    assert riga_n == z["riga_cases"] and riga_h.hexdigest() == z["riga_sha"]
+    print("same", same, "lidc", len(seen), "lab_v", int(z["riga_vertices"]), "prod_v", prod_v)
+    assert 100 * same >= 99 * len(seen) and prod_v <= z["riga_vertices"]

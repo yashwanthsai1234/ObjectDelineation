@@ -167,7 +167,7 @@ def reference(ref, model: str | None, set_sha256: str) -> float:
     return doc["reference"]
 
 
-def preload(cfg: dict, model: str | None) -> dict:
+def load_items(cfg: dict, model: str | None) -> dict:
     """{"prepared", "reference"} -> the fixed set and its checked reference {"items", "set_sha256", "reference"}."""
     from objdel.eval import vision
 
@@ -198,11 +198,11 @@ def vision_reference(args: RunArgs) -> int:
 
 
 def vision_check(model, processor, cfg: dict) -> dict:
-    """objdel.eval.vision.check (inference mode, module modes restored) on the fixed set: cfg = preload's output, or
+    """objdel.eval.vision.check (inference mode, module modes restored) on the fixed set: cfg = load_items' output, or
     {"prepared", "reference", "model"?} (select_ckpt)."""
     from objdel.eval import vision
 
-    cfg = cfg if "items" in cfg else preload(cfg, cfg.get("model"))
+    cfg = cfg if "items" in cfg else load_items(cfg, cfg.get("model"))
     images = [it["image"] for it in cfg["items"][: vision.N_IMAGES]]
     res = vision.check(model, processor, images, cfg["items"], reference=cfg["reference"])
     return res | {"set_sha256": cfg["set_sha256"]}
@@ -289,7 +289,7 @@ def train(args: RunArgs) -> int:
     if view["config"]["epochs"] < math.ceil(deep):  # S1-8, before anything loads
         raise ValueError(f"{args.view}: {view['config']['epochs']} view epoch(s), the deepest branch decays to "
                          f"{deep:g} epochs: rebuild it with build_views --epochs {math.ceil(deep)}")
-    vis = args.vision and preload(args.vision, args.model)
+    vis = args.vision and load_items(args.vision, args.model)
     out.mkdir(parents=True, exist_ok=True)
     old = json.loads((out / "manifest.json").read_text()) if (out / "manifest.json").exists() else None
     if old and not args.resume:

@@ -18,7 +18,7 @@ References:
     https://arxiv.org/abs/2302.07387 (PolyFormer §3: clockwise, start nearest the top-left, polygons ordered by start)
     https://arxiv.org/abs/2507.04664 (VectorLLM: clockwise from the top-left corner; a fixed start helps SFT)
     https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.6 (right-hand rule: exterior CCW, holes CW, y up)
-    experiments/phase1/lab/t_targets/targets/builder.py (canon_ring, canonical_parts)
+    archive/phase1_lab/t_targets/targets/builder.py (canon_ring, canonical_parts)
     experiments/phase1/EXECUTION.md §3 (checker contract: packed rings, roles, even-odd mask, DEFECTS)
 """
 from __future__ import annotations

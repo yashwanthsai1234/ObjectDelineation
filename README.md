@@ -27,7 +27,7 @@ reinforcement learning with TRL and vLLM on one GPU. The checker itself is a cus
 - **Output:** polygon JSON on a 0-1000 grid: rings, holes, nothing else.
 - **Reward:** format gate, ring legality, IoU against the expert set, and topology (b0 parts, b1 holes).
 - **Why sets, not one mask:** LIDC readers disagree on topology for 6.1 % of nodules, and every nodule with a hole
-  is one they disagree on (`experiments/phase0/RESULTS.md`). A shape that any expert drew counts as correct.
+  is one they disagree on (`docs/research/records/phase0/RESULTS.md`). A shape that any expert drew counts as correct.
   Pixels where experts disagree count as neither right nor wrong.
 
 ## ⚙️ How it works
@@ -95,8 +95,8 @@ LIDC-IDRI is a 3-D CT collection, and a nodule is a stack of slices. The system 
 - **Slice to volume.** The model outlines one slice at a time. The polygons of consecutive slices are rasterized
   and stacked into one voxel mask (`objdel.checker.volume.stack`).
 - **Voxel clusters.** Annotations from different readers are grouped into nodules by shared voxels
-  (`experiments/phase0/lidc_census.py`; the `b0_3d_*` and `cavity_any_*` columns in
-  `experiments/phase0/results/lidc/clusters.csv`).
+  (`archive/phase0/lidc_census.py`; the `b0_3d_*` and `cavity_any_*` columns in
+  `docs/research/records/phase0/results/lidc/clusters.csv`).
 - **Three Betti numbers.** Each voxel is a closed unit cube, so parts are 26-connected and the background is
   6-connected. `betti3d` counts b0 (parts) and b2 (cavities) by labeling, and b1 (tunnels) from the Euler
   characteristic of the cube complex (χ = b0 − b1 + b2). Slice-level b0 and b1 are the 2-D shadows of the same idea.
@@ -110,10 +110,10 @@ contact joins two parts) and on stacked slices of a hollow nodule.
 
 | What | Result | Source |
 |---|---|---|
-| Checker certificates, real masks | 0 failures on 26,820 RIGA masks and 40,189 LIDC slices | `experiments/phase0/RESULTS.md` |
+| Checker certificates, real masks | 0 failures on 26,820 RIGA masks and 40,189 LIDC slices | `docs/research/records/phase0/RESULTS.md` |
 | Raster and legality vs oracle | 0 of 849,802,293 pixels differ on 10,000 shapes; 0 of 10,000 rings | `experiments/phase1/RESULTS.md` (K1, K2) |
 | CUDA checker vs CPU checker | 195,809 of 195,809 cases bit-identical (RTX 4090) | `experiments/cuda_checker/RESULTS.md` |
-| LIDC topology disagreement | 114 of 1,877 nodules (6.1 %) after filtering | `experiments/phase0/RESULTS.md` |
+| LIDC topology disagreement | 114 of 1,877 nodules (6.1 %) after filtering | `docs/research/records/phase0/RESULTS.md` |
 | Rung 1 SFT (LFM2.5-VL-450M) | Failed the entry gates: median IoU 0.495 shifted, 0.092 rescaled; hole recall 0.5 % | `experiments/phase2/RESULTS.md` |
 | CUDA checker on an RTX 5090 | 0 mismatches on 8,559 fuzz polygons and all 13 defect classes | `experiments/phase2/perf/p1_results.md` |
 | G-probe, Qwen3-VL-2B SFT (e2), 20 RL steps | PASS: held-out reward 0.694 / 0.679 → 0.769, legal 94.5 % → 98.2 % | `docs/research/notes/issues_solved_2026-11-07.md` |
@@ -181,7 +181,7 @@ data/              downloaded datasets (git-ignored, never committed)
 ```
 
 Plan: [ROADMAP.md](ROADMAP.md). Phase results:
-[Phase 0](experiments/phase0/RESULTS.md), [Phase 1](experiments/phase1/RESULTS.md),
+[Phase 0](docs/research/records/phase0/RESULTS.md), [Phase 1](experiments/phase1/RESULTS.md),
 [Phase 2](experiments/phase2/RESULTS.md), [CUDA checker](experiments/cuda_checker/RESULTS.md).
 Speed work: [issues](experiments/phase2/perf/issues.md), [implementation](experiments/phase2/perf/implementation.md).
 

@@ -16,7 +16,8 @@
   (e.g. the validation ids) to keep one split.
 - write(rows, path): the JSONL file.
 - export_prompts / import_completions: the JSONL bridge to experiments/phase2/sample_vllm.py, which samples with
-  vLLM 0.32 in its own venv (plan D13, C-BRIDGE; promoted from lab/B5 export_prompts.py and vllm_parity.py). The
+  vLLM 0.32 in its own venv (plan D13, C-BRIDGE; promoted from archive/phase2_lab/B5
+  export_prompts.py and vllm_parity.py). The
   prompt is TRL GRPO's generation prompt as text (prepare_multimodal_messages, then the processor's
   apply_chat_template with add_generation_prompt=True, tokenize=False; B5: vLLM's prompt ids equal the training
   env's in 64 / 64 LFM items and through the renderer for Qwen3.5 and SmolVLM), the image path, the processor

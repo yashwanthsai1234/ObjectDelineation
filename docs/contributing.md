@@ -61,7 +61,7 @@ Read [Getting started](getting-started.md) first.
 | Retired code | `archive/` (not built, not imported, not tested) |
 
 Phase scripts under `experiments/` are frozen records of what produced published numbers. They are linted lightly (`E501`, `B023`, `B905` are ignored there).
-`experiments/phase1/lab` is frozen evidence and is excluded from ruff.
+`archive/phase1_lab` is frozen evidence and is excluded from ruff.
 
 ## 4. Code conventions
 

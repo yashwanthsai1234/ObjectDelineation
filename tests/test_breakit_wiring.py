@@ -229,7 +229,7 @@ def test_b4_6_readme_quick_start_imports_exist():
                 assert hasattr(mod, a.name), f"{node.module}.{a.name}"
 
 
-@pytest.mark.parametrize("script", ["census_sizerule", "fetch_lidc_pixels"])
+@pytest.mark.parametrize("script", ["fetch_lidc_pixels"])
 def test_b4_7_scripts_without_argparse(script):
     """Every script: tests/test_experiment_scripts.py."""
     r = subprocess.run([sys.executable, "-I", "-m", f"experiments.phase1.{script}", "--help"], cwd=ROOT,

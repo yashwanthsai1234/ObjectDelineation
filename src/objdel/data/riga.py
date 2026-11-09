@@ -35,7 +35,7 @@ References:
   https://docs.opencv.org/4.x/d5/daf/tutorial_py_histogram_equalization.html
 - Hysteresis thresholding as in scikit-image ``apply_hysteresis_threshold`` (strict ``>``, default 4-connected
   ``ndi.label``): https://github.com/scikit-image/scikit-image/blob/v0.25.2/skimage/filters/thresholding.py
-- Lab evidence: experiments/phase1/lab/t_data/REPORT.md (4,500 / 4,500 masks; 4,172 / 4,172 equal to Phase 0).
+- Lab evidence: archive/phase1_lab/t_data/REPORT.md (4,500 / 4,500 masks; 4,172 / 4,172 equal to Phase 0).
 """
 import re
 from dataclasses import dataclass

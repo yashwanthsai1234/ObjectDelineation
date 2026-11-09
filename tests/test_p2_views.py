@@ -292,7 +292,7 @@ def test_view_targets_are_certified_per_op(views, synthetic_items):
 
 
 def test_two_view_builds_are_byte_identical(views):
-    root, (m1, m2) = views
+    root, (m1, _) = views
     a, b = root / "v1" / "lidc-train", root / "v2" / "lidc-train"
     fa = sorted(p.relative_to(a) for p in a.rglob("*") if p.is_file())
     assert fa == sorted(p.relative_to(b) for p in b.rglob("*") if p.is_file())

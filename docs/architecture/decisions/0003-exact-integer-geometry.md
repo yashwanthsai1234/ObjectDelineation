@@ -58,7 +58,7 @@ The division rule for frame sides costs flexibility in frame size, and it remove
 
 | Check | Result | Source |
 |---|---|---|
-| Certificates on real masks | 0 failures on 26,820 RIGA masks and 40,189 LIDC slices | `experiments/phase0/RESULTS.md` |
+| Certificates on real masks | 0 failures on 26,820 RIGA masks and 40,189 LIDC slices | `docs/research/records/phase0/RESULTS.md` |
 | Raster and legality vs slow oracles | 0 of 849,802,293 pixels differ on 10,000 shapes; 0 of 10,000 rings differ | `experiments/phase1/RESULTS.md` (K1, K2) |
 | Defect classes | All 13 flagged exactly on 8,559 fuzz polygons | `experiments/phase2/perf/p1_results.md` |
 

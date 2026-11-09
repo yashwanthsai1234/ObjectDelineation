@@ -42,7 +42,7 @@ References:
     https://docs.vllm.ai/en/latest/features/structured_outputs/ (regex structured outputs; Rust-style regex)
     https://xgrammar.mlc.ai/docs/latest/api/python/grammar.html (Grammar.from_regex; compiles this pattern)
     https://github.com/huggingface/trl/blob/main/trl/trainer/grpo_config.py (vllm_structured_outputs_regex)
-    experiments/phase1/lab/t_stack/prod.py (the lab grammar and parser this replaces)
+    archive/phase1_lab/t_stack/prod.py (the lab grammar and parser this replaces)
 """
 from __future__ import annotations
 

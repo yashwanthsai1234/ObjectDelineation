@@ -1,5 +1,5 @@
 """G-vision (experiments/phase2/PLAN.md §5.1, revision 5): does the model still look at the image? The B1 §2.5
-protocol, promoted from experiments/phase2/lab/B1/vision_feats.py and image_use.py:
+protocol, promoted from archive/phase2_lab/B1/vision_feats.py and image_use.py:
 
 (a) the mean pairwise cosine distance between the projector outputs (get_image_features, what the language model
     sees; all image tokens of one image flattened into one vector) of a fixed image set, the 4 centred LIDC val crops
@@ -17,7 +17,7 @@ image_sha256 and the set's SHA-256 (ids, image hashes, targets) is returned for 
 lazily: this module imports without it. Run on the CPU in float32, as in B1.
 
 References:
-- experiments/phase2/lab/B1/REPORT.md §2.5 (protocol, table); PLAN.md §5.1 G-vision, §7 M4 / M8.
+- archive/phase2_lab/B1/REPORT.md §2.5 (protocol, table); PLAN.md §5.1 G-vision, §7 M4 / M8.
 - transformers get_image_features (projector output of the image-text-to-text models):
   https://huggingface.co/docs/transformers/main/en/model_doc/llava ; total variation distance:
   https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # vllm_native: the single-env image (D15; renamed from "phase3" and built for RL R2, owner 2026-11-06), promoted
-# from lab/B5/Dockerfile.phase3: training + vLLM
+# from archive/phase2_lab/B5/Dockerfile.phase3: training + vLLM
 # colocate in one re-pinned venv. /opt/venv = the Mac's pins with torch 2.13.0, torchvision 0.28.0, transformers 5.19.0
 # + vllm==0.32.0, and two uv overrides that keep the hash-relevant pins: numba==0.68.0 and numpy==2.5.4 (B5 Q1).
 # Re-run the fast suite and `xarch_hashes --strict` on every re-pin. Build context (build_images.sh):

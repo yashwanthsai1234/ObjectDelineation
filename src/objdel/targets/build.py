@@ -39,7 +39,7 @@ References:
     D. Estkowski, J. S. B. Mitchell, "Simplifying a polygonal subdivision while keeping it simple" (min-vertex
         simplification without crossings is hard; simplify per ring, then verify and repair):
         https://www.uni-trier.de/fileadmin/fb4/prof/INF/DEA/Seminar0708/Estkowski.pdf
-    experiments/phase1/lab/t_targets/REPORT.md (minseg_hybrid, tau = 3, IoU >= 0.99, bevel, crop policy)
+    archive/phase1_lab/t_targets/REPORT.md (minseg_hybrid, tau = 3, IoU >= 0.99, bevel, crop policy)
 """
 import hashlib
 import time

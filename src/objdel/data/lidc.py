@@ -53,6 +53,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from objdel.geometry.box import boxes_meet
+
 from .store import Item
 
 NS = {"n": "http://www.nih.gov"}
@@ -256,8 +258,7 @@ def slices(sessions, zvals) -> list[Slice]:
 
 def crowded(s: Slice, box) -> bool:
     """P6: does the half-open window box = (x0, y0, x1, y1) overlap another nodule's box on the slice?"""
-    x0, y0, x1, y1 = box
-    return any(a < x1 and x0 < c and b < y1 and y0 < d for a, b, c, d in s.others)
+    return boxes_meet(box, s.others)
 
 
 def series_files(xml_root) -> dict[str, Path]:

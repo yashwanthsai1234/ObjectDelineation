@@ -2,7 +2,7 @@
 checker, polycore), and the shape generators of its tests.
 
 Pure Python integers, all-pairs loops, no shared code with any checker (tests only). Derived from the Phase 1 lab
-(experiments/phase1/lab/common/oracle.py and lab/t_polycore/tests/helpers.py).
+(archive/phase1_lab/common/oracle.py and archive/phase1_lab/t_polycore/tests/helpers.py).
 
 - `ref_validate(rings, roles)`: every defect class, counted pair by pair; `ref_totals`: the checker's totals;
 - `ring_problems(ring)`: the lab's label spec of one ring (K2 compares against it), the labels of `ref_validate`;

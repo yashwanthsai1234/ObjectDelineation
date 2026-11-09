@@ -27,7 +27,7 @@ References:
 - Patient-level LIDC splits "to reduce bias ... from the similarity between adjacent lung nodule slices":
   ProSeg, https://arxiv.org/abs/2512.00748 ; two-timepoint patients: https://www.cancerimagingarchive.net/collection/lidc-idri/
 - Slice/image-level splits inflate CT segmentation scores: CTSCAN, https://arxiv.org/abs/2604.15561
-- Lab evidence: experiments/phase1/lab/t_data/riga/dedup.py, splits/build_splits.py (11 tests).
+- Lab evidence: archive/phase1_lab/t_data/riga/dedup.py, splits/build_splits.py (11 tests).
 - Lowe, "Distinctive image features from scale-invariant keypoints", IJCV 2004 (ratio test 0.75 here):
   https://www.cs.ubc.ca/~lowe/papers/ijcv04.pdf ; spatial verification by RANSAC inliers for near-duplicate
   retrieval: Philbin et al., CVPR 2007, https://www.robots.ox.ac.uk/~vgg/publications/2007/Philbin07/philbin07.pdf

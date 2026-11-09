@@ -10,7 +10,7 @@ variants live in tests/oracles/reward_harness.py and reward_variants.py.
 
 References:
 - Gate definitions: experiments/phase1/PLAN.md §7 (K3, K4, K8, K8b, K9, K10, R3, R4, R5); reward v4:
-  objdel.reward (its module references); lab protocol: experiments/phase1/lab/t_reward/results/ITERATION4.md.
+  objdel.reward (its module references); lab protocol: archive/phase1_lab/t_reward/results/ITERATION4.md.
 - Spearman rho (K8): https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.spearmanr.html
 - Cluster (item-level) percentile bootstrap CIs (K8, K9, R3, R4): C. A. Field, A. H. Welsh, "Bootstrapping clustered
   data", JRSS B 69(3), 2007, https://doi.org/10.1111/j.1467-9868.2007.00593.x
@@ -135,7 +135,8 @@ def k9_gate(pool, item_args, label, rng):
         a[order] = H.in_steps(V.SCHEMES[name], T[order])
         ok = a[:, 0] > a[:, 1]
         lo, up = H.cluster_ci(ok, keys, rng)
-        hlo, hup = H.cluster_ci(ok[hi], [k for k, h in zip(keys, hi, strict=True) if h], rng)
+        # the result is unused, but the call draws from rng: deleting it would move every later bootstrap number
+        _ = H.cluster_ci(ok[hi], [k for k, h in zip(keys, hi, strict=True) if h], rng)
         res.append(f"{pct(ok.mean())} {ci_str(lo, up)}; IoU ≥ 0.5: {pct(ok[hi].mean())}")
     emit(f"| {label} | {len(T)} pairs, {len(set(keys))} items | " + " | ".join(res) + " |")
 

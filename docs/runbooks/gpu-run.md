@@ -12,7 +12,7 @@ Run every command from the repository root on the Mac.
 
 | Need | Detail |
 |---|---|
-| `vastai` CLI | In `PATH`. Called with a scoped API key |
+| `vastai` CLI | In `PATH`, pinned: `uv tool install vastai==1.11.0` (isolated; never in `pyproject.toml`, its exact Pillow and cryptography pins would change the project environment). Called with a scoped API key |
 | Secrets | Names in `.secrets` (mode 600) or the macOS keychain: `objdel-vast-scoped` (scoped Vast key), `objdel-ghcr-read` (read-only GHCR token), `objdel-hf-write` (fine-grained Hugging Face token, write on one repo only). `objdel-riga-age` only for RIGA. Values are never printed |
 | Image | `image` in `experiments/phase2/vast/.vast-allowlist`: `ghcr.io/yashwanthsai1234/objdel-gpu:vllm_native-3ef6e9179051@sha256:...` |
 | Bundle | `build/bundles/bundle-lidc.tar` and its `.sha256`, from `experiments.phase2.vast.bundle lidc` ([Data, section 7](../reference/data.md#7-bundle-experimentsphase2vastbundle)) |
