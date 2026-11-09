@@ -182,7 +182,7 @@ def _verified(root, recs: list[dict]) -> list[dict]:
     return recs
 
 
-def _tokens(tokenizer, text: str) -> int:
+def target_tokens(tokenizer, text: str) -> int:
     return len(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 
@@ -190,7 +190,7 @@ def _caches(root, key: str, digests: dict[str, str]) -> dict[str, ExpertCache]:
     return {n: ExpertCache.load(Path(root, "caches", key, f"{n}.npz"), d) for n, d in digests.items()}
 
 
-def _voting(root, rec: dict, dataset: str) -> set[int]:
+def voting(root, rec: dict, dataset: str) -> set[int]:
     """Indices of the raters with a topology vote (objdel.reward.rater_answers; all raters of an item without
     caches, which has one rater)."""
     if not rec["caches"]:
@@ -204,9 +204,9 @@ def sft_rows(root, dataset: str, split: str, tokenizer=None, max_tokens: int | N
     (I5)."""
     rows = []
     for r in _verified(root, records(root, dataset, split)):
-        voting = _voting(root, r, dataset)
+        voters = voting(root, r, dataset)
         for i, (rater, text) in enumerate(zip(r["raters"], r["targets"], strict=True)):
-            if text is None or i not in voting or (max_tokens and _tokens(tokenizer, text) + 1 > max_tokens):
+            if text is None or i not in voters or (max_tokens and target_tokens(tokenizer, text) + 1 > max_tokens):
                 continue  # max_tokens + 1: the end-of-turn token
             answer = {"role": "assistant", "content": [{"type": "text", "text": text}]}
             rows.append({"messages": [_user(dataset), answer], "image": _image(root, r["item_id"]),
@@ -381,7 +381,7 @@ def view_rows(view_dir, tokenizer=None, max_tokens: int | None = None, a0: bool 
         target = spec.pop("target")
         if a0:
             target = _no_holes(target, SCHEMAS[spec["dataset"]])
-        n = _tokens(tokenizer, target) if tokenizer else len(target)
+        n = target_tokens(tokenizer, target) if tokenizer else len(target)
         if max_tokens and n + 1 > max_tokens:
             continue  # + 1: the end-of-turn token
         answer = {"role": "assistant", "content": [{"type": "text", "text": target}]}

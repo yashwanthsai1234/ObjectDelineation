@@ -22,7 +22,7 @@ def test_r5_test_golden_is_committed_and_holds_only_its_three_keys():
     assert set(json.loads((GOLDENS / "r5_test_items.meta.json").read_text())) == {"numpy", "machine"}
 
 
-CLIS = ("final_eval", "ceiling")  # A3, A6 and A8 add nsys_baseline and outline_lengths with their modules
+CLIS = ("final_eval", "ceiling", "outline_lengths")  # A6 adds nsys_baseline with its module
 
 
 def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
