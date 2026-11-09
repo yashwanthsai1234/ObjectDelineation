@@ -204,8 +204,12 @@ OPTIONS = ["-h", "--help", "--model", "--ckpt", "--train", "--out", "--steps", "
            "--lr", "--resume", "--merge-last", "--rows-revision", "--rows-manifest-sha256", "--budget-usd",
            "--session-start", "--rate-usd-per-h", "--fixed-usd", "--heldout", "--heldout-items", "--heldout-every",
            "--procs", "--grpo", "--profile-window", "--trace"]  # pre-CLEAN literal (ap._actions at 08e6455)
+LANE_OPTIONS = {"--shared-prefix": ["--fast-sync", "--group-requests", "--no-ckpt-layers"],  # C5, C6, C9
+                "--grpo": ["--runaway-cap", "--reward", "--numerics", "--opsm-start-delta"],  # C11, B3, B2.2
+                "--trace": ["--count-syncs", "--gpu-pixels", "--allow-cpu-pixels"]}  # C0, C1: impl2 adds, in place
 RL_KEYS = ["beta", "budget_stopped", "ckpt", "eval", "final", "log", "lr", "mask_truncated_completions", "model",
            "numerics", "resumed_from", "rows", "steps", "timing_s", "train_rows"]  # pre-CLEAN literal, same stub
+LANE_RL_KEYS = ["loc_guard_stopped", "loss_scale", "max_completion_length", "opsm_start_delta", "reward"]  # B2.2, B3
 
 
 @pytest.fixture
@@ -237,7 +241,8 @@ def stub(tmp_path, monkeypatch):
     trainer = SimpleNamespace(train=lambda resume_from_checkpoint=None: calls.append("train"), model=saver,
                               accelerator=SimpleNamespace(unwrap_model=lambda m: m),
                               state=SimpleNamespace(global_step=2, log_history=[{"step": 1, "reward": 0.5}]),
-                              args=SimpleNamespace(beta=0.0, mask_truncated_completions=True))
+                              args=SimpleNamespace(beta=0.0, mask_truncated_completions=True,
+                                                off_policy_mask_threshold=None, max_completion_length=1536))
     monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: (trainer, saver, 5e-5))
     (tmp_path / "root").mkdir()
     (tmp_path / "root/manifest.json").write_text("{}")
@@ -258,7 +263,7 @@ def test_procs_is_an_argparse_error_before_any_preload(stub, capsys, extra):
 
 
 def test_help_has_no_procs_and_keeps_the_other_options(stub, capsys, monkeypatch):
-    """CT-33: --help names no pool; the option list is the pre-CLEAN one minus --procs."""
+    """CT-33: --help names no pool; the option list is the pre-CLEAN one minus --procs (plus the lane flags)."""
     import argparse
 
     seen, orig = [], argparse.ArgumentParser.parse_args
@@ -268,7 +273,8 @@ def test_help_has_no_procs_and_keeps_the_other_options(stub, capsys, monkeypatch
         stub.main(["--help"])
     out = capsys.readouterr().out
     assert e.value.code == 0 and "procs" not in out and "scoring workers" not in out
-    assert [s for act in seen[0]._actions for s in act.option_strings] == [o for o in OPTIONS if o != "--procs"]
+    want = [x for o in OPTIONS if o != "--procs" for x in [o, *LANE_OPTIONS.get(o, [])]]
+    assert [s for act in seen[0]._actions for s in act.option_strings] == want
 
 
 def test_no_pool_and_one_freeze_after_the_last_preload(stub):
@@ -281,7 +287,7 @@ def test_no_pool_and_one_freeze_after_the_last_preload(stub):
     assert stub.calls == ["preload", "freeze", "train"]
     with_heldout = stub.calls.clear() or stub.run(*stub.train, "--heldout", str(stub.out.parent / "root"))
     assert with_heldout == 0 and stub.calls == ["preload", "preload", "freeze", "train"]
-    assert sorted(json.loads((stub.out / "rl.json").read_text())) == RL_KEYS
+    assert sorted(json.loads((stub.out / "rl.json").read_text())) == sorted(RL_KEYS + LANE_RL_KEYS)
     stub.calls.clear()
     assert stub.run(*stub.train) == 0 and stub.calls.count("freeze") == 1  # each main call freezes once
     assert gc.get_freeze_count() == frozen

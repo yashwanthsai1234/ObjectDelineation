@@ -32,7 +32,9 @@ def stub(tmp_path, monkeypatch):
         state.global_step = state.max_steps
 
     trainer = SimpleNamespace(train=train, model=None, accelerator=SimpleNamespace(unwrap_model=lambda m: m),
-                              state=state, args=SimpleNamespace(beta=1e-3, mask_truncated_completions=True))
+                              state=state, args=SimpleNamespace(beta=1e-3, mask_truncated_completions=True,
+                                                                  off_policy_mask_threshold=None,
+                                                                  max_completion_length=1536))
 
     def make(a, ckpt, train_rows, steps, **k):
         state.max_steps = steps
