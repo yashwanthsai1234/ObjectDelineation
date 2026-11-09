@@ -76,8 +76,14 @@ def topology_valid(T: dict) -> np.ndarray:
     return legal_gate(T) & (T["topo_any"] > 0) & (T["iou_min"] >= REWARD_V4.iou_gate) & (T["topo_freq"] > 0)
 
 
+def _answers(T: dict) -> np.ndarray:
+    """Topology answers with every illegal rollout mapped to one shared FAIL answer (as objdel.eval.metrics), so an
+    illegal rollout's signature never moves the legal rollouts' r_topo or the flat-group check."""
+    return np.where(legal_gate(T), T["sig_id"], -1.0)  # sig_ids are CRC32 values >= 0
+
+
 def _topology(T: dict, group: int) -> np.ndarray:
-    s = T["sig_id"]
+    s = _answers(T)
     pi = np.maximum((s[:, :, None] == s[:, None, :]).sum(-1) - 1, 0.5) / (group - 1)
     valid = topology_valid(T)
     f = np.where(valid, T["topo_freq"], 1.0)
@@ -100,6 +106,6 @@ def advantages_v4(terms: dict, group: int = REWARD_V4.group) -> np.ndarray:
     z = (X - X.mean(1, keepdims=True)) / np.maximum(X.std(1, keepdims=True), REWARD_V4.floors)
     r = _topology(T, group)
     a = (z * REWARD_V4.weights).sum(-1) + REWARD_V4.c_topo * (r - r.mean(1, keepdims=True))
-    flat = (np.ptp(R, axis=1).max(-1) < REWARD_V4.drop_spread) & (T["sig_id"] == T["sig_id"][:, :1]).all(1)
+    flat = (np.ptp(R, axis=1).max(-1) < REWARD_V4.drop_spread) & (_answers(T) == _answers(T)[:, :1]).all(1)
     a[flat] = 0.0
     return a.reshape(-1)

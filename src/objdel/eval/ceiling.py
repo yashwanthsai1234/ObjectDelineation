@@ -71,7 +71,9 @@ def item(cache: ExpertCache, texts: Sequence[str] | None, truncated: Sequence[bo
         raise ValueError(f"{len(texts)} texts but {len(truncated)} truncated flags")
     refs = [lo.cache for lo in loos] + [cache]  # the LOO caches, then all k doctors (model_all_k)
     jobs = [(t, tr, (name,), {name: c}, W, H) for c in refs for t, tr in zip(texts, truncated, strict=True)]
-    iou = np.array([t["iou_tc"] * t["legal"] for t, _ in score.score_many(jobs)]).reshape(len(refs), len(texts))
+    terms = [t for t, _ in score.score_many(jobs)]
+    iou = np.array([t["iou_tc"] if t["legal"] >= 0.5 else 0.0 for t in terms])  # not *: NaN * 0 is NaN
+    iou = iou.reshape(len(refs), len(texts))
     model = float(iou[:-1].mean())
     return row | {"model": model, "model_all_k": float(iou[-1].mean()), "diff": model - row["doctor"]}
 

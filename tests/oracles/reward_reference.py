@@ -148,6 +148,7 @@ def advantages(terms: dict, G: int = 8) -> np.ndarray:
     for g0 in range(0, n, G):
         idx = range(g0, g0 + G)
         legal = [terms["legal"][i] >= 0.5 for i in idx]
+        ans = [terms["sig_id"][i] if legal[j] else "FAIL" for j, i in enumerate(idx)]  # illegal: one shared answer
         a = [0.0] * G
         for key in W:
             x = [terms[key][i] if legal[j] else 0.0 for j, i in enumerate(idx)]
@@ -160,14 +161,14 @@ def advantages(terms: dict, G: int = 8) -> np.ndarray:
             if not valid:
                 r.append(0.0)
                 continue
-            n_same = sum(terms["sig_id"][i2] == terms["sig_id"][i] for i2 in idx)
+            n_same = ans.count(ans[j])
             pi = max(n_same - 1, 0.5) / (G - 1)
             f = terms["topo_freq"][i]
             r.append(max(EPS, 1 + LAM * (math.log(f) - loo_bias(f, G) - math.log(pi))))
         mean_r = sum(r) / G
         a = [a[j] + C_TOPO * (r[j] - mean_r) for j in range(G)]
         spread = max(max(terms[key][i] for i in idx) - min(terms[key][i] for i in idx) for key in W)
-        if spread < DROP and len({terms["sig_id"][i] for i in idx}) == 1:
+        if spread < DROP and len(set(ans)) == 1:
             a = [0.0] * G
         out[g0:g0 + G] = a
     return out

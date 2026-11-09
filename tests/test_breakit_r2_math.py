@@ -23,8 +23,6 @@ def _disc(r, cy=16, cx=16, n=32):
     return (y - cy) ** 2 + (x - cx) ** 2 <= r * r
 
 
-@pytest.mark.xfail(strict=True, reason="BR2-math-1: ceiling.item gates illegal answers by multiplication "
-                   "(iou_tc * legal); a parsed illegal answer with a NaN iou_tc (kept for logging) makes model NaN")
 def test_ceiling_model_ignores_raw_terms_of_illegal_answers(monkeypatch):
     cache = ExpertCache.build(np.stack([_disc(6), _disc(7), _disc(6, 17, 17)]))
 
@@ -44,16 +42,11 @@ def _topo_group(sig_last):
             "topo_any": [1.0] * 8, "topo_freq": [0.5] * 8, "sig_id": [7.0] * 4 + [8.0] * 3 + [sig_last]}
 
 
-@pytest.mark.xfail(strict=True, reason="BR2-math-2: r_topo's pi_loo counts the signature of an illegal rollout, so "
-                   "the legal rollouts' advantages depend on what an illegal rollout drew (eval counts it as FAIL)")
 def test_illegal_rollout_signature_does_not_move_legal_advantages():
     a, b = advantages_v4(_topo_group(7.0), 8), advantages_v4(_topo_group(9.0), 8)
     np.testing.assert_allclose(a[:7], b[:7])
 
 
-@pytest.mark.xfail(strict=True, reason="BR2-math-3: signal._ci drops NaN bootstrap replicates (spearman on a "
-                   "constant draw) with nanquantile when the point is finite: no NaN-draw count, and the interval "
-                   "can exclude its own point")
 def test_spearman_ci_counts_or_refuses_nan_draws():
     x, y = np.array([0.0] * 9 + [1.0]), np.arange(10.0)
     D = signal.draws([str(i) for i in range(10)], 2000, 0)
@@ -64,10 +57,8 @@ def test_spearman_ci_counts_or_refuses_nan_draws():
     rho, lo, hi = out[:3]
     # math-stats section 1: the NaN-draw count goes beside every CI; a percentile CI must contain its point
     assert len(out) > 3 or not (np.isfinite(lo) and np.isfinite(hi)), out
-    assert lo <= rho <= hi, out
+    assert not np.isfinite(lo) or lo <= rho <= hi, out  # a refused interval (NaN bounds) carries the count
 
 
-@pytest.mark.xfail(strict=True, reason="BR2-math-4: pass_at_k returns 1.0 when k > n even with 0 passes "
-                   "(the n - c < k shortcut); with no pass pass@k is 0")
 def test_pass_at_k_zero_passes_is_zero():
     assert M.pass_at_k(4, 0, 8) == 0.0
