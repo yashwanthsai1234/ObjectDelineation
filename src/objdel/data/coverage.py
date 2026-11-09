@@ -48,6 +48,8 @@ def props(target: str, W: int, op: str) -> dict | None:
 
 def distribution(rows: list[dict]) -> dict[str, dict]:
     """{property: {category: share of rows}}."""
+    if not rows:
+        raise ValueError("distribution of no rows")
     out = {}
     for k in KEYS:
         c = Counter(r[k] for r in rows)
@@ -65,8 +67,8 @@ def gaps(train: dict, exam: dict, eval_min: float = EVAL_MIN, train_max: float =
 def mix_coverage(rows, target, target_offsets) -> dict:
     """Worst cell ratio (cells with target share >= 1 %), total variation and offset KS (scipy.stats.ks_2samp) of the
     windows `rows` against the (4, 4) cell law `target` and its offsets; no rows: 0, 1, 1 (a failure, never NaN)."""
-    if not rows:
-        return {"rows": 0, "worst_ratio": 0.0, "tv": 1.0, "ks": 1.0}
+    if not rows or not len(target_offsets):
+        return {"rows": len(rows), "worst_ratio": 0.0, "tv": 1.0, "ks": 1.0}
     share, t = cell_shares(rows), np.asarray(target, np.float64)
     keep = t >= 0.01
     return {"rows": len(rows), "worst_ratio": float((share[keep] / t[keep]).min()),

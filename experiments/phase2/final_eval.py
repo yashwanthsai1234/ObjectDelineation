@@ -132,11 +132,16 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     out["miss_rate"] = cis((iou < signal.MISS).astype(float))
     found = iou >= signal.MISS
     fids = [i for i, f in zip(ids, found, strict=True) if f]
+    def found_ci(*key):  # None when the found items are fewer than 2 clusters (draws refuses one)
+        try:
+            return signal.ci(iou[found], signal.draws(fids, draws, seed, *key))[1:]
+        except ValueError:
+            return None
+
     out["iou_found"] = None if not fids else {
         "mean": float(iou[found].mean()), "items": len(fids),
-        "ci95_patient": None if groups is None else signal.ci(iou[found], signal.draws(
-            fids, draws, seed, key=groups.__getitem__))[1:],
-        "ci95_nodule": signal.ci(iou[found], signal.draws(fids, draws, seed))[1:]}
+        "ci95_patient": None if groups is None else found_ci(groups.__getitem__),
+        "ci95_nodule": found_ci()}
 
     def paired(arm: str) -> dict | None:  # the per-item difference arm - sel_mean_of_k under the same draws
         if arm not in out:
