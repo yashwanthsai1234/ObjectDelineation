@@ -1,8 +1,9 @@
-// gpucheck.h -- batched exact checker: polygon legality (13 defect classes) and the even-odd mask, the mask polygonizer of objdel.checker (bit-quads, rings by successor linking, pointer jumping and list ranking), and
-// the reward's scorer (score_polygons / score_masks: IoU_tc, F5, g_area and the size-filtered signature against
-// expert tables resident on the device; only per-object numbers leave it). One source, gpucheck.cpp: the C++ compiler
-// builds it for the CPU, nvcc (OBJDEL_CUDA=ON, `make cuda`) for the GPU. Results are bit-identical to the CPU checker
-// it replaced (polycore, archive/cpu_checker), checker.polygonize and the host scorer
+// gpucheck.h -- batched exact checker: polygon legality (13 defect classes) and the even-odd mask, the mask polygonizer
+// of objdel.checker (bit-quads, rings by run union-find, closed-form ring starts and seeded crack tracing: the K1-draft
+// design), and the reward's scorer (score_polygons / score_masks: IoU_tc, F5, g_area and the size-filtered signature
+// against expert tables resident on the device; only per-object numbers leave it). One source, gpucheck.cpp: the C++
+// compiler builds it for the CPU, nvcc (OBJDEL_CUDA=ON, `make cuda`) for the GPU. Results are bit-identical to the CPU
+// checker it replaced (polycore, archive/cpu_checker), checker.polygonize and the host scorer
 // (docs/research/notes/gpu_scoring.md).
 //
 // Inputs are packed like data/checker_eval (experiments/cuda_checker): many shapes or masks per call, one
@@ -109,6 +110,18 @@ struct MaskResult {
   std::vector<i64> pts_start;   // ring r = corners [pts_start[r], pts_start[r + 1])
   std::vector<i64> ring_area;   // signed area per ring: > 0 outer, < 0 hole
   std::vector<i32> pts;         // corners x0, y0, x1, y1, ...
+  std::vector<i32> ring_part;   // per ring: 0-based raster rank (by first pixel) in its mask of the foreground
+                                // 8-component it bounds (an outer ring's own, a hole's surrounding one)
+  std::vector<i64> betti;       // (n, 2): foreground components, bounded background components (from the same run
+                                // labels as the rings, so never an independent check of them)
+};
+
+// check_masks' work split. The defaults are the production values; tests set others (the binding's test keywords).
+constexpr i64 kMaxChunkPixels = i64(1) << 30;
+struct MaskOptions {
+  i32 seed_rows = 16;                     // >= 0: every K-th row's run sides also start a trace (0 = one per ring)
+  i64 chunk_pixels = i64(1) << 25;        // 1..2^30: masks per chunk by (W + 1)(H + 1); a larger mask goes alone
+  i64 max_scratch_bytes = i64(1) << 30;   // >= 1: a chunk whose run scratch is larger is halved; one such mask raises
 };
 
 // The expert tables of one object of one item (objdel.reward.ExpertCache), as host arrays. add_tables copies them to
@@ -163,7 +176,8 @@ Stats stats();
 void reset_stats();  // zeroes the events, keeps the state
 // times != nullptr: also the per-stage times of the call.
 PolygonResult check_polygons(const Polygons& in, Times* times = nullptr);
-MaskResult check_masks(const Masks& in, Times* times = nullptr);
+MaskResult check_masks(const Masks& in, Times* times = nullptr, const MaskOptions& opt = {});
+std::vector<std::string> test_hooks();  // the test-only compile definitions of this build (none in a shipped one)
 i64 add_tables(const Tables& t);  // -> handle
 void drop_tables(i64 handle);
 i64 resident();                    // tables on the device

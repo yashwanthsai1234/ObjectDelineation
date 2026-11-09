@@ -22,6 +22,12 @@ set_target_properties(gpucheck PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # gets the flag too (docs/implementation2.0/notes/research/cuda-kernels.md section 2).
 target_compile_options(gpucheck PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-ffp-contract=off>
                                         $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false -Xcompiler=-ffp-contract=off>)
+# Test-only compile definitions (a CMake list, e.g. GC_POISON_SCAN;GC_ALIAS_SCAN_FOR_TEST): only tests/variants.py sets
+# it, for its CPU test builds in build/variants/ (gpucheck.cpp, test_hooks()). Empty in every shipped build.
+set(OBJDEL_TEST_HOOKS "" CACHE STRING "test-only compile definitions of gpucheck (tests/variants.py)")
+if(OBJDEL_TEST_HOOKS)
+  target_compile_definitions(gpucheck PRIVATE ${OBJDEL_TEST_HOOKS})
+endif()
 if(OBJDEL_CUDA)
   if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     set(CMAKE_CUDA_ARCHITECTURES native)  # the box's GPU; pass -DCMAKE_CUDA_ARCHITECTURES=... to cross-compile

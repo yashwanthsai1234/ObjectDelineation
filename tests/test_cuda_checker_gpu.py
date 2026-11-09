@@ -4,8 +4,10 @@ On a GPU box objdel._gpucheck must be the nvcc build (`make cuda`): these tests 
 They then run large batches in one call each (many shapes per kernel launch) and compare with the CPU checker's
 recorded results (tests/goldens/polycore.npz);
 tests/test_cuda_checker.py runs the rest of the equivalence suite on the same build."""
+import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -24,7 +26,7 @@ def _gpus() -> int:
     return sum(line.startswith("GPU ") for line in out.splitlines())
 
 
-pytestmark = pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")
+pytestmark = [pytest.mark.gpu, pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")]
 
 
 def test_module_is_the_cuda_build():
@@ -46,10 +48,22 @@ def test_large_polygon_batches_match_polycore():
 def test_large_mask_batch_matches_polygonize():
     masks = [m for _, m in C.fuzz_masks(3000, seed=12)]
     rng = np.random.default_rng(12)
-    masks += [rng.random((512, 512)) < .5, rng.random((2048, 2048)) < .1]  # long cycles: many jump rounds
+    masks += [rng.random((512, 512)) < .5, rng.random((2048, 2048)) < .1]  # many rings, deep union-find chains
     out = C.run_masks(C.pack_masks(masks))
     for i, m in enumerate(masks):
         assert C.mask_diff(out, i, C.mask_reference(np.asarray(m, bool))) is None, i
+
+
+def test_lidc_crop_masks_match_the_oracle():
+    """D-G3: all 37,093 LIDC crops in one call equal the numpy oracle (rings, quads, Betti numbers, ring parts), so a
+    CUDA-only ring defect fails here. The crops ship in the box payload (data/checker_eval, OBJDEL_DATA_ROOT)."""
+    path = Path(os.environ.get("OBJDEL_DATA_ROOT", Path(__file__).resolve().parents[1] / "data"))
+    z = dict(np.load(path / "checker_eval" / "masks.npz", allow_pickle=False))
+    out = gc.check_masks(z["bits"], z["hw"], z["start"])
+    assert len(out["quads"]) == 37093 and len(out["ring_area"]) == 38002 and len(out["pts"]) == 1476508
+    for k in range(len(z["hw"])):
+        m = z["bits"][z["start"][k]:z["start"][k + 1]].reshape(z["hw"][k]).astype(bool)
+        assert C.mask_diff(out, k, C.mask_reference(m)) is None, k
 
 
 def test_repeated_calls_are_identical():

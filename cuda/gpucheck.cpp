@@ -14,13 +14,11 @@
 //  * validate: one item per ring (clean the ring, count repeats/area/range), one per edge (classify it against
 //    every later edge of the shape; polycore's sweep only prunes pairs whose boxes do not meet, which classify
 //    rejects anyway), one per shape (ring-ring counts, winding, containment by exact witness points).
-// Masks (port of objdel.checker.polygonize + bitquad, the array-only design):
-//  * every unit boundary edge is a slot (vertex, direction); its successor is read from the 2x2 bit-quad at its end
-//    (left turn at saddles: 8-connected foreground, 4-connected background);
-//  * ring label = minimum slot on the cycle (pointer jumping); the minimum slot is polygonize's canonical start;
-//  * corner index = number of corners from the start (weighted list ranking on the predecessor);
-//  * rings are ordered as polygonize returns them (by their first east edge in raster order) and their corners
-//    scattered to their output positions.
+// Masks (objdel.checker.polygonize's rings and bitquad's counts, the K1-draft design; "masks" section below):
+//  * bit-packed rows, runs per row, union-find on runs (foreground 8-, background 4-connected), roots = first run;
+//  * one ring per foreground component (outer) and per bounded background component (hole): its order key (first east
+//    edge in raster order) and canonical start in closed form from the labels, its rank by a popcount scan (no sort);
+//  * crack tracing from seeds over boundary edges only, corners written in place: work ~ words + runs + edges.
 //
 // Host side (issues CK-1 to CK-3 of experiments/phase2/perf/issues.md): per lane one stream, one device arena and two
 // staging buffers (pinned host memory), all made at the first call and grown to the next power of two, never freed
@@ -37,6 +35,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cstring>
 #include <mutex>
 #include <numeric>
@@ -45,6 +44,8 @@
 
 #ifdef __CUDACC__
 #include <cuda_runtime.h>
+
+#include <cub/device/device_scan.cuh>
 #include <nvtx3/nvtx3.hpp>
 #define HD __host__ __device__
 #else
@@ -62,6 +63,13 @@ struct gc_domain {
 #define GC_RANGE(name) nvtx3::scoped_range_in<gc_domain> GC_CAT(gc_range_, __LINE__) { name }
 #else
 #define GC_RANGE(name)
+#endif
+
+// Test-only compile definitions (CMake OBJDEL_TEST_HOOKS, set by tests/variants.py only; test_hooks() names them):
+// K1_ORDER 1/2 runs the CPU build's items reversed / permuted, GC_POISON_SCAN fills a scan's scratch with 0xFF,
+// GC_ALIAS_SCAN_FOR_TEST hands one scan a live block, K1_MUTATE_FG4 makes the polygonizer foreground 4-connected.
+#ifndef K1_ORDER
+#define K1_ORDER 0
 #endif
 
 namespace gpucheck {
@@ -191,9 +199,11 @@ Mark mark(Stream) { return std::chrono::steady_clock::now(); }
 double elapsed_ms(Mark a, Mark b) { return std::chrono::duration<double, std::milli>(b - a).count(); }
 void unmark(Mark) {}
 
+// K1_ORDER stands in for the GPU's arbitrary schedule: 0 forward, 1 reverse, 2 the permutation k -> k p mod n
+// (p = 2^31 - 1 is prime, so coprime with any n < p). Every step must give the same result in every order.
 template <class F>
 void for_each(Stream, i64 n, const F& f) {
-  for (i64 i = 0; i < n; ++i) f(i);
+  for (i64 k = 0; k < n; ++k) f(K1_ORDER == 0 ? k : K1_ORDER == 1 ? n - 1 - k : (k * 2147483647LL) % n);
 }
 #endif
 
@@ -221,9 +231,9 @@ struct Block {
   }
 };
 
-struct Lane {  // one stream with its device arenas (dev: checker, score: scorer) and its staging buffers (in: host ->
-  Stream stream{};  // device, out: device -> host)
-  Block<true> dev, score;
+struct Lane {  // one stream with its device arenas (dev: checker, score: scorer; the polygonizer's layouts A and B),
+  Stream stream{};  // CUB's scan scratch (scan, never live data) and its staging buffers (in: host -> device, out:
+  Block<true> dev, score, scan;  // device -> host)
   Block<false> in, out;
 };
 
@@ -342,6 +352,22 @@ HD inline i32 atomic_min_old(i32* p, i32 v) {  // returns the old value
 #endif
 }
 
+HD inline void atomic_or(u32* p, u32 v) {
+#ifdef __CUDA_ARCH__
+  atomicOr(p, v);
+#else
+  *p |= v;
+#endif
+}
+
+HD inline void set_flag(i32* p) {  // an error flag any thread may set
+#ifdef __CUDA_ARCH__
+  atomicExch(p, 1);
+#else
+  *p = 1;
+#endif
+}
+
 HD inline i32 load(const i32* p) {  // a fresh read of memory other threads write (union-find parents)
 #ifdef __CUDA_ARCH__
   return *static_cast<const volatile i32*>(p);
@@ -388,7 +414,8 @@ HD inline T floordiv(T a, T b) {  // b != 0
 }
 
 // Segment of item i in a prefix-sum array start[0..n]: the largest s < n with start[s] <= i.
-HD inline i64 segment(const i64* start, i64 n, i64 i) {
+template <class T>
+HD inline i64 segment(const T* start, i64 n, i64 i) {
   i64 lo = 0, hi = n;
   while (hi - lo > 1) {
     const i64 mid = (lo + hi) / 2;
@@ -399,6 +426,28 @@ HD inline i64 segment(const i64* start, i64 n, i64 i) {
 }
 
 HD inline i64 iabs(i64 v) { return v < 0 ? -v : v; }
+
+HD inline i32 find(const i32* par, i32 x) {
+  for (i32 p = load(par + x); p != x; p = load(par + x)) x = p;
+  return x;
+}
+
+// Union by linking the larger root under the smaller (Playne and Hawick 2018: a failed atomicMin means the root was
+// linked meanwhile; retry from the value it had). Roots only ever get smaller parents, so the final root of a
+// component is its smallest pixel index, its first raster pixel.
+HD inline void unite(i32* par, i32 a, i32 b) {
+  for (;;) {
+    a = find(par, a), b = find(par, b);
+    if (a == b) return;
+    if (a < b) {
+      const i32 t = a;
+      a = b, b = t;
+    }
+    const i32 old = atomic_min_old(par + a, b);
+    if (old == a) return;
+    a = old;
+  }
+}
 
 // ===================================================================== polygons
 struct Shapes {  // device view of Polygons plus derived offsets
@@ -851,318 +900,707 @@ struct ShapeTotals {
 };
 
 // ===================================================================== masks
-// Slot of the unit edge leaving vertex (x, y) in direction d (0 east, 1 south, 2 west, 3 north), local to a mask:
-// (y (W + 1) + x) 4 + d, which is also polygonize's edge key, so the minimum slot of a ring is its canonical start.
-// The bit-quad at vertex (x, y) has TL = pixel (x-1, y-1) = 1, TR = (x, y-1) = 2, BL = (x-1, y) = 4, BR = (x, y) = 8,
-// as in checker.bitquad. Foreground lies right of every edge (clockwise around parts, counter-clockwise in holes).
-struct MaskView {
-  const u8* bits;
-  const i64 *start, *slot_start, *vrow_start;
-  const i32 *W, *H;
-  i64 n;
+// The K1-draft polygonizer (docs/implementation2.0/kernels/K1, DESIGN.md: proofs, complexity, decision record) on a
+// lane. Conventions of objdel.checker.polygonize and bitquad: vertex (x, y), 0 <= x <= W, 0 <= y <= H; edge = (vertex,
+// direction d), d 0 east, 1 south, 2 west, 3 north, key (y (W + 1) + x) 4 + d; foreground lies right of every edge; the
+// bit-quad at vertex (x, y) is TL = pixel (x-1, y-1) = 1, TR = (x, y-1) = 2, BL = (x-1, y) = 4, BR = (x, y) = 8; at a
+// saddle the walk turns left (8-connected foreground, 4-connected background). Steps of one chunk of masks:
+//   Pack      bytes -> bit words (pixel x = bit x % 32 of word x / 32), one item per word (a warp ballot on the GPU).
+//   Quads     bit-quad counts n1, n2, nD, n3, n4 by bit slicing on words, one item per vertex row.
+//   RunCount  foreground / background runs per row; scan -> run offsets. [host wait 1: the run totals size the rest]
+//   RunEmit   runs (x0, x1) per row, in raster order; background run 0 of every mask is its OUTSIDE sentinel.
+//   Merge     union-find on runs: foreground rows joined if 8-adjacent, background if 4-adjacent, border background
+//             to the sentinel; roots are the minimum index = the first run in raster order. Flatten: run -> root.
+//   HoleKey   per bounded background component B (= one hole ring) the raster index of its ring's first east edge.
+//   RingMark  order bitmap (one bit per ring at its order pixel), start bitmap (at its start pixel), Betti numbers.
+//   scans     bitmap popcounts -> ring index (polygonize's order, no sort), start rank, outer-start rank (parts).
+//   RingInit  each ring's start edge in closed form, and its part (raster rank of its foreground component).
+//   Seeds     the ring starts plus, on every seed_rows-th row, both vertical sides of each foreground run.
+//   Trace     pass 1: each seed walks boundary edges to the next seed (corners, area, next seed); RingWalk: each
+//             segment's offset in its ring; scan -> output offsets; pass 2: each seed writes its corners in place.
+//   [host wait 2: the ring and corner totals; host wait 3: the outputs]
+// Every value is an integer, and cross-thread writes are commuting integer atomics, union-find links (root = minimum)
+// or an item's own slots, so the result does not depend on the schedule (the K1_ORDER test builds run the CPU build's
+// items reversed and permuted).
 
-  HD bool px(i64 m, i32 x, i32 y) const {
-    return x >= 0 && y >= 0 && x < W[m] && y < H[m] && bits[start[m] + i64(y) * W[m] + x] != 0;
+// Exclusive prefix sum of n items (out[k] = in[0] + ... + in[k-1]); callers pass one trailing zero to get the total.
+// `tmp` is CUB's scratch: it must never be a block that holds live data (the lane's `scan` arena only).
+void scan(Stream st, const i32* in, i32* out, i64 n, Block<true>& tmp) {
+  if (n <= 0) return;
+  if (n > INT_MAX) throw std::logic_error("scan: n > INT_MAX");  // the i32 sums would wrap
+#ifdef __CUDACC__
+  size_t bytes = 0;
+  cuda_check(cub::DeviceScan::ExclusiveSum(nullptr, bytes, in, out, n, st));
+  void* t = tmp.get(bytes > 0 ? bytes : 1);
+  cuda_check(cub::DeviceScan::ExclusiveSum(t, bytes, in, out, n, st));
+#else
+  (void)st;
+#ifdef GC_POISON_SCAN  // test build: scratch is overwritten, as CUB would, so a live block passed as `tmp` breaks
+  std::memset(tmp.get(4 * size_t(n + 1)), 0xFF, tmp.cap);
+#else
+  (void)tmp;
+#endif
+  i32 s = 0;
+  for (i64 k = 0; k < n; ++k) {
+    const i32 v = in[k];
+    out[k] = s;
+    s += v;
   }
-  HD int quad(i64 m, i32 x, i32 y) const {
-    return px(m, x - 1, y - 1) | px(m, x, y - 1) << 1 | px(m, x - 1, y) << 2 | px(m, x, y) << 3;
-  }
-};
-
-HD inline bool has_edge(int code, int d) {
-  switch (d) {
-    case 0: return (code & 8) && !(code & 2);  // top side of BR
-    case 1: return (code & 4) && !(code & 8);  // right side of BL
-    case 2: return (code & 1) && !(code & 4);  // bottom side of TL
-    default: return (code & 2) && !(code & 1);  // left side of TR
-  }
+#endif
 }
 
 HD inline i32 step_x(int d) { return d == 0 ? 1 : (d == 2 ? -1 : 0); }
 HD inline i32 step_y(int d) { return d == 1 ? 1 : (d == 3 ? -1 : 0); }
-HD inline bool is_corner(const i32* pred, i32 e) { return (e & 3) != (pred[e] & 3); }
-
-struct Slots {     // dense per-slot arrays of one chunk of masks, indexed slot_start[m] + local slot
-  i32* succ;       // successor slot, -1 = no edge
-  i32* pred;
-  i32 *lab[2], *jmp[2], *w[2];  // ping-pong buffers of the pointer-jumping rounds
-  i32* rcount;     // per ring (at its start slot): corners
-  i32* rkey;       // per ring: first east edge in raster order (polygonize's ring order)
-  i64* rarea;      // per ring: twice the signed area
-  i64* rbase;      // per ring: output offset of its first corner
-};
-
-// The outer loops below walk one vertex row (mask m, y) per item; f(m, base, x, y, local slot e).
-template <class F>
-HD inline void for_row_slots(const MaskView& v, i64 i, const Slots& sl, F f) {
-  const i64 m = segment(v.vrow_start, v.n, i);
-  const i32 y = i32(i - v.vrow_start[m]), W = v.W[m];
-  const i64 base = v.slot_start[m];
-  for (i32 x = 0; x <= W; ++x)
-    for (int d = 0; d < 4; ++d) {
-      const i32 e = (y * (W + 1) + x) * 4 + d;
-      if (sl.succ[base + e] >= 0) f(m, base, x, y, e);
-    }
+HD inline bool has_edge(int code, int d) {
+  switch (d) {
+    case 0: return (code & 8) && !(code & 2);   // top side of BR
+    case 1: return (code & 4) && !(code & 8);   // right side of BL
+    case 2: return (code & 1) && !(code & 4);   // bottom side of TL
+    default: return (code & 2) && !(code & 1);  // left side of TR
+  }
+}
+HD inline i64 area_term(i32 x, i32 y, int d) {  // x y1 - x1 y of the unit edge from (x, y) in direction d
+  return d == 0 ? -i64(y) : d == 1 ? i64(x) : d == 2 ? i64(y) : -i64(x);
 }
 
-struct InitSlots {
-  MaskView v;
-  Slots sl;
+struct Geo {  // one chunk of masks
+  const i32 *W, *H, *wpr;        // per mask: width, height, words per row
+  const i32 *ws, *rs, *vs, *ss;  // prefix (n + 1): words, rows, vertex rows (H + 1), seed-map entries
+  const i32* rowmask;            // per row: its mask
+  i32 n, K;                      // masks, seed rows (0 = off)
+
+  HD u32 word(const u32* bits, i32 m, i32 y, i32 j) const {  // word j of row y, 0 outside the mask
+    return (y >= 0 && y < H[m] && j >= 0 && j < wpr[m]) ? bits[ws[m] + y * wpr[m] + j] : 0u;
+  }
+  HD bool px(const u32* bits, i32 m, i32 x, i32 y) const {
+    if (x < 0 || y < 0 || x >= W[m] || y >= H[m]) return false;
+    return (bits[ws[m] + y * wpr[m] + (x >> 5)] >> (x & 31)) & 1u;
+  }
+  HD int quad(const u32* bits, i32 m, i32 x, i32 y) const {
+    return px(bits, m, x - 1, y - 1) | px(bits, m, x, y - 1) << 1 | px(bits, m, x - 1, y) << 2 | px(bits, m, x, y) << 3;
+  }
+  // Direction of the edge after the one arriving at vertex (x, y) in direction d: the left turn if it exists, else
+  // straight, else right (polygonize's link).
+  HD int succ_dir(const u32* bits, i32 m, i32 x, i32 y, int d) const {
+    const int c = quad(bits, m, x, y);
+#ifdef K1_MUTATE_FG4  // test build (D-G16): the right turn first, foreground 4-connected
+    const int turns[3] = {(d + 1) & 3, d, (d + 3) & 3};
+#else
+    const int turns[3] = {(d + 3) & 3, d, (d + 1) & 3};
+#endif
+    for (int t : turns)
+      if (has_edge(c, t)) return t;
+    return -1;
+  }
+  // Direction of the edge arriving at vertex (x, y) whose successor leaves in direction t (the successor map is a
+  // permutation of the edges, so exactly one exists).
+  HD int pred_dir(const u32* bits, i32 m, i32 x, i32 y, int t) const {
+    for (int d = 0; d < 4; ++d)
+      if (has_edge(quad(bits, m, x - step_x(d), y - step_y(d)), d) && succ_dir(bits, m, x, y, d) == t) return d;
+    return -1;
+  }
+  HD u32 valid(i32 m, i32 j) const {  // bits of word j inside the row
+    const i32 r = W[m] - 32 * j;
+    return r >= 32 ? ~0u : (r <= 0 ? 0u : ((1u << r) - 1u));
+  }
+  HD i32 bitword(i32 m, i32 x, i32 y) const { return ws[m] + y * wpr[m] + (x >> 5); }
+};
+
+struct Runs {
+  const i32 *rf, *rb;                           // per row (rows + 1): first foreground / background run
+  i32 *fx0, *fx1, *frow, *fpar;                 // foreground runs
+  i32 *bx0, *bx1, *brow, *bpar, *bleft, *hkey;  // background runs; bx0 = -1 marks a mask's OUTSIDE sentinel
+};
+
+// ---------------------------------------------------------------- words, quads, runs
+struct Pack {
+  Geo g;
+  const u8* bytes;
+  const i64* start;  // chunk-local byte offset of each mask
+  u32* words;
+  HD void operator()(i64 w) const {
+    const i32 m = i32(segment(g.ws, g.n, w));
+    const i32 lw = i32(w - g.ws[m]), wpr = g.wpr[m], W = g.W[m];
+    const i32 y = lw / wpr, x0 = 32 * (lw - y * wpr);
+    const u8* row = bytes + start[m] + i64(y) * W;
+    u32 v = 0;
+    for (i32 b = 0; b < mn(W - x0, 32); ++b) v |= u32(row[x0 + b] != 0) << b;
+    words[w] = v;
+  }
+};
+
+#ifdef __CUDACC__
+// One warp per word: lane l reads pixel 32 j + l (coalesced bytes) and __ballot_sync builds the word (as the
+// raster). The early exit is uniform per warp (blockDim is a multiple of 32 and all 32 lanes of a warp share w), so
+// every lane named in the ballot mask executes it.
+__global__ void pack_kernel(Pack p, i64 nw) {
+  const i64 t = i64(blockIdx.x) * blockDim.x + threadIdx.x, w = t >> 5;
+  const int lane = int(threadIdx.x & 31u);
+  if (w >= nw) return;
+  const Geo& g = p.g;
+  const i32 m = i32(segment(g.ws, g.n, w));
+  const i32 lw = i32(w - g.ws[m]), wpr = g.wpr[m], W = g.W[m];
+  const i32 y = lw / wpr, x = 32 * (lw - y * wpr) + lane;
+  const bool v = x < W && p.bytes[p.start[m] + i64(y) * W + x] != 0;
+  const u32 word = __ballot_sync(0xffffffffu, v);
+  if (lane == 0) p.words[w] = word;
+}
+void pack_words(Stream st, const Pack& p, i64 nw) {
+  constexpr int kThreads = 256;
+  if (nw <= 0) return;
+  pack_kernel<<<unsigned((nw * 32 + kThreads - 1) / kThreads), kThreads, 0, st>>>(p, nw);
+  cuda_check(cudaGetLastError());
+}
+#else
+void pack_words(Stream st, const Pack& p, i64 nw) { for_each(st, nw, p); }
+#endif
+
+struct Quads {  // bit slicing over 32 vertex columns at once
+  Geo g;
+  const u32* words;
   i64* quads;
   HD void operator()(i64 i) const {
-    const i64 m = segment(v.vrow_start, v.n, i);
-    const i32 y = i32(i - v.vrow_start[m]), W = v.W[m];
-    const i64 base = v.slot_start[m];
+    const i32 m = i32(segment(g.vs, g.n, i));
+    const i32 y = i32(i - g.vs[m]), W = g.W[m];
     i64 n1 = 0, n2 = 0, nd = 0, n3 = 0, n4 = 0;
-    for (i32 x = 0; x <= W; ++x) {
-      const int code = v.quad(m, x, y);
-      const int bits = (code & 1) + (code >> 1 & 1) + (code >> 2 & 1) + (code >> 3);
-      if (code == 6 || code == 9) ++nd;
-      else if (bits == 1) ++n1;
-      else if (bits == 2) ++n2;
-      else if (bits == 3) ++n3;
-      else if (bits == 4) ++n4;
-      for (int d = 0; d < 4; ++d) {
-        const i32 e = (y * (W + 1) + x) * 4 + d;
-        i32 next = -1;
-        if (has_edge(code, d)) {  // successor: the left turn if it exists (saddles), else the only edge
-          const i32 x1 = x + step_x(d), y1 = y + step_y(d);
-          const int c1 = v.quad(m, x1, y1);
-          const int turns[3] = {(d + 3) & 3, d, (d + 1) & 3};
-          for (int t : turns)
-            if (next < 0 && has_edge(c1, t)) next = (y1 * (W + 1) + x1) * 4 + t;
-        }
-        sl.succ[base + e] = next;
-        sl.lab[0][base + e] = e;
-        sl.jmp[0][base + e] = next;
-        sl.rkey[base + e] = 0x7FFFFFFF;
-      }
+    for (i32 j = 0; j < (W + 1 + 31) / 32; ++j) {
+      const u32 B = g.word(words, m, y - 1, j), D = g.word(words, m, y, j);  // TR, BR: pixel x
+      const u32 A = (B << 1) | (g.word(words, m, y - 1, j - 1) >> 31);       // TL: pixel x - 1
+      const u32 C = (D << 1) | (g.word(words, m, y, j - 1) >> 31);           // BL
+      const i32 r = W + 1 - 32 * j;                                         // vertex columns x <= W
+      const u32 vm = r >= 32 ? ~0u : ((1u << r) - 1u);
+      const u32 e1 = (A & ~B & ~C & ~D) | (~A & B & ~C & ~D) | (~A & ~B & C & ~D) | (~A & ~B & ~C & D);
+      const u32 e3 = (~A & B & C & D) | (A & ~B & C & D) | (A & B & ~C & D) | (A & B & C & ~D);
+      const u32 e4 = A & B & C & D;
+      const u32 dg = (A & D & ~B & ~C) | (B & C & ~A & ~D);  // codes 9 and 6
+      const u32 e2 = (A | B | C | D) & ~e1 & ~e3 & ~e4;
+      n1 += popc(e1 & vm), n2 += popc(e2 & vm & ~dg), nd += popc(dg & vm), n3 += popc(e3 & vm), n4 += popc(e4 & vm);
     }
-    i64* q = quads + 5 * m;
+    i64* q = quads + 5 * i64(m);
     atomic_add(q + 0, n1), atomic_add(q + 1, n2), atomic_add(q + 2, nd), atomic_add(q + 3, n3), atomic_add(q + 4, n4);
   }
 };
 
-// Label round: lab = min(lab, lab[jmp]); jmp = jmp[jmp]. After k rounds lab covers 2^k slots of the cycle.
-struct LabelRound {
-  MaskView v;
-  Slots sl;
-  int in;
-  HD void operator()(i64 i) const {
-    const i32 *lab = sl.lab[in], *jmp = sl.jmp[in];
-    i32 *lab2 = sl.lab[1 - in], *jmp2 = sl.jmp[1 - in];
-    for_row_slots(v, i, sl, [&](i64, i64 base, i32, i32, i32 e) {
-      const i32 j = jmp[base + e];
-      lab2[base + e] = mn(lab[base + e], lab[base + j]);
-      jmp2[base + e] = jmp[base + j];
-    });
+struct RunCount {
+  Geo g;
+  const u32* words;
+  i32 *cf, *cb;
+  HD void operator()(i64 r) const {
+    const i32 m = g.rowmask[r], y = i32(r - g.rs[m]);
+    u32 pf = 0, pb = 0;
+    i32 nf = 0, nbg = 0;
+    for (i32 j = 0; j < g.wpr[m]; ++j) {
+      const u32 w = g.word(words, m, y, j), nw = ~w & g.valid(m, j);
+      nf += popc(w & ~((w << 1) | pf));
+      nbg += popc(nw & ~((nw << 1) | pb));
+      pf = w >> 31, pb = nw >> 31;
+    }
+    cf[r] = nf;
+    cb[r] = nbg + (y == 0 ? 1 : 0);  // the mask's OUTSIDE sentinel takes the first background slot of row 0
   }
 };
 
-struct Pred {
-  MaskView v;
-  Slots sl;
-  HD void operator()(i64 i) const {
-    for_row_slots(v, i, sl, [&](i64, i64 base, i32, i32, i32 e) { sl.pred[base + sl.succ[base + e]] = e; });
-  }
-};
-
-// Ranking on pred, stopped at the ring's start: w(e) = corners from the start up to e's predecessor = e's corner index.
-struct RankInit {
-  MaskView v;
-  Slots sl;
-  const i32* lab;
-  HD void operator()(i64 i) const {
-    for_row_slots(v, i, sl, [&](i64, i64 base, i32, i32, i32 e) {
-      const bool start = lab[base + e] == e;
-      const i32 p = sl.pred[base + e];
-      sl.jmp[0][base + e] = start ? e : p;
-      sl.w[0][base + e] = start ? 0 : is_corner(sl.pred + base, p);
-    });
-  }
-};
-
-struct RankRound {
-  MaskView v;
-  Slots sl;
-  int in;
-  HD void operator()(i64 i) const {
-    const i32 *w = sl.w[in], *jmp = sl.jmp[in];
-    i32 *w2 = sl.w[1 - in], *jmp2 = sl.jmp[1 - in];
-    for_row_slots(v, i, sl, [&](i64, i64 base, i32, i32, i32 e) {
-      const i32 j = jmp[base + e];
-      w2[base + e] = w[base + e] + w[base + j];
-      jmp2[base + e] = jmp[base + j];
-    });
-  }
-};
-
-struct RingStats {
-  MaskView v;
-  Slots sl;
-  const i32* lab;
-  i32 *nrings, *rec;  // rec: (mask chunk index, start slot) of every ring, in any order
-  HD void operator()(i64 i) const {
-    for_row_slots(v, i, sl, [&](i64 m, i64 base, i32 x, i32 y, i32 e) {
-      const i32 root = lab[base + e], d = e & 3, x1 = x + step_x(d), y1 = y + step_y(d);
-      atomic_add(sl.rarea + base + root, i64(x) * y1 - i64(x1) * y);
-      if (is_corner(sl.pred + base, e)) atomic_add(sl.rcount + base + root, 1);
-      if (d == 0) atomic_min(sl.rkey + base + root, y * (v.W[m] + 1) + x);
-      if (root == e) {
-        const i32 k = atomic_inc(nrings);
-        rec[2 * k] = i32(m), rec[2 * k + 1] = e;
+struct RunEmit {
+  Geo g;
+  const u32* words;
+  Runs R;
+  HD void operator()(i64 r) const {
+    const i32 m = g.rowmask[r], y = i32(r - g.rs[m]), wpr = g.wpr[m];
+    i32 bi = R.rb[r];
+    if (y == 0) {
+      R.bx0[bi] = -1, R.bx1[bi] = -1, R.brow[bi] = i32(r), R.bpar[bi] = bi, R.bleft[bi] = -1, R.hkey[bi] = INT_MAX;
+      ++bi;
+    }
+    const i32 f0 = R.rf[r], b0 = bi;
+    i32 fs = 0, fe = 0, bs = 0, be = 0;
+    u32 pf = 0, pb = 0;
+    for (i32 j = 0; j < wpr; ++j) {
+      const u32 w = g.word(words, m, y, j), nw = ~w & g.valid(m, j);
+      const u32 wn = g.word(words, m, y, j + 1), nwn = j + 1 < wpr ? (~wn & g.valid(m, j + 1)) : 0u;
+      u32 s1 = w & ~((w << 1) | pf), e1 = w & ~((w >> 1) | ((wn & 1u) << 31));
+      u32 s0 = nw & ~((nw << 1) | pb), e0 = nw & ~((nw >> 1) | ((nwn & 1u) << 31));
+      for (; s1; s1 &= s1 - 1) {
+        const i32 k = f0 + fs++;
+        R.fx0[k] = 32 * j + ctz(s1), R.frow[k] = i32(r), R.fpar[k] = k;
       }
-    });
+      for (; e1; e1 &= e1 - 1) R.fx1[f0 + fe++] = 32 * j + ctz(e1);
+      for (; s0; s0 &= s0 - 1) {
+        const i32 k = b0 + bs++;
+        R.bx0[k] = 32 * j + ctz(s0), R.brow[k] = i32(r), R.bpar[k] = k, R.hkey[k] = INT_MAX;
+      }
+      for (; e0; e0 &= e0 - 1) R.bx1[b0 + be++] = 32 * j + ctz(e0);
+      pf = w >> 31, pb = nw >> 31;
+    }
+    // The foreground run left of each background run (the one ending at x0 - 1): runs alternate along the row.
+    i32 a = 0;
+    for (i32 k = 0; k < bs; ++k) {
+      const i32 x0 = R.bx0[b0 + k];
+      while (a < fs && R.fx1[f0 + a] < x0 - 1) ++a;
+      R.bleft[b0 + k] = (x0 > 0 && a < fs && R.fx1[f0 + a] == x0 - 1) ? f0 + a : -1;
+    }
   }
 };
 
-struct ScatterCorners {
-  MaskView v;
-  Slots sl;
-  const i32 *lab, *w;
-  i32* pts;
+// Union of runs of row y with row y - 1, and of border background runs with the sentinel. Two-pointer merge of two
+// sorted lists of disjoint intervals: when two runs end at different x, the one ending first meets no later run of
+// the other row (its next run starts >= 2 past the end); equal ends advance both.
+struct Merge {
+  Geo g;
+  Runs R;
+  HD void operator()(i64 r) const {
+    const i32 m = g.rowmask[r], y = i32(r - g.rs[m]), W = g.W[m], H = g.H[m];
+    const i32 sent = R.rb[g.rs[m]];
+    const i32 b_lo = R.rb[r] + (y == 0), b_hi = R.rb[r + 1];
+    for (i32 b = b_lo; b < b_hi; ++b)
+      if (y == 0 || y == H - 1 || R.bx0[b] == 0 || R.bx1[b] == W - 1) unite(R.bpar, b, sent);
+    if (y == 0) return;
+#ifdef K1_MUTATE_FG4  // test build (D-G16): foreground 4-adjacent, background 8-adjacent
+    constexpr i32 kFg = 0, kBg = 1;
+#else
+    constexpr i32 kFg = 1, kBg = 0;  // foreground 8-adjacent: a.x0 <= b.x1 + 1; background 4-adjacent
+#endif
+    for (i32 a = R.rf[r], ae = R.rf[r + 1], b = R.rf[r - 1], bend = R.rf[r]; a < ae && b < bend;) {
+      if (R.fx0[a] <= R.fx1[b] + kFg && R.fx0[b] <= R.fx1[a] + kFg) unite(R.fpar, a, b);
+      const i32 xa = R.fx1[a], xb = R.fx1[b];
+      if (xa <= xb) ++a;
+      if (xb <= xa) ++b;
+    }
+    for (i32 a = b_lo, ae = b_hi, b = R.rb[r - 1] + (y - 1 == 0), bend = R.rb[r]; a < ae && b < bend;) {
+      if (R.bx0[a] <= R.bx1[b] + kBg && R.bx0[b] <= R.bx1[a] + kBg) unite(R.bpar, a, b);
+      const i32 xa = R.bx1[a], xb = R.bx1[b];
+      if (xa <= xb) ++a;
+      if (xb <= xa) ++b;
+    }
+  }
+};
+
+struct Flatten {
+  Runs R;
+  i32 nf;
   HD void operator()(i64 i) const {
-    for_row_slots(v, i, sl, [&](i64, i64 base, i32 x, i32 y, i32 e) {
-      if (!is_corner(sl.pred + base, e)) return;
-      const i64 k = sl.rbase[base + lab[base + e]] + w[base + e];
-      pts[2 * k] = x, pts[2 * k + 1] = y;
-    });
+    if (i < nf) R.fpar[i] = find(R.fpar, i32(i));
+    else R.bpar[i - nf] = find(R.bpar, i32(i - nf));
   }
 };
 
-int jump_rounds(i64 n) {  // polygonize._jumps: ceil(log2(n)) + 1 rounds cover any cycle of <= n edges
-  int k = 0;
-  while ((i64(1) << k) < n) ++k;
-  return k + 1;
+// ---------------------------------------------------------------- rings: order, starts, parts
+// Order key of each hole ring: its first east edge in raster order. An east edge of the hole ring of B is the top
+// side of a foreground pixel p of S(B) (the component surrounding B) whose upper neighbour is in B. S(B) is the
+// component of the foreground run just left of B's first run (DESIGN.md lemma 3).
+struct HoleKey {
+  Geo g;
+  Runs R;
+  i32* err;
+  HD void operator()(i64 r) const {
+    const i32 m = g.rowmask[r], y = i32(r - g.rs[m]), W = g.W[m];
+    if (y == 0) return;
+    for (i32 a = R.rf[r], ae = R.rf[r + 1], b = R.rb[r - 1] + (y - 1 == 0), bend = R.rb[r]; a < ae && b < bend;) {
+      if (R.fx0[a] <= R.bx1[b] && R.bx0[b] <= R.fx1[a]) {
+        const i32 B = R.bpar[b];
+        if (R.bx0[B] >= 0) {  // a hole (not the outside)
+          const i32 left = R.bleft[B];
+          if (left < 0) set_flag(err);
+          else if (R.fpar[a] == R.fpar[left]) atomic_min(R.hkey + B, y * W + mx(R.fx0[a], R.bx0[b]));
+        }
+      }
+      const i32 xa = R.fx1[a], xb = R.bx1[b];
+      if (xa <= xb) ++a;
+      if (xb <= xa) ++b;
+    }
+  }
+};
+
+// One bit per ring in the order bitmap (at its order pixel) and in the start bitmap (at its start pixel: a
+// foreground pixel for an outer ring, a background one for a hole); the mask's Betti numbers (one per root).
+struct RingMark {
+  Geo g;
+  Runs R;
+  i32 nf;
+  u32 *obits, *sbits;
+  i64* betti;
+  i32* err;
+  HD void operator()(i64 i) const {
+    if (i < nf) {
+      if (R.fpar[i] != i) return;
+      const i32 r = R.frow[i], m = g.rowmask[r], y = r - g.rs[m], x = R.fx0[i];
+      atomic_or(obits + g.bitword(m, x, y), 1u << (x & 31));
+      atomic_or(sbits + g.bitword(m, x, y), 1u << (x & 31));
+      atomic_add(betti + 2 * i64(m), i64(1));
+    } else {
+      const i32 b = i32(i - nf);
+      if (R.bpar[b] != b || R.bx0[b] < 0) return;
+      const i32 r = R.brow[b], m = g.rowmask[r], y = r - g.rs[m], x = R.bx0[b], W = g.W[m];
+      atomic_or(sbits + g.bitword(m, x, y), 1u << (x & 31));
+      atomic_add(betti + 2 * i64(m) + 1, i64(1));
+      const i32 k = R.hkey[b];
+      if (k == INT_MAX) {
+        set_flag(err);
+        return;
+      }
+      const i32 ky = k / W, kx = k - ky * W;
+      atomic_or(obits + g.bitword(m, kx, ky), 1u << (kx & 31));
+    }
+  }
+};
+
+struct Popc {  // set bits per word of `bits` (and of `also`, when given)
+  const u32 *bits, *also;
+  i32* cnt;
+  HD void operator()(i64 w) const { cnt[w] = popc(bits[w] & (also ? also[w] : ~0u)); }
+};
+
+HD inline i32 rank_of(const u32* bits, const i32* scan, i32 w, i32 x) {
+  return scan[w] + popc(bits[w] & ((1u << (x & 31)) - 1u));
 }
 
-constexpr i64 kChunkSlots = i64(1) << 23;  // slots per batch of masks (~0.5 GB of scratch)
-
-struct RingInfo {  // one ring of a mask chunk, gathered for the host's ordering
-  i32 m, e, key, count;  // mask (chunk index), start slot, first east edge, corners
-  i64 area2;             // twice the signed area
+struct Seeds {
+  i32 *x, *y, *d, *m;  // start edge of each seed; seeds [0, R) are the ring starts, in ring order
+  i32 *cnt, *next, *off, *ring, *dead;
+  i64* area;
 };
 
-struct GatherRings {
-  MaskView v;
-  Slots sl;
-  const i32* rec;
-  RingInfo* info;
-  HD void operator()(i64 k) const {
-    const i32 m = rec[2 * k], e = rec[2 * k + 1];
-    const i64 slot = v.slot_start[m] + e;
-    info[k] = RingInfo{m, e, sl.rkey[slot], sl.rcount[slot], sl.rarea[slot]};
+struct RingInit {
+  Geo g;
+  Runs R;
+  i32 nf;
+  const u32 *obits, *sbits, *words;
+  const i32 *oscan, *sscan, *pscan;  // pscan: outer starts (start bits on foreground pixels) before each word
+  i32 *ring_of_start, *part;
+  Seeds S;
+  HD void operator()(i64 i) const {
+    i32 r, x, ox, oy, d, f;  // f: the root foreground run of the ring's part
+    if (i < nf) {
+      if (R.fpar[i] != i) return;
+      r = R.frow[i], x = R.fx0[i], d = 0, f = i32(i);
+    } else {
+      const i32 b = i32(i - nf);
+      if (R.bpar[b] != b || R.bx0[b] < 0) return;
+      r = R.brow[b], x = R.bx0[b], d = 1, f = R.bleft[b] < 0 ? -1 : R.fpar[R.bleft[b]];
+    }
+    const i32 m = g.rowmask[r], y = r - g.rs[m];
+    if (d == 0) ox = x, oy = y;
+    else oy = R.hkey[i - nf] / g.W[m], ox = R.hkey[i - nf] - oy * g.W[m];
+    const i32 ring = rank_of(obits, oscan, g.bitword(m, ox, oy), ox);
+    ring_of_start[rank_of(sbits, sscan, g.bitword(m, x, y), x)] = ring;
+    S.x[ring] = x, S.y[ring] = y, S.d[ring] = d, S.m[ring] = m;
+    if (f < 0) {  // HoleKey has flagged it
+      part[ring] = -1;
+      return;
+    }
+    const i32 fx = R.fx0[f], fw = g.bitword(m, fx, R.frow[f] - g.rs[m]);
+    part[ring] = pscan[fw] - pscan[g.ws[m]] + popc(sbits[fw] & words[fw] & ((1u << (fx & 31)) - 1u));
   }
 };
 
-struct SetBase {  // each ring's output offset, at its start slot
-  MaskView v;
-  Slots sl;
-  const i32* rec;
-  const i64* base;
-  HD void operator()(i64 k) const { sl.rbase[v.slot_start[rec[2 * k]] + rec[2 * k + 1]] = base[k]; }
+struct SeedFlag {
+  Geo g;
+  Runs R;
+  i32* flag;
+  HD void operator()(i64 i) const {
+    const i32 r = R.frow[i], m = g.rowmask[r];
+    flag[i] = ((r - g.rs[m]) % g.K) == 0;
+  }
 };
 
-// Masks [m0, m1) on one lane: copy in, rings and corner ranks, then three short round trips to the host (the ring
-// count; the rings and bit-quads; the corners after the host ordered the rings).
-void check_mask_chunk(const Masks& in, i64 m0, i64 m1, MaskResult& out, Lane& L, Timer& t) {
-  const i64 n = m1 - m0;
-  std::vector<i64> slot_start(n + 1, 0), vrow_start(n + 1, 0);
-  i64 max_slots = 1;
-  for (i64 k = 0; k < n; ++k) {
-    const i64 W = in.W[m0 + k], H = in.H[m0 + k];
-    slot_start[k + 1] = slot_start[k] + 4 * (W + 1) * (H + 1);
-    vrow_start[k + 1] = vrow_start[k] + H + 1;
-    max_slots = std::max(max_slots, 4 * (W + 1) * (H + 1));
+struct SeedEmit {
+  Geo g;
+  Runs R;
+  const i32 *flag, *soff, *counts;  // counts[0] = rings
+  i32* seedmap;
+  Seeds S;
+  HD void operator()(i64 i) const {
+    if (!flag[i]) return;
+    const i32 r = R.frow[i], m = g.rowmask[r], y = r - g.rs[m], W = g.W[m];
+    const i32 id = counts[0] + 2 * soff[i], x0 = R.fx0[i], x1 = R.fx1[i];
+    i32* row = seedmap + g.ss[m] + (y / g.K) * (W + 1);
+    row[x0] = id, row[x1 + 1] = id + 1;
+    S.x[id] = x0, S.y[id] = y + 1, S.d[id] = 3, S.m[id] = m;                  // left side of pixel (x0, y), north
+    S.x[id + 1] = x1 + 1, S.y[id + 1] = y, S.d[id + 1] = 1, S.m[id + 1] = m;  // right side of pixel (x1, y), south
   }
-  const i64 npx = in.start[m1] - in.start[m0], S = slot_start[n], rows = vrow_start[n];
-  const i64 rmax = S / 8 + 1;  // <= 2 edges per vertex (4 slots), >= 4 edges per ring
-  Layout lay;
-  const size_t o_bits = lay.put<u8>(npx), o_start = lay.put<i64>(n + 1), o_slot = lay.put<i64>(n + 1),
-               o_vrow = lay.put<i64>(n + 1), o_W = lay.put<i32>(n), o_H = lay.put<i32>(n);
-  const size_t in_bytes = lay.size;
-  size_t o_i32[9];  // succ, pred, lab 0/1, jmp 0/1, w 0/1, rkey
-  for (size_t& o : o_i32) o = lay.put<i32>(S);
-  const size_t o_rbase = lay.put<i64>(S), o_rec = lay.put<i32>(2 * rmax), o_info = lay.put<RingInfo>(rmax),
-               o_base = lay.put<i64>(rmax), o_pts = lay.put<i32>(S);  // <= S / 2 corners
-  const size_t o_rcount = lay.put<i32>(S), o_rarea = lay.put<i64>(S), o_quads = lay.put<i64>(5 * n),
-               o_nrings = lay.put<i32>(1);  // [o_rcount, end): zeroed
-  const size_t info_bytes = (sizeof(RingInfo) * size_t(rmax) + 255) / 256 * 256;
-  u8* d = L.dev.get(lay.size);
-  u8* h = L.in.get(std::max(in_bytes, sizeof(i64) * size_t(rmax)));
-  u8* o = L.out.get(std::max(info_bytes + sizeof(i64) * size_t(5 * n), sizeof(i32) * size_t(S)));
-  std::copy_n(in.bits + in.start[m0], npx, ptr<u8>(h, o_bits));
-  for (i64 k = 0; k <= n; ++k) ptr<i64>(h, o_start)[k] = in.start[m0 + k] - in.start[m0];
-  std::copy_n(slot_start.data(), n + 1, ptr<i64>(h, o_slot));
-  std::copy_n(vrow_start.data(), n + 1, ptr<i64>(h, o_vrow));
-  std::copy_n(in.W + m0, n, ptr<i32>(h, o_W));
-  std::copy_n(in.H + m0, n, ptr<i32>(h, o_H));
+};
+
+struct SetCounts {  // counts[0] = rings, [1] = seeds; Header sets [2] = corners; [4] = the error flag
+  const i32 *oscan, *soff;
+  i32 nw, nf, K;
+  i32* counts;
+  HD void operator()(i64) const {
+    counts[0] = oscan[nw];
+    counts[1] = counts[0] + (K > 0 ? 2 * soff[nf] : 0);
+  }
+};
+
+// ---------------------------------------------------------------- tracing
+// Walk boundary edges from a seed to the next seed. pass 1: corners, area, next seed; pass 2: write the corners.
+struct Trace {
+  Geo g;
+  const u32 *words, *sbits;
+  const i32 *sscan, *ring_of_start, *seedmap, *counts, *rbase;
+  Seeds S;
+  i32* pts;
+  i32* err;
+  int pass;
+
+  HD i32 seed_of(i32 m, i32 x, i32 y, int d) const {  // seed id of edge (x, y, d), or -1
+    if (d <= 1 && x < g.W[m] && y < g.H[m]) {
+      const i32 w = g.bitword(m, x, y);
+      if ((sbits[w] >> (x & 31)) & 1u) return ring_of_start[rank_of(sbits, sscan, w, x)];
+    }
+    if (g.K > 0) {
+      if (d == 1 && y % g.K == 0) return seedmap[g.ss[m] + (y / g.K) * (g.W[m] + 1) + x];
+      if (d == 3 && (y - 1) % g.K == 0) return seedmap[g.ss[m] + ((y - 1) / g.K) * (g.W[m] + 1) + x];
+    }
+    return -1;
+  }
+
+  HD void operator()(i64 i) const {
+    const i32 s = i32(i);
+    if (s >= counts[1]) return;
+    if (pass == 2 && S.dead[s]) return;
+    const i32 m = S.m[s];
+    i32 x = S.x[s], y = S.y[s];
+    int d = S.d[s];
+    if (pass == 1 && s >= counts[0] && seed_of(m, x, y, d) != s) {  // a row seed on a ring start: the start covers it
+      S.dead[s] = 1;
+      return;
+    }
+    int prev = g.pred_dir(words, m, x, y, d);
+    i64 k = pass == 2 ? i64(rbase[S.ring[s]]) + S.off[s] : 0;
+    i32 corners = 0, nxt = -1;
+    i64 area = 0;
+    const i64 cap = 4 * (i64(g.W[m]) + 1) * (i64(g.H[m]) + 1);
+    for (i64 step = 0; nxt < 0; ++step) {
+      if (step > cap || d < 0) {
+        set_flag(err);
+        return;
+      }
+      if (d != prev) {
+        if (pass == 2) pts[2 * k] = x, pts[2 * k + 1] = y, ++k;
+        ++corners;
+      }
+      area += area_term(x, y, d);
+      x += step_x(d), y += step_y(d);
+      prev = d;
+      d = g.succ_dir(words, m, x, y, d);
+      if (d < 0) {
+        set_flag(err);
+        return;
+      }
+      nxt = seed_of(m, x, y, d);
+    }
+    if (pass == 1) S.cnt[s] = corners, S.area[s] = area, S.next[s] = nxt;
+  }
+};
+
+struct RingWalk {  // per ring: follow its seeds; each segment gets the offset of its first corner
+  const i32* counts;
+  Seeds S;
+  i32* rcount;
+  i64* rarea;
+  i32* err;
+  i32 cap;
+  HD void operator()(i64 i) const {
+    const i32 g0 = i32(i);
+    if (g0 >= counts[0]) return;
+    i32 s = g0, off = 0, n = 0;
+    i64 a = 0;
+    do {
+      S.off[s] = off, S.ring[s] = g0;
+      off += S.cnt[s], a += S.area[s];
+      s = S.next[s];
+      if (++n > cap || s < 0) {
+        set_flag(err);
+        return;
+      }
+    } while (s != g0);
+    rcount[g0] = off, rarea[g0] = a;
+  }
+};
+
+struct Header {  // counts[2] = corners in all; the first ring of each mask (the order scan at its first word)
+  Geo g;
+  const i32 *oscan, *rbase;
+  i32 rmax;
+  i32 *counts, *ring_start;
+  HD void operator()(i64 m) const {
+    if (m == 0) counts[2] = rbase[rmax];
+    ring_start[m] = oscan[g.ws[m]];
+  }
+};
+
+// ---------------------------------------------------------------- one chunk
+// Masks [m0, m1) on one lane: layout A (inputs, words, bitmaps) in L.dev, layout B (runs, rings, seeds, corners) in
+// L.score, CUB's scratch in L.scan, three host waits. Returns false (nothing appended) when layout B would not fit
+// (above max_scratch_bytes, or past the i32 counts) and the chunk has more than one mask, so the caller halves it
+// (the steps before wait 1 are cheap to redo); one mask that does not fit raises.
+bool mask_chunk(const Masks& in, i64 m0, i64 m1, const MaskOptions& opt, MaskResult& out, Lane& L, Timer& t) {
+  const i32 n = i32(m1 - m0), K = opt.seed_rows;
+  std::vector<i32> W(n), H(n), wpr(n), ws(n + 1, 0), rs(n + 1, 0), vs(n + 1, 0), ss(n + 1, 0);
+  std::vector<i64> start(n + 1, 0);
+  for (i32 k = 0; k < n; ++k) {  // i32 counts: a chunk holds at most kMaxChunkPixels + one mask (check_masks)
+    W[k] = in.W[m0 + k], H[k] = in.H[m0 + k], wpr[k] = (W[k] + 31) / 32;
+    ws[k + 1] = ws[k] + H[k] * wpr[k];
+    rs[k + 1] = rs[k] + H[k];
+    vs[k + 1] = vs[k] + H[k] + 1;
+    ss[k + 1] = ss[k] + (K > 0 ? (H[k] + K - 1) / K * (W[k] + 1) : 0);
+    start[k + 1] = in.start[m0 + k + 1] - in.start[m0];
+  }
+  const i64 npx = start[n];
+  const i32 NW = ws[n], NR = rs[n], NV = vs[n];
+  std::vector<i32> rowmask(NR);
+  for (i32 k = 0; k < n; ++k) std::fill(rowmask.begin() + rs[k], rowmask.begin() + rs[k + 1], k);
+
+  Layout la;  // ---- layout A
+  const size_t o_bytes = la.put<u8>(npx), o_start = la.put<i64>(n + 1), o_W = la.put<i32>(n), o_H = la.put<i32>(n),
+               o_wpr = la.put<i32>(n), o_ws = la.put<i32>(n + 1), o_rs = la.put<i32>(n + 1), o_vs = la.put<i32>(n + 1),
+               o_ss = la.put<i32>(n + 1), o_rowmask = la.put<i32>(NR);
+  const size_t in_bytes = la.size;
+  const size_t o_words = la.put<u32>(NW), o_cf = la.put<i32>(NR + 1), o_cb = la.put<i32>(NR + 1),
+               o_rf = la.put<i32>(NR + 1), o_rb = la.put<i32>(NR + 1), o_ocnt = la.put<i32>(NW + 1),
+               o_scnt = la.put<i32>(NW + 1), o_pcnt = la.put<i32>(NW + 1), o_oscan = la.put<i32>(NW + 1),
+               o_sscan = la.put<i32>(NW + 1), o_pscan = la.put<i32>(NW + 1), o_seedmap = la.put<i32>(ss[n]);
+  const size_t z0 = la.size;  // [z0, end) zeroed
+  const size_t o_obits = la.put<u32>(NW), o_sbits = la.put<u32>(NW), o_quads = la.put<i64>(5 * i64(n)),
+               o_betti = la.put<i64>(2 * i64(n)), o_counts = la.put<i32>(8);
+  u8* A = L.dev.get(la.size);
+  u8* h = L.in.get(in_bytes);
+  std::copy_n(in.bits + in.start[m0], npx, ptr<u8>(h, o_bytes));  // copy_n: a count of 0 never reads
+  std::copy_n(start.data(), n + 1, ptr<i64>(h, o_start));
+  std::copy_n(W.data(), n, ptr<i32>(h, o_W));
+  std::copy_n(H.data(), n, ptr<i32>(h, o_H));
+  std::copy_n(wpr.data(), n, ptr<i32>(h, o_wpr));
+  std::copy_n(ws.data(), n + 1, ptr<i32>(h, o_ws));
+  std::copy_n(rs.data(), n + 1, ptr<i32>(h, o_rs));
+  std::copy_n(vs.data(), n + 1, ptr<i32>(h, o_vs));
+  std::copy_n(ss.data(), n + 1, ptr<i32>(h, o_ss));
+  std::copy_n(rowmask.data(), NR, ptr<i32>(h, o_rowmask));
 
   const Stream st = L.stream;
-  const MaskView v{ptr<u8>(d, o_bits), ptr<i64>(d, o_start), ptr<i64>(d, o_slot), ptr<i64>(d, o_vrow), ptr<i32>(d, o_W),
-                   ptr<i32>(d, o_H), n};
-  auto slots = [&](int k) { return ptr<i32>(d, o_i32[k]); };
-  const Slots sl{slots(0), slots(1), {slots(2), slots(3)}, {slots(4), slots(5)}, {slots(6), slots(7)},
-                 ptr<i32>(d, o_rcount), slots(8), ptr<i64>(d, o_rarea), ptr<i64>(d, o_rbase)};
-  i32* rec = ptr<i32>(d, o_rec);
-  to_device(d, h, in_bytes, st);
-  zero(d + o_rcount, lay.size - o_rcount, st);
-  const int rounds = jump_rounds(max_slots);
-  const i32 *lab = nullptr, *w = nullptr;
-  t.stage("ccl", st, [&] {  // ring labels: pointer jumping to each cycle's minimum slot
-    for_each(st, rows, InitSlots{v, sl, ptr<i64>(d, o_quads)});
-    int in_buf = 0;
-    for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(st, rows, LabelRound{v, sl, in_buf});
-    lab = sl.lab[in_buf];
+  const Geo g{ptr<i32>(A, o_W), ptr<i32>(A, o_H), ptr<i32>(A, o_wpr), ptr<i32>(A, o_ws), ptr<i32>(A, o_rs),
+              ptr<i32>(A, o_vs), ptr<i32>(A, o_ss), ptr<i32>(A, o_rowmask), n, K};
+  u32 *words = ptr<u32>(A, o_words), *obits = ptr<u32>(A, o_obits), *sbits = ptr<u32>(A, o_sbits);
+  i32 *counts = ptr<i32>(A, o_counts), *err = counts + 4;
+  i32 *oscan = ptr<i32>(A, o_oscan), *sscan = ptr<i32>(A, o_sscan), *pscan = ptr<i32>(A, o_pscan);
+#ifdef GC_ALIAS_SCAN_FOR_TEST
+  Block<true>& scan1 = L.dev;  // planted defect (tests/variants.py "alias"): CUB scratch on layout A
+#else
+  Block<true>& scan1 = L.scan;
+#endif
+  u8* o = L.out.get(64);
+  t.stage("ccl", st, [&] {
+    to_device(A, h, in_bytes, st);
+    zero(A + z0, la.size - z0, st);
+    for (size_t c : {o_cf, o_cb}) zero(A + c, sizeof(i32) * size_t(NR + 1), st);
+    for (size_t c : {o_ocnt, o_scnt, o_pcnt}) zero(A + c, sizeof(i32) * size_t(NW + 1), st);
+    pack_words(st, Pack{g, ptr<u8>(A, o_bytes), ptr<i64>(A, o_start), words}, NW);
+    for_each(st, NV, Quads{g, words, ptr<i64>(A, o_quads)});
+    for_each(st, NR, RunCount{g, words, ptr<i32>(A, o_cf), ptr<i32>(A, o_cb)});
+    scan(st, ptr<i32>(A, o_cf), ptr<i32>(A, o_rf), NR + 1, scan1);
+    scan(st, ptr<i32>(A, o_cb), ptr<i32>(A, o_rb), NR + 1, L.scan);
   });
-  t.stage("rings", st, [&] {  // corner ranks and the ring records
-    for_each(st, rows, Pred{v, sl});
-    for_each(st, rows, RankInit{v, sl, lab});
-    int in_buf = 0;
-    for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(st, rows, RankRound{v, sl, in_buf});
-    w = sl.w[in_buf];
-    for_each(st, rows, RingStats{v, sl, lab, ptr<i32>(d, o_nrings), rec});
-  });
-  to_host(o, d + o_nrings, sizeof(i32), st);
-  wait(st);
-  const i32 R = *ptr<i32>(o, 0);
-  if (R < 0 || R > rmax) throw std::logic_error("gpucheck: ring count out of its bound");
+  to_host(o, A + o_rf + sizeof(i32) * NR, sizeof(i32), st);
+  to_host(o + 4, A + o_rb + sizeof(i32) * NR, sizeof(i32), st);
+  wait(st);  // 1: the run totals
+  const i32 NF = ptr<i32>(o, 0)[0], NB = ptr<i32>(o, 4)[0];
+  if (NF < 0 || NB < 0 || NF > npx || NB > npx + NR) throw std::logic_error("gpucheck: run totals out of their bound");
+  const i64 rmax = i64(NF) + NB, smax = rmax + 2 * i64(NF);
 
-  t.stage("rings", st, [&] { for_each(st, R, GatherRings{v, sl, rec, ptr<RingInfo>(d, o_info)}); });
-  to_host(o, d + o_info, sizeof(RingInfo) * size_t(R), st);
-  to_host(o + info_bytes, d + o_quads, sizeof(i64) * size_t(5 * n), st);
-  wait(st);
-  // Order the rings as polygonize does and give each its output offset (host: rings are few).
-  const RingInfo* info = ptr<RingInfo>(o, 0);
-  std::vector<i32> order(R);
-  std::iota(order.begin(), order.end(), 0);
-  std::sort(order.begin(), order.end(), [&](i32 a, i32 b) {
-    return info[a].m != info[b].m ? info[a].m < info[b].m : info[a].key < info[b].key;
-  });
-  const i64 p0 = out.pts_start.back();
-  i64 total = 0;
-  std::vector<i64> per_mask(n, 0);
-  i64* base = ptr<i64>(h, 0);  // the copy in is done (wait above): its staging buffer is free
-  for (i32 k : order) {
-    base[k] = total;
-    total += info[k].count;
-    out.pts_start.push_back(p0 + total);
-    out.ring_area.push_back(info[k].area2 / 2);
-    per_mask[info[k].m] += 1;
+  Layout lb;  // ---- layout B
+  size_t o_f[4], o_b[6], o_s[8];
+  for (size_t& q : o_f) q = lb.put<i32>(NF);
+  for (size_t& q : o_b) q = lb.put<i32>(NB);
+  const size_t o_flag = lb.put<i32>(NF + 1), o_soff = lb.put<i32>(NF + 1), o_ros = lb.put<i32>(rmax),
+               o_part = lb.put<i32>(rmax), o_rbase = lb.put<i32>(rmax + 1), o_rarea = lb.put<i64>(rmax),
+               o_pts = lb.put<i32>(8 * i64(NF)), o_rstart = lb.put<i32>(n + 1);
+  for (size_t& q : o_s) q = lb.put<i32>(smax);
+  const size_t o_sarea = lb.put<i64>(smax);
+  const size_t zb = lb.size;  // [zb, end) zeroed
+  const size_t o_rcount = lb.put<i32>(rmax + 1), o_dead = lb.put<i32>(smax);
+  if (smax > INT_MAX / 2 || 8 * i64(NF) > INT_MAX || i64(lb.size) > opt.max_scratch_bytes) {
+    if (n > 1) return false;
+    throw std::invalid_argument("check_masks: one mask needs " + std::to_string(lb.size) +
+                                " bytes of run scratch, above max_scratch_bytes = " +
+                                std::to_string(opt.max_scratch_bytes));
   }
-  for (i64 k = 0; k < n; ++k) out.ring_start.push_back(out.ring_start.back() + per_mask[k]);
-  const i64* quads = ptr<i64>(o + info_bytes, 0);
-  out.quads.insert(out.quads.end(), quads, quads + 5 * n);
-  if (2 * total > S) throw std::logic_error("gpucheck: corner count out of its bound");
-
-  to_device(d + o_base, base, sizeof(i64) * size_t(R), st);
-  t.stage("trace", st, [&] {  // every corner to its output position
-    for_each(st, R, SetBase{v, sl, rec, ptr<i64>(d, o_base)});
-    for_each(st, rows, ScatterCorners{v, sl, lab, w, ptr<i32>(d, o_pts)});
+  u8* B = L.score.get(lb.size);
+  const i32 RMAX = i32(rmax), SMAX = i32(smax);
+  const Runs R{ptr<i32>(A, o_rf), ptr<i32>(A, o_rb), ptr<i32>(B, o_f[0]), ptr<i32>(B, o_f[1]), ptr<i32>(B, o_f[2]),
+               ptr<i32>(B, o_f[3]), ptr<i32>(B, o_b[0]), ptr<i32>(B, o_b[1]), ptr<i32>(B, o_b[2]), ptr<i32>(B, o_b[3]),
+               ptr<i32>(B, o_b[4]), ptr<i32>(B, o_b[5])};
+  const Seeds S{ptr<i32>(B, o_s[0]), ptr<i32>(B, o_s[1]), ptr<i32>(B, o_s[2]), ptr<i32>(B, o_s[3]),
+                ptr<i32>(B, o_s[4]), ptr<i32>(B, o_s[5]), ptr<i32>(B, o_s[6]), ptr<i32>(B, o_s[7]),
+                ptr<i32>(B, o_dead), ptr<i64>(B, o_sarea)};
+  i32 *ros = ptr<i32>(B, o_ros), *rcount = ptr<i32>(B, o_rcount), *rbase = ptr<i32>(B, o_rbase);
+  i32 *flag = ptr<i32>(B, o_flag), *soff = ptr<i32>(B, o_soff);
+  t.stage("ccl", st, [&] {
+    zero(B + zb, lb.size - zb, st);
+    zero(flag, sizeof(i32) * size_t(NF + 1), st);
+    for_each(st, NR, RunEmit{g, words, R});
+    for_each(st, NR, Merge{g, R});
+    for_each(st, rmax, Flatten{R, NF});
   });
-  to_host(o, d + o_pts, sizeof(i32) * size_t(2 * total), st);
-  wait(st);
-  out.pts.insert(out.pts.end(), ptr<i32>(o, 0), ptr<i32>(o, 0) + 2 * total);
+  t.stage("rings", st, [&] {
+    for_each(st, NR, HoleKey{g, R, err});
+    for_each(st, rmax, RingMark{g, R, NF, obits, sbits, ptr<i64>(A, o_betti), err});
+    for_each(st, NW, Popc{obits, nullptr, ptr<i32>(A, o_ocnt)});
+    for_each(st, NW, Popc{sbits, nullptr, ptr<i32>(A, o_scnt)});
+    for_each(st, NW, Popc{sbits, words, ptr<i32>(A, o_pcnt)});
+    scan(st, ptr<i32>(A, o_ocnt), oscan, NW + 1, L.scan);
+    scan(st, ptr<i32>(A, o_scnt), sscan, NW + 1, L.scan);
+    scan(st, ptr<i32>(A, o_pcnt), pscan, NW + 1, L.scan);
+    for_each(st, rmax, RingInit{g, R, NF, obits, sbits, words, oscan, sscan, pscan, ros, ptr<i32>(B, o_part), S});
+    if (K > 0) {
+      for_each(st, NF, SeedFlag{g, R, flag});
+      scan(st, flag, soff, NF + 1, L.scan);
+    }
+    for_each(st, 1, SetCounts{oscan, soff, NW, NF, K, counts});
+    if (K > 0) for_each(st, NF, SeedEmit{g, R, flag, soff, counts, ptr<i32>(A, o_seedmap), S});
+  });
+  t.stage("trace", st, [&] {
+    Trace tr{g, words, sbits, sscan, ros, ptr<i32>(A, o_seedmap), counts, rbase, S, ptr<i32>(B, o_pts), err, 1};
+    for_each(st, SMAX, tr);
+    for_each(st, RMAX, RingWalk{counts, S, rcount, ptr<i64>(B, o_rarea), err, SMAX});
+    scan(st, rcount, rbase, rmax + 1, L.scan);
+    tr.pass = 2;
+    for_each(st, SMAX, tr);
+    for_each(st, n + 1, Header{g, oscan, rbase, RMAX, counts, ptr<i32>(B, o_rstart)});
+  });
+  to_host(o, counts, sizeof(i32) * 8, st);
+  wait(st);  // 2: the ring and corner totals
+  i32 hdr[8];
+  std::copy_n(ptr<i32>(o, 0), 8, hdr);
+  if (hdr[4]) throw std::logic_error("gpucheck: polygonizer invariant violated on the device (trace, hole key, walk)");
+  const i32 nr = hdr[0], ncorner = hdr[2];
+  if (nr < 0 || nr > RMAX || ncorner < 0 || ncorner > 4 * NF) throw std::logic_error("gpucheck: counts out of bound");
+  Layout lo;
+  const size_t q_rbase = lo.put<i32>(nr + 1), q_area = lo.put<i64>(nr), q_part = lo.put<i32>(nr),
+               q_pts = lo.put<i32>(2 * i64(ncorner)), q_rstart = lo.put<i32>(n + 1), q_quads = lo.put<i64>(5 * i64(n)),
+               q_betti = lo.put<i64>(2 * i64(n));
+  o = L.out.get(lo.size);
+  to_host(o + q_rbase, rbase, sizeof(i32) * size_t(nr + 1), st);
+  to_host(o + q_area, ptr<i64>(B, o_rarea), sizeof(i64) * size_t(nr), st);
+  to_host(o + q_part, ptr<i32>(B, o_part), sizeof(i32) * size_t(nr), st);
+  to_host(o + q_pts, ptr<i32>(B, o_pts), sizeof(i32) * 2 * size_t(ncorner), st);
+  to_host(o + q_rstart, ptr<i32>(B, o_rstart), sizeof(i32) * size_t(n + 1), st);
+  to_host(o + q_quads, ptr<i64>(A, o_quads), sizeof(i64) * 5 * size_t(n), st);
+  to_host(o + q_betti, ptr<i64>(A, o_betti), sizeof(i64) * 2 * size_t(n), st);
+  wait(st);  // 3: the outputs
+  const i64 r0 = i64(out.ring_area.size()), p0 = out.pts_start.back();
+  const i32 *rst = ptr<i32>(o, q_rstart), *rb = ptr<i32>(o, q_rbase), *pp = ptr<i32>(o, q_pts);
+  const i64 *ar = ptr<i64>(o, q_area), *qq = ptr<i64>(o, q_quads), *bb = ptr<i64>(o, q_betti);
+  for (i32 k = 1; k <= n; ++k) out.ring_start.push_back(r0 + rst[k]);
+  for (i32 k = 0; k < nr; ++k) out.pts_start.push_back(p0 + rb[k + 1]), out.ring_area.push_back(ar[k] / 2);
+  out.ring_part.insert(out.ring_part.end(), ptr<i32>(o, q_part), ptr<i32>(o, q_part) + nr);
+  out.pts.insert(out.pts.end(), pp, pp + 2 * size_t(ncorner));
+  out.quads.insert(out.quads.end(), qq, qq + 5 * size_t(n));
+  out.betti.insert(out.betti.end(), bb, bb + 2 * size_t(n));
+  return true;
+}
+
+void mask_range(const Masks& in, i64 m0, i64 m1, const MaskOptions& opt, MaskResult& out, Lane& L, Timer& t) {
+  if (mask_chunk(in, m0, m1, opt, out, L, t)) return;
+  const i64 mid = m0 + (m1 - m0) / 2;
+  mask_range(in, m0, mid, opt, out, L, t);
+  mask_range(in, mid, m1, opt, out, L, t);
 }
 
 // ---------------------------------------------------------------- polygon calls
@@ -1372,28 +1810,6 @@ struct Crops {  // the call's crops, one item per crop row; pixel p of a crop = 
     return o;
   }
 };
-
-HD inline i32 find(const i32* par, i32 x) {
-  for (i32 p = load(par + x); p != x; p = load(par + x)) x = p;
-  return x;
-}
-
-// Union by linking the larger root under the smaller (Playne and Hawick 2018: a failed atomicMin means the root was
-// linked meanwhile; retry from the value it had). Roots only ever get smaller parents, so the final root of a
-// component is its smallest pixel index, its first raster pixel.
-HD inline void unite(i32* par, i32 a, i32 b) {
-  for (;;) {
-    a = find(par, a), b = find(par, b);
-    if (a == b) return;
-    if (a < b) {
-      const i32 t = a;
-      a = b, b = t;
-    }
-    const i32 old = atomic_min_old(par + a, b);
-    if (old == a) return;
-    a = old;
-  }
-}
 
 struct CropFill {
   Crops c;
@@ -1837,8 +2253,10 @@ PolygonResult check_polygons(const Polygons& in, Times* times) {
   return out;
 }
 
-MaskResult check_masks(const Masks& in, Times* times) {
+MaskResult check_masks(const Masks& in, Times* times, const MaskOptions& opt) {
   GC_RANGE("check_masks");
+  if (opt.seed_rows < 0 || opt.chunk_pixels < 1 || opt.chunk_pixels > kMaxChunkPixels || opt.max_scratch_bytes < 1)
+    throw std::invalid_argument("check_masks needs seed_rows >= 0, 1 <= chunk_pixels <= 2^30, max_scratch_bytes >= 1");
   MaskResult out;
   out.ring_start = {0};
   out.pts_start = {0};
@@ -1849,18 +2267,35 @@ MaskResult check_masks(const Masks& in, Times* times) {
   Drain drain{e};
   Timer t{times, {}};
   e.start();
-  for (i64 m0 = 0; m0 < in.n;) {  // chunks of at most kChunkSlots slots (a larger mask goes alone)
-    i64 m1 = m0, slots = 0;
+  // Chunks of at most chunk_pixels vertices, (W + 1)(H + 1) per mask (that also bounds rows and empty masks); a larger
+  // mask goes alone. So every count inside a chunk fits an i32.
+  for (i64 m0 = 0; m0 < in.n;) {
+    i64 m1 = m0, cost = 0;
     while (m1 < in.n) {
-      const i64 s = 4 * (i64(in.W[m1]) + 1) * (i64(in.H[m1]) + 1);
-      if (m1 > m0 && slots + s > kChunkSlots) break;
-      slots += s, ++m1;
+      const i64 c = (i64(in.W[m1]) + 1) * (i64(in.H[m1]) + 1);
+      if (m1 > m0 && cost + c > opt.chunk_pixels) break;
+      cost += c, ++m1;
     }
-    check_mask_chunk(in, m0, m1, out, e.lanes[0], t);
+    mask_range(in, m0, m1, opt, out, e.lanes[0], t);
     m0 = m1;
   }
   if (times) t.read();
   return out;
+}
+
+std::vector<std::string> test_hooks() {
+  std::vector<std::string> h;
+#ifdef GC_POISON_SCAN
+  h.emplace_back("GC_POISON_SCAN");
+#endif
+#ifdef GC_ALIAS_SCAN_FOR_TEST
+  h.emplace_back("GC_ALIAS_SCAN_FOR_TEST");
+#endif
+#ifdef K1_MUTATE_FG4
+  h.emplace_back("K1_MUTATE_FG4");
+#endif
+  if (K1_ORDER != 0) h.push_back("K1_ORDER=" + std::to_string(K1_ORDER));
+  return h;
 }
 
 i64 add_tables(const Tables& t) {

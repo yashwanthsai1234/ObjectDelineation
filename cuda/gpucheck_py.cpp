@@ -7,6 +7,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/string.h>
 
 #include <cmath>
 #include <optional>
@@ -158,16 +159,24 @@ NB_MODULE(_gpucheck, m) {
       nb::arg("roles").noconvert().none(), nb::arg("W").noconvert(), nb::arg("H").noconvert(), nb::arg("G"),
       nb::kw_only(), nb::arg("timing") = false);
 
+  m.def("test_hooks", [] {  // () in every shipped build; tests/variants.py checks its builds with it
+    nb::list h;
+    for (const std::string& s : gpucheck::test_hooks()) h.append(s);
+    return nb::tuple(h);
+  });
+
+  // chunk_pixels, max_scratch_bytes and seed_rows are for tests (gpucheck.h MaskOptions; defaults = production).
   m.def(
       "check_masks",
-      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start, bool timing) {
+      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start, bool timing, i64 chunk_pixels,
+         i64 max_scratch_bytes, i32 seed_rows) {
         const MasksIn k(bits, hw, start);
         const i64 n = k.in.n;
         gpucheck::MaskResult r;
         gpucheck::Times times;
         {
           nb::gil_scoped_release release;
-          r = gpucheck::check_masks(k.in, timing ? &times : nullptr);
+          r = gpucheck::check_masks(k.in, timing ? &times : nullptr, {seed_rows, chunk_pixels, max_scratch_bytes});
         }
         const size_t R = r.ring_area.size(), P = r.pts.size() / 2;
         nb::dict d;
@@ -176,11 +185,15 @@ NB_MODULE(_gpucheck, m) {
         d["pts_start"] = to_numpy(std::move(r.pts_start), {R + 1});
         d["ring_area"] = to_numpy(std::move(r.ring_area), {R});
         d["pts"] = to_numpy(std::move(r.pts), {P, 2});
+        d["ring_part"] = to_numpy(std::move(r.ring_part), {R});
+        d["betti"] = to_numpy(std::move(r.betti), {size_t(n), 2});
         if (timing) d["timing"] = times_dict(times);
         return d;
       },
       nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert(), nb::kw_only(),
-      nb::arg("timing") = false);
+      nb::arg("timing") = false, nb::arg("chunk_pixels") = gpucheck::MaskOptions{}.chunk_pixels,
+      nb::arg("max_scratch_bytes") = gpucheck::MaskOptions{}.max_scratch_bytes,
+      nb::arg("seed_rows") = gpucheck::MaskOptions{}.seed_rows);
 
   // One ExpertCache's tables to the device -> handle (objdel.reward.ExpertCache.device).
   m.def(

@@ -6,6 +6,9 @@ build counts the same events as the CUDA build: there, device memory counts as p
 host staging as synchronizing ones. `timing=True` adds per-stage times without adding a host wait.
 """
 import gc as pygc
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -13,6 +16,7 @@ import pytest
 from objdel import _gpucheck as gc
 from objdel.reward import ExpertCache
 
+ROOT = Path(__file__).resolve().parents[1]
 BASELINE = (4, 2)  # (waits, drain_syncs) per score_polygons call before D5 (gpucheck.cpp score_polygons, score_words)
 EVENTS = ("waits", "drain_syncs", "label_pairs", "sync_alloc", "sync_free", "pool_allocs", "pool_frees")
 STATE = ("arena_bytes", "table_bytes", "live_device_bytes", "contexts")
@@ -31,11 +35,16 @@ def _square_args(n, side, handle, a=200, b=800):
             np.full(n, handle, np.int64))
 
 
+def _caches():
+    """Two expert caches (40 and 96 px frames)."""
+    return (ExpertCache.build(np.stack([_disc(40, r) for r in (8, 9, 10)])),
+            ExpertCache.build(np.stack([_disc(96, r) for r in (30, 31, 33)])))
+
+
 @pytest.fixture()
 def cache():
-    """Two expert caches (40 and 96 px frames) whose tables live on the device for the test."""
-    small = ExpertCache.build(np.stack([_disc(40, r) for r in (8, 9, 10)]))
-    large = ExpertCache.build(np.stack([_disc(96, r) for r in (30, 31, 33)]))
+    """The two expert caches, their tables on the device for the test."""
+    small, large = _caches()
     yield small, large
     del small, large
 
@@ -81,17 +90,26 @@ def test_label_pairs_count_the_rows_of_the_second_label_pair(cache):
     assert st["label_pairs"] == 0
 
 
-def test_larger_call_allocates_and_its_repeat_does_not(cache):
-    small, large = cache
-    gc.score_polygons(*_square_args(64, 40, small.device()))
-    big = _square_args(256, 96, large.device())
-    _, st = _delta(lambda: gc.score_polygons(*big))
-    assert st["pool_allocs"] >= 1 and st["pool_allocs"] == st["pool_frees"]  # grow-only arenas: replace = 1 + 1
-    _, st = _delta(lambda: gc.score_polygons(*big))
-    assert (st["pool_allocs"], st["pool_frees"], st["sync_alloc"], st["sync_free"]) == (0, 0, 0, 0)
+def test_larger_call_allocates_and_its_repeat_does_not():
+    """Arenas are process-wide and grow-only (no trim before D5c), so an earlier test's larger call (check_masks on a
+    4096 x 4096 mask) would leave nothing to grow: the check runs in a fresh child process."""
+    code = """
+from tests.test_engine_counters import _caches, _delta, _square_args, gc
+small, large = _caches()
+gc.score_polygons(*_square_args(64, 40, small.device()))
+big = _square_args(256, 96, large.device())
+_, st = _delta(lambda: gc.score_polygons(*big))
+assert st["pool_allocs"] >= 1 and st["pool_allocs"] == st["pool_frees"]  # grow-only arenas: replace = 1 + 1
+_, st = _delta(lambda: gc.score_polygons(*big))
+assert (st["pool_allocs"], st["pool_frees"], st["sync_alloc"], st["sync_free"]) == (0, 0, 0, 0)
+"""
+    p = subprocess.run([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(ROOT)!r})\n{code}"],
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr[-2000:]
 
 
 def test_tables_count_their_bytes_and_drop_makes_no_wait():
+    pygc.collect()  # drop the tables of earlier tests' garbage first, so only this cache's drop is counted
     c = ExpertCache.build(np.stack([_disc(40, r) for r in (8, 9)]))
     before = gc.stats()
     h, st = _delta(c.device)
