@@ -1,6 +1,7 @@
 """Pack cases for objdel._gpucheck, run it, and compare it with the references: for polygons, the results of the CPU
 checker it replaced (polycore, archived in archive/cpu_checker), recorded per case in tests/goldens/polycore.npz
-before the archive; for masks, objdel.checker.polygonize and bitquad, run here.
+before the archive; for masks, the numpy polygonizer (tests/oracles/polygonize_oracle.py, never the engine under
+test), the bit-quad oracle (tests/oracles/bitquad_oracle.py) and cv2's 8-connected labels (ring parts), run here.
 
 Shared by tests/test_cuda_checker*.py, tests/test_checker_host.py, tests/test_gpu_scoring.py and
 experiments/cuda_checker/eval.py. The packed formats are those of data/checker_eval
@@ -15,11 +16,13 @@ import random
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from objdel import _gpucheck
-from objdel.checker import bitquads, polygonize
 from objdel.geometry.shape import pack_rings, unpack_rows
+from tests.oracles.bitquad_oracle import bitquads
+from tests.oracles.polygonize_oracle import polygonize
 
 TESTS = Path(__file__).resolve().parents[2] / "tests"
 if str(TESTS) not in sys.path:
@@ -27,7 +30,7 @@ if str(TESTS) not in sys.path:
 
 GOLDEN = TESTS / "goldens" / "polycore.npz"  # archive/cpu_checker/record_goldens.py
 POLY_FIELDS = ("legal", "defects", "evenodd")  # compared in this order; the first difference is reported
-MASK_FIELDS = ("quads", "rings", "b0", "b1", "ring_sha")
+MASK_FIELDS = ("quads", "rings", "b0", "b1", "betti", "parts", "ring_sha")
 
 
 # ------------------------------------------------------------------ packing and running
@@ -162,17 +165,37 @@ def polygon_diff(gpu: dict, ref: dict):
     return next((k for k in POLY_FIELDS if not same[k]), None)
 
 
+def ring_parts(mask, rings) -> tuple:
+    """Per ring, the raster rank (by first pixel) of the cv2 8-connected component of the foreground pixel right of the
+    ring's first edge: an outer ring's own component, a hole's surrounding one (the engine's ring_part). cv2 numbers
+    components in its own scan order (2x2 blocks), so its labels are ranked by first pixel here."""
+    if not rings:
+        return ()
+    lab = cv2.connectedComponents(np.asarray(mask, np.uint8), connectivity=8)[1]
+    labels, first = np.unique(lab.ravel(), return_index=True)
+    fg = labels > 0
+    rank = np.full(labels.max() + 1, -1, np.int64)
+    rank[labels[fg][np.argsort(first[fg])]] = np.arange(fg.sum())
+    out = []
+    for pts, _ in rings:
+        (x, y), (dx, dy) = pts[0], np.sign(pts[1] - pts[0])  # east: pixel (x, y); south (x-1, y); west, north
+        out.append(int(rank[lab[y - (dx < 0 or dy < 0), x - (dx < 0 or dy > 0)]]))
+    return tuple(out)
+
+
 def mask_reference(mask) -> dict:
     q = bitquads(mask)
     rings = [(g.pts.astype(np.int64), g.area) for g in polygonize(mask)]
     return dict(quads=(q.n1, q.n2, q.nD, q.n3, q.n4), n_rings=len(rings), b0=sum(a > 0 for _, a in rings),
-                b1=sum(a < 0 for _, a in rings), ring_sha=ring_sha(rings))
+                b1=sum(a < 0 for _, a in rings), parts=ring_parts(mask, rings), ring_sha=ring_sha(rings))
 
 
 def mask_diff(out: dict, m: int, ref: dict):
     """First field of MASK_FIELDS where the GPU result for mask m differs from ref (mask_reference, or the
-    certify columns of masks.npz: b0, b1, area, corners and ring_sha)."""
+    certify columns of masks.npz: b0, b1, area, corners and ring_sha). `betti` is the engine's own (b0, b1) count,
+    `parts` its ring_part."""
     rings = gpu_rings(out, m)
+    r0, r1 = out["ring_start"][m], out["ring_start"][m + 1]
     q = out["quads"][m]
     n1, n2, nd, n3, n4 = (int(v) for v in q)
     if "quads" in ref:
@@ -184,6 +207,8 @@ def mask_diff(out: dict, m: int, ref: dict):
             "rings": "n_rings" not in ref or len(rings) == ref["n_rings"],
             "b0": sum(a > 0 for _, a in rings) == ref["b0"],
             "b1": sum(a < 0 for _, a in rings) == ref["b1"],
+            "betti": tuple(int(v) for v in out["betti"][m]) == (ref["b0"], ref["b1"]),
+            "parts": "parts" not in ref or tuple(int(v) for v in out["ring_part"][r0:r1]) == ref["parts"],
             "ring_sha": ring_sha(rings) == ref["ring_sha"]}
     return next((k for k in MASK_FIELDS if not same[k]), None)
 

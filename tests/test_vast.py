@@ -1431,3 +1431,20 @@ def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp
     offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
     assert P.launch_refusal(offer, 2.4) == ""
     assert "hard stop" in P.launch_refusal(dict(offer, dph_total=1.5), 2.4)
+
+
+def test_code_files_ship_the_kernel_drafts_but_no_other_docs(tmp_path, monkeypatch):
+    """D1 step 0: the kernel drafts ship for R-D1 (K1-K3 runbooks run from /workspace/src/docs/...); their build/ and
+    results/ folders and every other docs/ path except the two reference tables do not."""
+    keep = ["docs/implementation2.0/kernels/K1/k1poly.cpp", "docs/implementation2.0/kernels/K3/GPU_RUN.md",
+            "docs/reference/frozen_views.json", "docs/reference/val_halves.json", "tests/oracles/o.py"]
+    drop = ["docs/implementation2.0/kernels/K1/build/x", "docs/implementation2.0/kernels/K1/results/x.txt",
+            "docs/implementation2.0/kernels/README.md", "docs/implementation2.0/kernels/K4/a.cpp",
+            "docs/reference/other.json", "docs/implementation2.0/Implementation.md"]
+    for p in keep + drop:
+        (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / p).write_text("x")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    monkeypatch.setattr(P, "ROOT", tmp_path)
+    assert sorted(P.code_files()) == sorted(keep)

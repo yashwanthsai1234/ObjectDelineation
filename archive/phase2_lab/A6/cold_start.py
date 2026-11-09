@@ -19,14 +19,14 @@ def main():
     a = ap.parse_args()
     res = {"env": env(), "numba_cache_dir": os.environ.get("NUMBA_CACHE_DIR")}
     t0 = time.perf_counter()
-    from objdel.targets import build_target  # noqa: PLC0415 - timed import
+    from objdel.targets import build_target, min_areas  # noqa: PLC0415 - timed import
     res["import_targets_s"] = time.perf_counter() - t0
     yy, xx = np.mgrid[:500, :500]
     disc = (yy - 250) ** 2 / 120**2 + (xx - 250) ** 2 / 110**2 < 1
     cup = (yy - 250) ** 2 / 50**2 + (xx - 255) ** 2 / 45**2 < 1
     for label in ("first_call_s", "second_call_s"):
         t0 = time.perf_counter()
-        build_target({"disc": disc, "cup": cup}, ("disc", "cup"))
+        build_target({"disc": disc, "cup": cup}, ("disc", "cup"), None, min_areas({"disc": disc[None], "cup": cup[None]}))
         res[label] = time.perf_counter() - t0
     from scipy import ndimage  # noqa: PLC0415
     m = ~disc

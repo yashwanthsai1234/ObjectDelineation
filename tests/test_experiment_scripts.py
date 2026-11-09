@@ -1,6 +1,10 @@
-"""Every Phase 1 script has a command line: `--help` prints usage and exits 0 without touching data (B4-7).
+"""Every Phase 1 script has a command line: `--help` prints usage and exits 0 without touching data (B4-7). D3 (S03)
+adds the other non-lab scripts that import objdel.checker or objdel.targets: experiments/phase1/bench,
+experiments/cuda_checker (not compare.py, a helper module) and experiments/phase2. The Phase 0 scripts fail before
+their command line on names removed in Phase 1 (topology.BG4, reward.AnnotatorSet; CLEAN's to archive), so for them
+only the names they take from the objdel.checker and objdel.targets packages are checked.
 
-Scripts run as modules in an isolated interpreter, as CLAUDE.md prescribes for anything that reads data/
+Scripts run as modules in an isolated interpreter, as docs/contributing.md prescribes for anything that reads data/
 (`python -I -m experiments.phase1.<script>`; -I drops the current directory from sys.path, so this also checks that
 the editable install makes `experiments` importable). One `-I` subprocess runs every script through `runpy`, so the
 heavy imports (torch, TRL) are paid once. A script whose optional extra is not installed (the CI `python` job has
@@ -17,7 +21,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = sorted(p.stem for p in (ROOT / "experiments" / "phase1").glob("*.py") if p.stem != "__init__")
+SCRIPTS = [f"experiments.{d.replace('/', '.')}.{p.stem}"
+           for d in ("phase1", "phase1/bench", "cuda_checker", "phase2")
+           for p in sorted((ROOT / "experiments" / d).glob("*.py")) if p.stem not in ("__init__", "compare")]
 OPTIONAL = {"torch", "transformers", "trl", "datasets", "peft", "accelerate", "pydicom", "pylidc"}  # extras
 
 RUNNER = """
@@ -27,7 +33,7 @@ for s in scripts:
     buf, sys.argv = io.StringIO(), [s, "--help"]
     try:
         with contextlib.redirect_stdout(buf):
-            runpy.run_module("experiments.phase1." + s, run_name="__main__", alter_sys=True)
+            runpy.run_module(s, run_name="__main__", alter_sys=True)
         out[s] = {"code": "returned without exiting", "stdout": buf.getvalue()}
     except SystemExit as e:
         out[s] = {"code": e.code or 0, "stdout": buf.getvalue()}
@@ -48,12 +54,14 @@ def helps(tmp_path_factory):
     return json.loads(out.read_text())
 
 
-def test_phase1_scripts_found():
-    assert {"eval_run", "prepare_rl", "build_data"} <= set(SCRIPTS)
+def test_scripts_found():
+    assert {f"experiments.phase1.{s}" for s in ("eval_run", "prepare_rl", "build_data")} | {
+        "experiments.cuda_checker.eval", "experiments.phase2.verify_target_hashes",
+        "experiments.phase2.final_eval"} <= set(SCRIPTS)
 
 
 @pytest.mark.parametrize("script", SCRIPTS)
-def test_phase1_script_help(helps, script):
+def test_script_help(helps, script):
     h = helps[script]
     if "missing" in h:
         if h["missing"].split(".")[0] in OPTIONAL:

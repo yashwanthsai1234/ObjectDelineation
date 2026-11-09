@@ -239,7 +239,7 @@ def test_score_polygons_returns_numbers_only(jobs):
     r = _gpucheck.score_polygons(np.array([[0, 0], [1000, 0], [1000, 1000]], np.int32), np.array([0, 3], np.int64),
                                  np.array([0, 1], np.int64), None, np.array([40], np.int32), np.array([40], np.int32),
                                  1000, np.array([c.device()], np.int64))
-    assert set(r) == {"defects", "area", "iou_tc", "f5", "g_area", "topo_freq", "sig_start", "sig"}
+    assert set(r) == {"defects", "area", "sum_x", "sum_y", "iou_tc", "f5", "g_area", "topo_freq", "sig_start", "sig"}
     assert all(v.size <= 13 for v in r.values())
     with pytest.raises(ValueError, match="frame"):
         _gpucheck.score_polygons(np.zeros((0, 2), np.int32), np.array([0], np.int64), np.array([0, 0], np.int64),

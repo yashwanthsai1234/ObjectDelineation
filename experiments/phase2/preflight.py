@@ -319,13 +319,23 @@ def projection(a, cfg) -> list[str]:
     return [] if doc["go"] else [out.getvalue().splitlines()[0]]
 
 
+def runbooks(a, cfg, root: Path = ROOT) -> list[str]:
+    """The kernel drafts run from the synced code (Implementation.md D1 step 0): no scratch path in any of their files,
+    and no hand copy or stale box torch in their runbooks."""
+    k = root / "docs/implementation2.0/kernels"
+    files = [p for p in k.rglob("*") if p.is_file() and "build" not in p.relative_to(k).parts]
+    bad = [f"{p.relative_to(root)}: scratch path" for p in files if re.search(r"/[p]rivate/tmp", p.read_text("latin-1"))]
+    return bad + [f"{p.relative_to(root)}: {s.strip()!r}" for p in sorted(k.glob("*/GPU_RUN.md"))
+                  for s in ("torch 2.14.1", "scp ", "rsync ") if s in p.read_text()]
+
+
 CHECKS = [
     ("DATA bundle integrity", view_integrity), ("DATA patient disjointness", patients),
     ("DATA prompt identity", prompts), ("DATA CT window", ct_window), ("DATA training targets legal", targets),
     ("DATA coverage of the exam views", coverage), ("DATA ROWS root", rows_root), ("DATA ROWS revision", rows_revision),
     ("CHECKER CPU exactness (+ CUDA equivalence)", checker_tests),
     ("CODE TRL private names", lambda a, cfg: trl_problems()),
-    ("CODE quick tests", lambda a, cfg: pytest("-m", "not slow", *QUICK_TESTS)),
+    ("CODE kernel runbooks", runbooks), ("CODE quick tests", lambda a, cfg: pytest("-m", "not slow", *QUICK_TESTS)),
     ("CODE CPU dry run train -> select", lambda a, cfg: pytest(DRY_RUN)),
     ("CODE projected GPU hours and dollars", projection),
 ]  # fmt: skip

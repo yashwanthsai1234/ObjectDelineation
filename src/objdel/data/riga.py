@@ -45,7 +45,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from objdel.checker import certify
+from objdel.checker import certify_many
 
 from .store import Item
 
@@ -223,7 +223,7 @@ def split_touching(o):
 
 def certified(disc, cup) -> bool:
     """Disc and cup each one hole-free component, cup inside disc, all three (with the rim) certified."""
-    reports = [certify(disc), certify(cup), certify(disc & ~cup, min_size=RIM_MIN_SIZE)]
+    reports = certify_many([disc, cup, disc & ~cup], [0, 0, RIM_MIN_SIZE])
     return all(r.certified for r in reports) and (reports[0].b0, reports[0].b1, reports[1].b0, reports[1].b1) == (
         1, 0, 1, 0) and bool(np.all(disc[cup]))
 

@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
 
-from objdel.checker import betti, bitquads, certify, polygonize
+from objdel.checker import betti, certify, certify_many
+from tests.oracles.bitquad_oracle import bitquads
+from tests.oracles.polygonize_oracle import polygonize
 
 N4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
 N8 = N4 + [(1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -131,3 +133,57 @@ def test_non_canonical_bool_bytes():
         assert bitquads(nb) == bitquads(m)
         assert [r.pts.tolist() for r in polygonize(nb)] == [r.pts.tolist() for r in polygonize(m)]
         assert certify(nb) == certify(m) and certify(nb, min_size=2) == certify(m, min_size=2)
+
+
+def _certify_masks(seed, n):
+    """Noise, blobs with holes, diagonals, 1xN and empty masks."""
+    rng = np.random.default_rng(seed)
+    out = [np.zeros((0, 0), bool), np.zeros((4, 5), bool), np.ones((1, 1), bool), np.eye(3, dtype=bool),
+           np.ones((1, 9), bool), np.ones((9, 1), bool)]
+    while len(out) < n:
+        h, w = (int(v) for v in rng.integers(1, 40, 2))
+        out.append(rng.random((h, w)) < rng.uniform(.1, .9))
+    return out
+
+
+def test_certify_reports_equal_the_oracles():
+    """U10: every Report field from independent references: b0, b1 from cv2/scipy (the topology oracle via the flood
+    reference here), area, perimeter, corners and chi8 from the numpy bit-quads of the size-filtered mask; certified
+    with no failures; empty and below-min_size masks certify with zeros. Field names and types are the pre-D3 ones."""
+    from dataclasses import fields
+
+    from objdel.checker.certify import Report
+    from tests.oracles.topology_oracle import size_filter as oracle_filter
+    assert [(f.name, f.type) for f in fields(Report)] == [
+        ("b0", int), ("b1", int), ("area", int), ("perimeter", int), ("corners", int), ("chi8", int),
+        ("certified", bool), ("failures", list)]
+    for m in _certify_masks(seed=11, n=100):
+        for min_size in (0, 1, 2, 5, 50):
+            f = oracle_filter(m, min_size) if min_size > 1 and m.size else m
+            q = bitquads(f)
+            b0, b1 = reference(f)[:2] if f.size else (0, 0)
+            r = certify(m, min_size)
+            assert (r.b0, r.b1, r.area, r.perimeter, r.corners, r.chi8, r.certified, r.failures) == (
+                b0, b1, q.area, q.perimeter, q.corners, q.chi8, True, []), (m.shape, min_size)
+            assert all(type(v) is int for v in (r.b0, r.b1, r.area, r.perimeter, r.corners, r.chi8))
+    dot = np.zeros((5, 5), bool)
+    dot[2, 2] = True
+    assert certify(dot, min_size=5) == certify(np.zeros((5, 5), bool)) == certify(np.zeros((0, 3), bool))
+    assert certify(dot, min_size=5) == Report(0, 0, 0, 0, 0, 0, True, [])
+
+
+def test_certify_many_is_certify_of_each():
+    """U10: one engine call for the list, the same Reports as certify one by one; min_size per mask (RIGA's rim)."""
+    from objdel import _gpucheck
+    masks = _certify_masks(seed=12, n=30)
+    calls, real = [], _gpucheck.check_masks
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_gpucheck, "check_masks", lambda *a, **k: calls.append(1) or real(*a, **k))
+        many = certify_many(masks, 2)
+        sizes = [0, 5] * 15
+        per_mask = certify_many(masks, sizes)
+    assert len(calls) == 2
+    assert many == [certify(m, 2) for m in masks]
+    assert per_mask == [certify(m, s) for m, s in zip(masks, sizes, strict=True)]
+    with pytest.raises(ValueError, match="min_size"):
+        certify_many(masks, [0, 1])

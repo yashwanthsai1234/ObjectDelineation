@@ -1,4 +1,6 @@
-"""Exact mask -> rectilinear rings, linked with array operations only.
+"""Exact mask -> rectilinear rings, linked with array operations only: the numpy reference (oracle) of the engine's
+rings, objdel.checker.rings.polygonize (B1.4a moved it here from objdel.checker.polygonize; same signature, its own
+Ring without the engine's part).
 
 This mirrors the planned GPU linker: emit unit boundary edges, link each edge to
 its successor, find rings by min-label pointer jumping, order each ring by list
@@ -35,12 +37,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# Directions: 0 east, 1 south, 2 west, 3 north.
-DX = np.array([1, 0, -1, 0])
-DY = np.array([0, 1, 0, -1])
 
-
-@dataclass
+@dataclass(frozen=True)
 class Ring:
     pts: np.ndarray  # (k, 2) int64 corner vertices (x, y), canonical start first
     area: int  # signed: > 0 outer, < 0 hole
@@ -48,6 +46,11 @@ class Ring:
     @property
     def hole(self):
         return self.area < 0
+
+
+# Directions: 0 east, 1 south, 2 west, 3 north.
+DX = np.array([1, 0, -1, 0])
+DY = np.array([0, 1, 0, -1])
 
 
 def boundary_edges(mask):

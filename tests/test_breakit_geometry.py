@@ -14,13 +14,13 @@ from oracles import raster_oracle as RO
 from test_geometry_oracle import lab_parse
 
 from objdel import _gpucheck
-from objdel.checker.bitquad import bitquads
 from objdel.checker.topology import instance_topology, min_area, signature, size_filter
 from objdel.data import Item
 from objdel.geometry import parse, pattern, serialize, shape, to_mask, to_masks
 from objdel.reward.cache import ExpertCache
 from objdel.reward.score import score_completion
 from objdel.targets import build_target, frame
+from tests.oracles.bitquad_oracle import bitquads
 
 DOC = '{"nodule":[{"outer":[[0,0],[1000,0],[1000,1000]],"holes":[]}]}'
 NODULE = ("nodule",)
@@ -50,18 +50,17 @@ def test_b1_2_pack_rejects_rings_that_are_not_k_by_2(ring):
         shape.pack_rings([ring])
 
 
-def test_b1_3_default_min_area_target_keeps_signature_under_a_larger_union_rule():
+def test_b1_3_target_keeps_signature_under_the_union_rule():
     S = 500
     yy, xx = np.mgrid[:S, :S]
     m = (yy - 250) ** 2 + (xx - 250) ** 2 < 150 ** 2
     m &= ~((yy - 250) ** 2 / 14 ** 2 + (xx - 250) ** 2 / 8.4 ** 2 < 1)  # one elliptic hole of 371 px
     own = min_area(int(m.sum()))
-    t = build_target({"nodule": m}, NODULE)  # default: min_area of this mask (352)
-    g = to_mask(t.objs["nodule"], S, S).mask
     union_rule = 371  # a union of raters ~6 % larger than this rater's mask
     assert union_rule >= own
-    assert signature(g, own) == signature(m, own)  # certified at the default
-    assert signature(g, union_rule) == signature(m, union_rule)  # "never larger, hence stricter"
+    t = build_target({"nodule": m}, NODULE, None, {"nodule": union_rule})  # D4: the caller passes the union's rule
+    g = to_mask(t.objs["nodule"], S, S).mask
+    assert signature(g, union_rule) == signature(m, union_rule)
 
 
 def test_b1_4_sub_filter_pinholes_do_not_make_a_mask_uncertifiable():
@@ -70,10 +69,10 @@ def test_b1_4_sub_filter_pinholes_do_not_make_a_mask_uncertifiable():
     d[30:70:4, 50] = False  # ten 1-px pinholes: 11 raw rings, filtered signature (0,)
     assert signature(d, 5) == (0,)
     # a certifiable answer exists: the filtered disc is legal, IoU 0.998 and keeps the filtered signature
-    g = to_mask(build_target({"nodule": size_filter(d, 5)}, NODULE).objs["nodule"], 100, 100)
+    g = to_mask(build_target({"nodule": size_filter(d, 5)}, NODULE, None, {"nodule": 5}).objs["nodule"], 100, 100)
     assert g.legal and np.count_nonzero(g.mask & d) / np.count_nonzero(g.mask | d) >= 0.99
     assert signature(g.mask, 5) == signature(d, 5)
-    build_target({"nodule": d}, NODULE)  # raises "11 rings > MAX_RINGS"
+    build_target({"nodule": d}, NODULE, None, {"nodule": 5})  # raised "11 rings > MAX_RINGS" before B1-4
 
 
 @pytest.mark.parametrize("byte", [2, 255])
@@ -81,7 +80,8 @@ def test_b1_5_targets_normalise_bool_bytes(byte):
     m = _square_with_hole()
     nb = (m.view(np.uint8) * np.uint8(byte)).view(bool)
     assert np.array_equal(nb, m)
-    assert build_target({"nodule": nb}, NODULE).text == build_target({"nodule": m}, NODULE).text
+    assert build_target({"nodule": nb}, NODULE, None, {"nodule": 5}).text == build_target({"nodule": m}, NODULE, None,
+                                                                                         {"nodule": 5}).text
 
 
 @pytest.mark.parametrize("byte", [2, 255])
@@ -264,6 +264,6 @@ def test_targets_recertify_through_the_reward():
 def test_targets_on_degenerate_and_rectangular_crops(shape):
     H, W = shape
     for m in (np.ones(shape, bool), np.eye(H, W, dtype=bool), np.zeros(shape, bool)):
-        t = build_target({"nodule": m}, NODULE)
+        t = build_target({"nodule": m}, NODULE, None, {"nodule": min_area(int(m.sum()))})
         g = to_mask(parse(t.text, NODULE).objs["nodule"], W, H)
         assert g.legal and signature(g.mask, min_area(int(m.sum()))) == signature(m, min_area(int(m.sum())))

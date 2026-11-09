@@ -1,4 +1,5 @@
-"""Bit-quad (2x2 pixel pattern) counts and Gray's 1971 invariants.
+"""Bit-quad (2x2 pixel pattern) counts and Gray's 1971 invariants: the numpy reference (oracle) of the engine's quads
+(objdel.checker.rings.trace; D3 moved it here from objdel.checker.bitquad).
 
 Each 2x2 window over the zero-padded mask gets a code TL=1, TR=2, BL=4, BR=8.
 Q1 = one pixel set, Q2 = two adjacent, QD = two diagonal (codes 6, 9),

@@ -206,13 +206,13 @@ Experiment scripts run as modules, in an isolated interpreter, because downloade
 import numpy as np
 from objdel.checker import certify
 from objdel.reward import ExpertCache, score_completion
-from objdel.targets import build_target
+from objdel.targets import build_target, min_areas
 
 y, x = np.ogrid[:100, :100]
 raters = np.stack([(y - 50) ** 2 + (x - 50) ** 2 <= r * r for r in (20, 22, 24)])  # 3 raters, one nodule
 
 report = certify(raters[0])                                    # b0, b1, area, perimeter, certificate
-text = build_target({"nodule": raters[1]}, ("nodule",)).text   # polygon JSON, grid 0-1000
+text = build_target({"nodule": raters[1]}, ("nodule",), None, min_areas({"nodule": raters})).text  # grid 0-1000
 caches = {"nodule": ExpertCache.build(raters)}                 # built once per item, offline
 score = score_completion(text, False, ("nodule",), caches, 100, 100)
 print(score["format_ok"], score["legal"], score["iou_tc"], score["topo_any"])   # 1.0 1.0 1.0 1.0

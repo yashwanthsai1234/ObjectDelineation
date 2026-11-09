@@ -14,7 +14,7 @@ from scipy.optimize import linear_sum_assignment, linprog
 from objdel.eval import gates, metrics, summarize
 from objdel.eval.metrics import NSD_TAU, hm_iou, min_mode_retention, nsd, tv_js
 from objdel.reward import ExpertCache
-from objdel.targets import build_target
+from objdel.targets import build_target, min_areas
 
 S = 50
 
@@ -182,7 +182,7 @@ def test_nsd_in_metrics_is_one_on_the_raters_own_targets():
     riga = {"disc": np.stack([disk(50, 50, r, 100) for r in (30, 32)]),
             "cup": np.stack([disk(50, 51, r, 100) for r in (12, 14)])}
     names = ("disc", "cup")
-    ma = {n: ExpertCache.build(riga[n]).min_area for n in names}
+    ma = min_areas(riga)  # with the rim's rule
     t = [build_target({n: riga[n][r] for n in names}, names, min_area=ma).text for r in range(2)]
     m = metrics(t, riga, 100, 100, names)
     assert all(m["objects"][n]["nsd"] == [1.0, 1.0] for n in names)
@@ -410,7 +410,7 @@ def _rows(frames):
     for item_id, fr in sorted(frames.items()):
         names = tuple(fr["masks"])
         k = len(fr["masks"][names[0]])
-        ma = None if k < 2 else {n: ExpertCache.build(fr["masks"][n]).min_area for n in names}
+        ma = min_areas(fr["masks"])
         texts = [build_target({n: fr["masks"][n][r] for n in names}, names, min_area=ma).text for r in range(k)]
         out.append({"item_id": item_id, "samples": (texts * 2)[:max(2, k)]})
     return out

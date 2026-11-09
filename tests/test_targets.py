@@ -14,22 +14,23 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from scipy import ndimage
 
-from objdel.checker import instance_topology, min_area, polygonize, signature, size_filter
+from objdel.checker import min_area, signature, size_filter
 from objdel.geometry import MAX_RINGS, canonicalize, parse, serialize, to_mask
 from objdel.targets import BuildConfig, build_target, min_areas, target_set_hash
-from objdel.targets.build import _kept
 from tests.oracles.crops_oracle import mask_sha, pad_div
+from tests.oracles.kept_oracle import kept
+from tests.oracles.polygonize_oracle import polygonize
 
 
 def check(masks, names, ma=None, cfg=None):
     """Build, then certify the text independently of the builder's own bookkeeping: the signature is compared under
-    the size rule, at ma[name] or, by default, at every rule a union of raters on this crop can have (min_area of the
-    mask itself up to min_area of the whole crop). Masks with more rings than the grammar allows (MAX_RINGS) after
-    the size rule must be refused; masks with more raw rings are traced after the size rule, which may cost the IoU."""
+    the size rule ma[name] (default: min_areas of the masks themselves, a one-rater union). Masks with more rings than
+    the grammar allows (MAX_RINGS) after the size rule must be refused; masks with more raw rings are traced after
+    the size rule, which may cost the IoU."""
     cfg = cfg or BuildConfig()
+    ma = ma or min_areas({n: np.asarray(masks[n], bool)[None] for n in names})
     H, W = next(iter(masks.values())).shape
-    lo = {n: (ma or {}).get(n, min_area(int(np.count_nonzero(masks[n])))) for n in names}
-    if any(len(polygonize(size_filter(masks[n], lo[n]))) > MAX_RINGS for n in names):
+    if any(len(polygonize(size_filter(masks[n], ma[n]))) > MAX_RINGS for n in names):
         with pytest.raises(ValueError, match="MAX_RINGS"):
             build_target(masks, names, cfg, ma)
         return None, None
@@ -46,13 +47,11 @@ def check(masks, names, ma=None, cfg=None):
     assert serialize(canonicalize(p.objs), names) == t.text  # canonical
     assert serialize(t.objs, names) == t.text
     out = {}
-    # every rule in [lo, hi]; _kept equals that brute force (test_kept_over_a_range_of_rules_equals_brute_force)
-    rules = lambda n, src: (ma[n], ma[n]) if ma and n in ma else (min_area(int(src.sum())), min_area(H * W))
     for n in names:
         g = to_mask(p.objs[n], W, H)
         assert g.legal, (n, g.defects)
         src = np.asarray(masks[n], bool)
-        assert _kept(g.mask, src, *rules(n, src)), n
+        assert kept(g.mask, src, ma[n], ma[n]), n
         u = np.count_nonzero(g.mask | src)
         iou = 1.0 if u == 0 else np.count_nonzero(g.mask & src) / u
         assert iou >= cfg.iou_min, (n, iou)
@@ -60,7 +59,7 @@ def check(masks, names, ma=None, cfg=None):
         out[n] = g.mask
     if set(names) == {"disc", "cup"}:
         rim, rim_src = out["disc"] & ~out["cup"], masks["disc"] & ~masks["cup"]
-        assert _kept(rim, rim_src, *rules("rim", rim_src))
+        assert kept(rim, rim_src, ma["rim"], ma["rim"])
     return t, out
 
 
@@ -158,7 +157,7 @@ def test_rings_beyond_the_vertex_cap_are_not_targets():
     m[100:400, 100:400] = True
     m[100:400:2, 99] = m[99, 100:400:2] = m[100:400:2, 400] = m[400, 100:400:2] = True  # 600 one-pixel teeth
     with pytest.raises(ValueError, match="no certified target"):
-        build_target({"nodule": m}, ("nodule",), BuildConfig(tau=0.0, step=1.0, iou_min=1.0))
+        build_target({"nodule": m}, ("nodule",), BuildConfig(tau=0.0, step=1.0, iou_min=1.0), {"nodule": 5})
 
 
 def test_island_in_hole_is_two_parts():
@@ -269,12 +268,13 @@ def _brute_kept(a, b, lo, hi):
 @settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(a=blobs(12), b=blobs(12), lo=st.integers(0, 12), span=st.integers(0, 30))
 def test_kept_over_a_range_of_rules_equals_brute_force(a, b, lo, span):
-    """_kept(a, b, lo, hi) checks the signature only at the rules where one can change; it must agree with checking
-    every integer rule in [lo, hi] (pairs of masks of one shape, including near-copies)."""
+    """The interval loop (tests/oracles/kept_oracle.kept, build.py's _kept before D4) checks the signature only at the
+    rules where one can change; it must agree with checking every integer rule in [lo, hi] (pairs of masks of one
+    shape, including near-copies)."""
     H, W = min(a.shape[0], b.shape[0]), min(a.shape[1], b.shape[1])
     a, b = a[:H, :W], b[:H, :W]
     for x, y in ((a, b), (a, a ^ (b & np.eye(H, W, dtype=bool))), (a, size_filter(a, max(lo, 1)))):
-        assert _kept(x, y, lo, lo + span) == _brute_kept(x, y, lo, lo + span)
+        assert kept(x, y, lo, lo + span) == _brute_kept(x, y, lo, lo + span)
 
 
 def test_kept_sees_a_hole_freed_by_a_removed_island():
@@ -287,25 +287,9 @@ def test_kept_sees_a_hole_freed_by_a_removed_island():
     assert (signature(m, 28), signature(m, 30), signature(m, 40), signature(m, 70)) == ((1, 0), (0,), (1,), (0,))
     g = m.copy()
     g[3, 3] = False  # island 35 px, moat 29 px: differs from m at rules 29 and 36 only
-    assert _kept(m, g, 30, 35) and _brute_kept(m, g, 30, 35)
-    assert not _kept(m, g, 30, 36) and not _brute_kept(m, g, 30, 36)
-    assert not _kept(m, g, 29, 29)
-
-
-def test_default_min_area_is_safe_for_every_union_rule():
-    """B1-3: without min_area the target keeps the size-filtered signature at every rule a raters' union on this
-    crop can produce (own rule .. min_area(H * W)), not only at the mask's own rule. Objects outside
-    BuildConfig.exact only: an exact target keeps every hole at any rule."""
-    S = 500
-    yy, xx = np.mgrid[:S, :S]
-    m = (yy - 250) ** 2 + (xx - 250) ** 2 < 150 ** 2
-    m &= ~((yy - 250) ** 2 / 14 ** 2 + (xx - 250) ** 2 / 8.4 ** 2 < 1)  # a 371-px hole, own rule 352
-    cfg = BuildConfig(exact=())
-    t, out = check({"nodule": m}, ("nodule",), None, cfg)
-    g = out["nodule"]
-    assert instance_topology(g).hole_areas.tolist() == [371]
-    explicit = build_target({"nodule": m}, ("nodule",), cfg, {"nodule": min_area(int(m.sum()))})
-    assert len(explicit.text) < len(t.text)  # the reward's rule, when known, allows a shorter answer
+    assert kept(m, g, 30, 35) and _brute_kept(m, g, 30, 35)
+    assert not kept(m, g, 30, 36) and not _brute_kept(m, g, 30, 36)
+    assert not kept(m, g, 29, 29)
 
 
 def test_ring_cap_applies_after_the_size_rule():
@@ -332,7 +316,7 @@ def test_bool_bytes_other_than_one(byte):
     """B1-5: a bool mask whose True bytes are not 1 gives the canonical mask's target."""
     m = disc(60, 30, 30, 20) & ~disc(60, 30, 30, 6)
     nb = (m.view(np.uint8) * np.uint8(byte)).view(bool)
-    for ma in (None, {"nodule": 5}):
+    for ma in ({"nodule": 0}, {"nodule": 5}):
         assert build_target({"nodule": nb}, ("nodule",), None, ma).text == build_target({"nodule": m}, ("nodule",),
                                                                                       None, ma).text
 
@@ -340,16 +324,17 @@ def test_bool_bytes_other_than_one(byte):
 def test_deterministic_and_input_untouched():
     m = disc(250, 120, 130, 90) & ~disc(250, 120, 130, 20)
     keep = m.copy()
-    a = build_target({"nodule": m}, ("nodule",)).text
+    a = build_target({"nodule": m}, ("nodule",), None, {"nodule": 5}).text
     assert np.array_equal(m, keep)
-    assert build_target({"nodule": m.copy()}, ("nodule",)).text == a
+    assert build_target({"nodule": m.copy()}, ("nodule",), None, {"nodule": 5}).text == a
 
 
 def test_deterministic_across_processes():
     code = ("import hashlib, numpy as np; from objdel.targets import build_target;"
             "y, x = np.mgrid[:200, :200]; a = np.arctan2(y - 100, x - 100);"
             "m = np.hypot(y - 100, x - 100) < 80 + 5 * np.sin(7 * a); m[90:99, 60:64] = m[120, 130:140] = False;"
-            "print(hashlib.sha256(build_target({'nodule': m}, ('nodule',)).text.encode()).hexdigest())")
+            "t = build_target({'nodule': m}, ('nodule',), None, {'nodule': 5});"
+            "print(hashlib.sha256(t.text.encode()).hexdigest())")
     outs = {subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
                            env={"PYTHONHASHSEED": str(s)}).stdout for s in (1, 2)}
     assert len(outs) == 1 and len(next(iter(outs)).strip()) == 64
@@ -357,13 +342,15 @@ def test_deterministic_across_processes():
 
 def test_invalid_inputs():
     with pytest.raises(ValueError):
-        build_target({"nodule": np.ones((501, 10), bool)}, ("nodule",))  # beyond the 500 px crop policy
+        build_target({"nodule": np.ones((501, 10), bool)}, ("nodule",), None, {"nodule": 5})  # beyond the 500 px
     with pytest.raises(ValueError):
-        build_target({"disc": np.ones((5, 5), bool), "cup": np.ones((5, 6), bool)}, ("disc", "cup"))
+        build_target({"disc": np.ones((5, 5), bool), "cup": np.ones((5, 6), bool)}, ("disc", "cup"), None,
+                     {"disc": 5, "cup": 5, "rim": 5})
     with pytest.raises(ValueError):
-        build_target({"nodule": np.ones((5, 5, 2), bool)}, ("nodule",))
+        build_target({"nodule": np.ones((5, 5, 2), bool)}, ("nodule",), None, {"nodule": 5})
     with pytest.raises(ValueError):  # more than MAX_RINGS rings: the text would not parse
-        build_target({"nodule": np.kron(np.ones((4, 4), bool), [[1, 0, 0], [0, 0, 0], [0, 0, 0]])}, ("nodule",))
+        build_target({"nodule": np.kron(np.ones((4, 4), bool), [[1, 0, 0], [0, 0, 0], [0, 0, 0]])}, ("nodule",), None,
+                     {"nodule": 1})
 
 
 def test_min_areas_is_the_rule_of_each_union_and_of_the_rim():

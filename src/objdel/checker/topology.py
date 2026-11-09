@@ -5,27 +5,26 @@ Jordan curve theorem holds, so a component's holes are well defined [Rosenfeld 1
 A hole is a bounded 4-connected background component; the holes of component k are those k has when it is
 the only foreground (an island inside a hole of k does not change k's count; the island's holes are its own).
 
-Algorithm, O(pixels), two labelings and no per-component loop:
+Algorithm, on the CUDA engine (objdel._gpucheck.topology: the reward scorer's pixel label chain, nvcc build on the box,
+CPU build of the same source on the Mac), O(pixels), one call for many masks:
 1. Crop to the foreground bounding box (holes cannot leave it) and pad by one background pixel, so the whole
    outside is a single background component.
-2. Label the foreground with 8-connectivity and the background with 4-connectivity, both with OpenCV's
-   Spaghetti labeling (Spaghetti4C for 4-connectivity). Background label of pixel (0, 0) = outside;
-   every other background label is a hole.
+2. Label the foreground with 8-connectivity and the background with 4-connectivity (union-find, root = the first
+   raster pixel; the background root at pixel 0 is the outside, every other background root is a hole), apply the
+   size filter, label again.
 3. The first raster pixel of a hole has a foreground pixel directly above it (a background pixel there would be
    4-adjacent, hence in the hole, and earlier in raster order), and that pixel belongs to the enclosing
-   component: an island inside the hole lies strictly below the hole's top row. A bincount gives holes per
-   component.
-The bit-quad Euler number (checker.bitquad) is an independent certificate: chi8 = b0 - b1 = sum_k (1 - holes_k).
+   component: an island inside the hole lies strictly below the hole's top row.
+The engine returns per-component numbers only (areas, hole counts, hole areas, signatures), and the filtered pixels
+only when asked (size_filter). The OpenCV versions it replaced are tests/oracles/topology_oracle.py (cv2_*). The
+bit-quad Euler number (the engine's quads, checker.rings.trace) is an independent certificate:
+chi8 = b0 - b1 = sum_k (1 - holes_k).
 
 Input: any 2-D array-like; every nonzero value is foreground (NaN included). `as_mask` is the one normalisation,
 used here and by objdel.targets. A numpy bool array may hold bytes other than 0 and 1 (np.asarray(PIL "1" image,
 bool) stores 255; views of other dtypes store anything), and bool -> bool copies (asarray, astype, ascontiguousarray,
 pad) keep those bytes, while every cast to or from bool computes x != 0 [numpy casts]; so a bool array is cast
 to uint8 (5 us at 500 x 500, 10x cheaper than a != 0 comparison) and viewed back (issue I1, break-it B1-5, B2-10).
-
-Threads: callers that score in worker pools should call cv2.setNumThreads(0), which makes OpenCV sequential on
-every parallel backend; setNumThreads(1) is a no-op on the GCD backend of the macOS wheels (issue I14) [OpenCV
-setNumThreads].
 
 Size rule (plan §4.2): `min_area(|U|) = max(5, ceil(0.5 % of the rater union))`. `size_filter` is an area
 opening (drop 8-connected components with < min_area pixels) followed by an area closing (fill holes with
@@ -35,29 +34,26 @@ merges the islands inside it into the enclosing component. The result is idempot
 and hole has >= min_area pixels.
 
 References:
-- F. Bolelli, S. Allegretti, L. Baraldi, C. Grana, "Spaghetti Labeling: Directed Acyclic Graphs for Block-Based
-  Connected Components Labeling", IEEE TIP 29:1999-2012, 2020. https://iris.unimore.it/handle/11380/1181437
-- OpenCV CCL flags (CCL_SPAGHETTI: Spaghetti for 8-way, Spaghetti4C for 4-way):
-  https://github.com/opencv/opencv/blob/5.x/modules/imgproc/include/opencv2/imgproc.hpp
-- OpenCV dispatcher (parallel labeling when rows / threads >= 2): connectedComponents_sub1 in
-  https://github.com/opencv/opencv/blob/5.x/modules/imgproc/src/connectedcomponents.cpp
 - A. Rosenfeld, "Connectivity in digital pictures", J. ACM 17(1):146-160, 1970.
   https://projects.csail.mit.edu/jacm/Authors/rosenfeldazriel.html
 - T. Y. Kong, A. Rosenfeld, "Digital topology: introduction and survey", CVGIP 48(3):357-393, 1989.
   https://doi.org/10.1016/0734-189X(89)90147-3
+- O. Kalentev, A. Rai, S. Kemnitz, R. Schneider, "Connected component labeling on a 2D grid using CUDA", JPDC
+  71(4):615-620, 2011 (union-find labeling on the GPU). https://doi.org/10.1016/j.jpdc.2010.10.012
 - L. Vincent, "Morphological area openings and closings for grey-scale images", Shape in Picture, NATO ASI F 126,
   1994 (binary area opening and its dual closing). https://www.doi.org/10.1007/978-3-662-03039-4_13
 - numpy casts: _CONVERT_FN is (npy_bool)(x != 0) whenever the source or the destination is bool, in
   https://github.com/numpy/numpy/blob/main/numpy/_core/src/multiarray/lowlevel_strided_loops.c.src ; JAX's
   Array.view warns that viewing as bool gives non-canonical values and recommends comparing with 0:
   https://docs.jax.dev/en/latest/_autosummary/jax.Array.view.html
-- OpenCV setNumThreads ("If threads == 0, OpenCV will disable threading optimizations and run all its functions
-  sequentially"): https://docs.opencv.org/5.x/db/de0/group__core__utils.html
 """
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
+
+from objdel import _gpucheck
 
 _EMPTY = np.zeros(0, np.int64)
 _EMPTY.flags.writeable = False  # shared by every empty result
@@ -70,11 +66,6 @@ class InstanceTopology:
     areas: np.ndarray  # (n,) int64, pixels per 8-connected component
     holes: np.ndarray  # (n,) int64, holes per component
     hole_areas: np.ndarray  # (holes.sum(),) int64, background pixels per hole
-
-
-def _label(img: np.ndarray, connectivity: int) -> tuple[int, np.ndarray]:
-    # opencv-python 5.0.0 rejects bool input and the `ccltype=` keyword, hence uint8 and positional arguments.
-    return cv2.connectedComponentsWithAlgorithm(img, connectivity, cv2.CV_32S, cv2.CCL_SPAGHETTI)
 
 
 def as_mask(mask, ndim: int = 2) -> np.ndarray:
@@ -93,36 +84,36 @@ def bbox(m: np.ndarray) -> tuple[int, int, int, int]:
     return cv2.boundingRect(m.view(np.uint8))  # box of the non-zero pixels
 
 
-def _crop_pad(m: np.ndarray) -> tuple[np.ndarray | None, tuple[int, int, int, int]]:
-    """Foreground bounding box of an as_mask mask, as uint8 padded by one zero pixel (None if empty), and the box
-    (x, y, w, h)."""
-    x, y, w, h = box = bbox(m)
-    if w == 0:
-        return None, box
-    return cv2.copyMakeBorder(m[y:y + h, x:x + w].view(np.uint8), 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0), box
+def _engine(masks: Sequence, min_area, want_masks: bool = False) -> tuple[list[np.ndarray], dict]:
+    """One gc.topology call: the as_mask masks and the engine's result (min_area: one value or one per mask)."""
+    ms = [as_mask(m) for m in masks]
+    start = np.zeros(len(ms) + 1, np.int64)
+    start[1:] = np.cumsum([m.size for m in ms])
+    bits = np.concatenate([m.view(np.uint8).ravel() for m in ms]) if ms else np.zeros(0, np.uint8)
+    hw = np.array([m.shape for m in ms], np.int32).reshape(-1, 2)
+    rules = np.array(np.broadcast_to(np.asarray(min_area, np.int64), (len(ms),)))
+    return ms, _gpucheck.topology(bits, hw, start, rules, want_masks)
+
+
+def topologies(masks: Sequence) -> list[InstanceTopology]:
+    """instance_topology of each mask, in one engine call."""
+    _, out = _engine(masks, 0)
+    cs, hs, res = out["comp_start"], out["hole_start"], []
+    for i in range(len(cs) - 1):
+        a, b = cs[i], cs[i + 1]
+        if a == b:
+            res.append(InstanceTopology(_EMPTY, _EMPTY, _EMPTY))
+            continue
+        areas, holes = out["comp_area"][a:b], out["comp_holes"][a:b].astype(np.int64)
+        ha = out["hole_area"][hs[a]:hs[b]]
+        order = np.lexsort((-holes, -areas))  # canonical, independent of the engine's raster order
+        res.append(InstanceTopology(areas[order], holes[order], np.sort(ha)[::-1] if ha.size else _EMPTY))
+    return res
 
 
 def instance_topology(mask) -> InstanceTopology:
     """Area and hole count of every 8-connected component, and the area of every hole."""
-    mp, _ = _crop_pad(as_mask(mask))
-    if mp is None:
-        return InstanceTopology(_EMPTY, _EMPTY, _EMPTY)
-    n1, lab = _label(mp, 8)
-    areas = np.array([np.count_nonzero(mp)]) if n1 == 2 else np.bincount(lab.ravel(), minlength=n1)[1:]
-    holes = np.zeros(n1, np.int64)
-    hole_areas = _EMPTY
-    nb, bl = _label(1 - mp, 4)  # foreground pixels get label 0
-    if nb > 2:  # labels 0 (foreground) and the outside, plus at least one hole
-        w2 = mp.shape[1]
-        outside = bl[0, 0]
-        # Hole pixels whose upper neighbour is foreground; every hole's first raster pixel is among them.
-        idx = np.flatnonzero((bl[1:] != outside) & (mp[1:] == 0) & (mp[:-1] == 1)) + w2
-        hole_ids, first = np.unique(bl.ravel()[idx], return_index=True)
-        holes += np.bincount(lab.ravel()[idx[first] - w2], minlength=n1)
-        hole_areas = np.sort(np.bincount(bl.ravel(), minlength=nb)[hole_ids])[::-1]
-    areas, holes = areas.astype(np.int64), holes[1:]
-    order = np.lexsort((-holes, -areas))  # canonical, independent of label numbering and OpenCV threads
-    return InstanceTopology(areas[order], holes[order], hole_areas.astype(np.int64))
+    return topologies([mask])[0]
 
 
 def betti(mask) -> tuple[int, int]:
@@ -136,28 +127,31 @@ def min_area(union_area: int) -> int:
     return max(5, -(-int(union_area) // 200))  # integer ceil(union_area / 200)
 
 
+def filtered(masks: Sequence, min_area) -> list[tuple[np.ndarray, int, int]]:
+    """(size_filter(mask, min_area), b0, b1 of it) of each mask, in one engine call (min_area: one value or one per
+    mask)."""
+    ms, out = _engine(masks, min_area, want_masks=True)
+    flat, cs, holes = out["masks"].view(bool), out["comp_start"], out["comp_holes"]
+    res, at = [], 0
+    for i, m in enumerate(ms):
+        res.append((flat[at:at + m.size].reshape(m.shape), int(cs[i + 1] - cs[i]), int(holes[cs[i]:cs[i + 1]].sum())))
+        at += m.size
+    return res
+
+
 def size_filter(mask, min_area: int) -> np.ndarray:
-    """Remove components, then fill holes, with fewer than min_area pixels (see module docstring)."""
-    out = as_mask(mask)  # a new array: the caller's is never written
-    mp, (x, y, w, h) = _crop_pad(out)
-    if mp is None:
-        return out
-    n1, lab = _label(mp, 8)
-    small = np.bincount(lab.ravel(), minlength=n1) < min_area
-    small[0] = False
-    mp[small[lab]] = 0
-    nb, bl = _label(1 - mp, 4)
-    small = np.bincount(bl.ravel(), minlength=nb) < min_area
-    small[[0, bl[0, 0]]] = False
-    mp[small[bl]] = 1
-    out[y:y + h, x:x + w] = mp[1:-1, 1:-1]
-    return out
+    """Remove components, then fill holes, with fewer than min_area pixels (see module docstring); a new array."""
+    return filtered([mask], min_area)[0][0]
+
+
+def signatures(masks: Sequence, min_area: int) -> list[tuple[int, ...]]:
+    """signature of each mask at one rule, in one engine call."""
+    _, out = _engine(masks, min_area)
+    s, sig = out["sig_start"], out["sig"].tolist()
+    return [tuple(sig[s[i]:s[i + 1]]) for i in range(len(s) - 1)]
 
 
 def signature(mask, min_area: int = 0) -> tuple[int, ...]:
     """Holes per component, descending, after `size_filter(mask, min_area)`: (0,) = one simply connected part,
     (0, 0) = two parts, (1,) = one part with one hole, () = empty."""
-    t = instance_topology(mask)
-    if (t.areas < min_area).any() or (t.hole_areas < min_area).any():  # else the filter changes nothing
-        t = instance_topology(size_filter(mask, min_area))
-    return tuple(sorted(t.holes.tolist(), reverse=True))
+    return signatures([mask], min_area)[0]

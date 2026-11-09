@@ -17,9 +17,17 @@ add_library(gpucheck STATIC cuda/gpucheck.cpp)
 target_compile_features(gpucheck PUBLIC cxx_std_17)
 set_target_properties(gpucheck PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # No fused multiply-add contraction: the scorer's float64 terms must be the IEEE operations of the host formulas,
-# one rounding each, on the CPU build and the GPU build alike (gpucheck.cpp, scoring).
+# one rounding each, on the CPU build and the GPU build alike (gpucheck.cpp, scoring). Under nvcc the host functions
+# go to the host compiler, whose C++ default contracts (g++ -ffp-contract=fast; an aarch64 host emits fmadd), so it
+# gets the flag too (docs/implementation2.0/notes/research/cuda-kernels.md section 2).
 target_compile_options(gpucheck PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-ffp-contract=off>
-                                        $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
+                                        $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false -Xcompiler=-ffp-contract=off>)
+# Test-only compile definitions (a CMake list, e.g. GC_POISON_SCAN;GC_ALIAS_SCAN_FOR_TEST): only tests/variants.py sets
+# it, for its CPU test builds in build/variants/ (gpucheck.cpp, test_hooks()). Empty in every shipped build.
+set(OBJDEL_TEST_HOOKS "" CACHE STRING "test-only compile definitions of gpucheck (tests/variants.py)")
+if(OBJDEL_TEST_HOOKS)
+  target_compile_definitions(gpucheck PRIVATE ${OBJDEL_TEST_HOOKS})
+endif()
 if(OBJDEL_CUDA)
   if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     set(CMAKE_CUDA_ARCHITECTURES native)  # the box's GPU; pass -DCMAKE_CUDA_ARCHITECTURES=... to cross-compile
@@ -32,6 +40,13 @@ if(OBJDEL_CUDA)
   set_target_properties(gpucheck PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON
                                             CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
   target_link_libraries(gpucheck PUBLIC CUDA::cudart_static)  # the module needs only the driver at run time
+  # NVTX ranges (header-only nvtx3). FindCUDAToolkit defines CUDA::nvtx3 without checking that the headers exist, and
+  # the PyPI toolkit has them only with the nvtx extra (nvidia/cu13/include/nvtx3): check the file itself.
+  find_file(OBJDEL_NVTX3_HPP nvtx3/nvtx3.hpp PATHS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+  if(NOT OBJDEL_NVTX3_HPP)
+    message(FATAL_ERROR "nvtx3 headers not found under ${CUDAToolkit_INCLUDE_DIRS}: install cuda-toolkit[nvtx]")
+  endif()
+  target_link_libraries(gpucheck PRIVATE CUDA::nvtx3)
 endif()
 # NOMINSIZE: nanobind builds with -Os by default, which halves the kernels' speed (lab REPORT.md).
 # STABLE_ABI: one cp312-abi3 wheel per platform (wheel.py-api in pyproject.toml).

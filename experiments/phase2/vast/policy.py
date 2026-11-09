@@ -390,11 +390,13 @@ def code_files() -> list[str]:
     """The code snapshot (tracked and new files), without the roots data/, docs/, archive/ and .claude/, lab or results
     dirs, or RIGA-derived tables (D16, BK4-13); only files on disk (rsync --files-from aborts on a missing one).
     tests/ ships: k3_harness -> phase1.reward_gates -> tests.oracles. Kept from docs/: the two records the box reads
-    (final_eval's frozen view hashes, val_half's table; LIDC ids, counts and hashes, no pixels, no RIGA; B1.6)."""
+    (final_eval's frozen view hashes, val_half's table; LIDC ids, counts and hashes, no pixels, no RIGA; B1.6) and the
+    kernel drafts K1-K3 without their build/ and results/ folders (the R-D1 runbooks run them on the box)."""
     git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole (V1)
     files = subprocess.run(git, cwd=ROOT, capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
     drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/|riga[^/]*\.(csv|jsonl?)$", re.I)
-    keep = re.compile(r"^docs/reference/(frozen_views|val_halves)\.json$")
+    keep = re.compile(r"^docs/reference/(frozen_views|val_halves)\.json$"
+                      r"|^docs/implementation2\.0/kernels/K[123]/(?!build/|results/)")
     files = [f for f in dict.fromkeys(files) if (keep.match(f) or not drop.search(f)) and (ROOT / f).is_file()]
     if not any(f.startswith("tests/oracles/") for f in files):
         die("tests/oracles missing from the code snapshot")

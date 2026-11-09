@@ -4,8 +4,10 @@ On a GPU box objdel._gpucheck must be the nvcc build (`make cuda`): these tests 
 They then run large batches in one call each (many shapes per kernel launch) and compare with the CPU checker's
 recorded results (tests/goldens/polycore.npz);
 tests/test_cuda_checker.py runs the rest of the equivalence suite on the same build."""
+import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -24,7 +26,7 @@ def _gpus() -> int:
     return sum(line.startswith("GPU ") for line in out.splitlines())
 
 
-pytestmark = pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")
+pytestmark = [pytest.mark.gpu, pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")]
 
 
 def test_module_is_the_cuda_build():
@@ -46,10 +48,22 @@ def test_large_polygon_batches_match_polycore():
 def test_large_mask_batch_matches_polygonize():
     masks = [m for _, m in C.fuzz_masks(3000, seed=12)]
     rng = np.random.default_rng(12)
-    masks += [rng.random((512, 512)) < .5, rng.random((2048, 2048)) < .1]  # long cycles: many jump rounds
+    masks += [rng.random((512, 512)) < .5, rng.random((2048, 2048)) < .1]  # many rings, deep union-find chains
     out = C.run_masks(C.pack_masks(masks))
     for i, m in enumerate(masks):
         assert C.mask_diff(out, i, C.mask_reference(np.asarray(m, bool))) is None, i
+
+
+def test_lidc_crop_masks_match_the_oracle():
+    """D-G3: all 37,093 LIDC crops in one call equal the numpy oracle (rings, quads, Betti numbers, ring parts), so a
+    CUDA-only ring defect fails here. The crops ship in the box payload (data/checker_eval, OBJDEL_DATA_ROOT)."""
+    path = Path(os.environ.get("OBJDEL_DATA_ROOT", Path(__file__).resolve().parents[1] / "data"))
+    z = dict(np.load(path / "checker_eval" / "masks.npz", allow_pickle=False))
+    out = gc.check_masks(z["bits"], z["hw"], z["start"])
+    assert len(out["quads"]) == 37093 and len(out["ring_area"]) == 38002 and len(out["pts"]) == 1476508
+    for k in range(len(z["hw"])):
+        m = z["bits"][z["start"][k]:z["start"][k + 1]].reshape(z["hw"][k]).astype(bool)
+        assert C.mask_diff(out, k, C.mask_reference(m)) is None, k
 
 
 def test_repeated_calls_are_identical():
@@ -113,3 +127,82 @@ def test_arena_reuse_is_exact():
 
 def test_two_stream_chunks_equal_one_call():
     assert two_stream_chunks()
+
+
+def test_topology_large_batch_matches_the_cv2_oracle_and_repeats():
+    """D4b, D-G3/G5 GPU half: gc.topology of 3,000 fuzz masks and two large noise masks (deep union-find chains) at
+    mixed rules in one call equals the OpenCV oracle field by field, and a second call is identical."""
+    from oracles.topology_oracle import cv2_components
+
+    rng = np.random.default_rng(14)
+    masks = [m for _, m in C.fuzz_masks(3000, seed=14)] + [rng.random((512, 512)) < .5, rng.random((2048, 2048)) < .4]
+    ma = rng.choice([0, 1, 3, 10, 100], len(masks)).astype(np.int64)
+    p = C.pack_masks(masks)
+    a, b = (gc.topology(p["bits"], p["hw"], p["start"], ma, True) for _ in range(2))
+    assert all(np.array_equal(a[k], b[k]) for k in a)
+    cs, hs = a["comp_start"], a["hole_start"]
+    for i, m in enumerate(masks):
+        got = [(int(a["comp_area"][c]), int(a["comp_holes"][c]), a["hole_area"][hs[c]:hs[c + 1]].tolist())
+               for c in range(cs[i], cs[i + 1])]
+        assert got == cv2_components(m, int(ma[i])), i
+
+
+def test_certify_polygons_on_own_rasters_matches_the_oracle_and_repeats():
+    """D4, D-G3/G5 GPU half: certify_polygons of the 326 fuzz polygons at G = 1000 against their own oracle rasters in
+    one call: a legal shape's inter and union equal its raster area and its signature equals the reference's; a
+    second call is identical (tests/test_certify_polygons.py runs the full algebra on the same build)."""
+    from tests.test_certify_polygons import fuzz_objects, legal, raster, run
+
+    objs = [(parts, W, H) for parts, W, H, G in fuzz_objects(3000, seed=15) if G == 1000]
+    refs = [raster(*o) for o in objs]
+    n = len(objs)
+    a, b = (run(objs, refs, np.arange(n), np.full(n, 5)) for _ in range(2))
+    assert all(np.array_equal(a[k], b[k]) for k in a)
+    ok = np.array(legal(objs))
+    area = np.array([r.sum() for r in refs])
+    assert n == 326 and ok.sum() == 65 and (a["legal"] == ok).all()
+    assert (a["inter"][ok] == area[ok]).all() and (a["union"][ok] == area[ok]).all() and a["equal"][ok].all()
+
+
+def test_engine_pool_is_used_and_the_default_pool_is_not():
+    """D5c (GAP-17, D-G15 box half): after warm-up the engine's own pool holds memory and keeps it over 50 calls of
+    one shape (release threshold UINT64_MAX, no allocation), the device's default pool does not grow, the device
+    bytes do not leak, and trim(0) gives unused pool memory back without breaking the next call."""
+    from tests.test_engine_counters import _caches, _square_args
+    small, _ = _caches()
+    args = _square_args(256, 40, small.device())
+    want = gc.score_polygons(*args)
+    before = gc.stats()
+    assert before["pool_reserved"] > 0
+    for _ in range(50):
+        gc.score_polygons(*args)
+    st = gc.stats()
+    assert st["pool_reserved"] == before["pool_reserved"]
+    assert st["default_pool_reserved"] <= before["default_pool_reserved"]
+    assert st["live_device_bytes"] == before["live_device_bytes"] == st["arena_bytes"] + st["table_bytes"]
+    assert st["sync_alloc"] == before["sync_alloc"] and st["pinned_grows"] == before["pinned_grows"]
+    gc.trim(0)
+    got = gc.score_polygons(*args)
+    assert all(got[k].tobytes() == want[k].tobytes() for k in want)
+
+
+def test_validity_warp_totals_on_adversarial_families():
+    """D6: ShapeTotalsWarp with 32 lanes (the CPU build runs one) on the I17 families and the straggler batch."""
+    from tests.test_cuda_checker import test_validity_adversarial_families
+    test_validity_adversarial_families()
+
+
+def test_device_tables_equal_host_tables_and_repeat():
+    """D7b on the GPU (I04, G6): the 28 synthetic caches of tests/test_tables_device.py in one call equal the host
+    build (scalars and scored terms), and 20 calls return byte-identical scalars."""
+    from tests.test_tables_device import FAMILIES, _build, _check_equal
+    first = None
+    for _ in range(20):
+        dev = _build(FAMILIES)
+        got = [dev[k].tobytes() for k in sorted(dev) if k != "handles"]
+        if first is None:
+            first = got
+            _check_equal(FAMILIES, dev, np.random.default_rng(1))
+        assert got == first
+        for h in dev["handles"]:
+            gc.drop_tables(int(h))

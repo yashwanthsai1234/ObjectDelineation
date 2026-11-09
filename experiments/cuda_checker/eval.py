@@ -1,5 +1,5 @@
 """Eval of the batched checker objdel._gpucheck against its references: the CPU checker it replaced (polycore, archived
-in archive/cpu_checker; its results recorded) for polygons, polygonize and bitquad (run here) for masks.
+in archive/cpu_checker; its results recorded) for polygons, the numpy polygonizer (tests/oracles/polygonize_oracle.py) and bitquad (run here) for masks.
 
 Run (Mac: CPU build; CUDA box: after `make cuda`, the GPU build):
     .venv/bin/python -I -m experiments.cuda_checker.eval [--data data/checker_eval] [--quick] [--no-speed]
@@ -39,8 +39,9 @@ import cv2
 import numpy as np
 
 from objdel import _gpucheck
-from objdel.checker import bitquads, polygonize
 from objdel.checker.topology import betti
+from tests.oracles.bitquad_oracle import bitquads
+from tests.oracles.polygonize_oracle import polygonize
 
 from . import compare as C
 

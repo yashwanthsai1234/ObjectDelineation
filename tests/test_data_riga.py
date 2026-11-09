@@ -176,6 +176,17 @@ def test_certified_requires_nesting_and_simple_curves():
     assert not riga.certified(disc | filled(ring(5, cy=10, cx=10)), cup)  # two disc components
 
 
+def test_certified_makes_one_certify_many_call(monkeypatch):
+    """I13: disc, cup and rim (at RIM_MIN_SIZE) in one certify_many call, so one engine call."""
+    from objdel import _gpucheck
+    from objdel.checker import certify_many
+    calls, engine, real = [], [], _gpucheck.check_masks
+    monkeypatch.setattr(riga, "certify_many", lambda masks, sizes: calls.append(sizes) or certify_many(masks, sizes))
+    monkeypatch.setattr(_gpucheck, "check_masks", lambda *a, **k: engine.append(1) or real(*a, **k))
+    assert riga.certified(filled(ring(60)), filled(ring(25)))
+    assert calls == [[0, 0, riga.RIM_MIN_SIZE]] and len(engine) == 1
+
+
 # ---- data-backed -----------------------------------------------------------------------------------------------
 
 PHASE0 = Path(__file__).resolve().parents[1] / "data" / "riga_true"

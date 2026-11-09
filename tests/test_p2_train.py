@@ -164,7 +164,7 @@ def test_a0_drops_a_part_inside_another_parts_hole(disc_mask):
     from scipy.ndimage import binary_fill_holes
     ring = disc_mask(50, 50, 25, 25, 14, 9) | disc_mask(50, 50, 25, 25, 3)
     blob = disc_mask(50, 50, 6, 44, 3)
-    text = build_target({"nodule": ring | blob}, SCHEMAS["lidc"]).text
+    text = build_target({"nodule": ring | blob}, SCHEMAS["lidc"], None, {"nodule": 5}).text
     assert len(parse(text, SCHEMAS["lidc"]).objs["nodule"]) == 3
     parts = parse(D._no_holes(text, SCHEMAS["lidc"]), SCHEMAS["lidc"]).objs["nodule"]
     g = to_mask(parts, 50, 50)

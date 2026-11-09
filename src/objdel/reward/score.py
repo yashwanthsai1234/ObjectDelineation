@@ -42,7 +42,7 @@ from objdel import _gpucheck
 from objdel.geometry import GRID, parse
 from objdel.geometry.shape import pack_objects
 
-from .cache import ExpertCache
+from .cache import ExpertCache, device_many
 
 NUMERIC = ("format_ok", "legal", "iou_tc", "iou_min", "f5", "g_area", "topo_any", "topo_freq", "sig_id")
 _FAILED = dict.fromkeys(NUMERIC, 0.0) | {"sig_id": -1.0}
@@ -105,7 +105,9 @@ def score_completion(text: str, truncated: bool, names: Sequence[str], caches: M
 
 def score_many(jobs: Sequence[tuple]) -> list[tuple[dict, dict[str, ObjectTerms]]]:
     """(score_completion's terms, {object: ObjectTerms}, empty when the completion does not parse) of every job
-    (tuples of score_completion's arguments), in order: one CUDA checker call for all parsed objects."""
+    (tuples of score_completion's arguments), in order: one engine call that builds the jobs' cold caches
+    (device_many), and one CUDA checker call for all parsed objects."""
+    device_many([c for _, _, names, caches, _, _ in jobs for c in (caches[n] for n in names)])
     parsed = [parse(text, names, truncated) for text, truncated, names, _, _, _ in jobs]
     objs, tables = [], []
     for p, (_, _, names, caches, W, H) in zip(parsed, jobs, strict=True):
