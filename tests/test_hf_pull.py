@@ -61,14 +61,15 @@ def test_fetch_hf_has_its_shim():
 
 # --- B1.5: rows root and checkpoint folder names (I40, I40b) ------------------------------------------------------
 
-ZERO40, ZERO64 = "0" * 40, "0" * 64  # b1_rows.yaml's placeholders until B1.4 step 5 pins the upload
+ROWS_REV = "34213dceb068128f1a1abf9c67aa65dd59bc1220"  # B1.4 step 5 upload (rows/lidc-train-b1) and its manifest pin
+ROWS_SHA = "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4"
 
 
 def test_hf_pull_allow_keeps_repo_paths_under_local_dir(tmp_path, monkeypatch):
     """I40 / I40b (a): --allow passes allow_patterns; snapshot_download keeps repo paths under local_dir, so the repo
     folder rows/lidc-train-b1/ lands at {data}/rows/lidc-train-b1, the root train_rl --train reads."""
     def fake(repo_id, revision, local_dir, token, allow_patterns):
-        assert allow_patterns == "rows/lidc-train-b1/**" and revision == ZERO40
+        assert allow_patterns == "rows/lidc-train-b1/**" and revision == ROWS_REV
         d = Path(local_dir) / "rows/lidc-train-b1"
         (d / "lidc").mkdir(parents=True)
         (d / "manifest.json").write_text("{}")
@@ -78,21 +79,21 @@ def test_hf_pull_allow_keeps_repo_paths_under_local_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "snapshot_download", fake)
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     data = tmp_path / "data/lidc"
-    assert L.main(["--repo", REPO, "--revision", ZERO40, "--out", str(data), "--allow", "rows/lidc-train-b1/**"]) == 0
+    assert L.main(["--repo", REPO, "--revision", ROWS_REV, "--out", str(data), "--allow", "rows/lidc-train-b1/**"]) == 0
     root = data / "rows/lidc-train-b1"
     assert (root / "manifest.json").is_file() and (root / "lidc/train.jsonl").is_file()
 
 
 def test_fetch_rows_downloads_the_root_and_checks_it_on_the_box(monkeypatch):
     sent = box(monkeypatch)
-    fetch(rows=[ZERO40, "lidc-train-b1"])
+    fetch(rows=[ROWS_REV, "lidc-train-b1"])
     ((cmd, stdin, _),) = sent
     assert "hf_secret" not in cmd and stdin == "hf_secret\n"
-    assert (f"-m experiments.phase2.hf_pull --repo {REPO} --revision {ZERO40} --out /workspace/data/lidc "
+    assert (f"-m experiments.phase2.hf_pull --repo {REPO} --revision {ROWS_REV} --out /workspace/data/lidc "
             "--allow 'rows/lidc-train-b1/**' && ") in cmd
     check = shlex.split(cmd.split(" && ")[-1])
     assert check[:3] == ["/opt/venv/bin/python", "-I", "-c"] and check[3] == P.ROWS_CHECK
-    assert check[4:] == ["/workspace/data/lidc/rows/lidc-train-b1", ZERO64]  # the SHA the plan pins for that revision
+    assert check[4:] == ["/workspace/data/lidc/rows/lidc-train-b1", ROWS_SHA]  # the SHA the plan pins for that revision
 
 
 def rows_root(tmp: Path, files_count=2) -> tuple[Path, str]:
@@ -132,7 +133,7 @@ def test_fetch_as_names_the_checkpoint_folder(monkeypatch):
         with pytest.raises(SystemExit):
             fetch("b1-rows", name=bad)
         with pytest.raises(SystemExit):
-            fetch(rows=[ZERO40, bad])
+            fetch(rows=[ROWS_REV, bad])
     assert len(sent) == 2
 
 
@@ -141,11 +142,11 @@ def test_fetch_hf_takes_a_revision_or_rows(monkeypatch):
     with pytest.raises(SystemExit):
         fetch()  # neither
     with pytest.raises(SystemExit):
-        fetch("x", rows=[ZERO40, "lidc-train-b1"])  # both
+        fetch("x", rows=[ROWS_REV, "lidc-train-b1"])  # both
     assert sent == []
     got = []
     monkeypatch.setattr(P, "cmd_fetch_hf", got.append)
-    P.main(["fetch_hf", "p1", "--rows", ZERO40, "lidc-train-b1"])
+    P.main(["fetch_hf", "p1", "--rows", ROWS_REV, "lidc-train-b1"])
     P.main(["fetch_hf", "p1", "b1-rows", "--as", "b1"])
-    assert (got[0].rows, got[0].revision, got[1].revision, got[1].name) == ([ZERO40, "lidc-train-b1"], None,
+    assert (got[0].rows, got[0].revision, got[1].revision, got[1].name) == ([ROWS_REV, "lidc-train-b1"], None,
                                                                              "b1-rows", "b1")

@@ -82,5 +82,6 @@ def test_push_target_of_a_spec_without_a_training_stage_dies():
 
 
 def test_rows_pin_reads_the_specs():
-    zero40 = "0" * 40
-    assert policy.rows_pin(zero40) == "0" * 64
+    """B1.4 step 5 pin (rows/lidc-train-b1): the plans and specs/b1_rows.yaml agree on one manifest SHA-256."""
+    assert policy.rows_pin("34213dceb068128f1a1abf9c67aa65dd59bc1220") == (
+        "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4")

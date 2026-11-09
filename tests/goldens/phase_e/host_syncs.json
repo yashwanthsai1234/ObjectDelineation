@@ -1,5 +1,5 @@
 {
  "eval/vision.py": 2,
- "train/fast.py": 20,
+ "train/fast.py": 25,
  "train/gpu_pixels.py": 3
 }
