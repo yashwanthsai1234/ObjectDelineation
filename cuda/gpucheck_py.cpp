@@ -105,6 +105,13 @@ void check_tables(const In<i64, 1>& tables, i64 n) {
   if (i64(tables.shape(0)) != n) throw std::invalid_argument("tables must have one handle per object");
 }
 
+// timing=True: the call's per-stage milliseconds (stage -> ms, in run order) as the result's "timing".
+nb::dict times_dict(const gpucheck::Times& times) {
+  nb::dict t;
+  for (const auto& [name, ms] : times) t[name.c_str()] = ms;
+  return t;
+}
+
 }  // namespace
 
 NB_MODULE(_gpucheck, m) {
@@ -112,6 +119,17 @@ NB_MODULE(_gpucheck, m) {
             "(bit-packed rows), polygonize's rings, and the reward's scorer against expert tables resident on the device.";
   m.def("build", [] { return gpucheck::cuda_build() ? "cuda" : "cpu"; });
   m.def("device_count", &gpucheck::device_count);
+  m.def("stats", [] {  // gpucheck.h Stats
+    const gpucheck::Stats s = gpucheck::stats();
+    nb::dict d;
+    d["waits"] = s.waits, d["drain_syncs"] = s.drain_syncs, d["label_pairs"] = s.label_pairs;
+    d["sync_alloc"] = s.sync_alloc, d["sync_free"] = s.sync_free;
+    d["pool_allocs"] = s.pool_allocs, d["pool_frees"] = s.pool_frees;
+    d["arena_bytes"] = s.arena_bytes, d["table_bytes"] = s.table_bytes;
+    d["live_device_bytes"] = s.live_device_bytes, d["contexts"] = s.contexts;
+    return d;
+  });
+  m.def("reset_stats", &gpucheck::reset_stats);
   nb::list names;
   for (const char* name : gpucheck::kDefectNames) names.append(name);
   m.attr("DEFECTS") = nb::tuple(names);
@@ -119,33 +137,37 @@ NB_MODULE(_gpucheck, m) {
   m.def(
       "check_polygons",
       [](const XY& xy, const In<i64, 1>& ring_start, const In<i64, 1>& shape_start, std::optional<In<i32, 1>> roles,
-         const In<i32, 1>& W, const In<i32, 1>& H, i64 G) {
+         const In<i32, 1>& W, const In<i32, 1>& H, i64 G, bool timing) {
         const PolygonsIn p(xy, ring_start, shape_start, roles, W, H, G);
         const i64 n = p.in.n;
         gpucheck::PolygonResult r;
+        gpucheck::Times times;
         {
           nb::gil_scoped_release release;
-          r = gpucheck::check_polygons(p.in);
+          r = gpucheck::check_polygons(p.in, timing ? &times : nullptr);
         }
         nb::dict d;
         const size_t words = r.evenodd.size();
         d["word_start"] = to_numpy(std::move(r.word_start), {size_t(n + 1)});
         d["evenodd"] = to_numpy(std::move(r.evenodd), {words});  // uint32 rows: objdel.geometry.shape.unpack_rows
         d["defects"] = to_numpy(std::move(r.defects), {size_t(n), size_t(gpucheck::kNumDefects)});
+        if (timing) d["timing"] = times_dict(times);
         return d;
       },
       nb::arg("xy").noconvert(), nb::arg("ring_start").noconvert(), nb::arg("shape_start").noconvert(),
-      nb::arg("roles").noconvert().none(), nb::arg("W").noconvert(), nb::arg("H").noconvert(), nb::arg("G"));
+      nb::arg("roles").noconvert().none(), nb::arg("W").noconvert(), nb::arg("H").noconvert(), nb::arg("G"),
+      nb::kw_only(), nb::arg("timing") = false);
 
   m.def(
       "check_masks",
-      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start) {
+      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start, bool timing) {
         const MasksIn k(bits, hw, start);
         const i64 n = k.in.n;
         gpucheck::MaskResult r;
+        gpucheck::Times times;
         {
           nb::gil_scoped_release release;
-          r = gpucheck::check_masks(k.in);
+          r = gpucheck::check_masks(k.in, timing ? &times : nullptr);
         }
         const size_t R = r.ring_area.size(), P = r.pts.size() / 2;
         nb::dict d;
@@ -154,9 +176,11 @@ NB_MODULE(_gpucheck, m) {
         d["pts_start"] = to_numpy(std::move(r.pts_start), {R + 1});
         d["ring_area"] = to_numpy(std::move(r.ring_area), {R});
         d["pts"] = to_numpy(std::move(r.pts), {P, 2});
+        if (timing) d["timing"] = times_dict(times);
         return d;
       },
-      nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert());
+      nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert(), nb::kw_only(),
+      nb::arg("timing") = false);
 
   // One ExpertCache's tables to the device -> handle (objdel.reward.ExpertCache.device).
   m.def(
@@ -196,32 +220,38 @@ NB_MODULE(_gpucheck, m) {
   m.def(
       "score_polygons",
       [](const XY& xy, const In<i64, 1>& ring_start, const In<i64, 1>& shape_start, std::optional<In<i32, 1>> roles,
-         const In<i32, 1>& W, const In<i32, 1>& H, i64 G, const In<i64, 1>& tables) {
+         const In<i32, 1>& W, const In<i32, 1>& H, i64 G, const In<i64, 1>& tables, bool timing) {
         const PolygonsIn p(xy, ring_start, shape_start, roles, W, H, G);
         check_tables(tables, p.in.n);
         gpucheck::Scores r;
+        gpucheck::Times times;
         {
           nb::gil_scoped_release release;
-          r = gpucheck::score_polygons(p.in, tables.data());
+          r = gpucheck::score_polygons(p.in, tables.data(), timing ? &times : nullptr);
         }
-        return scores_dict(std::move(r), p.in.n);
+        nb::dict d = scores_dict(std::move(r), p.in.n);
+        if (timing) d["timing"] = times_dict(times);
+        return d;
       },
       nb::arg("xy").noconvert(), nb::arg("ring_start").noconvert(), nb::arg("shape_start").noconvert(),
       nb::arg("roles").noconvert().none(), nb::arg("W").noconvert(), nb::arg("H").noconvert(), nb::arg("G"),
-      nb::arg("tables").noconvert());
+      nb::arg("tables").noconvert(), nb::kw_only(), nb::arg("timing") = false);
 
   m.def(
       "score_masks",
-      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start, const In<i64, 1>& tables) {
+      [](const In<u8, 1>& bits, const XY& hw, const In<i64, 1>& start, const In<i64, 1>& tables, bool timing) {
         const MasksIn k(bits, hw, start);
         check_tables(tables, k.in.n);
         gpucheck::Scores r;
+        gpucheck::Times times;
         {
           nb::gil_scoped_release release;
-          r = gpucheck::score_masks(k.in, tables.data());
+          r = gpucheck::score_masks(k.in, tables.data(), timing ? &times : nullptr);
         }
-        return scores_dict(std::move(r), k.in.n);
+        nb::dict d = scores_dict(std::move(r), k.in.n);
+        if (timing) d["timing"] = times_dict(times);
+        return d;
       },
       nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert(),
-      nb::arg("tables").noconvert());
+      nb::arg("tables").noconvert(), nb::kw_only(), nb::arg("timing") = false);
 }

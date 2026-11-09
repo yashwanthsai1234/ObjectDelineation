@@ -36,6 +36,7 @@
 #include "gpucheck.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <numeric>
@@ -44,9 +45,23 @@
 
 #ifdef __CUDACC__
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 #define HD __host__ __device__
 #else
 #define HD
+#endif
+
+// NVTX ranges for nsys, in the "gpucheck" domain (CUDA build only; they cost a few instructions without a profiler).
+// Each use declares its own variable, so two ranges can share a scope; a range ends with its scope.
+#define GC_CAT2(a, b) a##b
+#define GC_CAT(a, b) GC_CAT2(a, b)
+#ifdef __CUDACC__
+struct gc_domain {
+  static constexpr char const* name{"gpucheck"};
+};
+#define GC_RANGE(name) nvtx3::scoped_range_in<gc_domain> GC_CAT(gc_range_, __LINE__) { name }
+#else
+#define GC_RANGE(name)
 #endif
 
 namespace gpucheck {
@@ -55,7 +70,14 @@ namespace {
 using i128 = __int128;
 constexpr i32 kPairs = kMaxRings * kMaxRings;
 
+// The engine counters (gpucheck.h Stats). Written with the engine mutex held, read under it (stats()).
+Stats& counters() {
+  static Stats s;
+  return s;
+}
+
 // ===================================================================== platform
+// Every host wait, stream sync, allocation and release goes through the helpers of this section, which count them.
 #ifdef __CUDACC__
 void cuda_check(cudaError_t e) {
   if (e != cudaSuccess) throw std::runtime_error(std::string("CUDA: ") + cudaGetErrorString(e));
@@ -75,13 +97,19 @@ Stream new_stream() {  // non-blocking (no implicit sync with the legacy default
 // cudaGetLastError() after a good launch would return it: clear it at the start of every call.
 void clear_error() { (void)cudaGetLastError(); }
 
-void* alloc(bool device, size_t bytes) {
+void* alloc(bool device, size_t bytes) {  // cudaMalloc and cudaMallocHost synchronize the device
   void* p = nullptr;
   cuda_check(device ? cudaMalloc(&p, bytes) : cudaMallocHost(&p, bytes));
+  ++counters().sync_alloc;
+  if (device) counters().live_device_bytes += i64(bytes);
   return p;
 }
 
-void release(bool device, void* p) { cuda_check(device ? cudaFree(p) : cudaFreeHost(p)); }
+void release(bool device, void* p, size_t bytes) {
+  ++counters().sync_free;
+  if (device) counters().live_device_bytes -= i64(bytes);
+  cuda_check(device ? cudaFree(p) : cudaFreeHost(p));
+}
 
 void to_device(void* dst, const void* src, size_t bytes, Stream st) {
   if (bytes) cuda_check(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyHostToDevice, st));
@@ -95,7 +123,30 @@ void zero(void* p, size_t bytes, Stream st) {
   if (bytes) cuda_check(cudaMemsetAsync(p, 0, bytes, st));
 }
 
-void wait(Stream st) { cuda_check(cudaStreamSynchronize(st)); }
+void wait(Stream st) {
+  ++counters().waits;
+  cuda_check(cudaStreamSynchronize(st));
+}
+
+void drain_sync(Stream st) {  // errors ignored: the call that throws reports the first one
+  ++counters().drain_syncs;
+  (void)cudaStreamSynchronize(st);
+}
+
+// Stage marks (Timer): CUDA events on the lane's stream.
+using Mark = cudaEvent_t;
+Mark mark(Stream st) {
+  cudaEvent_t ev = nullptr;
+  cuda_check(cudaEventCreate(&ev));
+  cuda_check(cudaEventRecord(ev, st));
+  return ev;
+}
+double elapsed_ms(Mark a, Mark b) {
+  float ms = 0;
+  cuda_check(cudaEventElapsedTime(&ms, a, b));
+  return ms;
+}
+void unmark(Mark m) { (void)cudaEventDestroy(m); }
 
 template <class F>
 __global__ void kernel(i64 n, F f) {
@@ -114,13 +165,31 @@ void for_each(Stream st, i64 n, const F& f) {
 struct Stream {};  // the CPU build runs every step at once, in order
 
 Stream new_stream() { return {}; }
-void* alloc(bool, size_t bytes) { return ::operator new(bytes); }
-void release(bool, void* p) { ::operator delete(p); }
+// Counted as the CUDA build counts them after the stream-ordered pool (D5c): device memory as pool allocations, host
+// staging as synchronizing ones.
+void* alloc(bool device, size_t bytes) {
+  void* p = ::operator new(bytes);
+  ++(device ? counters().pool_allocs : counters().sync_alloc);
+  if (device) counters().live_device_bytes += i64(bytes);
+  return p;
+}
+void release(bool device, void* p, size_t bytes) {
+  ++(device ? counters().pool_frees : counters().sync_free);
+  if (device) counters().live_device_bytes -= i64(bytes);
+  ::operator delete(p);
+}
 void to_device(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
 void to_host(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
 void zero(void* p, size_t bytes, Stream) { if (bytes) std::memset(p, 0, bytes); }
-void wait(Stream) {}
+void wait(Stream) { ++counters().waits; }
+void drain_sync(Stream) { ++counters().drain_syncs; }
 void clear_error() {}
+
+// Stage marks (Timer): the host clock, since every step has run when the next one is queued.
+using Mark = std::chrono::steady_clock::time_point;
+Mark mark(Stream) { return std::chrono::steady_clock::now(); }
+double elapsed_ms(Mark a, Mark b) { return std::chrono::duration<double, std::milli>(b - a).count(); }
+void unmark(Mark) {}
 
 template <class F>
 void for_each(Stream, i64 n, const F& f) {
@@ -141,10 +210,13 @@ struct Block {
     while (c < bytes && c < (size_t(64) << 20)) c <<= 1;
     if (c < bytes) c = bytes;
     void* old = p;
+    const size_t old_cap = cap;
     p = nullptr, cap = 0;
-    if (old) release(kDevice, old);
+    if (kDevice) counters().arena_bytes -= i64(old_cap);
+    if (old) release(kDevice, old, old_cap);
     p = static_cast<u8*>(alloc(kDevice, c));
     cap = c;
+    if (kDevice) counters().arena_bytes += i64(cap);
     return p;
   }
 };
@@ -163,6 +235,9 @@ struct Engine {
     if (ready) return;
     for (Lane& l : lanes) l.stream = new_stream();
     ready = true;
+#ifdef __CUDACC__
+    counters().contexts = 1;  // the streams live in the device's primary context
+#endif
   }
 };
 
@@ -173,14 +248,41 @@ Engine& engine() {
 }
 
 // Waits for both lanes on every exit of a call, so a call that throws leaves no copy in flight from a staging buffer
-// the next call refills. Errors are ignored here: the throwing call reports the first one.
+// the next call refills.
 struct Drain {
   Engine& e;
   ~Drain() {
-#ifdef __CUDACC__
     if (e.ready)
-      for (Lane& l : e.lanes) cudaStreamSynchronize(l.stream);
-#endif
+      for (Lane& l : e.lanes) drain_sync(l.stream);
+  }
+};
+
+// The per-stage times of one call (gpucheck.h Times): a mark before and after each stage on its lane's stream, read
+// by read() after the call's last wait, which covers every mark. Without `out`, a stage is only its NVTX range.
+struct Timer {
+  struct Span {
+    const char* name;
+    Mark a, b;
+  };
+  Times* out;
+  std::vector<Span> spans;
+  template <class F>
+  void stage(const char* name, Stream st, const F& f) {
+    GC_RANGE(name);
+    if (!out) return f();
+    const Mark a = mark(st);
+    f();
+    spans.push_back(Span{name, a, mark(st)});
+  }
+  void read() {
+    for (const Span& s : spans) {
+      auto it = std::find_if(out->begin(), out->end(), [&](const auto& t) { return t.first == s.name; });
+      if (it == out->end()) it = out->insert(out->end(), {s.name, 0.0});
+      it->second += elapsed_ms(s.a, s.b);
+    }
+  }
+  ~Timer() {
+    for (const Span& s : spans) unmark(s.a), unmark(s.b);
   }
 };
 
@@ -963,7 +1065,7 @@ struct SetBase {  // each ring's output offset, at its start slot
 
 // Masks [m0, m1) on one lane: copy in, rings and corner ranks, then three short round trips to the host (the ring
 // count; the rings and bit-quads; the corners after the host ordered the rings).
-void check_mask_chunk(const Masks& in, i64 m0, i64 m1, MaskResult& out, Lane& L) {
+void check_mask_chunk(const Masks& in, i64 m0, i64 m1, MaskResult& out, Lane& L, Timer& t) {
   const i64 n = m1 - m0;
   std::vector<i64> slot_start(n + 1, 0), vrow_start(n + 1, 0);
   i64 max_slots = 1;
@@ -1006,22 +1108,27 @@ void check_mask_chunk(const Masks& in, i64 m0, i64 m1, MaskResult& out, Lane& L)
   to_device(d, h, in_bytes, st);
   zero(d + o_rcount, lay.size - o_rcount, st);
   const int rounds = jump_rounds(max_slots);
-  for_each(st, rows, InitSlots{v, sl, ptr<i64>(d, o_quads)});
-  int in_buf = 0;
-  for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(st, rows, LabelRound{v, sl, in_buf});
-  const i32* lab = sl.lab[in_buf];
-  for_each(st, rows, Pred{v, sl});
-  for_each(st, rows, RankInit{v, sl, lab});
-  in_buf = 0;
-  for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(st, rows, RankRound{v, sl, in_buf});
-  const i32* w = sl.w[in_buf];
-  for_each(st, rows, RingStats{v, sl, lab, ptr<i32>(d, o_nrings), rec});
+  const i32 *lab = nullptr, *w = nullptr;
+  t.stage("ccl", st, [&] {  // ring labels: pointer jumping to each cycle's minimum slot
+    for_each(st, rows, InitSlots{v, sl, ptr<i64>(d, o_quads)});
+    int in_buf = 0;
+    for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(st, rows, LabelRound{v, sl, in_buf});
+    lab = sl.lab[in_buf];
+  });
+  t.stage("rings", st, [&] {  // corner ranks and the ring records
+    for_each(st, rows, Pred{v, sl});
+    for_each(st, rows, RankInit{v, sl, lab});
+    int in_buf = 0;
+    for (int k = 0; k < rounds; ++k, in_buf ^= 1) for_each(st, rows, RankRound{v, sl, in_buf});
+    w = sl.w[in_buf];
+    for_each(st, rows, RingStats{v, sl, lab, ptr<i32>(d, o_nrings), rec});
+  });
   to_host(o, d + o_nrings, sizeof(i32), st);
   wait(st);
   const i32 R = *ptr<i32>(o, 0);
   if (R < 0 || R > rmax) throw std::logic_error("gpucheck: ring count out of its bound");
 
-  for_each(st, R, GatherRings{v, sl, rec, ptr<RingInfo>(d, o_info)});
+  t.stage("rings", st, [&] { for_each(st, R, GatherRings{v, sl, rec, ptr<RingInfo>(d, o_info)}); });
   to_host(o, d + o_info, sizeof(RingInfo) * size_t(R), st);
   to_host(o + info_bytes, d + o_quads, sizeof(i64) * size_t(5 * n), st);
   wait(st);
@@ -1049,8 +1156,10 @@ void check_mask_chunk(const Masks& in, i64 m0, i64 m1, MaskResult& out, Lane& L)
   if (2 * total > S) throw std::logic_error("gpucheck: corner count out of its bound");
 
   to_device(d + o_base, base, sizeof(i64) * size_t(R), st);
-  for_each(st, R, SetBase{v, sl, rec, ptr<i64>(d, o_base)});
-  for_each(st, rows, ScatterCorners{v, sl, lab, w, ptr<i32>(d, o_pts)});
+  t.stage("trace", st, [&] {  // every corner to its output position
+    for_each(st, R, SetBase{v, sl, rec, ptr<i64>(d, o_base)});
+    for_each(st, rows, ScatterCorners{v, sl, lab, w, ptr<i32>(d, o_pts)});
+  });
   to_host(o, d + o_pts, sizeof(i32) * size_t(2 * total), st);
   wait(st);
   out.pts.insert(out.pts.end(), ptr<i32>(o, 0), ptr<i32>(o, 0) + 2 * total);
@@ -1107,7 +1216,7 @@ void pack(const Polygons& in, const std::vector<i64>& word_start, const PolyChun
 
 // Queues the chunk on its lane: copy in, zero the counters, the kernels, copy out (the defects, and the masks when
 // `masks`; else they stay in the lane's arena for the scorer). Nothing waits.
-void launch(const PolyChunk& c, i64 G, Lane& L, bool masks) {
+void launch(const PolyChunk& c, i64 G, Lane& L, bool masks, Timer& t) {
   u8* d = L.dev.p;
   const Stream st = L.stream;
   const Shapes s{ptr<i32>(d, c.xy), ptr<i64>(d, c.ring_start), ptr<i64>(d, c.shape_start), ptr<i64>(d, c.row_start),
@@ -1117,11 +1226,15 @@ void launch(const PolyChunk& c, i64 G, Lane& L, bool masks) {
   u8 *raster_wide = ptr<u8>(d, c.raster_wide), *validate_wide = ptr<u8>(d, c.validate_wide);
   to_device(d, L.in.p, c.in_bytes, st);
   zero(d + c.counts, c.words - c.counts, st);  // counts, pairs, defects: the masks are written whole
-  for_each(st, c.n, Precision{s, raster_wide, validate_wide});
-  raster(st, s, raster_wide, ptr<u32>(d, c.words), c.rows);
-  for_each(st, c.nr, CleanRings{s, r});
-  for_each(st, c.nv, EdgePairs{s, r, validate_wide});
-  for_each(st, c.n, ShapeTotals{s, r, validate_wide, ptr<i64>(d, c.defects)});
+  t.stage("raster", st, [&] {
+    for_each(st, c.n, Precision{s, raster_wide, validate_wide});
+    raster(st, s, raster_wide, ptr<u32>(d, c.words), c.rows);
+  });
+  t.stage("validity", st, [&] {
+    for_each(st, c.nr, CleanRings{s, r});
+    for_each(st, c.nv, EdgePairs{s, r, validate_wide});
+    for_each(st, c.n, ShapeTotals{s, r, validate_wide, ptr<i64>(d, c.defects)});
+  });
   to_host(L.out.p, d + c.defects, (masks ? c.size : c.words) - c.defects, st);
 }
 
@@ -1154,6 +1267,7 @@ struct TableView {  // device view of resident tables: bit planes of H rows of w
 
 struct Registry {  // resident tables; handle = index (reused once dropped)
   std::vector<u8*> block;
+  std::vector<size_t> bytes;
   std::vector<TableView> view;
   std::vector<i64> free;
   i64 live = 0;
@@ -1547,7 +1661,7 @@ struct SigCompact {
 // Scores the masks at `words` in lane L's checker arena (mask s at word_start[s]) against their tables. The staging
 // buffers and the scorer's arena are free (the caller waited for the lane).
 void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, const std::vector<i64>& word_start,
-                 Scores& out) {
+                 Scores& out, Timer& t) {
   const i64 n = i64(tv.size());
   const Stream st = L.stream;
   std::vector<Obj> obj(size_t(n), Obj{});
@@ -1567,8 +1681,10 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
   std::copy_n(obj.data(), n, ptr<Obj>(h, a_obj));
   std::copy_n(row_start.data(), n + 1, ptr<i64>(h, a_rows));
   to_device(d, h, a_rbox, st);
-  for_each(st, rows, RowBox{ptr<Obj>(d, a_obj), ptr<i64>(d, a_rows), n, words, ptr<i32>(d, a_rbox)});
-  for_each(st, n, ObjBox{ptr<i64>(d, a_rows), ptr<i32>(d, a_rbox), ptr<i64>(d, a_box)});
+  t.stage("label", st, [&] {  // the crop boxes, which the labeling works on
+    for_each(st, rows, RowBox{ptr<Obj>(d, a_obj), ptr<i64>(d, a_rows), n, words, ptr<i32>(d, a_rbox)});
+    for_each(st, n, ObjBox{ptr<i64>(d, a_rows), ptr<i32>(d, a_rbox), ptr<i64>(d, a_box)});
+  });
   const i64* box = ptr<i64>(L.out.get(sizeof(i64) * size_t(5 * n)), 0);
   to_host(L.out.p, d + a_box, sizeof(i64) * size_t(5 * n), st);
   wait(st);
@@ -1583,6 +1699,7 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
     crow_start[size_t(o + 1)] = crow_start[size_t(o)] + (b.area ? b.bh + 2 : 0);
   }
   const i64 crows = crow_start[size_t(n)];
+  counters().label_pairs += crows;  // the second label pair relabels every crop row
 
   // Labeling, row partials, terms.
   Layout l;
@@ -1600,25 +1717,32 @@ void score_words(Lane& L, const std::vector<TableView>& tv, const u32* words, co
   const Crops c{dobj, ptr<i64>(d, o_crows), n, ptr<u8>(d, o_img), ptr<i32>(d, o_fg), ptr<i32>(d, o_bg),
                 ptr<i32>(d, o_aux), ptr<i32>(d, o_nc)};
   auto label = [&](int which) {
-    for_each(st, crows, LabelInit{c, which});
-    for_each(st, crows, LabelMerge{c, which});
-    for_each(st, crows, LabelFlatten{c, which});
+    t.stage("label", st, [&] {
+      for_each(st, crows, LabelInit{c, which});
+      for_each(st, crows, LabelMerge{c, which});
+      for_each(st, crows, LabelFlatten{c, which});
+    });
   };
   auto count = [&](int which) {
-    zero(c.aux, sizeof(i32) * size_t(crop), st);
-    for_each(st, crows, Count{c, which});
+    t.stage("count", st, [&] {
+      zero(c.aux, sizeof(i32) * size_t(crop), st);
+      for_each(st, crows, Count{c, which});
+    });
   };
-  for_each(st, crows, CropFill{c, words});
-  label(1), count(1), for_each(st, crows, Filter{c, 1});
-  label(0), count(0), for_each(st, crows, Filter{c, 0});
+  auto filter = [&](int which) { t.stage("filter", st, [&] { for_each(st, crows, Filter{c, which}); }); };
+  t.stage("label", st, [&] { for_each(st, crows, CropFill{c, words}); });
+  label(1), count(1), filter(1);
+  label(0), count(0), filter(0);
   label(1), label(0);
-  zero(c.aux, sizeof(i32) * size_t(crop), st);
-  for_each(st, crows, Holes{c});
-  for_each(st, crows, Gather{c});
-  for_each(st, rows, ScoreRows{dobj, ptr<i64>(d, o_rows), n, words, ptr<i64>(d, o_parts)});
-  for_each(st, n, ObjTerms{dobj, ptr<i64>(d, o_parts), c.ncomp, c.bg, ptr<ObjOut>(d, o_out)});
-  for_each(st, 1, SigScan{c.ncomp, n, ptr<i64>(d, o_ss)});
-  for_each(st, n, SigCompact{dobj, c.ncomp, ptr<i64>(d, o_ss), c.bg, c.aux});
+  t.stage("score", st, [&] {  // holes per component, row partials, the terms and the signatures
+    zero(c.aux, sizeof(i32) * size_t(crop), st);
+    for_each(st, crows, Holes{c});
+    for_each(st, crows, Gather{c});
+    for_each(st, rows, ScoreRows{dobj, ptr<i64>(d, o_rows), n, words, ptr<i64>(d, o_parts)});
+    for_each(st, n, ObjTerms{dobj, ptr<i64>(d, o_parts), c.ncomp, c.bg, ptr<ObjOut>(d, o_out)});
+    for_each(st, 1, SigScan{c.ncomp, n, ptr<i64>(d, o_ss)});
+    for_each(st, n, SigCompact{dobj, c.ncomp, ptr<i64>(d, o_ss), c.bg, c.aux});
+  });
   const size_t res = sizeof(ObjOut) * size_t(n), res_pad = (res + 255) / 256 * 256;
   u8* ho = L.out.get(res_pad + sizeof(i64) * size_t(n + 1));
   to_host(ho, d + o_out, res, st);
@@ -1660,7 +1784,24 @@ int device_count() {
 #endif
 }
 
-PolygonResult check_polygons(const Polygons& in) {
+Stats stats() {
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  return counters();
+}
+
+void reset_stats() {
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  Stats& s = counters();
+  const Stats kept = s;
+  s = Stats{};
+  s.arena_bytes = kept.arena_bytes, s.table_bytes = kept.table_bytes;
+  s.live_device_bytes = kept.live_device_bytes, s.contexts = kept.contexts;
+}
+
+PolygonResult check_polygons(const Polygons& in, Times* times) {
+  GC_RANGE("check_polygons");
   const i64 n = in.n;
   PolygonResult out;
   out.word_start.assign(n + 1, 0);
@@ -1675,6 +1816,7 @@ PolygonResult check_polygons(const Polygons& in) {
   std::lock_guard<std::mutex> lock(e.mu);
   clear_error();
   Drain drain{e};
+  Timer t{times, {}};
   e.start();
   for (int k = 0; k < used; ++k) {  // every buffer is grown before any work is queued
     Lane& L = e.lanes[k];
@@ -1682,7 +1824,7 @@ PolygonResult check_polygons(const Polygons& in) {
   }
   for (int k = 0; k < used; ++k) {  // lane 1 is packed while lane 0 runs
     pack(in, out.word_start, chunks[k], e.lanes[k].in.p);
-    launch(chunks[k], in.G, e.lanes[k], true);
+    launch(chunks[k], in.G, e.lanes[k], true, t);
   }
   for (int k = 0; k < used; ++k) {
     const PolyChunk& c = chunks[k];
@@ -1691,10 +1833,12 @@ PolygonResult check_polygons(const Polygons& in) {
     std::copy_n(ptr<i64>(L.out.p, 0), c.n * kNumDefects, out.defects.data() + c.a * kNumDefects);
     std::copy_n(ptr<u32>(L.out.p, c.words - c.defects), c.nwords, out.evenodd.data() + out.word_start[c.a]);
   }
+  if (times) t.read();
   return out;
 }
 
-MaskResult check_masks(const Masks& in) {
+MaskResult check_masks(const Masks& in, Times* times) {
+  GC_RANGE("check_masks");
   MaskResult out;
   out.ring_start = {0};
   out.pts_start = {0};
@@ -1703,6 +1847,7 @@ MaskResult check_masks(const Masks& in) {
   std::lock_guard<std::mutex> lock(e.mu);
   clear_error();
   Drain drain{e};
+  Timer t{times, {}};
   e.start();
   for (i64 m0 = 0; m0 < in.n;) {  // chunks of at most kChunkSlots slots (a larger mask goes alone)
     i64 m1 = m0, slots = 0;
@@ -1711,13 +1856,15 @@ MaskResult check_masks(const Masks& in) {
       if (m1 > m0 && slots + s > kChunkSlots) break;
       slots += s, ++m1;
     }
-    check_mask_chunk(in, m0, m1, out, e.lanes[0]);
+    check_mask_chunk(in, m0, m1, out, e.lanes[0], t);
     m0 = m1;
   }
+  if (times) t.read();
   return out;
 }
 
 i64 add_tables(const Tables& t) {
+  GC_RANGE("add_tables");
   const i64 wpr = words_per_row(t.W), plane = i64(t.H) * wpr, px = i64(t.H) * t.W, nsig = t.sig_start[t.k];
   Layout l;
   const size_t o_r = l.put<u32>(t.k * plane), o_u = l.put<u32>(plane), o_c = l.put<u32>(plane),
@@ -1743,7 +1890,7 @@ i64 add_tables(const Tables& t) {
     to_device(d, h.data(), l.size, e.lanes[0].stream);
     wait(e.lanes[0].stream);
   } catch (...) {
-    release(true, d);
+    release(true, d, l.size);
     throw;
   }
   const TableView v{ptr<u32>(d, o_r), ptr<u32>(d, o_u), ptr<u32>(d, o_c), ptr<u32>(d, o_v), ptr<float>(d, o_d),
@@ -1752,13 +1899,14 @@ i64 add_tables(const Tables& t) {
   Registry& r = registry();
   i64 handle = i64(r.block.size());
   if (r.free.empty()) {
-    r.block.push_back(d), r.view.push_back(v);
+    r.block.push_back(d), r.bytes.push_back(l.size), r.view.push_back(v);
   } else {
     handle = r.free.back();
     r.free.pop_back();
-    r.block[size_t(handle)] = d, r.view[size_t(handle)] = v;
+    r.block[size_t(handle)] = d, r.bytes[size_t(handle)] = l.size, r.view[size_t(handle)] = v;
   }
   ++r.live;
+  counters().table_bytes += i64(l.size);
   return handle;
 }
 
@@ -1769,7 +1917,8 @@ void drop_tables(i64 handle) {
   if (handle < 0 || handle >= i64(r.block.size()) || !r.block[size_t(handle)])
     throw std::invalid_argument("unknown tables handle");
   clear_error();
-  release(true, r.block[size_t(handle)]);
+  release(true, r.block[size_t(handle)], r.bytes[size_t(handle)]);
+  counters().table_bytes -= i64(r.bytes[size_t(handle)]);
   r.block[size_t(handle)] = nullptr;
   r.free.push_back(handle);
   --r.live;
@@ -1781,7 +1930,8 @@ i64 resident() {
   return registry().live;
 }
 
-Scores score_polygons(const Polygons& in, const i64* tables) {
+Scores score_polygons(const Polygons& in, const i64* tables, Times* times) {
+  GC_RANGE("score_polygons");
   const i64 n = in.n;
   Scores out;
   out.sig_start = {0};
@@ -1790,22 +1940,25 @@ Scores score_polygons(const Polygons& in, const i64* tables) {
   if (n == 0) return out;
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
+  Drain drain{e};
   const std::vector<TableView> tv = views(tables, n, in.W, in.H);
   clear_error();
-  Drain drain{e};
+  Timer t{times, {}};
   e.start();
   Lane& L = e.lanes[0];
   const PolyChunk c = plan(in, word_start, 0, n);
   L.dev.get(c.size), L.in.get(c.in_bytes), L.out.get(c.words - c.defects);
   pack(in, word_start, c, L.in.p);
-  launch(c, in.G, L, false);
+  launch(c, in.G, L, false, t);
   wait(L.stream);
   out.defects.assign(ptr<i64>(L.out.p, 0), ptr<i64>(L.out.p, 0) + n * kNumDefects);
-  score_words(L, tv, ptr<u32>(L.dev.p, c.words), word_start, out);
+  score_words(L, tv, ptr<u32>(L.dev.p, c.words), word_start, out, t);
+  if (times) t.read();
   return out;
 }
 
-Scores score_masks(const Masks& in, const i64* tables) {
+Scores score_masks(const Masks& in, const i64* tables, Times* times) {
+  GC_RANGE("score_masks");
   const i64 n = in.n;
   Scores out;
   out.sig_start = {0};
@@ -1814,9 +1967,10 @@ Scores score_masks(const Masks& in, const i64* tables) {
   if (n == 0) return out;
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
+  Drain drain{e};
   const std::vector<TableView> tv = views(tables, n, in.W, in.H);
   clear_error();
-  Drain drain{e};
+  Timer t{times, {}};
   e.start();
   Lane& L = e.lanes[0];
   const size_t bytes = sizeof(u32) * size_t(word_start[size_t(n)]);
@@ -1828,7 +1982,8 @@ Scores score_masks(const Masks& in, const i64* tables) {
   to_device(d, h, bytes, L.stream);
   wait(L.stream);
   out.defects.assign(size_t(n * kNumDefects), 0);
-  score_words(L, tv, ptr<u32>(d, 0), word_start, out);
+  score_words(L, tv, ptr<u32>(d, 0), word_start, out, t);
+  if (times) t.read();
   return out;
 }
 

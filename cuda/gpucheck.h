@@ -13,6 +13,8 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace gpucheck {
@@ -136,15 +138,37 @@ struct Scores {                // per object (objdel.reward.score: ObjectTerms),
   std::vector<i32> sig;        // holes per component of the size-filtered mask, descending
 };
 
+// Per-stage device time of one call in milliseconds, stages in the order they first ran (timing=True in the binding).
+// Read after the call's last wait: asking for it adds no host wait.
+using Times = std::vector<std::pair<std::string, double>>;
+
+// Engine counters, process-wide (gpucheck.cpp, "counters"). Events since the last reset_stats():
+struct Stats {
+  i64 waits = 0;        // host waits for a lane (stream synchronizations inside a call)
+  i64 drain_syncs = 0;  // stream synchronizations of both lanes on every exit of a call (Drain)
+  i64 label_pairs = 0;  // crop rows the scorer's second label pair relabels
+  i64 sync_alloc = 0, sync_free = 0;  // allocations that synchronize the device: cudaMalloc(Host) / cudaFree(Host);
+                                      // on the CPU build, the host staging buffers
+  i64 pool_allocs = 0, pool_frees = 0;  // stream-ordered pool allocations; on the CPU build, device-kind memory
+  // State, kept by reset_stats():
+  i64 arena_bytes = 0;        // capacity of the grow-only device arenas of both lanes
+  i64 table_bytes = 0;        // bytes of the resident expert tables
+  i64 live_device_bytes = 0;  // device bytes allocated and not released (== arena_bytes + table_bytes)
+  i64 contexts = 0;           // 1 once a call has opened a CUDA context in this process (0 on the CPU build)
+};
+
 bool cuda_build();   // compiled by nvcc
 int device_count();  // CUDA devices (0 on a CPU build or without a driver)
-PolygonResult check_polygons(const Polygons& in);
-MaskResult check_masks(const Masks& in);
+Stats stats();
+void reset_stats();  // zeroes the events, keeps the state
+// times != nullptr: also the per-stage times of the call.
+PolygonResult check_polygons(const Polygons& in, Times* times = nullptr);
+MaskResult check_masks(const Masks& in, Times* times = nullptr);
 i64 add_tables(const Tables& t);  // -> handle
 void drop_tables(i64 handle);
 i64 resident();                    // tables on the device
 // Object s is scored against the tables tables[s]; its frame must be theirs (std::invalid_argument otherwise).
-Scores score_polygons(const Polygons& in, const i64* tables);
-Scores score_masks(const Masks& in, const i64* tables);
+Scores score_polygons(const Polygons& in, const i64* tables, Times* times = nullptr);
+Scores score_masks(const Masks& in, const i64* tables, Times* times = nullptr);
 
 }  // namespace gpucheck

@@ -373,11 +373,14 @@ def get_run(run_id: str) -> dict:
 
 def code_files() -> list[str]:
     """The tracked code snapshot, without data, docs, lab or results dirs, or RIGA-derived tables (D16, BK4-13).
-    tests/ ships: k3_harness -> phase1.reward_gates -> tests.oracles."""
+    tests/ ships: k3_harness -> phase1.reward_gates -> tests.oracles. Kept from docs/: two reference tables and the
+    kernel drafts K1-K3 without their build/ and results/ folders (the R-D1 runbooks run them on the box)."""
     git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole (V1)
     files = subprocess.run(git, cwd=ROOT, capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
     drop = re.compile(r"^(data|docs)/|^experiments/[^/]+/(lab|results)/|riga[^/]*\.(csv|jsonl?)$", re.I)
-    files = [f for f in files if not drop.search(f)]
+    keep = re.compile(r"^docs/reference/(frozen_views|val_halves)\.json$"
+                      r"|^docs/implementation2\.0/kernels/K[123]/(?!build/|results/)")
+    files = [f for f in files if keep.match(f) or not drop.search(f)]
     if not any(f.startswith("tests/oracles/") for f in files):
         die("tests/oracles missing from the code snapshot")
     return files
