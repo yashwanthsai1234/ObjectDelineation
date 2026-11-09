@@ -153,6 +153,10 @@ class TRLReward:
         ahead, self._ahead = self._ahead, None
         same = ahead is not None and ahead[0] == self._signature(keys, jobs)
         T = ahead[1].result() if same else _score(jobs)
+        for n, v in T.items():  # one NaN term would make its group's advantages NaN and the LoRA weights after them
+            if isinstance(v, np.ndarray) and v.dtype.kind == "f" and not np.isfinite(v).all():
+                i = int(np.flatnonzero(~np.isfinite(v).reshape(len(v), -1).all(1))[0])
+                raise ValueError(f"reward term {n} is not finite ({v[i]}) for key {keys[i]}")
         legal = legal_gate(T)
         out = {n: (T[n] * legal if n in GATED else T[n]).tolist() for n in LOGGED[:-1]}
         out["r_topo"] = topology_reward(T).tolist()

@@ -174,7 +174,7 @@ def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
     for k in ("num_generations", "num_generations_eval"):
         if overrides.get(k) not in (None, g):
             raise ValueError(f"{k}={overrides[k]}: reward v4 scores groups of exactly {g} (REWARD_V4.group)")
-    return GRPOConfig(**{
+    cfg = GRPOConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
         # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM
         "per_device_train_batch_size": 2 * g, "gradient_accumulation_steps": 16, "per_device_eval_batch_size": 2 * g,
@@ -188,4 +188,11 @@ def grpo_config(model: str, output_dir: str, **overrides) -> GRPOConfig:
         "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
+    train, spg = cfg.per_device_train_batch_size, cfg.steps_per_generation
+    b = {"per_device_train_batch_size": train, "per_device_eval_batch_size": cfg.per_device_eval_batch_size,
+         "per_device_train_batch_size * steps_per_generation": train * spg}
+    for k, v in b.items():  # TRLReward scores whole groups: refuse here, not at the first held-out eval
+        if v % g:
+            raise ValueError(f"{k}={v}: must be a multiple of the group size {g} (REWARD_V4.group)")
+    return cfg
 

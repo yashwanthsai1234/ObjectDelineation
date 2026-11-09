@@ -8,6 +8,7 @@ evaluation, logged to rl.json).
 References:
 - transformers TrainerCallback / TrainerControl: https://huggingface.co/docs/transformers/main_classes/callback
 """
+import math
 import time
 from pathlib import Path
 
@@ -61,7 +62,13 @@ class NvtxSteps(TrainerCallback):
                              "step start - 1, and TraceStep's wait is start - 2)")
         self.window, self.open, self.opt_open, self.capturing, self.done = window, False, False, False, False
 
+    def _in_window(self, step: int) -> bool:  # a range, not == s - 1: a run resumed inside the window still captures
+        return bool(self.window) and not self.done and self.window[0] - 1 <= step < self.window[1]
+
     def on_train_begin(self, args, state, control, **kw):
+        if self._in_window(state.global_step) and torch.cuda.is_available():
+            torch.cuda.profiler.start()
+            self.capturing = True
         nvtx.push("step")
         self.open = True
 
@@ -78,7 +85,7 @@ class NvtxSteps(TrainerCallback):
         if self.open:
             nvtx.pop()
         if self.window and not self.done and torch.cuda.is_available():
-            if state.global_step == self.window[0] - 1 and not self.capturing:
+            if self._in_window(state.global_step) and not self.capturing:
                 torch.cuda.profiler.start()
                 self.capturing = True
             elif state.global_step == self.window[1] and self.capturing:
@@ -106,8 +113,13 @@ class BudgetStop(TrainerCallback):
 
     def __init__(self, rate_usd_per_h: float, cap_usd: float, session_start: float, fixed_usd: float = 0.0,
                  clock=time.time):
-        if rate_usd_per_h <= 0:
-            raise ValueError(f"budget stop: rate {rate_usd_per_h} $/h must be > 0")
+        if not all(map(math.isfinite, (rate_usd_per_h, cap_usd, session_start, fixed_usd))):
+            raise ValueError(f"budget stop: rate, cap, start and fixed must be finite numbers, got {rate_usd_per_h}, "
+                             f"{cap_usd}, {session_start}, {fixed_usd}")
+        if rate_usd_per_h <= 0 or cap_usd <= 0:
+            raise ValueError(f"budget stop: rate {rate_usd_per_h} $/h and cap ${cap_usd} must be > 0")
+        if session_start > clock() + 60:
+            raise ValueError(f"budget stop: session start {session_start} is in the future (ms? wrong clock?)")
         self.rate, self.cap, self.start, self.fixed = rate_usd_per_h, cap_usd, session_start, fixed_usd
         self.clock, self.tripped = clock, False
 
@@ -115,6 +127,6 @@ class BudgetStop(TrainerCallback):
         return self.fixed + max(0.0, self.clock() - self.start) / 3600 * self.rate
 
     def on_step_end(self, args, state, control, **kw):
-        self.tripped = self.tripped or self.spend() >= self.cap
+        self.tripped = self.tripped or not self.spend() < self.cap
         if self.tripped:
             control.should_training_stop = control.should_save = True
