@@ -60,3 +60,23 @@ def test_a_crashing_check_fails_the_preflight(cfg, monkeypatch):
         raise KeyError("qwen3-vl-2b")
     code, stamp = run(cfg, monkeypatch, [("CODE boom", boom)])
     assert code == 1 and not stamp["pass"] and "check crashed: KeyError" in stamp["checks"]["CODE boom"]["problems"][0]
+
+
+def test_the_trl_contract_is_the_first_code_check(monkeypatch):
+    from objdel.train import trl_adapter as T
+
+    name, fn = next(c for c in PF.CHECKS if c[0].startswith("CODE"))
+    assert name == "CODE TRL private names" and fn(None, None) == []
+
+    def broken():
+        raise T.TRLContractError("boom: _compute_loss")
+
+    monkeypatch.setattr(T, "check", broken)
+    assert fn(None, None) == ["boom: _compute_loss"]
+
+    def missing():
+        raise ImportError("no trl")
+
+    monkeypatch.setattr(T, "check", missing)
+    with pytest.raises(ImportError):  # any other error propagates: main() records it as a crashed (failed) check
+        fn(None, None)

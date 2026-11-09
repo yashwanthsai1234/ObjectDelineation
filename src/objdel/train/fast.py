@@ -25,6 +25,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
+from objdel.train import trl_adapter
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -486,6 +487,7 @@ class FastGRPO(FastForward, GRPOTrainer):
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
 
     def __init__(self, *args, **kwargs):
+        trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
         super().__init__(*args, **kwargs)
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
         self.images = ImageMemo.install(self.processing_class)

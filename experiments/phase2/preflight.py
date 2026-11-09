@@ -9,7 +9,8 @@ Checks, in order; the stage (DATA / CHECKER / CODE) with a failure is finished, 
   CHECKER  tests/test_cuda_checker*.py when they exist, the scorers on the CUDA checker (tests/test_gpu_scoring.py:
            equal to the host scorer it replaced), then the checker's exactness tests (the slow exact oracles, the
            archived CPU checker's recorded results, topology, geometry)
-  CODE     a quick test subset, the CPU dry run of train -> select on a tiny model, the projected GPU hours and dollars
+  CODE     the private TRL names fast.py relies on (objdel.train.trl_adapter), a quick test subset, the CPU dry run
+           of train -> select on a tiny model, the projected GPU hours and dollars
 Writes runs/preflight/<config>.json: pass per check and the code, data and config hashes. vast launch (policy.py)
 refuses unless that stamp passes and all three hashes still match: refusal(). Exit 0 = every check passed.
 """
@@ -207,6 +208,17 @@ def pytest(*args: str) -> list[str]:
     return [] if p.returncode == 0 else ["pytest " + " ".join(args)] + p.stdout.splitlines()[-15:]
 
 
+def trl_problems() -> list[str]:
+    """The private TRL names fast.py relies on (objdel.train.trl_adapter): [] or the contract error's message."""
+    from objdel.train import trl_adapter
+
+    try:
+        trl_adapter.check()
+    except trl_adapter.TRLContractError as e:
+        return [str(e)]
+    return []
+
+
 def checker_tests(a, cfg) -> list[str]:
     cuda = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "tests").glob("test_cuda_checker*.py"))
     return pytest("-m", "not slow", *cuda, "tests/test_gpu_scoring.py", *CHECKER_TESTS)  # CUDA equivalence first
@@ -245,6 +257,7 @@ CHECKS = [
     ("DATA bundle integrity", view_integrity), ("DATA patient disjointness", patients),
     ("DATA prompt identity", prompts), ("DATA CT window", ct_window), ("DATA training targets legal", targets),
     ("DATA coverage of the exam views", coverage), ("CHECKER CPU exactness (+ CUDA equivalence)", checker_tests),
+    ("CODE TRL private names", lambda a, cfg: trl_problems()),
     ("CODE quick tests", lambda a, cfg: pytest("-m", "not slow", *QUICK_TESTS)),
     ("CODE CPU dry run train -> select", lambda a, cfg: pytest(DRY_RUN)),
     ("CODE projected GPU hours and dollars", projection),
