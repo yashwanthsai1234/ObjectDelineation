@@ -74,6 +74,7 @@ References:
 - Lab derivation and evidence: archive/phase1_lab/t_reward/rewardcore/band.py, results/ITERATION3.md (R5).
 """
 import hashlib
+import math
 import os
 import weakref
 from collections import defaultdict
@@ -245,6 +246,8 @@ class ExpertCache:
     built by the first `device()` (or `device_many`) in the process; the distance maps on the host only when read."""
 
     def __init__(self, raters: np.ndarray, tau: float, t5: float):
+        if not (math.isfinite(t5) and t5 > 0):
+            raise ValueError(f"t5 must be finite and > 0, got {t5}")
         raters = _rater_stack(raters)
         self.raters, self.tau, self.t5, self.k = raters, float(tau), float(t5), len(raters)
         s = raters.sum(0, dtype=np.int16)
