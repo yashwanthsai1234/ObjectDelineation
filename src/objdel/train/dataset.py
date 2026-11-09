@@ -115,6 +115,22 @@ def _prepare(job) -> dict:
     return rec
 
 
+def window_record(out, item, window=None, *, f=None) -> dict:
+    """The `_prepare` record of one window of `item`, writing its image and caches under `out`.
+
+    window (an objdel.data.windows.Window, B1.4 rows): framed at (dx, dy) and side, keyed by `window.window_id` (so
+    two windows of one item never share an image or a cache folder), plus `source_item_id`, `cell` and
+    `view = {kind, draw, offset, side, fallback: false, kept_side: false, op: "id"}`.
+    window None (eval views): the given frame `f`, keyed by the item's own id; the caller adds its `view`."""
+    if window is None:
+        return _prepare((str(out), item.item_id, item.dataset, item.group_id, item.raters, f))
+    f = frame(item, offset=(window.dx, window.dy), side=window.side)
+    rec = _prepare((str(out), window.window_id, item.dataset, item.group_id, item.raters, f))
+    return rec | {"source_item_id": item.item_id, "cell": f"{window.cell[0]}{window.cell[1]}",
+                  "view": {"kind": window.kind, "draw": window.draw, "offset": [window.dx, window.dy],
+                           "side": window.side, "fallback": False, "kept_side": False, "op": "id"}}
+
+
 def _jobs(store_root, out, dataset, split, skipped):
     for it in store.load(dataset, split, store_root):
         if it.image is None:
