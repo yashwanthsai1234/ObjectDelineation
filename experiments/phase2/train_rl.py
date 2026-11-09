@@ -114,6 +114,10 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
                                     "else step 3 (the nsys fallback)")
     ap.add_argument("--count-syncs", action="store_true", help="C0: log perf/host_syncs/<phase> (torch sync warnings)")
+    ap.add_argument("--host-meta", action="store_true",
+                    help="C4: row lengths, image ids and groups from vLLM's host lists in the batch (host_meta)")
+    ap.add_argument("--check-meta-every", type=int, default=50, metavar="N",
+                    help="with --host-meta: compare host_meta with the device masks on steps 1, N+1, ... (0: never)")
     ap.add_argument("--gpu-pixels", choices=("off", "auto"), default="off",
                     help="C1: prepare pixel values on the GPU after a start-up self-check (default off: the CPU path)")
     ap.add_argument("--allow-cpu-pixels", action="store_true",
