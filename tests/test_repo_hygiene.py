@@ -45,3 +45,15 @@ def test_the_old_ceiling_is_archived_and_not_imported():
     for top in ("src", "experiments", "tests"):
         for p in (ROOT / top).rglob("*.py"):
             assert not re.search(r"^\s*(from|import)\s.*rater_ceiling", p.read_text(), re.M), p
+
+
+def test_metric_definitions_are_in_the_code():
+    """S11 (A5): the metrics module docstring states GED's squared form and K, HM-IoU8, and the official boundary
+    IoU band; the band widths are BIOU_D."""
+    import importlib
+
+    metrics = importlib.import_module("objdel.eval.metrics")  # the package exports the function of that name
+    doc = metrics.__doc__
+    assert re.search(r"D(2|²)_GED[^\n]*K = 8", doc) and re.search(r"HM-IoU8[^\n]*not comparable", doc)
+    assert re.search(r"[Bb]oundary IoU[^\n]*mask_to_boundary", doc)
+    assert metrics.BIOU_D == {"nodule": 2, "disc": 9, "cup": 16}

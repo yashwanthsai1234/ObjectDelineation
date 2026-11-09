@@ -20,7 +20,8 @@ CI_KEYS = {"mean", "ci95_nodule", "ci95_patient", "ci95_item", "higher_is_better
 def result(item, legal, iou, f5, p, r, d, sample_iou=None):
     K = len(legal)
     return {"item_id": item, "samples": {"legal": legal, "iou_tc": iou, "f5": f5},
-            "objects": {"nodule": {"precision_vote": p, "recall_vote": r, "dice_vote": d,
+            "objects": {"nodule": {"precision_vote": p, "recall_vote": r, "dice_vote": d, "nsd": d, "boundary_iou": d,
+                                   "boundary_iou_vote": d, "soft_dice": .5, "hm_iou": .5, "ged": .5, "vote_area": 10,
                                    "sample_iou": np.eye(K).tolist() if sample_iou is None else sample_iou}}}
 
 
@@ -44,13 +45,6 @@ def walk(x):
             yield from walk(v)
 
 
-def test_per_item_takes_the_k_sample_means():
-    it = FE.per_item(result("lidc/a", [1, 0], [0.8, 0.0], [0.9, 0.0], [0.6, 0.0], [1.0, 0.0], [0.75, 0.0]))
-    assert {k: it[k] for k in ("item_id", *FE.METRICS)} == {
-        "item_id": "lidc/a", "legal": 0.5, "iou_tc": 0.4, "f5": 0.45, "precision_vote": 0.3, "recall_vote": 0.5,
-        "dice_vote": 0.375}
-
-
 def test_per_item_selection_keys():
     """U07: K = 4; medoid scores .45, .5, .15 over the legal answers 0-2 -> answer 1; the illegal answer 3 is never
     the medoid although its row has IoU 1 with itself."""
@@ -66,7 +60,7 @@ def test_per_item_selection_keys():
     r = result("lidc/a", [1, 1, 1, 0], [.9, .8, .1, 0], [0] * 4, [0] * 4, [0] * 4, [0] * 4, M)
     r["objects"]["nodule"]["pixel_vote_iou_tc"] = 0.7
     assert FE.per_item(r)["sel_vote"] == 0.7
-    assert all(type(v) is float for k, v in FE.per_item(r).items() if k != "item_id")
+    assert all(type(v) is float for k, v in FE.per_item(r).items() if k not in ("item_id", "vote_area"))
 
 
 def test_summary_schema_2():
@@ -216,7 +210,7 @@ def test_resummarize_writes_schema_2_beside_the_run(tmp_path, monkeypatch):
     doc = json.loads((tmp_path / "out" / "final_eval.json").read_text())
     assert (doc["schema"], doc["gate_ci"], doc["patients"]) == (2, "ci95_patient", 8)
     assert doc["resummarized_from"] == str(run)
-    assert doc["metrics_absent"] == ["precision_vote", "recall_vote", "dice_vote"]
+    assert doc["metrics_absent"] == TWELVE[3:]
     assert {k: doc[k] for k in ("ckpt", "view", "split", "K", "seed")} == {
         "ckpt": "/workspace/runs/r5/final_model", "view": "/w/v", "split": "test", "K": 8, "seed": 11}
     groups = {i: f"LIDC-IDRI-{i.split('/')[1][1:]:>04}" for i in (it["item_id"] for it in items)}
@@ -330,3 +324,92 @@ def test_selection_key_invariants():
         assert it["sel_oracle"] >= it["sel_mean_of_k"] and it["sel_legal_mean"] >= it["sel_mean_of_k"]
         assert it["sel_medoid_legal"] in (0.0, 1.0) and all(0 <= it[k] <= 1 for k in FE.SELECTION if k in it)
 
+
+TWELVE = ["legal", "iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote", "nsd", "boundary_iou",
+          "boundary_iou_vote", "soft_dice", "hm_iou", "ged"]
+
+
+def test_metrics_table():
+    """U05."""
+    assert list(FE.METRICS) == TWELVE and not hasattr(FE, "TERMS")
+    assert {m for m, (_, h) in FE.METRICS.items() if not h} == {"ged"}
+    assert {s for s, _ in FE.METRICS.values()} == {"samples", "objects", "item"}
+
+
+def k4_result(legal=(1, 1, 0, 1), iou=(.8, .6, 0, .4), obj="nodule"):
+    K = len(legal)
+    o = {"precision_vote": [.5, .7, 0, .8], "recall_vote": [.9, .5, 0, .6], "dice_vote": [.6, .6, 0, .6],
+         "nsd": [.3, .2, 0, .3], "boundary_iou": [.5, .5, 0, .5], "boundary_iou_vote": [.2, .2, 0, .2],
+         "soft_dice": .33, "hm_iou": .44, "ged": .55, "vote_area": 40, "sample_iou": np.eye(K).tolist()}
+    o = {k: v[:K] if isinstance(v, list) and k != "sample_iou" else v for k, v in o.items()}
+    return {"item_id": "lidc/a", "samples": {"legal": list(legal), "iou_tc": list(iou), "f5": [.9, .7, 0, .5][:K]},
+            "objects": {obj: o}}
+
+
+def test_per_item_sources_averages_and_miss():
+    """U06."""
+    it = FE.per_item(k4_result())
+    want = {"legal": .75, "iou_tc": .45, "f5": .525, "precision_vote": .5, "recall_vote": .5, "dice_vote": .45,
+            "nsd": .2, "boundary_iou": .375, "boundary_iou_vote": .15, "soft_dice": .33, "hm_iou": .44, "ged": .55}
+    assert {m: it[m] for m in FE.METRICS} == pytest.approx(want, rel=0, abs=1e-15)
+    assert (it["soft_dice"], it["hm_iou"], it["ged"], it["vote_area"]) == (.33, .44, .55, 40)
+    assert all(type(it[m]) is float for m in FE.METRICS) and it["miss"] == 0.0
+    for x, miss in ((0.0999999, 1.0), (0.1, 0.0), (0.1000001, 0.0)):
+        assert FE.per_item(k4_result(iou=(x,) * 4))["miss"] == miss
+    # literal pin: numpy's mean of eight 0.1 is 0.1 exactly (pairwise sum), so K = 8 answers at 0.1 are found
+    assert np.mean([0.1] * 8) == 0.1 and FE.per_item(k4_result(iou=(0.1,) * 8, legal=(1,) * 8))["miss"] == 0.0
+    assert FE.per_item(k4_result(obj="cup"), "cup")["ged"] == .55
+    with pytest.raises(KeyError):
+        FE.per_item(k4_result(obj="cup"))
+    for K in (1, 8):
+        it = FE.per_item(k4_result(legal=(0,) * K, iou=(0,) * K))
+        assert (it["legal"], it["sel_legal_mean"], it["miss"]) == (0.0, 0.0, 1.0)
+
+
+def test_miss_rate_and_iou_found():
+    """U10: iou_found is the mean over found items, its CIs drawn over the found subset's ids."""
+    s = FE.summarize(items_of([f"x{i}" for i in range(4)], [0.05, 0.5, 0.7, 0.0]))
+    assert s["miss_rate"]["mean"] == .5 and abs(s["iou_found"]["mean"] - .6) < 1e-12
+    ids = [f"lidc/p{p}/n{n}/s{z}" for p in range(3) for n in range(2) for z in range(2)]
+    groups = {i: i.split("/")[1] for i in ids}
+    v = np.array([.05, .5, .7, 0, .3, .6, .8, .4, .9, .2, .65, .55])
+    f = FE.summarize(items_of(ids, v), groups)["iou_found"]
+    found = [i for i, x in zip(ids, v, strict=True) if x >= 0.1]
+    x = v[v >= 0.1]
+    want_p = S.ci(x, S.draws(found, 2000, 0, key=groups.__getitem__))[1:]
+    want_n = S.ci(x, S.draws(found, 2000, 0))[1:]
+    assert np.allclose(f["ci95_patient"], want_p, rtol=0, atol=1e-12)
+    assert np.allclose(f["ci95_nodule"], want_n, rtol=0, atol=1e-12) and f["ci95_patient"] != f["ci95_nodule"]
+    assert np.allclose(f["ci95_nodule"], [0.5, 0.62], atol=1e-12) and np.allclose(f["ci95_patient"], [0.525, 0.6])
+    assert FE.summarize(items_of(ids, v + 0.1))["miss_rate"]["mean"] == 0.0
+    s = FE.summarize(items_of(ids, v * 0), groups)
+    assert s["iou_found"] is None
+    json.dumps(s, allow_nan=False)
+
+
+def test_summary_has_every_metric_and_selection_key():
+    """U08 (A4 / A5 part): every METRICS and selection key the items hold, the paired block, iou_found."""
+    ids = [f"lidc/s{i % 8}/n{i % 3:03d}/z{i}" for i in range(20)]
+    groups = {i: f"P{i.split('/')[1]}" for i in ids}
+    rng = np.random.default_rng(0)
+    items = [FE.per_item(k4_result(iou=tuple(rng.random(4)))) | {"item_id": i} for i in ids]
+    s = FE.summarize(items, groups)
+    for m in [*FE.METRICS, *FE.SELECTION[:-1]]:
+        assert set(s[m]) == CI_KEYS | ({"median"} if m == "iou_tc" else set()), m
+        assert s[m]["higher_is_better"] is (m != "ged"), m
+    assert {"miss_rate", "iou_found", "paired"} <= set(s) and "sel_vote" not in s
+    json.dumps(s, allow_nan=False)
+
+
+def test_size_terciles():
+    """U52: terciles of the vote-mask area with their means; ties stay in one tercile; fewer than 3 items raise."""
+    items = [{"item_id": f"x{a}", "vote_area": a, "iou_tc": a / 100, "boundary_iou": a / 200}
+             for a in range(10, 100, 10)]
+    t = FE.size_terciles(items)
+    assert t["bounds"] == [30, 60] and [g["items"] for g in t["terciles"]] == [3, 3, 3]
+    assert [g["iou_tc"] for g in t["terciles"]] == pytest.approx([.2, .5, .8])
+    assert [g["boundary_iou"] for g in t["terciles"]] == pytest.approx([.1, .25, .4])
+    tied = [it | {"vote_area": 30} if it["vote_area"] == 40 else it for it in items]
+    assert [g["items"] for g in FE.size_terciles(tied)["terciles"]] == [4, 2, 3]
+    with pytest.raises(ValueError, match="3 items"):
+        FE.size_terciles(items[:2])
