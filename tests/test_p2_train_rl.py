@@ -206,7 +206,8 @@ OPTIONS = ["-h", "--help", "--model", "--ckpt", "--train", "--out", "--steps", "
            "--procs", "--grpo", "--profile-window", "--trace"]  # pre-CLEAN literal (ap._actions at 08e6455)
 LANE_OPTIONS = {"--shared-prefix": ["--fast-sync", "--group-requests", "--no-ckpt-layers"],  # C5, C6, C9
                 "--grpo": ["--runaway-cap", "--reward", "--numerics", "--opsm-start-delta"],  # C11, B3, B2.2
-                "--trace": ["--count-syncs", "--gpu-pixels", "--allow-cpu-pixels"]}  # C0, C1: impl2 adds, in place
+                "--trace": ["--count-syncs", "--host-meta", "--check-meta-every",  # C0, C4
+                            "--gpu-pixels", "--allow-cpu-pixels"]}  # C1
 RL_KEYS = ["beta", "budget_stopped", "ckpt", "eval", "final", "log", "lr", "mask_truncated_completions", "model",
            "numerics", "resumed_from", "rows", "steps", "timing_s", "train_rows"]  # pre-CLEAN literal, same stub
 LANE_RL_KEYS = ["loc_guard_stopped", "loss_scale", "max_completion_length", "opsm_start_delta", "reward"]  # B2.2, B3

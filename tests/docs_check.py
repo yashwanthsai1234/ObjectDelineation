@@ -11,7 +11,7 @@ import yaml
 
 # Frozen records are exempt by path, never by banner (a banner cannot go into .py data).
 FROZEN_GLOBS = [
-    "docs/research/**", "experiments/phase0/**", "experiments/**/lab/**", "experiments/**/impl/**",
+    "docs/research/**", "experiments/**/impl/**",
     "experiments/cuda_checker/results/**", "experiments/*/PLAN*.md", "experiments/*/JUDGE_*.md",
     "experiments/*/V0_V1.md", "experiments/*/RESULTS*.md", "experiments/*/EXECUTION.md", "experiments/*/RESEARCH.md",
 ]  # fmt: skip

@@ -23,3 +23,6 @@ what they changed. Golden 1: RewardV4 gains its `name` field (B3.3; the constant
 gains the `loc` term (B3.2; the other keys keep their bits). Golden 6: reward_weights gains one 0 for the `loc` logger.
 host_syncs: train/gpu_pixels.py (C1, 3 host-buffer and self-check sites). tests_import_experiments: the lanes' new
 test files. module_strings_stale: test_repo_hygiene's forward name objdel.geom.rings (E3a).
+Second lane merge (impl2, 2026-11-09): chain_argv carries the uploaded B1 rows revision and manifest SHA-256 (B1.4
+step 5); host_syncs train/fast.py 20 -> 25 (C4 check_meta and the C2 rope check, both behind flags that default off);
+tests_import_experiments gains the round-2 break-it files and test_gpu_active.py; old_names re-recorded.
