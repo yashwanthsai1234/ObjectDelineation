@@ -62,11 +62,11 @@ class NvtxSteps(TrainerCallback):
                              "step start - 1, and TraceStep's wait is start - 2)")
         self.window, self.open, self.opt_open, self.capturing, self.done = window, False, False, False, False
 
-    def _in_window(self, step: int) -> bool:  # a range, not == s - 1: a run resumed inside the window still captures
-        return bool(self.window) and not self.done and self.window[0] - 1 <= step < self.window[1]
+    def _starts_at(self, step: int) -> bool:  # also checked at on_train_begin: a run resumed at s - 1 still captures
+        return bool(self.window) and not self.done and not self.capturing and step == self.window[0] - 1
 
     def on_train_begin(self, args, state, control, **kw):
-        if self._in_window(state.global_step) and torch.cuda.is_available():
+        if self._starts_at(state.global_step) and torch.cuda.is_available():
             torch.cuda.profiler.start()
             self.capturing = True
         nvtx.push("step")
@@ -85,7 +85,7 @@ class NvtxSteps(TrainerCallback):
         if self.open:
             nvtx.pop()
         if self.window and not self.done and torch.cuda.is_available():
-            if self._in_window(state.global_step) and not self.capturing:
+            if self._starts_at(state.global_step):
                 torch.cuda.profiler.start()
                 self.capturing = True
             elif state.global_step == self.window[1] and self.capturing:

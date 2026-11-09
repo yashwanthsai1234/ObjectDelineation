@@ -125,7 +125,9 @@ def test_budget_stop_cannot_be_silently_off(case):
     assert c.should_training_stop and c.should_save
 
 
-@pytest.mark.parametrize("resume_at", [11, 12])
+@pytest.mark.parametrize("resume_at", [11, pytest.param(12, marks=pytest.mark.xfail(strict=True, reason=(
+    "plan decision: NvtxSteps captures exactly steps s..e; test_nvtx.test_profiler_window_edges pins no partial "
+    "capture on a resume past s - 1")))])
 def test_nvtx_capture_window_survives_resume(monkeypatch, resume_at):
     import torch
 
