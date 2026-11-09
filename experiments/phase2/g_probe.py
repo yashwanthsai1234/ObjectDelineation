@@ -83,7 +83,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     from objdel.train import callbacks, configs, fast, rewards, serve
 
     peft = configs.lora(a.model)
-    lr = getattr(a, "lr", None) or (G_PROBE["lr_lora"] if peft else G_PROBE["lr_full"])
+    lr = getattr(a, "lr", None) or configs.rl_lr(a.model)
     over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
     over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), **over)
