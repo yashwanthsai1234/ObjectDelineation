@@ -659,6 +659,7 @@ class FastGRPO(FastForward, GRPOTrainer):
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
+    opsm_watch = None  # B2.4 rule 4: callbacks.OpsmDelta, fed the train-mode per-sequence (seq_kl, advantage) rows
     log_by_prompt = False  # B2.3: train logs also hold rewards/iou_tc/by_prompt (one mean per prompt of the step)
 
     def __init__(self, *args, **kwargs):
@@ -792,7 +793,10 @@ class FastGRPO(FastForward, GRPOTrainer):
         new = is_summary(logps, sampling, mask, r, adv, mode, lo, hi, self.off_policy_mask_threshold)
         self.is_stats = merge_summary(self.is_stats, new)
         if self.model.training:  # eval rows inform the eval metrics only; they never enter seq_gaps (B2.1, R01c)
-            rows = torch.stack([seq_kl(logps, sampling, mask), adv.to(logps.dtype), mask.sum(-1).to(logps.dtype)], 1)
+            kl = seq_kl(logps, sampling, mask)
+            rows = torch.stack([kl, adv.to(logps.dtype), mask.sum(-1).to(logps.dtype)], 1)
+            if self.opsm_watch is not None:
+                self.opsm_watch.add(kl, adv)
             self.seq_gaps = [*self.seq_gaps, rows.float()]
 
     def log(self, logs, start_time=None):

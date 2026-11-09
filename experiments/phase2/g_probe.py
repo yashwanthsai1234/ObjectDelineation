@@ -104,6 +104,9 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
     trainer.log_by_prompt = bool(getattr(a, "log_by_prompt", False))
+    if cfg.off_policy_mask_threshold is not None and cls is fast.FastGRPO:  # bf16-tis-opsm: B2.4 rule 4's live delta
+        trainer.opsm_watch = callbacks.OpsmDelta(trainer, cfg.output_dir)
+        trainer.add_callback(trainer.opsm_watch)
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
         trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers

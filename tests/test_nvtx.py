@@ -250,7 +250,7 @@ def fake_trainer(**attrs):
 
     t = object.__new__(fast.FastGRPO)
     t.model, t._metrics = SimpleNamespace(training=True), {"train": defaultdict(list), "eval": defaultdict(list)}
-    t.off_policy_mask_threshold = None  # TRL's attribute
+    t.off_policy_mask_threshold, t.reward_funcs = None, []  # TRL's attributes
     t.accelerator = SimpleNamespace(is_main_process=False)  # log writes no seq_gaps file
     for k, v in attrs.items():
         setattr(t, k, v)
@@ -601,10 +601,14 @@ def built(monkeypatch, tmp_path):
             got.append(kw["callbacks"])
             self.model = None
 
+        def add_callback(self, cb):
+            got[-1].append(cb)
+
     stub = SimpleNamespace(from_pretrained=lambda *a, **k: SimpleNamespace())
     monkeypatch.setattr("transformers.AutoModelForImageTextToText", stub)  # by path: imports above swap the module
     monkeypatch.setattr("transformers.AutoProcessor", stub)
-    monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace())
+    monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace(
+        fp16=False, off_policy_mask_threshold=k.get("off_policy_mask_threshold"), output_dir="o"))
     monkeypatch.setattr(rewards, "TRLReward", lambda *a: SimpleNamespace(funcs=lambda: ([], [])))
     monkeypatch.setattr(rewards, "stop_ids", lambda *a: set())
     monkeypatch.setattr(serve, "loader", lambda *roots: None)
@@ -633,6 +637,14 @@ def test_make_trainer_adds_nvtx_steps_only_with_a_window(built):
     assert built(profile_window=[2, 5], trace="T")[1].wait == 0
     with pytest.raises(ValueError):
         built(profile_window=[1, 3], trace="T")
+
+
+def test_make_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold(built):
+    from objdel.train.callbacks import OpsmDelta
+
+    assert built() == []
+    (cb,) = built(grpo='{"off_policy_mask_threshold": 0.5}')
+    assert isinstance(cb, OpsmDelta)
 
 
 def test_train_rl_flags():

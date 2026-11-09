@@ -1,5 +1,5 @@
 """TrainerCallbacks of the live runs: TraceStep (one torch.profiler step), NvtxSteps (NVTX step ranges and the
-nsys capture window) and BudgetStop (stop and save at a session spend).
+nsys capture window), BudgetStop (stop and save at a session spend) and OpsmDelta (the live OPSM delta).
 
 The Phase 2 hack-audit callback (audit of held-out evaluation, best-checkpoint rollback, live guard switches) is
 archived in archive/controller/ (CLEAN6): no live run attached it. The held-out curve is train_rl --heldout (TRL's own
@@ -8,7 +8,9 @@ evaluation, logged to rl.json).
 References:
 - transformers TrainerCallback / TrainerControl: https://huggingface.co/docs/transformers/main_classes/callback
 """
+import json
 import time
+from collections import deque
 from pathlib import Path
 
 import torch
@@ -118,3 +120,47 @@ class BudgetStop(TrainerCallback):
         self.tripped = self.tripped or self.spend() >= self.cap
         if self.tripped:
             control.should_training_stop = control.should_save = True
+
+
+class OpsmDelta(TrainerCallback):
+    """B2.4 rule 4: the OPSM delta (trainer.off_policy_mask_threshold, read by TRL at each loss call) is the preset's
+    start value for steps 1-20, then q99.5 of the 20 x 256 per-sequence seq_kl values of those steps, written to
+    <out>/opsm_delta.json. Guard, once: if the share of sequences OPSM masks (advantage < 0 and seq_kl > delta)
+    stays above 2 % for 20 consecutive steps, delta becomes q99.5 of the last 20 steps. Then it never changes. A
+    resume reads the file. FastGRPO.set_is_ratio calls `add` in train mode (trainer.opsm_watch)."""
+
+    WINDOW, SHARE = 20, 0.02
+
+    def __init__(self, trainer, out_dir: str):
+        self.trainer, self.path = trainer, Path(out_dir) / "opsm_delta.json"
+        self.cur, self.ring, self.streak, self.final = [], deque(maxlen=self.WINDOW), 0, False
+
+    def add(self, kl: torch.Tensor, adv: torch.Tensor):
+        """One micro-batch's per-sequence seq_kl and advantage, on the device."""
+        self.cur.append(torch.stack([kl.float(), adv.float()]))
+
+    def on_train_begin(self, args, state, control, **kw):
+        if state.global_step >= self.WINDOW and self.path.is_file():
+            saved = json.loads(self.path.read_text())
+            self.trainer.off_policy_mask_threshold, self.final = saved["delta"], True  # the ring is lost: no guard
+
+    def on_step_end(self, args, state, control, **kw):
+        if not self.cur:
+            return
+        step, self.cur = torch.cat(self.cur, 1), []
+        if self.final:
+            return
+        self.ring.append(step)
+        if state.global_step == self.WINDOW:
+            self.set_delta(guarded=False)
+        elif state.global_step > self.WINDOW:
+            masked = (step[1] < 0) & (step[0] > self.trainer.off_policy_mask_threshold)
+            self.streak = self.streak + 1 if masked.float().mean().item() > self.SHARE else 0
+            if self.streak >= self.WINDOW:
+                self.set_delta(guarded=True)
+
+    def set_delta(self, guarded: bool):
+        delta = torch.quantile(torch.cat([s[0] for s in self.ring]), 0.995).item()
+        self.trainer.off_policy_mask_threshold, self.final = delta, guarded
+        self.path.write_text(json.dumps({"delta": delta, "guarded": guarded}) + "\n")
+        print(f"OpsmDelta: delta = {delta:.6g} (guard: {guarded})")
