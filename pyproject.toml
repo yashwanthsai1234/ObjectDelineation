@@ -136,6 +136,7 @@ ignore_names = [
   "clean_store", "no_nvtx_calls", "no_load", "mutant", "lora_request",  # fixtures requested by name for their side effect
   "repo_id", "trial", "stream", "num_images", "pixel_attention_mask", "image_sizes", "num_tiles", "spatial_shapes", "token_type_ids", "image_position_ids", "_save_checkpoint",  # fakes of library signatures
   "schema_version", "compute",  # objdel.core.spec RunSpec fields, read by pydantic and the YAML specs
+  "record_old_names",  # tests/core/test_layers.py: run by hand to re-record a golden (goldens README)
   "current_gradient_accumulation_steps",  # Trainer attribute that the code under test reads
   "TransferSyntaxUID", "MediaStorageSOPInstanceUID", "MediaStorageSOPClassUID",  # pydicom file-meta that save_as reads
 ]
