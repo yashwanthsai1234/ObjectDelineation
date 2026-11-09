@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
 GOLDENS = ROOT / "tests" / "goldens"
 
 
@@ -41,6 +42,7 @@ def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
         assert r.returncode == 0 and "usage" in r.stdout, (name, r.stderr)
 
 
+@NEEDS_ARCHIVE
 def test_the_old_ceiling_is_archived_and_not_imported():
     """S05: rater_ceiling moved to archive/phase2_lab/A4 (replaced by objdel.eval.ceiling); nothing imports it."""
     new = ROOT / "archive/phase2_lab/A4"  # the old tree is gone (test_retired_trees_hold_nothing)
@@ -72,6 +74,7 @@ def tracked(*paths: str) -> list[str]:  # tracked files, as the working tree has
     return [f for f in out.stdout.split("\0") if f]
 
 
+@NEEDS_ARCHIVE
 def test_vendor_copies_deleted_and_nothing_names_them():
     """CLEAN3: only the 5 vendor files that differ from their twins may remain (CLEAN5 moved them with the lab)."""
     left = {f.split("/vendor/", 1)[1] for f in tracked("archive/phase1_lab/t_stack/vendor") if "/vendor/" in f}
@@ -158,6 +161,7 @@ def test_retired_trees_hold_nothing():
     assert r.returncode == 0, r.stderr[-800:]
 
 
+@NEEDS_ARCHIVE
 def test_phase1_scripts_archived_and_their_tests_listed():
     """CT-83 and CT-40: the four one-off scripts left the live list; each removed test is named in the README."""
     live = {p.stem for p in (ROOT / "experiments/phase1").glob("*.py")}
@@ -175,6 +179,7 @@ def test_phase1_scripts_archived_and_their_tests_listed():
     assert "census_sizerule" not in wiring
 
 
+@NEEDS_ARCHIVE
 def test_archive_readmes_follow_the_contract():
     """CT-38: four headings in order, a retiring hash that is a prefix of the tag's commit, restore names the tag."""
     full = subprocess.run(
@@ -193,6 +198,7 @@ def test_archive_readmes_follow_the_contract():
     assert "stay on the owner's disk only" in (ROOT / "docs/research/records/phase0/README.md").read_text()
 
 
+@NEEDS_ARCHIVE
 def test_phase0_scripts_and_records_moved():
     """CT-87: 8 python files in the archive, records beside the research notes, the oracle parser stays in tests."""
     assert len(list((ROOT / "archive/phase0").glob("*.py"))) == 8
@@ -204,6 +210,7 @@ def test_phase0_scripts_and_records_moved():
             assert (ROOT / m).exists(), (f, m)
 
 
+@NEEDS_ARCHIVE
 def test_archive_is_not_collected_or_linted():
     """CT-39: pytest only walks tests/, ruff only skips archive (key extend-exclude keeps the default excludes)."""
     cfg = tomllib.loads((ROOT / "pyproject.toml").read_text())

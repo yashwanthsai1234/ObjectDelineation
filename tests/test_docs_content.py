@@ -9,7 +9,10 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
+LOCAL_ONLY = pytest.mark.skipif(not (REPO / "docs/plan").exists(), reason="planning records are local-only (git-ignored)")
 
 # Frozen paths (DOC.spec "Definitions"); experiments/phase1 is live after DOC4, except its lab folder.
 FROZEN_PARTS = ("/lab/", "/impl/")
@@ -37,6 +40,7 @@ def _is_frozen(rel: str) -> bool:
 # ---------------------------------------------------------------- DOC1
 
 
+@LOCAL_ONLY
 def test_plan_moved_out_of_frozen_folder():
     names = sorted(p.name for p in (REPO / "docs/plan").iterdir())
     assert names == ["Architecture.md", "Direction.md", "Research2.0.md", "previous-vs-new.md"]
@@ -59,6 +63,7 @@ def test_no_reference_to_the_old_plan_path():
     assert hits == []
 
 
+@LOCAL_ONLY
 def test_research_page_corrected_ceiling():
     row = next(ln for ln in _read("docs/plan/Research2.0.md").splitlines() if ln.startswith("| All images"))
     assert "0.723" in row and "0.734" not in row
@@ -157,6 +162,7 @@ FROZEN_RECORDS = (
 )
 
 
+@LOCAL_ONLY
 def test_frozen_records_carry_the_banner_on_line_one_only():
     for rel in FROZEN_RECORDS:
         lines = _read(rel).splitlines()

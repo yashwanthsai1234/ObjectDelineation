@@ -1,1 +1,0 @@
-../../.venv/bin/python -I riga_extract.py  $PWD/out > out.log 2>&1  1566.03s user 120.51s system 484% cpu 5:47.91 total

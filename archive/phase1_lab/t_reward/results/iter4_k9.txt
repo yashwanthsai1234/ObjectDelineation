@@ -1,9 +1,0 @@
-item set: fixtures + 2-part composites
-pairs: 7963 from 1328 items; high-IoU 7762; groups with extra wrong fillers 75%
-IoU (vote) alone correct: 52.0% [50.8%, 53.2%]
-  v4 gate zero           all 99.28% [99.04%, 99.49%] | IoU>=0.5 99.42% [99.21%, 99.62%] | IoU<0.5 94.0%
-  v4 gate tauP           all 99.94% [99.87%, 99.99%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 97.5%
-  v4 term zero           all 99.92% [99.86%, 99.98%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 97.0%
-  v4 term tauP           all 99.94% [99.87%, 99.99%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 97.5%
-  v3 c_topo=2.0          all 99.94% [99.88%, 99.99%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 97.5% (n=201) | pinhole 99.9% speck 100.0% bridge 100.0%
-    per subset (v3): lidc/nodule 99.7%, lidc/nodule+2part 100.0%, riga/cup 100.0%, riga/cup+2part 100.0%, riga/disc 100.0%

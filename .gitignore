@@ -63,3 +63,20 @@ CLAUDE.md
 /archive/phase1_lab/t_reward/results/advantage_groups.json
 /archive/phase1_lab/t_reward/results/iter3_r5_raw.json
 /archive/phase1_lab/t_stack/results/t[24]_*.json
+
+# Internal working records: plans, reviews, agent notes and retired code stay on the owner's machine.
+# The public repo holds the product (src, cuda, tests, experiment scripts and results) and its user docs.
+/ROADMAP.md
+/archive/
+/docs/plan/
+/docs/research/notes/
+/docs/research/records/**/PLAN*.md
+/docs/implementation2.0/*
+!/docs/implementation2.0/kernels/
+/experiments/*/PLAN.md
+/experiments/*/EXECUTION.md
+/experiments/*/RESEARCH.md
+/experiments/*/JUDGE_R*.md
+/experiments/*/V0_V1.md
+/experiments/*/impl/
+/experiments/phase2/perf/*.md

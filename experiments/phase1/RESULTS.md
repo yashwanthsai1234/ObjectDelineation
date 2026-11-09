@@ -1,7 +1,7 @@
 # Phase 1 results: exact reward, data and training integration
 
-Written 2026-10-19. Plan: [PLAN.md](PLAN.md). Coordination: [EXECUTION.md](EXECUTION.md). Per-task notes:
-[impl/](impl/). Issue ledger: [impl/ISSUES.md](impl/ISSUES.md).
+Written 2026-10-19. Plan: `PLAN.md`. Coordination: `EXECUTION.md`. Per-task notes:
+`impl/`. Issue ledger: `impl/ISSUES.md`.
 
 **Status: done.** Every Phase 1 exit gate passes on the Mac, or is re-registered or accepted with a recorded reason
 (§2). The exactness and determinism gates also pass on x86-64 in Docker (§6). Two checks need hardware Phase 1 did
@@ -179,7 +179,7 @@ until `prepare_rl` is re-run (F2 §B2-8).
 
 - **Break-it (wave 5):** 136 attacks, 33 breakdowns.
   - Severity: 2 critical, 2 high, 11 medium, 18 low (ISSUES.md break-it table).
-  - Notes: `impl/breakit/B1_geometry.md`, `B2_reward.md`, `B3_data.md`, `B4_wiring.md`. Ledger: [impl/ISSUES.md](impl/ISSUES.md).
+  - Notes: `impl/breakit/B1_geometry.md`, `B2_reward.md`, `B3_data.md`, `B4_wiring.md`. Ledger: `impl/ISSUES.md`.
 - **Fixes (wave 6):** test-first, each recorded with its regression test:
 
   | Fix | Scope | Findings fixed |
@@ -202,13 +202,13 @@ until `prepare_rl` is re-run (F2 §B2-8).
   - S3: store rebuild byte-identical (−64 lines).
   - S4: prepared set byte-identical (−29 lines, then the voting-rater follow-up).
   - S1: all six golden sections identical; 6,021 → 5,896 lines (−125; the sweep alone −169, then `min_areas` +17 and F3 +23); K1/K2 slow gates and the fuzz re-run after the C++ edit; `make cov` 92.98 % (S1 §Line counts, §Verification).
-- **Ledger:** every row of [impl/ISSUES.md](impl/ISSUES.md) is fixed, decided or accepted, or open with a Phase 2
+- **Ledger:** every row of `impl/ISSUES.md` is fixed, decided or accepted, or open with a Phase 2
   owner. The open rows are I34–I38 and I41–I45. The 33 break-it rows and the 12 code-review rows (RV-1 … RV-12) are
   all fixed or decided.
 
 ### Code review (wave 7)
 
-An independent, read-only review of the swept code ([impl/REVIEW.md](impl/REVIEW.md)) found 12 issues: 1 high,
+An independent, read-only review of the swept code (`impl/REVIEW.md`) found 12 issues: 1 high,
 2 medium, 9 low. Fix round R1–R4 (`impl/fixes/R1.md` … `R4.md`), each test-first:
 
 | Finding | Fix | Regression test |
@@ -225,7 +225,7 @@ Reward v4 stayed byte-identical through R1–R4: the S2/S1 goldens of caches, ro
 
 ## 5. A/B results
 
-Full table, with sources and D1's measurement method: [impl/AB.md](impl/AB.md). One line each:
+Full table, with sources and D1's measurement method: `impl/AB.md`. One line each:
 
 | AB | Winner | Result | Evidence |
 |---|---|---|---|
@@ -239,7 +239,7 @@ Full table, with sources and D1's measurement method: [impl/AB.md](impl/AB.md). 
 
 ## 6. x86-64
 
-Note: [impl/M9_x86.md](impl/M9_x86.md), sections "Final run" and "Re-run after the review fixes". All runs are in
+Note: `impl/M9_x86.md`, sections "Final run" and "Re-run after the review fixes". All runs are in
 Docker linux/amd64 under Rosetta 2, with `--cpus 3 --memory 4g --network none`.
 
 **Final run** (post-sweep code with F1–F3, 477 s): **ALL PASS**.

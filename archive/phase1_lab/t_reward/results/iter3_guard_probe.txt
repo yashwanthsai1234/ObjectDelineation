@@ -1,6 +1,0 @@
-union                            n=300 median 0.128 p90 0.320 p99 0.509
-hull                             n=300 median 0.210 p90 0.470 p99 0.621
-honest 1px (largest rater)       n=300 median 0.000 p90 0.057 p99 0.164
-honest 0.5tau (largest rater)    n=300 median 0.038 p90 0.230 p99 0.595
-honest 0.5tau (any rater)        n=300 median 0.000 p90 0.081 p99 0.332
-held-out largest rater (k>=3)    n=255 median 0.169 p90 0.629 p99 1.514

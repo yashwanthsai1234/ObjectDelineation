@@ -1,6 +1,6 @@
 # Phase 2 results: SFT on Vast AI
 
-Plan: [PLAN.md](PLAN.md). Build log: [V0_V1.md](V0_V1.md). Issue ledger: [impl/ISSUES.md](impl/ISSUES.md).
+Plan: `PLAN.md`. Build log: `V0_V1.md`. Issue ledger: `impl/ISSUES.md`.
 
 **Status: in progress.** R1 rung 1 (LFM2.5-VL-450M) is done and frozen below: trained, selected, judged; it fails the
 §5.1 entry gates. The next rung is Qwen3-VL-2B (PLAN revision 9); its results will be a new section. Nothing in a frozen

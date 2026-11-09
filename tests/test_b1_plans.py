@@ -13,6 +13,7 @@ import pytest
 yaml = pytest.importorskip("yaml")
 
 ROOT = Path(__file__).resolve().parents[1]
+NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
 CONFIGS = ROOT / "experiments/phase2/configs"
 V1_APPROVED_USD = 2.40  # front 6.4 rule 5: the owner's V1 amount ...
 TAIL_USD = 0.35  # ... minus the tail after train_rl (evals, pull, push, teardown); no later V1 item
@@ -91,6 +92,7 @@ def test_smoke_node_ids_collect_exactly_two_tests():
     assert [ln for ln in r.stdout.splitlines() if "::" in ln] == ids
 
 
+@NEEDS_ARCHIVE
 def test_rl_shifted_is_archived_with_its_readme_row():
     name = "rl_shifted" + ".yaml"  # built, so this file does not match its own scan below
     assert not (CONFIGS / name).exists()
