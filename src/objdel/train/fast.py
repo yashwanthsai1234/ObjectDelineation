@@ -901,11 +901,12 @@ class FastGRPO(FastForward, GRPOTrainer):
         return 0  # perf F3: the Trainer default walks ~2.5k PEFT modules per micro-batch
 
 
-def lora_merged_params(model):
+def lora_merged_params(model, with_delta: bool = True):
     """(vLLM name, tensor) for every weight of a PEFT model, as TRL 1.17's VLLMGeneration._iter_named_params names
     them, with each LoRA layer's delta added into a new tensor. TRL instead runs merge_adapter / unmerge_adapter on the
     bf16 base weights in place, and W + d - d != W in bf16, so the frozen base drifts at every sync (trl #6688,
-    #7423). Same values pushed (W + delta in W's dtype, as PEFT's merge computes it); no parameter is written."""
+    #7423). Same values pushed (W + delta in W's dtype, as PEFT's merge computes it); no parameter is written.
+    with_delta=False: the same names with the base W alone (vllm_sync's option-F base push)."""
     from peft.tuners.lora import LoraLayer
 
     deltas = {}
@@ -914,7 +915,7 @@ def lora_merged_params(model):
             ads = [a for a in m.active_adapters if a in m.lora_A]
             if ads and (getattr(m, "use_dora", {}).get(ads[0]) or getattr(m, "lora_bias", {}).get(ads[0])):
                 raise NotImplementedError(f"{name}: DoRA / LoRA bias are not merged here")
-            if ads:
+            if ads and with_delta:
                 deltas[f"{name}.base_layer.weight"] = sum(m.get_delta_weight(a) for a in ads)
     for name, p in model.named_parameters():
         out = name.removeprefix("base_model.model.").replace(".base_layer", "")
