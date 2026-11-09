@@ -16,10 +16,10 @@ from .score import (
     score_mask,
     sig_id,
 )
-from .spec import REWARD_V4, TERMS, fingerprint
+from .spec import CACHE_SPEC, REWARD_V4, TERMS, fingerprint
 
 __all__ = [
-    "NUMERIC", "REWARD_V4", "TERMS", "ExpertCache", "ObjectTerms", "StaleCacheError", "advantages_v4",
+    "CACHE_SPEC", "NUMERIC", "REWARD_V4", "TERMS", "ExpertCache", "ObjectTerms", "StaleCacheError", "advantages_v4",
     "fingerprint", "legal_gate", "loo_bias", "rater_answers", "rl_eligible", "score_batch", "score_completion",
     "score_many", "score_mask", "sig_id", "topology_reward", "topology_valid", "voters",
 ]

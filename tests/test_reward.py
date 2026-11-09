@@ -63,7 +63,8 @@ def test_frozen_constants_match_plan():
     v = REWARD_V4
     assert (v.weights, v.floors, v.c_topo, v.lam, v.eps, v.group, v.drop_spread) == (
         (0.3, 0.3, 0.1, 0.3), (0.05, 0.05, 0.25, 0.05), 2.0, 0.5, 0.1, 8, 1e-2)
-    assert (v.iou_gate, v.expert_score, v.tau_floor, v.tau_quantile) == (0.5, 0.95, 1.0, 95.0)
+    c = R.CACHE_SPEC
+    assert (v.iou_gate, c.expert_score, c.tau_floor, c.tau_quantile) == (0.5, 0.95, 1.0, 95.0)
     assert R.TERMS == ("iou_tc", "f5", "legal", "g_area")
 
 
