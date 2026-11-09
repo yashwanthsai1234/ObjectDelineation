@@ -1233,3 +1233,30 @@ def test_rope_bad_rows_routes_on_host_data_only():
     bad = fast.rope_bad_rows([(1, 2, 3), (1, 2, 4), (1, 2, 3), (1, 2, 3)], [[7, 8], [7], [7, IMG], [START]],
                              [tmpl] * 4, vision)  # fmt: skip
     assert bad.dtype == bool and bad.tolist() == [False, True, True, True]
+
+
+def test_tokenize_prompts_with_prompt_memo_gives_trls_prompt_ids_tokenizing_each_layout_once():
+    """C2 step 1 (--prompt-memo): rows are grouped by (rendered text, image sizes); TRL tokenizes one row per group.
+    Prompt ids and images equal TRL's own; the vLLM path drops the multimodal fields."""
+    import PIL.Image
+    from transformers import AutoProcessor
+
+    try:
+        proc = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct", local_files_only=True)
+    except OSError:
+        pytest.skip("the Qwen3-VL processor is not in the local HF cache")
+    imgs = [PIL.Image.new("RGB", s, (i, 0, 0)) for i, s in enumerate([(64, 64)] * 3 + [(96, 64)])]
+    ask = lambda img, q: [{"role": "user", "content": [{"type": "image", "image": img},  # noqa: E731
+                                                       {"type": "text", "text": q}]}]  # fmt: skip
+    prompts = [ask(imgs[i % 4], "outline the disc" if i % 3 else "outline the cup") for i in range(24)]
+    attrs = dict(processing_class=proc, chat_template=None, chat_template_kwargs={}, _is_vlm=True, tools=None,
+                 environment_factories=None, use_vllm=True)  # fmt: skip
+    want_ids, want_images, _ = trainer(Plain, **attrs)._tokenize_prompts(prompts)
+    calls, real = [], GRPOTrainer._tokenize_prompts
+    t = trainer(fast.FastGRPO, prompt_memo=True, **attrs)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(GRPOTrainer, "_tokenize_prompts", lambda self, p: calls.append(len(p)) or real(self, p))
+        ids, images, fields = t._tokenize_prompts(prompts)
+    assert [list(x) for x in ids] == [list(x) for x in want_ids] and fields == {}
+    assert all(a[0] is b[0] for a, b in zip(images, want_images, strict=True))
+    assert calls == [1] * 4  # 2 texts x 2 image sizes

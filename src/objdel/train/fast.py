@@ -806,6 +806,7 @@ class FastGRPO(FastForward, GRPOTrainer):
     host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
     check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
     meta = None  # the generation batch's RowMeta, from _generate to the batch
+    prompt_memo = False  # C2, train_rl --prompt-memo: _tokenize_prompts tokenizes one row per prompt layout
     count_syncs = False  # C0, train_rl --count-syncs: perf/host_syncs/<phase> per timed phase
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
@@ -986,6 +987,26 @@ class FastGRPO(FastForward, GRPOTrainer):
                 self._metrics[mode][f"time/{phase}_s"].append(start.elapsed_time(end) / 1e3)
             self.cuda_times = None
             return super().log(logs, start_time)
+
+    def _tokenize_prompts(self, prompts):
+        """With prompt_memo on the vLLM path: TRL's own tokenization once per (rendered text, image sizes), its
+        prompt ids reused by every row of that layout, each row's own image objects. vLLM drops the multimodal
+        fields (C1 note S1), so none are built."""
+        if not (self.prompt_memo and self.use_vllm and self._is_vlm):
+            return super()._tokenize_prompts(prompts)
+        rows = [trl_grpo.prepare_multimodal_messages(p) for p in prompts]
+        images = [[c["image"] for m in p if isinstance(m["content"], list)
+                   for c in m["content"] if c["type"] == "image"] for p in rows]  # fmt: skip
+        memo, ids = {}, []
+        for prompt, row, imgs in zip(prompts, rows, images, strict=True):
+            text = self.processing_class.apply_chat_template(
+                row, chat_template=self.chat_template, tokenize=False, add_generation_prompt=True,
+                **self.chat_template_kwargs)  # fmt: skip
+            key = (text, tuple(i.size for i in imgs))
+            if key not in memo:
+                memo[key] = super()._tokenize_prompts([prompt])[0][0]
+            ids.append(memo[key])
+        return ids, ([i or None for i in images] if any(images) else None), {}
 
     def _generate(self, prompts):
         if self.images is not None:  # the previous batch's images
