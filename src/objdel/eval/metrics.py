@@ -94,6 +94,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
+from objdel.eval.select import vote_mask
 from objdel.geometry import parse, to_masks
 from objdel.reward import (
     NUMERIC,
@@ -321,7 +322,8 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
             o[key][~legal] = 0.0
         objects[n] = {**{key: _native(v) for key, v in o.items()},
                       "soft_dice": soft_dice(drawn, c.raters), "ged": _ged(iou[:-1, :-1], K),
-                      "hm_iou": hm_iou(iou[:K, K:K + k])}
+                      "hm_iou": hm_iou(iou[:K, K:K + k]), "sample_iou": iou[:K, :K].tolist(),
+                      "pixel_vote_iou_tc": float(score_mask(vote_mask(masks, legal), c).iou_tc)}
 
     # topology answers: the joint size-filtered signature, as score_completion's sig_id; failures share FAIL
     answers = rater_answers(caches, names)

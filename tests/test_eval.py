@@ -1,6 +1,8 @@
 """Evaluation harness (plan §4.7, gate R10): metrics, hack audit and Phase 2 entry gates on synthetic items."""
+import json
 from itertools import combinations
 from math import comb
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,7 +10,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from oracles import reward_harness as H
 
-from objdel.eval import gates, hack_audit, metrics, summarize
+from objdel.eval import gates, hack_audit, metrics, select, summarize
 from objdel.eval.metrics import _pairwise_iou, ged, min_mode_retention, pass_at_k, soft_dice, tv_js
 from objdel.reward import ExpertCache
 from objdel.targets import BuildConfig, build_target
@@ -457,3 +459,56 @@ def test_precision_and_recall_vs_the_majority_outline(nod):
     assert o["recall_vote"][0] >= 0.99 and o["precision_vote"][0] == pytest.approx(vote.sum() / big.sum(), rel=0.05)
     assert o["precision_vote"][1] >= 0.99 and o["recall_vote"][1] == pytest.approx(small.sum() / vote.sum(), rel=0.15)
     assert o["precision_vote"][2] == o["recall_vote"][2] == 0.0  # a failed answer scores 0, as the other terms
+
+
+# ---------------------------------------------------------------- A4 / A5: answer IoU matrix and boundary IoU
+
+F = 128
+BOWTIE = '{"nodule":[{"outer":[[300,300],[700,700],[700,300],[300,700]],"holes":[]}]}'  # self-intersecting
+GOLDEN_I02 = Path(__file__).parent / "goldens" / "a_i02_metrics_before.json"
+
+
+def i02_item(k):
+    """I02's item on a 128 px frame: K = 4 answers (rater 0's copy, it shifted 3 px, a self-intersecting ring,
+    unparseable) against k = 2 or 3 raters."""
+    r = {"nodule": np.stack([disk(64, 64, 20, F), disk(64, 67, 22, F), disk(62, 64, 18, F)][:k])}
+    texts = [text_of({"nodule": m}, ("nodule",), r) for m in (r["nodule"][0], np.roll(r["nodule"][0], 3, 1))]
+    return r, [*texts, BOWTIE, "not json"]
+
+
+@pytest.mark.parametrize("k", [2, 3])
+def test_metrics_additions_keep_the_old_keys(k):
+    """I02: sample_iou is K x K, symmetric, in [0, 1], 1 on the diagonal; the keys and values before A4 / A5 are
+    unchanged (golden dumped from commit df4c9f7 by a one-off script; hm_iou left out: A5 moves it to the LCM
+    protocol)."""
+    raters, texts = i02_item(k)
+    m = metrics(texts, raters, F, F)
+    o = m["objects"]["nodule"]
+    s = np.array(o["sample_iou"])
+    assert s.shape == (4, 4) and np.array_equal(s, s.T) and ((0 <= s) & (s <= 1)).all()
+    assert np.diag(s).tolist() == [1.0] * 4
+    old = json.loads(GOLDEN_I02.read_text())[str(k)]
+    del old["objects"]["nodule"]["hm_iou"], o["hm_iou"]
+    for key, v in old.items():
+        if key == "objects":
+            assert v["nodule"].items() <= o.items()
+        else:
+            assert m[key] == v, key
+
+
+def test_illegal_failed_and_empty_answers_in_sample_iou(nod):
+    """I03 (A4 part): two failed or illegal answers have IoU 1 with each other; no NaN."""
+    raters, texts = nod
+    o = metrics([texts[0], "not json", BOWTIE, ""], raters, S, S)
+    s = np.array(o["objects"]["nodule"]["sample_iou"])
+    assert o["samples"]["legal"][1:] == [0.0] * 3
+    assert s[1, 2] == 1.0 and s[0, 1] == 0.0 and np.isfinite(s).all()
+
+
+def test_sample_iou_is_averaged_over_the_objects(riga):
+    """U16: the item's answer matrix is (disc + cup) / 2, exactly."""
+    raters, texts = riga
+    o = metrics(texts * 2, raters, 100, 100)["objects"]
+    A, B = np.array(o["disc"]["sample_iou"]), np.array(o["cup"]["sample_iou"])
+    assert np.array_equal(select.sample_iou(o), (A + B) / 2)
+
