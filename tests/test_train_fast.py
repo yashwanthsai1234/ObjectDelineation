@@ -1311,3 +1311,26 @@ def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch
     t.host_meta = False
     t._compute_loss(None, {"host_meta": rows})
     assert seen[-1] is None
+
+
+def test_packed_chunks_stage_their_indices_in_one_fresh_buffer_each(monkeypatch):
+    """U-RM6 (C4 step 4): each packed chunk fills its own torch.empty staging buffer (pinned on CUDA) from numpy and
+    copies it once; two chunks never share one, and the trainer keeps none."""
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
+    bufs, real_empty = [], torch.empty
+
+    def spy(*a, pin_memory=False, **k):
+        out = real_empty(*a, **k)
+        if a and isinstance(a[0], int) and k.get("dtype") is torch.int64:
+            bufs.append((out, pin_memory))
+        return out
+
+    monkeypatch.setattr(fast.torch, "empty", spy)
+    t = shared(m)
+    lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    assert len(bufs) == 2 and bufs[0][0].data_ptr() != bufs[1][0].data_ptr()
+    assert [p for _, p in bufs] == [False, False]  # CPU here; pin_memory=True when the rows are on CUDA
+    assert not any(isinstance(v, torch.Tensor) for v in vars(t).values())

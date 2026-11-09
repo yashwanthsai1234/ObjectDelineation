@@ -293,8 +293,12 @@ class FastForward:
             toks.append(torch.cat(t)), poss.append(torch.cat(p, 1))
             mms.append(torch.cat(m)), labs.append(torch.cat(lab)), segs.append(seg)
         W, c = max(map(len, segs)), len(runs)
-        seg = torch.tensor([x + [-1] * (W - len(x)) for x in segs], device=dev)  # one copy each, before the forward
-        idx = torch.tensor([gi, pi, ri, ci], dtype=torch.long, device=dev)
+        host = np.concatenate([np.asarray([x + [-1] * (W - len(x)) for x in segs]).ravel(),
+                               np.asarray([gi, pi, ri, ci]).ravel()]).astype(np.int64)  # fmt: skip
+        stage = torch.empty(host.size, dtype=torch.int64, pin_memory=dev.type == "cuda")  # fresh per chunk (C4 step 4)
+        stage.numpy()[:] = host
+        flat = stage.to(dev, non_blocking=True)  # one copy; the caching host allocator keeps `stage` until it ends
+        seg, idx = flat[:c * W].view(c, W), flat[c * W:].view(4, -1)
         tok = torch.zeros(c, W, dtype=ids.dtype, device=dev)
         lab = torch.full((c, W), -100, dtype=ids.dtype, device=dev)
         mmt = torch.zeros(c, W, dtype=mm.dtype, device=dev)
