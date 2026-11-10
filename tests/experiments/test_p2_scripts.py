@@ -257,7 +257,7 @@ def test_g_probe_report_form():
     """BK3-16: the training-log form is the mean logged raw composite R (steps 1-5 vs 11-20), and the step-0 legal
     rate is the mean of both step-0 draws."""
     pytest.importorskip("scipy")
-    from experiments.phase2 import g_probe as GP
+    from objdel.rl import probe as GP
 
     terms = ("iou_tc", "f5", "legal", "g_area")
     log = [{f"rewards/{t}/mean": 1.0 for t in terms} | {"step": i} for i in range(1, 21)] + [{"train_runtime": 1}]
@@ -273,7 +273,7 @@ def test_g_probe_report_form():
 def test_g_probe_repair_is_the_next_earlier_eligible_branch():
     """D12(c): a non-PASS selected branch -> the next-earlier eligible branch, probed once."""
     pytest.importorskip("scipy")
-    from experiments.phase2 import g_probe as GP
+    from objdel.rl import probe as GP
 
     b = lambda d, e: {"depth": d, "eligible": e}  # noqa: E731
     sel = {"selected": "e2", "branches": {"e0.5": b(0.5, True), "e1": b(1.0, False), "e2": b(2.0, True)}}
