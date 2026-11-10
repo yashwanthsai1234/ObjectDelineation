@@ -58,6 +58,19 @@ def test_all_items_is_the_one_count_of_the_contract():
         assert sum(x.startswith("|") for x in doc.read_text().splitlines()) - 2 == len(ALL_ITEMS)
 
 
+def test_the_coupling_page_has_one_row_per_item_with_the_case_that_breaks_it():
+    """trl-coupling.md: each row's item, kind and place are the code's; its failing test is a real BREAKS case."""
+    rows = [[c.strip().strip("`") for c in ln.strip("|\n").split("|")] for ln in
+            (ROOT / "docs/reference/trl-coupling.md").read_text().splitlines() if ln.startswith("| `")]  # fmt: skip
+    code = {(name, kind): spec[-1] for kinds in (T._SIGNED, T._TEXT) for kind, items in kinds.items()
+            for name, spec in items.items()}  # fmt: skip
+    assert {(r[0], r[1]) for r in rows} == set(code) and len(rows) == len(code)
+    cases = {b[0] for b in BREAKS}
+    for name, kind, _, place, tests in rows:
+        assert place == code[name, kind].replace(", ", "`, `"), name
+        assert all(t.strip("`") in cases for t in tests.split(", ")), name
+
+
 def test_no_live_python_file_says_trl_1_16():
     stale = [p for d in ("src", "experiments") for p in (ROOT / d).rglob("*.py")
              if "lab" not in p.relative_to(ROOT).parts and "TRL " + "1.16" in p.read_text()]  # fmt: skip
@@ -74,7 +87,8 @@ def setsig(monkeypatch, name, fn):
     monkeypatch.setattr(GRPOTrainer, name, fn)
 
 
-GASC, LOSS = GRPOTrainer._generate_and_score_completions, GRPOTrainer._compute_loss
+GASC, LOSS, CALC = (GRPOTrainer._generate_and_score_completions, GRPOTrainer._compute_loss,
+                    GRPOTrainer._calculate_rewards)
 ATTR_NAMES = ("use_vllm", "loss_type", "num_iterations", "num_generations", "top_entropy_quantile",
               "vllm_importance_sampling_correction", "vllm_importance_sampling_mode",
               "vllm_importance_sampling_clip_min", "vllm_importance_sampling_clip_max", "vllm_generation",
@@ -113,6 +127,17 @@ BREAKS = [
     ("no C10 gate", lambda m: drop(m, GASC, "self.use_vllm and self.vllm_importance_sampling_correction"),
      "old-logprob pass"),
     ("no ratio block", lambda m: drop(m, GASC, "per_token_logps_diff = (old_per_token_logps"), "IS ratio block"),
+    ("_generate_and_score_completions extra param",
+     lambda m: setsig(m, "_generate_and_score_completions", lambda self, inputs, extra: 0),
+     "_generate_and_score_completions"),
+    ("_generate renamed param", lambda m: setsig(m, "_generate", lambda self, prompt: 0), "_generate"),
+    ("_calculate_rewards without completion_ids_list",
+     lambda m: setsig(m, "_calculate_rewards", lambda self, inputs, prompts, completions: 0), "_calculate_rewards"),
+    ("VLLMGeneration without self._llm_weights_sleeping",
+     lambda m: drop(m, VLLMGeneration, "self._llm_weights_sleeping ="), "_llm_weights_sleeping"),
+    *[(f"no {n} to reward functions", lambda m, t=t: drop(m, CALC, t), f"{n} to reward functions")
+      for n, t in (("log_metric", 'reward_kwargs["log_metric"]'), ("log_extra", 'reward_kwargs["log_extra"]'),
+                   ("completion_ids", "completion_ids=completion_ids_list"))],
 ]  # fmt: skip
 
 
