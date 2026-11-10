@@ -35,6 +35,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from objdel.data.windows import OFFSET_EDGES, SIZE_EDGES  # B1.1 cells
 from objdel.eval import signal
 
 K = 8
@@ -42,7 +43,6 @@ MISS = signal.MISS
 FAR, NEAR = 0.3, 0.15
 FAR_MISS_MAX, NEAR_FLOOR = 0.205, -0.02
 B3_FALL, B3_BOTH_FLOOR = 0.75, -0.01
-SIZE_EDGES, OFFSET_EDGES = (10, 20, 40), (0.15, 0.2, 0.3)  # B1.1 cells (objdel.data.windows)
 C_MEASURED = 0.077
 EFFECT = 0.25
 B3_EFFECTS = (0.25, 0.35, 0.5)
