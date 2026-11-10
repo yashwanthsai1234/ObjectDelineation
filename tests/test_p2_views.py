@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.core.hashing import pixels_sha256
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
@@ -17,7 +18,6 @@ from objdel.data.targets.frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, 
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS, parse
 from objdel.geom.topology import signature
-from objdel.hashing import pixels_sha256
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 

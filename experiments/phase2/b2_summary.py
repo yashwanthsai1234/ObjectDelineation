@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 REL_ERR_LORA = 0.2  # rule 0: B2.0 bf16 relative error at step 100, at or above it -> lora-seqmask
 FP16_HALF = 0.5  # rule 1: fp16 logp difference at most this share of B1's

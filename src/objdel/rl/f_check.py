@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 from transformers import TrainerCallback
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 STEPS = 15  # the check covers optimizer steps 1-15
 PRESETS = ("fp16-seqmask", "lora-seqmask")

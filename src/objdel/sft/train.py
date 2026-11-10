@@ -62,9 +62,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from objdel.core.hashing import file_sha256
+from objdel.core.io import read_json, write_json
 from objdel.core.provenance import code_hashes
-from objdel.hashing import file_sha256
-from objdel.io import read_json, write_json
 
 ABORTED = 3  # exit code of a G-vision abort
 

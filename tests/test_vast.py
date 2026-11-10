@@ -21,14 +21,14 @@ from unittest import mock
 
 import pytest
 
-from experiments.phase2 import preflight as PF
-from experiments.phase2.vast import policy as P
+from objdel.core.io import git_sha
 from objdel.infra import bundle as B
+from objdel.infra import preflight as PF
+from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import chain as CH
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
-from objdel.io import git_sha
 
 ROOT = Path(__file__).resolve().parents[1]
 VAST = ROOT / "experiments" / "phase2" / "vast"
@@ -144,7 +144,7 @@ class Env:
 
     def stamp(self, ok=True, **hashes):
         """The preflight stamp launch.sh checks (the gate): passing and current, or as given."""
-        path = PF.ROOT / self.env["OBJDEL_RUN_DIR"] / "preflight" / f"{self.config.stem}.json"
+        path = PF.repo_root() / self.env["OBJDEL_RUN_DIR"] / "preflight" / f"{self.config.stem}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         with mock.patch.dict(os.environ, OBJDEL_DATA_ROOT=self.env["OBJDEL_DATA_ROOT"]):
             now = PF.hashes(self.config)
@@ -1449,7 +1449,7 @@ def test_a_spec_run_writes_run_spec_json_first(E):
     """run.sh on a spec: the first (hard) job on the box writes /workspace/runs/<id>/run_spec.json beside the log."""
     E.launched()
     line = E.tmux("specs/b1_rows.yaml")
-    assert "-m experiments.phase2.vast.policy run_spec specs/b1_rows.yaml /workspace/runs/r1/run_spec.json &&" in line
+    assert "-m objdel.infra.vast run_spec specs/b1_rows.yaml /workspace/runs/r1/run_spec.json &&" in line
     assert line.index("run_spec.json") < line.index("run_box.sh --build-only")
 
 
@@ -1494,7 +1494,7 @@ def test_launch_without_an_image_in_the_allowlist_refuses(monkeypatch, tmp_path)
     monkeypatch.setattr(P, "load_spec", lambda p: SimpleNamespace(compute=compute))
     monkeypatch.setattr(P, "reasons", lambda *a: [])
     monkeypatch.setattr(P, "vast", lambda *a, **k: [])
-    monkeypatch.setattr("experiments.phase2.preflight.refusal", lambda cfg: "")
+    monkeypatch.setattr("objdel.infra.preflight.refusal", lambda cfg: "")
     a = SimpleNamespace(run_id="r1", config="c.yaml", offer=1, cap_hours=2.0, owner_approved=False,
                         allow_parallel=False, idle_minutes=30)
     with pytest.raises(SystemExit, match="no image in .vast-allowlist"):

@@ -49,10 +49,11 @@ import numpy as np
 import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
-from objdel.data import lidc, store, windows
+from objdel.core.hashing import file_sha256, pixels_sha256
+from objdel.core.io import read_json
+from objdel.core.provenance import repo_root
+from objdel.data import lidc, splits, store, windows
 from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
-from objdel.hashing import file_sha256, pixels_sha256
-from objdel.io import read_json
 
 from .coverage import cell_coverage, mix_coverage
 from .store import SPLITS
@@ -539,3 +540,47 @@ def gates(report: Mapping) -> list[Gate]:
 def failures(gs: Sequence[Gate]) -> list[Gate]:
     """The hard gates that failed."""
     return [g for g in gs if g.hard and not g.ok]
+
+
+def _json_or_empty(path) -> dict:
+    return read_json(path) if Path(path).is_file() else {}
+
+
+def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, exclusions=None, review=None,
+          frozen_views=None, series_z=None, out=None, plan=None) -> dict:
+    """The report that `gates` reads, for the rows root `rows` (the audit_data and build_rl_rows scripts, and
+    objdel.infra.preflight). `tokenizer` and `limit` are DG12's; the caller builds them
+    (objdel.policy.models.tokenizer).
+    The target is the train shifted law of the manifest's pool; the val view (default <eval_views>/lidc-val-shifted)
+    feeds only DG16. Defaults under the repo: docs/reference/{train_exclusions,neardup_review,frozen_views}.json,
+    runs/b1/series_z.json and runs/b1/audit (DG3 PNGs). `plan`: the schedule dict (build_rl_rows passes it before the
+    manifest exists); default the manifest's `schedule`."""
+    root = repo_root()
+    ref = root / "docs" / "reference"
+    rows, store_root, eval_views = Path(rows), Path(store_root), Path(eval_views)
+    exclusions = Path(exclusions or ref / "train_exclusions.json")
+    plan = plan or read_json(rows / "manifest.json")["schedule"]
+    ex = _json_or_empty(exclusions)
+    pool = windows.pool(store.load("lidc", "train", store_root), plan["draws"], plan["seed"],
+                        frozenset(plan["excluded_ids"]))
+    by_id = {w.window_id: w for w in pool.windows}
+    recs = records(rows)
+    scheduled = [by_id[r["item_id"]] for r in recs if r["item_id"] in by_id]
+    val = view_windows(val_view or eval_views / "lidc-val-shifted", store_root)
+    halves = {f"val-{h}": [w for w in val if splits.val_half(w.group_id) == h] for h in ("shape", "select")}
+    sched = schedule_report(scheduled, pool, halves | {"val": val}, **{k: plan[k] for k in SCHEDULE_ARGS})
+    wn = window_checks(rows, store_root)
+    z = Path(series_z or root / "runs/b1/series_z.json")
+    return {
+        "leakage": leakage(store_root, _json_or_empty(review or ref / "neardup_review.json"), ex,
+                           out or root / "runs/b1/audit"),
+        "rows": rows_leakage(rows, store_root, view_image_hashes(eval_views), frozenset(ex))
+        | {"exclusions_stale": plan["exclusions_sha256"] != file_sha256(exclusions)},
+        "windows": wn,
+        "schedule": sched | {"unknown": len(recs) - len(scheduled)},
+        "tokens": tokens(rows, tokenizer, limit),
+        "agreement": agreement(rows, wn["low_contrast"]),
+        "frozen": frozen(eval_views, _json_or_empty(frozen_views or ref / "frozen_views.json")),
+        "z": dg17(read_json(z), ex, file_sha256(store_root / "lidc/train.parquet"))
+        if z.is_file() else [f"no contour-to-slice report {z}: run check_series_z"],
+    }

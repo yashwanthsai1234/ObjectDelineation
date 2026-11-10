@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from experiments.phase2 import preflight as PF
+from objdel.infra import preflight as PF
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = b'{"schedule": {}}\n'
@@ -45,7 +45,7 @@ def cfg(tmp_path, monkeypatch):
 
 def run(cfg, monkeypatch, checks):
     monkeypatch.setattr(PF, "CHECKS", checks)
-    code = PF.main(["--config", str(cfg)])
+    code = PF.run(cfg)
     return code, json.loads(PF.stamp_path(cfg).read_text())
 
 
@@ -223,9 +223,11 @@ def test_a_planted_shared_patient_fails_disjointness(cfg, tmp_path):
 
 # ------------------------------------------------------------------------------- ROWS root and revision (B1.3, I19)
 def gates_report(monkeypatch, report):
-    from experiments.phase2 import audit_data
+    from objdel.data import quality as Q
+    from objdel.policy import models
     seen = []
-    monkeypatch.setattr(audit_data, "audit", lambda root, *a, **k: seen.append(root) or report)
+    monkeypatch.setattr(models, "tokenizer", lambda model: (None, 1536))
+    monkeypatch.setattr(Q, "audit", lambda root, *a, **k: seen.append(root) or report)
     return seen
 
 

@@ -135,3 +135,7 @@ cache tests went to tests/rl/test_forward.py and tests/policy/test_caches.py). i
 through it (later_edits) instead of re-recording the chain argv. module_strings_stale re-recorded on its own tree: it
 loses objdel.policy.rows, objdel.policy.models and objdel.rl.reward (they exist now) and gains the e_moves tools' and
 their tests' planted objdel.train / objdel.eval names (those packages are gone). Goldens 1-6 and old_names unchanged.
+E8.1 finish (impl2-emoves2): old_names re-recorded: experiments/phase2/preflight.py keeps only main (its library
+names live in objdel.infra.preflight; run() is main's body after the flag); vast/policy.py is gone (src/objdel/infra/
+vast/__main__.py holds every recorded name). objdel.io and objdel.hashing became objdel.core.io and
+objdel.core.hashing. Goldens 1-6, host_syncs and tests_import_experiments unchanged.

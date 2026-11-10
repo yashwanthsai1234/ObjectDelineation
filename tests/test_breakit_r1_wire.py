@@ -10,10 +10,10 @@ from types import SimpleNamespace
 import pytest
 
 from experiments.phase2 import final_eval as FE
-from experiments.phase2 import preflight as PF
 from experiments.phase2 import train_rl as TR
-from experiments.phase2.vast import policy as P
 from objdel.data import quality as Q
+from objdel.infra import preflight as PF
+from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import remote as RM
 from objdel.rl import run as rl_run

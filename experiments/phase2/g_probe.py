@@ -34,7 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from experiments.phase2.prereg import G_PROBE, g_probe
-from objdel.io import read_json
+from objdel.core.io import read_json
 from objdel.policy.evaluate import eval_rows, score_items
 from objdel.rl.build import build_trainer
 from objdel.rl.run import save_json

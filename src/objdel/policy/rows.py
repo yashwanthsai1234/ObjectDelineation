@@ -42,9 +42,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from objdel.core.hashing import pixels_sha256
+from objdel.core.io import read_jsonl
 from objdel.geom.text import SCHEMAS
-from objdel.hashing import pixels_sha256
-from objdel.io import read_jsonl
 from objdel.policy.prompt import _user
 
 DISAGREEMENT_OVERSAMPLE = 4  # decided in experiments/phase1/impl/M7_train.md

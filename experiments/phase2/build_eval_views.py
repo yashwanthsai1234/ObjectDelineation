@@ -38,11 +38,11 @@ from itertools import batched
 from multiprocessing import get_context
 from pathlib import Path
 
+from objdel.core.io import write_json
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import target_set_hash
 from objdel.data.targets.frame import FRAMES, frame, rgb, union_box
-from objdel.io import write_json
 
 KINDS = ("shifted", "rescaled", "rotated", "edge")  # --kinds default: the first three
 ROTATION = {"lidc": "r90"}  # the rotated view's op per dataset; no rotated RIGA view

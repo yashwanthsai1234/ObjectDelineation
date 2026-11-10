@@ -706,8 +706,8 @@ def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
 
 
 def test_code_sha_precedence(tmp_path, monkeypatch):
-    """U47: CODE_SHA (stripped) wins; an empty one counts as absent; then objdel.io.git_sha with a .git (a clean tree:
-    HEAD); else None, also when git is missing."""
+    """U47: CODE_SHA (stripped) wins; an empty one counts as absent; then objdel.core.io.git_sha with a .git (a clean
+    tree: HEAD); else None, also when git is missing."""
     (tmp_path / ".git").mkdir()
     (tmp_path / "CODE_SHA").write_text("abc123-dirty-0123456789ab\n")
     assert FE.code_sha(tmp_path, required=False) == "abc123-dirty-0123456789ab"
@@ -717,7 +717,7 @@ def test_code_sha_precedence(tmp_path, monkeypatch):
         seen.append(cmd)
         return SimpleNamespace(stdout=b"f" * 40 + b"\n" if cmd[1] == "rev-parse" else b"", returncode=0)
 
-    monkeypatch.setattr("objdel.io.subprocess.run", git)  # code_sha calls git through objdel.io
+    monkeypatch.setattr("objdel.core.io.subprocess.run", git)  # code_sha calls git through objdel.core.io
     (tmp_path / "CODE_SHA").write_text("")
     assert FE.code_sha(tmp_path, required=False) == "f" * 40
     assert seen == [["git", "rev-parse", "HEAD"], ["git", "status", "--porcelain"]]
@@ -727,7 +727,7 @@ def test_code_sha_precedence(tmp_path, monkeypatch):
     def missing(cmd, **k):
         raise FileNotFoundError("git")
 
-    monkeypatch.setattr("objdel.io.subprocess.run", missing)
+    monkeypatch.setattr("objdel.core.io.subprocess.run", missing)
     assert FE.code_sha(tmp_path, required=False) is None
     (tmp_path / ".git").rmdir()
     assert FE.code_sha(tmp_path, required=False) is None and json.dumps(FE.code_sha(tmp_path, required=False)) == "null"
@@ -736,7 +736,7 @@ def test_code_sha_precedence(tmp_path, monkeypatch):
 def test_code_sha_of_a_dirty_tree_is_the_same_locally_and_on_the_box(tmp_path):
     """X2-3: final_eval's code_sha of a dirty tree on the Mac (git, no CODE_SHA) carries the -dirty-<sha12> suffix and
     equals the CODE_SHA sync_up writes for the box (git_sha), which the box (no .git) reads back."""
-    from objdel.io import git_sha
+    from objdel.core.io import git_sha
 
     repo, box = tmp_path / "repo", tmp_path / "box"
     repo.mkdir()
@@ -886,10 +886,10 @@ def test_tost():
 
 
 def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
-    """U49: vast sync_up's CODE_SHA text (objdel.io.git_sha): HEAD when clean; HEAD-dirty-<sha256(D)[:12]> with D =
+    """U49: vast sync_up's CODE_SHA text (objdel.core.io.git_sha): HEAD when clean; HEAD-dirty-<sha256(D)[:12]> with D =
     git diff HEAD plus the sorted untracked, not-ignored paths; staged-only changes count; ignored files do not; git
     failing raises."""
-    from objdel.io import git_sha
+    from objdel.core.io import git_sha
 
     git(tmp_path, "init", "-q")
     (tmp_path / ".gitignore").write_text("ignored.txt\n")
@@ -932,8 +932,8 @@ def test_a3_specs_are_valid_plans(monkeypatch):
     stages."""
     import time
 
-    from experiments.phase2.vast import policy as P
     from objdel.core.spec import load_spec
+    from objdel.infra.vast import __main__ as P
     from objdel.infra.vast import chain as CH
 
     sent, evals = [], {}

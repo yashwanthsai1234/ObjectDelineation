@@ -135,7 +135,7 @@ ignore_decorators = ["@pytest.fixture", "@model_validator", "@app.*"]  # autouse
 ignore_names = [
   "on_*", "should_save", "should_training_stop",  # transformers TrainerCallback hooks and control flags
   "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes
-  "cmd_*",  # vast/policy.py subcommands, dispatched by name
+  "cmd_*",  # objdel.infra.vast subcommands, dispatched by name
   "pytestmark", "pre_tokenizer", "decoder", "projector_hidden_size", "is_main_process",
   "writeable", "atexit",  # numpy flag (topology.py), atexit hook (cache.py)
   "rid", "multimodal_fields", "has_tool_images", "return_tensors",  # fake signatures that callers use by keyword

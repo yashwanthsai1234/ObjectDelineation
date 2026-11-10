@@ -8,8 +8,8 @@ import argparse
 import json
 from pathlib import Path
 
+from objdel.core.io import read_json
 from objdel.data.splits import val_half_table
-from objdel.io import read_json
 
 
 def main(argv=None) -> None:

@@ -76,3 +76,10 @@ are C2 / Phase 3 work by design (§5.2). Decided on 2026-11-02: see the note bel
 3. **Cause of the geometry failure, data side.** Train rows with a nodule under 10 % of the crop were 0.5 %; the rescaled
    exam view had 27 %. The scale jitter (D10) did not cover that view. The training data are rebuilt (`lidc-bundle-v2`).
 4. **Decisions.** The LFM is not trained again; Qwen3.5-0.8B is skipped; the next rung is Qwen3-VL-2B (PLAN revision 9).
+
+### Code-name note (2026-11-10, added after the freeze; the sections above are not changed)
+
+Phase E moved the library into layers. Names in the frozen text map as follows: `objdel.geometry` is now
+`objdel.geom.text` (grammar, parser) and `objdel.geom.shape` (canonical form, masks). `configs/r1_lfm.yaml` left the
+repository with the LFM path (CLEAN8, `fa15f46`); new runs are typed run specs in `specs/` (ADR 0018). The current
+package layout is in `docs/reference/package.md`.

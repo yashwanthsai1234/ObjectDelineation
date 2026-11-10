@@ -1,8 +1,8 @@
-"""objdel.io.write_json / read_json (X2-6): the bytes every manifest writer wrote before (indent 1, sorted keys, one
-trailing newline), so manifest hashes and goldens do not move."""
+"""objdel.core.io.write_json / read_json (X2-6): the bytes every manifest writer wrote before (indent 1, sorted keys,
+one trailing newline), so manifest hashes and goldens do not move."""
 import json
 
-from objdel.io import read_json, write_json
+from objdel.core.io import read_json, write_json
 
 
 def test_write_json_keeps_the_manifest_bytes(tmp_path):

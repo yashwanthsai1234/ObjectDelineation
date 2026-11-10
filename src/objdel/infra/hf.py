@@ -29,7 +29,7 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 REPO = "svenk029/objdel-sft"  # the owner's private model repo (2026-11-02)
 TOKEN_OK = {"repo.content.read", "repo.write"}

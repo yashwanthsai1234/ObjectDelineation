@@ -173,8 +173,9 @@ def unresolved_module_strings() -> list[str]:
 
 
 def test_module_string_through_an_imported_module_resolves():
-    """A monkeypatch target such as objdel.io.subprocess.run names a module that objdel.io imports."""
-    assert resolves("objdel.io.subprocess.run") and not resolves(".".join(("objdel", "io", "no_such_name")))
+    """A monkeypatch target such as objdel.core.io.subprocess.run names a module that objdel.core.io imports."""
+    assert resolves("objdel.core.io.subprocess.run")
+    assert not resolves(".".join(("objdel", "core", "io", "no_such_name")))
 
 
 def test_module_strings_resolve():

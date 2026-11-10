@@ -10,9 +10,9 @@ import numpy as np
 from datasets import Dataset, Image
 from PIL import Image as PILImage
 
+from objdel.core.io import read_json
 from objdel.geom.shape import canonicalize
 from objdel.geom.text import SCHEMAS, parse, serialize
-from objdel.io import read_json
 from objdel.policy.prompt import _user
 from objdel.policy.rows import _image, _verified, records, target_tokens
 from objdel.verify.store import voting

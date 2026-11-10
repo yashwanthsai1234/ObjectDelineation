@@ -41,8 +41,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from objdel.hashing import file_sha256
-from objdel.io import read_json, write_json
+from objdel.core.hashing import file_sha256
+from objdel.core.io import read_json, write_json
 
 DATASETS = ("riga", "lidc")
 SPLITS = ("train", "val", "test")

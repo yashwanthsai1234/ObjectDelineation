@@ -14,7 +14,7 @@ from datasets import Dataset, Image  # noqa: E402
 from test_vllm_sync import FakeEngine, lora_request  # noqa: E402, F401  (the fixture)
 
 from experiments.phase2 import c_speed_check as C  # noqa: E402
-from objdel.hashing import pixels_sha256  # noqa: E402
+from objdel.core.hashing import pixels_sha256  # noqa: E402
 from objdel.rl import rows as dataset  # noqa: E402
 from objdel.rl import trl_adapter as fast  # noqa: E402
 from objdel.rl import vllm_sync  # noqa: E402

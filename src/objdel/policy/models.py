@@ -83,6 +83,14 @@ def lora(model: str) -> LoraConfig | None:
     return LoraConfig(r=16, lora_alpha=32, target_modules="all-linear", exclude_modules=VISION, task_type="CAUSAL_LM")
 
 
+def tokenizer(model: str):
+    """(tokenizer, max completion tokens) of a model, from the local HF cache: DG12's arguments of
+    objdel.data.quality.audit."""
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(MODELS[model]), MAX_COMPLETION[model]
+
+
 def sampling(model: str, api: str = "vllm") -> dict:
     """Every sampling field explicit (D13): T 1 and no filter or penalty, overriding the cards' defaults (Qwen3-VL
     T 0.7 / top_p 0.8 / top_k 20). One source of values,

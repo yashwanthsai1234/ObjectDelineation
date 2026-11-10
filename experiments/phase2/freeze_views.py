@@ -17,8 +17,8 @@ import json
 import sys
 from pathlib import Path
 
+from objdel.core.io import code_sha, git, git_sha, read_json, write_json
 from objdel.data import quality as Q
-from objdel.io import code_sha, git, git_sha, read_json, write_json
 
 ROOT = Path(__file__).resolve().parents[2]
 RENDER_FILES = ("src/objdel/data/targets/augment.py", "src/objdel/data/targets/frame.py", "src/objdel/data/targets/build.py",

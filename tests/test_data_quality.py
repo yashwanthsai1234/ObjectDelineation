@@ -492,8 +492,9 @@ def test_policy_side_limit_is_exact(world):
 def cli(world, tmp_path, monkeypatch):
     from experiments.phase2 import audit_data as A
     from objdel.data import splits
+    from objdel.policy import models
     stub_ceiling(monkeypatch, [0.9, 0.8])
-    monkeypatch.setattr(A, "tokenizer", lambda model: (Tok(50), 1536))
+    monkeypatch.setattr(models, "tokenizer", lambda model: (Tok(50), 1536))
     monkeypatch.setattr(splits, "val_half", lambda g: "shape" if int(g[-1]) % 2 else "select")  # fixture patients
     ex = tmp_path / "train_exclusions.json"
     ex.write_text("{}")

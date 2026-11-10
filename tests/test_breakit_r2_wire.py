@@ -11,9 +11,9 @@ from types import SimpleNamespace
 import pytest
 
 from experiments.phase2 import final_eval as FE
-from experiments.phase2 import preflight as PF
 from experiments.phase2 import train_rl as TR
-from experiments.phase2.vast import policy as P
+from objdel.infra import preflight as PF
+from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import remote as RM
 from tests.test_final_eval import ev, ev_root, fake_sampler, jsonl  # noqa: F401  (fixtures and helpers)

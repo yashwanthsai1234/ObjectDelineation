@@ -35,7 +35,7 @@ from collections import Counter
 from pathlib import Path
 
 from experiments.phase2.profile import covered
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 GPU_TABLES = ("CUPTI_ACTIVITY_KIND_KERNEL", "CUPTI_ACTIVITY_KIND_MEMCPY", "CUPTI_ACTIVITY_KIND_MEMSET")
 GRAPH_TABLES = ("CUPTI_ACTIVITY_KIND_GRAPH_TRACE",)  # the CUPTI record name; the nsys table name is unverified

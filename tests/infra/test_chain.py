@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from experiments.phase2.vast import policy
 from objdel.core import spec as S
+from objdel.infra.vast import __main__ as policy
 from objdel.infra.vast import chain as C
 from tests.core.test_move_invariance import later_edits
 

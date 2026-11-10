@@ -8,18 +8,18 @@ import cv2
 import pytest
 from test_data_quality import PLAN, SHARES, Tok, stub_ceiling, world  # noqa: F401 (world: the module fixture)
 
+from objdel.core.hashing import pixels_sha256
 from objdel.data import quality as Q
 from objdel.data import windows as Wn
-from objdel.hashing import pixels_sha256
 
 
 @pytest.fixture
 def run(world, tmp_path, monkeypatch):  # noqa: F811
-    from experiments.phase2 import audit_data as A
     from experiments.phase2 import build_rl_rows as R
     from objdel.data import splits
+    from objdel.policy import models
     stub_ceiling(monkeypatch, [0.9, 0.8])
-    monkeypatch.setattr(A, "tokenizer", lambda model: (Tok(50), 1536))
+    monkeypatch.setattr(models, "tokenizer", lambda model: (Tok(50), 1536))
     monkeypatch.setattr(splits, "val_half", lambda g: "shape" if int(g[-1]) % 2 else "select")
     ex = tmp_path / "train_exclusions.json"
     ex.write_text("{}")

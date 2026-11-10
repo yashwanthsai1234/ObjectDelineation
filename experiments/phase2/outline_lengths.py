@@ -19,8 +19,8 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.hashing import file_sha256
-from objdel.io import read_jsonl
+from objdel.core.hashing import file_sha256
+from objdel.core.io import read_jsonl
 from objdel.policy import models as configs
 from objdel.policy import rows as dataset
 from objdel.verify import store as verify_store

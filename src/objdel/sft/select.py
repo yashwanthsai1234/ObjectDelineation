@@ -48,7 +48,7 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 from objdel.policy import evaluate
 
 TRIES = 2  # sampler child attempts that finish no new item

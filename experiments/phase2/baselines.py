@@ -27,9 +27,9 @@ from pathlib import Path
 import numpy as np
 from scipy.stats import binomtest
 
+from objdel.core.io import read_jsonl
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS, parse
-from objdel.io import read_jsonl
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_mask
 

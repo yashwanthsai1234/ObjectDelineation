@@ -28,7 +28,7 @@ before each view, each request seeded request_seed(seed, item_id)) and scores th
 2. after scoring, <out>/metrics.jsonl (the whole metrics() result per item), <out>/items.jsonl (per-item metrics) and
    the full <out>/final_eval.json (summary, schema 2, "partial": false). Every file goes through a temp file.
 Run keys: ckpt, view, split, K, seed, sampler, view_manifest_sha256 (manifest.json bytes), view_content_sha256 (B1.6's
-content hash, view_content_sha256), code_sha (objdel.io.code_sha: <repo>/CODE_SHA, written by vast sync_up on the box;
+content hash, view_content_sha256), code_sha (objdel.core.io.code_sha: <repo>/CODE_SHA, written by vast sync_up on the box;
 else git HEAD plus -dirty-<sha12> on an edited tree; else null), checker_build ("cuda" or "cpu").
 Per item the K-sample mean; then the mean over items with three 95 % percentile bootstrap intervals (B = 2,000,
 seed 0): `ci95_patient` resamples patients (`group_id`; the gate CI, named by `gate_ci`), `ci95_nodule` resamples
@@ -70,11 +70,11 @@ from pathlib import Path
 import numpy as np
 
 from experiments.phase2.freeze_views import render_files
+from objdel.core.hashing import file_sha256
+from objdel.core.io import code_sha, read_json, read_jsonl
+from objdel.core.io import write_atomic as _write
 from objdel.data import quality as Q
 from objdel.geom import engine as _gpucheck
-from objdel.hashing import file_sha256
-from objdel.io import code_sha, read_json, read_jsonl
-from objdel.io import write_atomic as _write
 from objdel.policy.evaluate import METRICS, evaluate, per_item, score_items, summarize
 from objdel.verify import device
 from objdel.verify import stats as signal

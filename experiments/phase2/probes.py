@@ -17,8 +17,8 @@ import json
 import time
 from pathlib import Path
 
+from objdel.core.io import read_jsonl, write_json
 from objdel.data import probes as P
-from objdel.io import read_jsonl, write_json
 
 
 def build(a):

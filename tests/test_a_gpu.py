@@ -230,7 +230,7 @@ def test_g07_repeat(tmp_path):
     """G07 (A3; optional box test, `OBJDEL_G07_CKPT` names the checkpoint folder): two final_eval runs with --seed 11
     on 16 items write answers of one schema, and scoring the same answers twice (--rescore) gives byte-identical
     metrics. Texts that differ between the runs are reported, not failed (the vLLM build state can differ)."""
-    from objdel.io import read_jsonl
+    from objdel.core.io import read_jsonl
 
     ckpt = os.environ.get("OBJDEL_G07_CKPT")
     assert ckpt, "set OBJDEL_G07_CKPT to the checkpoint folder"

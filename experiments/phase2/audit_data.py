@@ -15,58 +15,9 @@ from dataclasses import asdict
 from pathlib import Path
 
 from objdel.data import quality as Q
-from objdel.data import splits, store, windows
-from objdel.io import read_json
 
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "docs" / "reference"
-
-
-def tokenizer(model: str):
-    """(tokenizer, max completion tokens) of a train config model, from the local HF cache."""
-    from transformers import AutoTokenizer
-
-    from objdel.policy.models import MAX_COMPLETION, MODELS
-
-    return AutoTokenizer.from_pretrained(MODELS[model]), MAX_COMPLETION[model]
-
-
-def _json(path: Path) -> dict:
-    return read_json(path) if path.is_file() else {}
-
-
-def audit(rows, store_root=ROOT / "data/store", eval_views=ROOT / "data/eval_views", val_view=None,
-          exclusions=REF / "train_exclusions.json", review=REF / "neardup_review.json",
-          frozen=REF / "frozen_views.json", series_z=ROOT / "runs/b1/series_z.json", model="qwen3-vl-2b",
-          out=ROOT / "runs/b1/audit", plan=None) -> dict:
-    """The report that quality.gates reads, for the rows root `rows` (module docstring). `plan`: the schedule dict
-    (build_rl_rows passes it before the manifest exists); default the manifest's `schedule`."""
-    rows, store_root, eval_views, exclusions = Path(rows), Path(store_root), Path(eval_views), Path(exclusions)
-    plan = plan or read_json(rows / "manifest.json")["schedule"]
-    ex = _json(exclusions)
-    pool = windows.pool(store.load("lidc", "train", store_root), plan["draws"], plan["seed"],
-                        frozenset(plan["excluded_ids"]))
-    by_id = {w.window_id: w for w in pool.windows}
-    recs = Q.records(rows)
-    scheduled = [by_id[r["item_id"]] for r in recs if r["item_id"] in by_id]
-    val = Q.view_windows(val_view or eval_views / "lidc-val-shifted", store_root)
-    halves = {f"val-{h}": [w for w in val if splits.val_half(w.group_id) == h] for h in ("shape", "select")}
-    sched = Q.schedule_report(scheduled, pool, halves | {"val": val}, **{k: plan[k] for k in Q.SCHEDULE_ARGS})
-    wn = Q.window_checks(rows, store_root)
-    tok, limit = tokenizer(model)
-    z = Path(series_z)
-    return {
-        "leakage": Q.leakage(store_root, _json(Path(review)), ex, out),
-        "rows": Q.rows_leakage(rows, store_root, Q.view_image_hashes(eval_views), frozenset(ex))
-        | {"exclusions_stale": plan["exclusions_sha256"] != Q.file_sha256(exclusions)},
-        "windows": wn,
-        "schedule": sched | {"unknown": len(recs) - len(scheduled)},
-        "tokens": Q.tokens(rows, tok, limit),
-        "agreement": Q.agreement(rows, wn["low_contrast"]),
-        "frozen": Q.frozen(eval_views, _json(Path(frozen))),
-        "z": Q.dg17(read_json(z), ex, Q.file_sha256(store_root / "lidc/train.parquet"))
-        if z.is_file() else [f"no contour-to-slice report {z}: run check_series_z"],
-    }
 
 
 def main(argv=None) -> int:
@@ -83,8 +34,10 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=Path, default=ROOT / "runs/b1/audit", help="near-duplicate PNGs (DG3)")
     ap.add_argument("--json", type=Path, default=None)
     a = ap.parse_args(argv)
-    report = audit(a.rows, a.store, a.eval_views, a.val_view, a.exclusions, a.review, a.frozen, a.series_z, a.model,
-                   a.out)
+    from objdel.policy import models
+
+    report = Q.audit(a.rows, *models.tokenizer(a.model), a.store, a.eval_views, a.val_view, a.exclusions, a.review,
+                     a.frozen, a.series_z, a.out)
     gs = Q.gates(report)
     for g in gs:
         state = "report" if not g.hard else "ok" if g.ok else "FAIL"

@@ -24,11 +24,11 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from experiments.phase2.build_eval_views import _rotated
+from objdel.core.io import read_json
 from objdel.data import store
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
 from objdel.geom.text import SCHEMAS
-from objdel.io import read_json
 
 MANIFESTS = ("data/prepared/manifest.json", "data/targets/manifest.json",
              *(f"data/eval_views/lidc-val-{k}/manifest.json" for k in ("shifted", "rescaled", "rotated")),

@@ -46,7 +46,7 @@ import sys
 import time
 from pathlib import Path
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 from objdel.rl import build
 
 

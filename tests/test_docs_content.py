@@ -116,7 +116,7 @@ def test_kernel_build_output_is_not_tracked_or_cited():
 def test_policy_docstring_has_no_dollar_value():
     import importlib
 
-    policy = importlib.import_module("experiments.phase2.vast.policy")
+    policy = importlib.import_module("objdel.infra.vast.__main__")
     assert re.search(r"\$\d", policy.__doc__) is None
     assert 0 < policy.ALARM < policy.HARD_STOP
 

@@ -22,7 +22,7 @@ import numpy as np
 import torch
 from transformers import TrainerCallback
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 from objdel.policy import marks as nvtx
 
 

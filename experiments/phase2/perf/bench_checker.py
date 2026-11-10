@@ -59,7 +59,7 @@ def data_root() -> Path:
 
 
 def file_sha256(path: Path) -> str:
-    """SHA-256 hex digest of the file. Not objdel.hashing: --engine old runs this module in the pre-D2 venv, whose
+    """SHA-256 hex digest of the file. Not objdel.core.hashing: --engine old runs this module in the pre-D2 venv, whose
     objdel has no hashing module (only the standard library, numpy and objdel._gpucheck; tests/test_bench_checker
     S10)."""
     with open(path, "rb") as f:

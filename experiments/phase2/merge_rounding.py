@@ -23,7 +23,7 @@ import numpy as np
 import torch
 from safetensors import safe_open
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 SAMPLE = 50_000  # elements per module for the median
 DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16}

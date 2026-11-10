@@ -82,7 +82,7 @@ def make_batches(generate, rows, n_rows: int, out) -> list[Path]:
     distinct image in first-appearance order, its row key and pixel SHA-256 (hashed on the host)."""
     import torch
 
-    from objdel.hashing import pixels_sha256
+    from objdel.core.hashing import pixels_sha256
     from objdel.rl import record
 
     out, adv = record.open_dir(out), centred_advantages()

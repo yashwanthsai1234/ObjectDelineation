@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 ROOT = Path(__file__).resolve().parents[2]
 STEPS, ITEMS = 4, 8

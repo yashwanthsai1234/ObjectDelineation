@@ -48,7 +48,7 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 LIDC_FRACTIONS = (("train", 0.7), ("val", 0.1), ("test", 0.2))
 RIGA_VAL_FRACTION = 0.1

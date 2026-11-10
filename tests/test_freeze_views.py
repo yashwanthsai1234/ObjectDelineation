@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 from experiments.phase2 import freeze_views as FV
+from objdel.core.io import code_sha, git_sha
 from objdel.data import quality as Q
 from objdel.data import store
-from objdel.io import code_sha, git_sha
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORD = ROOT / "docs/reference/frozen_views.json"

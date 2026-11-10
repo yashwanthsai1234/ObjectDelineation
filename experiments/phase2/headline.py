@@ -14,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 METRICS = ("iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote", "legal")
 
