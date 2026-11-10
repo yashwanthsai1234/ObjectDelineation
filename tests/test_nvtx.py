@@ -77,7 +77,7 @@ def no_nvtx_calls(monkeypatch):
 
 
 def test_import_is_inert_it_imports_no_torch():
-    """objdel.reward is imported before serve.fork_pool: an import-time CUDA query would poison the fork."""
+    """an import-time CUDA query would poison a later fork (the reward test pool forks, tests/test_eval_device.py)."""
     code = "import sys, objdel.train.nvtx as n; assert 'torch' not in sys.modules, 'torch imported'; print(n._ON)"
     out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True,
                          env=os.environ | {"OBJDEL_NVTX": "1"}, cwd=os.path.dirname(__file__))  # fmt: skip

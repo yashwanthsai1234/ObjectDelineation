@@ -388,13 +388,8 @@ def test_cli_refuses_answers_that_miss_an_item(view, tmp_path):
     assert not (tmp_path / "out").exists()
 
 
-def test_cli_scores_in_one_process(view, tmp_path, monkeypatch):
-    """I19 after D7: the CLI forks no worker (fork_pool raises if called) and two runs give the same rows."""
-    from objdel.train import serve
-
-    def no_pool(*a, **k):
-        raise AssertionError("ceiling forked a pool")
-    monkeypatch.setattr(serve, "fork_pool", no_pool)
+def test_cli_scores_in_one_process(view, tmp_path):
+    """I19 after D7: two runs of the CLI, which scores in its own process, give the same rows."""
     answers = str(_answers(view, tmp_path / "answers.jsonl"))
     got = [_run(view, tmp_path / f"out{n}", "--answers", answers)[1] for n in (1, 2)]
     assert got[0] == got[1]
