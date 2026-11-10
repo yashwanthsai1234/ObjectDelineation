@@ -6,9 +6,21 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.geom import engine
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(os.environ.get("OBJDEL_FIXTURES", ROOT / "data" / "fixtures"))
 STORE = Path(os.environ.get("OBJDEL_STORE", ROOT / "data" / "store"))
+
+
+def pytest_collection_modifyitems(config, items):
+    """The one GPU skip rule (D8): a `gpu` test skips unless objdel._gpucheck is the CUDA build. The box asserts the
+    build before pytest and fails the step on any skip (run_box.sh --gpu-check)."""
+    if engine.build() != "cuda":
+        skip = pytest.mark.skip(reason="CPU build: the CUDA build runs on the box")
+        for item in items:
+            if item.get_closest_marker("gpu"):
+                item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)

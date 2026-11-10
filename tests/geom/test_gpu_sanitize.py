@@ -5,11 +5,9 @@ import numpy as np
 import pytest
 
 from objdel.geom import engine as gc
-from tests.geom.test_cuda_checker_gpu import _gpus
 from tests.oracles import cuda_parity as C
 
-pytestmark = [pytest.mark.gpu, pytest.mark.sanitizer,
-              pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")]
+pytestmark = [pytest.mark.gpu, pytest.mark.sanitizer]
 
 
 def _spiral(n: int = 33) -> np.ndarray:

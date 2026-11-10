@@ -2,10 +2,9 @@
 byte-identical outputs. racecheck cannot see global-memory races, so this test covers them. eval_sets joins with D7."""
 import pytest
 
-from tests.geom.test_cuda_checker_gpu import _gpus
 from tests.geom.test_gpu_sanitize import CORPUS
 
-pytestmark = [pytest.mark.gpu, pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")]
+pytestmark = pytest.mark.gpu
 
 
 @pytest.mark.parametrize("name", CORPUS)

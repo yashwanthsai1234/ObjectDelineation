@@ -16,12 +16,10 @@ import pytest
 from experiments.phase2.perf.make_b_goldens import b_sets, b_tables, random_masks, score_masks_of
 from objdel.geom import engine as G
 from objdel.geom.shape import unpack_rows
-from tests.geom.test_cuda_checker_gpu import _gpus
 
 ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = ROOT / "tests" / "goldens" / "b_g01.json"
 BOX_INPUTS = ("checker_eval/masks.npz",)
-on_gpu = pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")
 
 
 def _masks_npz() -> Path:  # D8's box_input replaces this; a missing input fails (gpu tests never skip on the box)
@@ -122,7 +120,6 @@ def test_g01_polygon_inputs_do_not_depend_on_the_platform_libm(monkeypatch):
 
 @pytest.mark.gpu
 @pytest.mark.sanitizer
-@on_gpu
 def test_g07_sanitize_sums():
     """G07: the only scorer test under compute-sanitizer (R-D2's sanitize step): a G01 subset, sums only."""
     sets = b_sets(_masks_npz(), n_masks=32, n_polys=64, n_crops=32)
@@ -132,7 +129,6 @@ def test_g07_sanitize_sums():
 
 
 @pytest.mark.gpu  # never under a sanitizer (too long, B.9.5 G07)
-@on_gpu
 def test_g01_golden():
     """G01: the CUDA build equals the CPU build on every field (old fields through the Mac golden, sums through
     np.nonzero) on the five G01 sets."""
