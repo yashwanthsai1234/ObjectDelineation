@@ -260,12 +260,7 @@
   "boxes_meet"
  ],
  "experiments/phase2/select_ckpt.py": [
-  "PATHS",
-  "dump",
-  "judge",
-  "main",
-  "topology_only",
-  "vision_config"
+  "main"
  ],
  "experiments/phase2/train_sft.py": [
   "main"
