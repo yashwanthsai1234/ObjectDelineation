@@ -128,6 +128,9 @@ def parse(argv=None) -> argparse.Namespace:
                          "(0: never)")
     ap.add_argument("--prompt-memo", action="store_true",
                     help="C2: tokenize one prompt per (rendered text, image sizes) before vLLM, not every row")
+    ap.add_argument("--encoder-once", action="store_true",
+                    help="C3, with --host-meta: encode each generation batch's distinct images once; every forward "
+                         "takes their features, never pixel values")
     ap.add_argument("--gpu-pixels", choices=("off", "auto"), default="off",
                     help="C1: prepare pixel values on the GPU after a start-up self-check (default off: the CPU path)")
     ap.add_argument("--allow-cpu-pixels", action="store_true",

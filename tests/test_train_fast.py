@@ -6,12 +6,15 @@ run on a tiny random Qwen3-VL (CPU, fp32) with TRL's fused LM head.
 
 import collections
 import contextlib
+import functools
 import json
 import math
 import time
 
 import numpy as np
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
@@ -26,15 +29,15 @@ IMG, START, END = 100, 102, 103
 PATCH = 3 * 2 * 16 * 16  # channels x temporal patch x patch x patch
 
 
-def tiny_model():
+def tiny_model(vocab_size=128, img=IMG, video=101, start=START, end=END):
     torch.manual_seed(0)
     cfg = Qwen3VLConfig(
-        text_config=dict(vocab_size=128, hidden_size=32, intermediate_size=64, num_hidden_layers=3,
+        text_config=dict(vocab_size=vocab_size, hidden_size=32, intermediate_size=64, num_hidden_layers=3,
                          num_attention_heads=2, num_key_value_heads=1, head_dim=16,
                          rope_scaling={"rope_type": "default", "mrope_section": [2, 3, 3], "mrope_interleaved": True}),
         vision_config=dict(depth=2, hidden_size=32, intermediate_size=64, num_heads=2, out_hidden_size=32,
                            patch_size=16, spatial_merge_size=2, temporal_patch_size=2, deepstack_visual_indexes=[0]),
-        image_token_id=IMG, video_token_id=101, vision_start_token_id=START, vision_end_token_id=END)  # fmt: skip
+        image_token_id=img, video_token_id=video, vision_start_token_id=start, vision_end_token_id=end)  # fmt: skip
     m = Qwen3VLForConditionalGeneration(cfg).eval()
     add_fused_lm_head(m, outputs=("log_probs", "entropy"))
     return m
@@ -1228,6 +1231,71 @@ def test_rope_positions_equal_get_rope_index_and_flag_rows_off_the_template():
     assert fast.rope_positions(tmpl, ids, short, mm * short)[1].tolist() == [False, True, False, False, False]
 
 
+@functools.cache
+def rope_model():
+    return tiny_model()
+
+
+@settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(rows=st.lists(st.tuples(st.integers(0, 40), st.integers(0, 6), st.booleans()), min_size=1, max_size=6),
+       seed=st.integers(0, 2**16))  # fmt: skip
+def test_rope_positions_equal_get_rope_index_on_random_rows(rows, seed):
+    """C2 property: any answer lengths, left pads, a mask hole or a masked (truncated) answer: rope_positions equals
+    get_rope_index on every column and no row is bad."""
+    m, g = rope_model(), torch.Generator().manual_seed(seed)
+    prompt = [5, 6, START, *[IMG] * 4, END, 7, 8, 9]
+    answers = [torch.randint(0, 99, (n,), generator=g).tolist() for n, _, _ in rows]
+    ids, mask, mm = rope_rows(prompt, answers, [p for _, p, _ in rows], W=6 + len(prompt) + 40)
+    for r, (n, p, odd) in enumerate(rows):
+        if odd and n > 1:
+            mask[r, p + len(prompt) + int(torch.randint(0, n, (1,), generator=g))] = 0  # a hole in the answer
+        elif odd:
+            mask[r, p + len(prompt):] = 0  # a truncated answer, masked
+    mm = mm * mask
+    grid = torch.tensor([[1, 4, 4]])
+    tmpl = fast.rope_template(m.model, torch.tensor(prompt), (torch.tensor(prompt) == IMG).long(), grid)
+    pos, bad = fast.rope_positions(tmpl, ids, mask, mm)
+    want, _ = m.model.get_rope_index(ids, mm_token_type_ids=mm, image_grid_thw=grid.repeat(len(rows), 1),
+                                     attention_mask=mask)  # fmt: skip
+    assert torch.equal(pos, want) and not bad.any()
+
+
+def test_rope_positions_equal_get_rope_index_on_the_real_lidc_prompt():
+    """C2: the real processor's LIDC prompt (325 tokens, grid (1, 32, 32)) on a model with the real vision token ids:
+    answers of 0, 1, 131 and 1,536 tokens, left pads, a mask hole and a truncated masked row equal get_rope_index;
+    an image pad in an answer sets bad."""
+    import PIL.Image
+    from transformers import AutoConfig, AutoProcessor
+
+    from objdel.train import dataset
+
+    try:
+        name = "Qwen/Qwen3-VL-2B-Instruct"
+        proc, cfg = AutoProcessor.from_pretrained(name, local_files_only=True), AutoConfig.from_pretrained(
+            name, local_files_only=True)
+    except OSError:
+        pytest.skip("the Qwen3-VL processor is not in the local HF cache")
+    text = proc.apply_chat_template([dataset._user("lidc")], add_generation_prompt=True, tokenize=False)
+    one = proc(text=[text], images=[PIL.Image.new("RGB", (512, 512))], return_tensors="pt")
+    prompt, grid = one["input_ids"][0].tolist(), one["image_grid_thw"]
+    assert len(prompt) == 325 and grid.tolist() == [[1, 32, 32]]
+    m = tiny_model(vocab_size=cfg.text_config.vocab_size, img=cfg.image_token_id, video=cfg.video_token_id,
+                   start=cfg.vision_start_token_id, end=cfg.vision_end_token_id)  # fmt: skip
+    g = torch.Generator().manual_seed(5)
+    answers = [torch.randint(0, 151000, (n,), generator=g).tolist() for n in (0, 1, 131, 1536, 131)]
+    ids, mask, _ = rope_rows(prompt, answers, [3, 0, 2, 0, 1], W=325 + 1536 + 3)
+    mm = (ids == cfg.image_token_id).long() * mask
+    mask[2, 2 + 325 + 7] = 0  # a hole
+    mask[4, 1 + 325:] = 0  # truncated and masked
+    mm = mm * mask
+    tmpl = fast.rope_template(m.model, torch.tensor(prompt), one["mm_token_type_ids"][0], grid)
+    pos, bad = fast.rope_positions(tmpl, ids, mask, mm)
+    want, _ = m.model.get_rope_index(ids, mm_token_type_ids=mm, image_grid_thw=grid.repeat(5, 1), attention_mask=mask)
+    assert torch.equal(pos, want) and not bad.any()
+    mm[3, 325 + 10] = 1  # an image token in an answer
+    assert fast.rope_positions(tmpl, ids, mask, mm)[1].tolist() == [False, False, False, True, False]
+
+
 def test_rope_bad_rows_routes_on_host_data_only():
     """U-RP7: a prompt off its template, an answer holding the image pad id or the vision start id; a clean row."""
     tmpl, vision = (1, 2, 3), (IMG, 101, START, END)
@@ -1429,11 +1497,12 @@ def test_tokenize_prompts_with_prompt_memo_gives_trls_prompt_ids_tokenizing_each
 
 def meta_for(mask, T, G, bad=()):
     """The RowMeta host lists of a test batch: real prompt and answer tokens; image, group and prompt layout per G
-    rows; rows `bad` marked for the HF rope path."""
+    rows; rows `bad` marked for the HF rope path; 16 pixel rows (one 4 x 4-patch image) per row."""
     n, P = mask.size(0), mask.size(1) - T
     grp = np.arange(n, dtype=np.int32) // G
     return fast.RowMeta(mask[:, :P].sum(1).numpy().astype(np.int32), mask[:, P:].sum(1).numpy().astype(np.int32),
-                        grp, grp, grp, np.isin(np.arange(n), bad).astype(np.int32))  # fmt: skip
+                        grp, grp, grp, np.isin(np.arange(n), bad).astype(np.int32),
+                        np.full(n, 16, dtype=np.int32))  # fmt: skip
 
 
 def no_device_reads(monkeypatch):
@@ -1459,19 +1528,49 @@ def test_host_meta_forward_takes_windows_runs_and_lengths_from_the_host(monkeypa
         assert (lp[~real] == 0).all()
 
 
+@pytest.mark.parametrize("shared_prefix", [False, True])
+def test_host_meta_forward_never_reads_the_grid(monkeypatch, shared_prefix):
+    """C4 step 3: under host_meta each row's pixel rows come from RowMeta (image pads x merge^2), so the forward makes
+    no Tensor.tolist read of its own; without host_meta it reads the grid once, in grid_rows (control)."""
+    import sys
+
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
+    reads, real = [], torch.Tensor.tolist
+
+    def spy(x):
+        f = sys._getframe(1).f_code
+        reads.append(f.co_filename.endswith("fast.py") and f.co_name in ("_get_per_token_logps_and_entropies",
+                                                                         "grid_rows"))  # fmt: skip
+        return real(x)
+
+    monkeypatch.setattr(torch.Tensor, "tolist", spy)
+    t = shared(m) if shared_prefix else trainer(Fast, buckets=(4, 8, 12, 16))
+    lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, host_meta=meta_for(mask, T, 4), **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    assert not any(reads)
+    t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
+    assert any(reads)
+
+
 def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch):
     """C4: _compute_loss reads the micro-batch's host_meta rows (moved by TRL's split and shuffle) for its forward;
-    without them under --host-meta it raises; the old and reference passes get none."""
+    without them under --host-meta it raises; the old and reference passes get the generation batch's RowMeta (C2:
+    their rope positions, windows and pixel rows from the host too), none outside a generation batch."""
     seen = []
     monkeypatch.setattr(fast.FastForward, "_get_per_token_logps_and_entropies",
                         lambda self, *a, **k: seen.append(k.get("host_meta")) or (None, None, None))
     monkeypatch.setattr(GRPOTrainer, "_compute_loss",
                         lambda self, model, inputs: self._get_per_token_logps_and_entropies(model, None, None, 1))
     t = trainer(fast.FastGRPO, host_meta=True, use_vllm=False)
-    rows = [fast.MetaRow(5, 3, 0, 0, 0, 0), fast.MetaRow(4, 0, 1, 1, 1, 0)]
+    rows = [fast.MetaRow(5, 3, 0, 0, 0, 0, 16), fast.MetaRow(4, 0, 1, 1, 1, 0, 16)]
     t._compute_loss(None, {"host_meta": rows})
     t._get_per_token_logps_and_entropies(None, None, None, 1)
-    assert fast.host_rows(seen[0]) == rows and seen[1] is None
+    t.meta = fast.meta_of({"host_meta": rows[::-1]})
+    t._get_per_token_logps_and_entropies(None, None, None, 1)
+    assert fast.host_rows(seen[0]) == rows and seen[1] is None and seen[2] is t.meta
+    t.meta = None
     with pytest.raises(KeyError, match="host_meta"):
         t._compute_loss(None, {})
     t.host_meta = False
@@ -1502,6 +1601,29 @@ def test_packed_chunks_stage_their_indices_in_one_fresh_buffer_each(monkeypatch)
     assert not any(isinstance(v, torch.Tensor) for v in vars(t).values())
 
 
+def test_packed_chunks_gather_their_rows_with_index_select(monkeypatch):
+    """C4 step 4: packed_chunk gathers tok, mmt and posp from the row tensors with index_select (host indices, one
+    staging copy) instead of per-row torch.full / torch.cat loops; same logprobs. Per chunk: 3 gathers, the labels'
+    one torch.full, and the 2 image cats (pixel_values, image_grid_thw)."""
+    import sys
+
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, ent_ref, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4,
+                                                                   compute_entropy=True, **kw)  # fmt: skip
+    calls, real = collections.Counter(), {n: getattr(torch, n) for n in ("full", "cat", "index_select")}
+    for name in real:
+        def spy(*a, _name=name, **k):
+            calls[_name] += sys._getframe(1).f_code.co_name == "packed_chunk"
+            return real[_name](*a, **k)
+
+        monkeypatch.setattr(torch, name, spy)
+    lp, ent, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, compute_entropy=True,
+                                                              **kw)  # fmt: skip
+    assert torch.equal(lp, ref) and torch.equal(ent, ent_ref)
+    assert calls == {"index_select": 6, "full": 2, "cat": 4}  # 2 packed chunks
+
+
 def counted_rope(m):
     calls, orig = [], m.model.get_rope_index
 
@@ -1527,6 +1649,12 @@ def test_host_meta_rope_positions_come_from_one_template_per_layout_bad_rows_fro
     real = mask.bool()
     assert torch.equal(pos[:, real], ref[:, real]) and nbad == 1
     assert calls == [1, 1, 1]  # two layout templates, one bad row
+    rope.clear()
+    with pytest.MonkeyPatch.context() as mp:  # C2: the keyed cache is the no-host_meta path only
+        mp.setattr(fast.RopeCache, "keys", None)
+        assert torch.equal(rope.template_positions(ids, mask, kw["mm_token_type_ids"], kw["image_grid_thw"],
+                                                   kw["num_images"], ids.size(1) - T, meta_for(mask, T, 4, bad=[5]),
+                                                   check=True)[0], pos)  # fmt: skip
     plain = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)[0]
     t = trainer(Fast, shared_prefix=True, rope=rope)
     rope.clear()
