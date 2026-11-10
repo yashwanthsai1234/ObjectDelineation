@@ -25,9 +25,9 @@ from objdel.train import nvtx
 
 
 class TraceStep(TrainerCallback):
-    """torch.profiler on one optimizer step after `wait` steps and one profiler warm-up step (CPU ops, and CUDA
-    kernels on a GPU): <out>/trace.json.gz and ops.txt (top ops by device and CPU time). train_sft `profile:`,
-    g_probe --trace."""
+    """torch.profiler on global step wait + 2, after one profiler warm-up step (CPU ops, and CUDA kernels on a GPU),
+    once: <out>/trace.json.gz and ops.txt (top ops by device and CPU time). A resumed run counts from global_step;
+    no trace when the step is already done. train_sft `profile:`, g_probe --trace."""
 
     def __init__(self, out: str, wait: int):
         self.out, self.wait = Path(out), wait
@@ -36,18 +36,24 @@ class TraceStep(TrainerCallback):
         """Start the profiler."""
         from torch.profiler import ProfilerActivity, profile, schedule
 
+        wait, self.prof = self.wait - state.global_step, None
+        if wait < 0:
+            print(f"TraceStep: step {self.wait + 2} is not after the resume at {state.global_step}: no trace")
+            return
         acts = [ProfilerActivity.CPU] + [ProfilerActivity.CUDA] * torch.cuda.is_available()
-        self.prof = profile(activities=acts, schedule=schedule(wait=self.wait, warmup=1, active=1),
+        self.prof = profile(activities=acts, schedule=schedule(wait=wait, warmup=1, active=1, repeat=1),
                             on_trace_ready=self.write)  # fmt: skip
         self.prof.start()
 
     def on_step_end(self, args, state, control, **kw):
         """Advance the profiler one step."""
-        self.prof.step()
+        if self.prof:
+            self.prof.step()
 
     def on_train_end(self, args, state, control, **kw):
         """Stop the profiler."""
-        self.prof.stop()
+        if self.prof:
+            self.prof.stop()
 
     def write(self, prof):
         """Write the Chrome trace and the top-op tables to `out` when the profiler trace is ready."""
