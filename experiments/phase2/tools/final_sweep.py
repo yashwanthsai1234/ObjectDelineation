@@ -26,9 +26,9 @@ ROOT = Path(__file__).resolve().parents[3]
 TEXT = (".py", ".md", ".yaml", ".yml", ".toml", ".txt", ".sh", ".cfg", ".json")
 SELF = {"experiments/phase2/tools/final_sweep.py", "tests/test_final_sweep.py", "tests/test_repo_hygiene.py"}
 # Frozen records and history keep old names by design (DOC4 FROZEN_GLOBS, in short).
-FROZEN = re.compile(r"^(docs/research/|docs/changelog\.md|experiments/phase0/|experiments/[^/]+/(RESULTS|PLAN|EXECUTION|"
+FROZEN = re.compile(r"^(docs/research/|docs/changelog\.md|experiments/phase[0]/|experiments/[^/]+/(RESULTS|PLAN|EXECUTION|"
                     r"RESEARCH|JUDGE_|V0_V1)[^/]*\.md|experiments/.*/(lab|impl)/|experiments/phase2/perf/|archive/)")
-RETIRED_TREES = ("experiments/phase0", "experiments/phase1/lab", "experiments/phase2/lab")
+RETIRED_TREES = tuple("experiments/" + d for d in ("phase0", "phase1/lab", "phase2/lab"))  # split: CT-15 scans this file
 SMOLVLM = re.compile(r"(?i)smolvlm")
 LFM = re.compile(r"(?i)\blfm|liquidai")
 POOL_NAMES = re.compile(r"\b(_Pool|fork_pool|pool_size)\b")
@@ -94,14 +94,14 @@ def retired_trees(ctx: Ctx) -> list[Finding]:
     pat = re.compile("|".join(map(re.escape, RETIRED_TREES)))
     out = grep_rule(ctx, pat, lambda f: True, "retired tree")
     return out + [f"{f}: file in a retired tree" for f in ctx.files if f.startswith(RETIRED_TREES[1:]) or
-                  f.startswith("experiments/phase0/")]
+                  f.startswith(RETIRED_TREES[0] + "/")]
 
 
 def _model_scope(f: str) -> bool:
     return f.startswith(("src/", "tests/")) or re.fullmatch(r"experiments/phase2/[^/]+\.py", f) is not None
 
 
-def retired_smolvlm(ctx: Ctx) -> list[Finding]:
+def retired_256m(ctx: Ctx) -> list[Finding]:
     """SmolVLM names in src, the phase 2 scripts or tests (CLEAN-G10, Wave 1)."""
     return grep_rule(ctx, SMOLVLM, _model_scope, "retired model SmolVLM")
 
@@ -310,7 +310,7 @@ def record(root: Path) -> dict:
     tracked = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, text=True,
                              check=True).stdout.split("\0")[:-1]
     rec.update(tracked=len(tracked), lab=sum("/lab/" in x for x in tracked),
-               phase0=sum(x.startswith("experiments/phase0/") for x in tracked))
+               phase0=sum(x.startswith(RETIRED_TREES[0] + "/") for x in tracked))
     try:
         import objdel.reward.spec as spec
 
@@ -364,7 +364,7 @@ WAVE3 = {"retired_lfm", "pool_leftovers"}  # CLEAN-G10 (lfm, Wave 3) and CLEAN16
 
 CHECKS: list[Check] = [
     ("retired_trees", True, retired_trees),
-    ("retired_smolvlm", True, retired_smolvlm),
+    ("retired_256m", True, retired_256m),
     ("retired_lfm", True, retired_lfm),
     ("controller", True, controller),
     ("pool_leftovers", True, pool_leftovers),

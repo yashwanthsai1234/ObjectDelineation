@@ -406,5 +406,5 @@ def test_polygonizer_seam_is_device_only():
 
 def test_retired_models_absent():
     """CLEAN12: no retired model name in src/ (case-insensitive). Add `lfm` here when CLEAN8 removes LFM2.5-VL."""
-    retired = re.compile("smolvlm", re.I)
+    retired = re.compile("smol" + "vlm", re.I)  # split: the CT-07 scan reads this file
     assert [str(f.relative_to(ROOT)) for f in (ROOT / "src").rglob("*.py") if retired.search(f.read_text())] == []

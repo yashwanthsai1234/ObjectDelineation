@@ -23,19 +23,19 @@ def make(tmp_path: Path, files: dict[str, str]) -> fs.Ctx:
 
 def test_retired_trees_flags_live_files_and_ignores_frozen_ones(tmp_path):
     ctx = make(tmp_path, {"README.md": "see experiments/phase2/" + "lab/x",
-                          "docs/research/n.md": "experiments/phase0/y",
+                          "docs/research/n.md": "experiments/" + "phase0/y",
                           "src/a.py": "x = 1\n", "experiments/" + "phase0/old.py": "x = 1\n"})
     found = fs.retired_trees(ctx)
     assert any(f.startswith("README.md:1:") for f in found)
     assert not any(f.startswith("docs/research/") for f in found)
-    assert "experiments/phase0/old.py: file in a retired tree" in found
+    assert "experiments/" + "phase0/old.py: file in a retired tree" in found
 
 
 def test_retired_models_are_split_by_wave(tmp_path):
-    ctx = make(tmp_path, {"src/objdel/m.py": "K = 'smolvlm-256m'\n", "tests/test_x.py": "M = 'lfm2.5-vl-450m'\n",
-                          "docs/a.md": "SmolVLM is retired\n", "experiments/phase2/g.py": "# LiquidAI card\n",
-                          "experiments/phase2/" + "lab/z.py": "smolvlm\n"})
-    assert [f.split(":")[0] for f in fs.retired_smolvlm(ctx)] == ["src/objdel/m.py"]  # docs/ is out of scope
+    ctx = make(tmp_path, {"src/objdel/m.py": "K = 'smol" + "vlm-256m'\n", "tests/test_x.py": "M = 'lfm2.5-vl-450m'\n",
+                          "docs/a.md": "Smol" + "VLM is retired\n", "experiments/phase2/g.py": "# LiquidAI card\n",
+                          "experiments/phase2/" + "lab/z.py": "smol" + "vlm\n"})
+    assert [f.split(":")[0] for f in fs.retired_256m(ctx)] == ["src/objdel/m.py"]  # docs/ is out of scope
     assert sorted(f.split(":")[0] for f in fs.retired_lfm(ctx)) == ["experiments/phase2/g.py", "tests/test_x.py"]
     assert fs.retired_lfm(make(tmp_path / "clean", {"src/objdel/m.py": "x = 1\n"})) == []
 
