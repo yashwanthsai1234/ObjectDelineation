@@ -522,7 +522,10 @@ def cmd_run(a) -> None:
         die(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
     if a.module.endswith(".yaml"):
         stages, name = chain(ROOT / a.module, a.run_id), Path(a.module).stem
-        guard = [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} "
+        if a.module.startswith("specs/"):  # E6.5: the spec, code and versions beside the log, before any stage
+            guard = [f"/opt/venv/bin/python -I -m experiments.phase2.vast.policy run_spec {shlex.quote(a.module)} "
+                     f"/workspace/runs/{a.run_id}/run_spec.json"]
+        guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} "
                  f"experiments/phase2/configs/r0.yaml first' >&2; false; }}; }}"
                  for r in vision_refs(ROOT / a.module, a.run_id)]  # fmt: skip
     elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
@@ -550,6 +553,25 @@ def cmd_run(a) -> None:
              f"timeout -k 120 {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1")  # fmt: skip
     remote(run, f"tmux new-session -d -s {a.run_id}-{name} {shlex.quote('bash -c ' + shlex.quote(inner))}")
     ledger(event="run", run_id=a.run_id, instance_id=run["instance"], detail=f"{a.module} cap_s={cap}")
+
+
+def cmd_run_spec(a) -> None:
+    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (CODE_SHA, written by sync_up;
+    else "unknown"), the trl, torch and transformers versions and the reward fingerprint, as strict JSON. A different
+    spec already in OUT stops the chain: a second run with the same id never overwrites it silently."""
+    from importlib.metadata import version
+
+    from objdel.reward.spec import fingerprint
+
+    sha = ROOT / "CODE_SHA"
+    rec = {"spec": load_spec(ROOT / a.spec).model_dump(mode="json"),
+           "git_sha": sha.read_text().strip() if sha.is_file() else "unknown",
+           **{p: version(p) for p in ("trl", "torch", "transformers")}, "reward_fingerprint": fingerprint()}
+    out = Path(a.out)
+    if out.is_file() and json.loads(out.read_text())["spec"] != rec["spec"]:
+        die(f"{out} holds a different spec: use a new run id")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(rec, indent=1, allow_nan=False))
 
 
 def cmd_pull(a) -> None:
@@ -709,6 +731,7 @@ CLI = {  # subcommand -> its arguments, in order
                 "--bundle-dir": {"type": Path, "default": ROOT / "build" / "bundles"}, "--code-only": FLAG},
     "run": {"run_id": {}, "module": {}, "--cap-hours": {"type": float, "default": 24},
             "args": {"nargs": argparse.REMAINDER}},
+    "run_spec": {"spec": {}, "out": {}},
     "pull": {"run_id": {"nargs": "?"}},
     "push_hf": {"run_id": {}, "config": {}},
     "fetch_hf": {"run_id": {}, "revision": {"nargs": "?"}, "--rows": {"nargs": 2, "metavar": ("REVISION", "ROOT")},

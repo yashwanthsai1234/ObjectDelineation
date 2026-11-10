@@ -1465,3 +1465,42 @@ def test_code_files_ship_the_kernel_drafts_but_no_other_docs(tmp_path, monkeypat
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     monkeypatch.setattr(P, "ROOT", tmp_path)
     assert sorted(P.code_files()) == sorted(keep)
+
+
+# --- E6.5 (I16): runs/<id>/run_spec.json ------------------------------------------------------------------------------
+
+
+def test_a_spec_run_writes_run_spec_json_first(E):
+    """run.sh on a spec: the first (hard) job on the box writes /workspace/runs/<id>/run_spec.json beside the log."""
+    E.launched()
+    line = E.tmux("specs/b1_rows.yaml")
+    assert "-m experiments.phase2.vast.policy run_spec specs/b1_rows.yaml /workspace/runs/r1/run_spec.json &&" in line
+    assert line.index("run_spec.json") < line.index("run_box.sh --build-only")
+
+
+def test_run_spec_json_holds_the_spec_code_and_versions_and_never_overwrites_another_spec(tmp_path, monkeypatch):
+    from importlib.metadata import version
+
+    from objdel.core.spec import RunSpec, load_spec
+    from objdel.reward.spec import fingerprint
+
+    monkeypatch.setattr(P, "ROOT", tmp_path)
+    (tmp_path / "specs").mkdir()
+    spec = tmp_path / "specs/b1_rows.yaml"
+    spec.write_text((ROOT / "specs/b1_rows.yaml").read_text())
+    (tmp_path / "CODE_SHA").write_text("a" * 40 + "\n")
+    out = tmp_path / "rd/run_spec.json"
+    P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
+    rec = json.loads(out.read_text(), parse_constant=lambda c: pytest.fail(f"not strict JSON: {c}"))
+    assert RunSpec.model_validate(rec["spec"]) == load_spec(spec)
+    assert rec["git_sha"] == "a" * 40 and rec["reward_fingerprint"] == fingerprint()
+    libs = ("trl", "torch", "transformers")
+    assert {k: rec[k] for k in libs} == {k: version(k) for k in libs}
+    P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))  # the same spec again: fine
+    (tmp_path / "CODE_SHA").unlink()
+    spec.write_text(spec.read_text().replace("cap_hours: 3.0", "cap_hours: 2.0"))
+    with pytest.raises(SystemExit, match="different spec"):
+        P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
+    out.unlink()
+    P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
+    assert json.loads(out.read_text())["git_sha"] == "unknown"
