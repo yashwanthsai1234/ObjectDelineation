@@ -2,6 +2,7 @@
 import numpy as np
 
 from experiments.phase2.reward_lab_v5 import report, spearman
+from objdel.verify.reward.spec import REWARD_V5
 
 
 def groups():
@@ -46,3 +47,24 @@ def test_report_splits_the_advantage_variance_by_term():
     assert np.isclose(sum(share.values()), 1.0)
     topo = rep["topology"]
     assert 0 < topo["hit_share"] < 1 and np.isclose(topo["jump"], 1.0)
+
+
+def test_report_bounds_c_topo_by_the_fallback_margin():
+    """Rule 8: an answer no doctor drew (topo_any 0) beats the best valid answer of its group by iou_tc - best valid
+    iou_tc; c_topo must be at least q95 of that margin over eps, so the fallback never beats a valid topology."""
+    n = 8
+    T = dict(format_ok=np.ones(n), legal=np.ones(n), f5=np.full(n, 0.5), g_area=np.ones(n), loc=np.zeros(n),
+             iou_tc=np.array([0.6, 0.55, 0.5, 0.52, 0.7, 0.65, 0.4, 0.62]),
+             topo_any=np.r_[np.ones(4), np.zeros(4)], topo_freq=np.r_[np.full(4, 0.5), np.zeros(4)],
+             sig_id=np.arange(n, dtype=float))
+    T["iou_min"] = T["iou_tc"]
+    topo = report(T, np.ones(n), ["p1"], np.zeros(n, bool))["topology"]
+    q95 = np.percentile([0.1, 0.05, -0.2, 0.02], 95)
+    assert np.isclose(topo["fallback_margin_q95"], q95)
+    assert np.isclose(topo["c_topo_min"], q95 / REWARD_V5.eps)
+
+
+def test_report_has_no_fallback_bound_without_fallback_answers():
+    T, d = groups()
+    topo = report(T, d, ["p1", "p2", "p3", "p4"], np.zeros(32, bool))["topology"]
+    assert np.isnan(topo["c_topo_min"])

@@ -16,11 +16,13 @@ missed answer has gated IoU_tc < miss_iou. Report keys (rule numbers of B3.7):
   6 adv_size: median |A| on non-dropped groups for v4 and v5, r = their ratio, beta = 1e-3 / r, adam_epsilon = 1e-8 / r
   7 hit_agreement: mean Spearman(A_v4, A_v5) over groups with every IoU_tc >= miss_iou
   8 topology: jump = c_topo x median r_topo of valid answers; hit_share = the c_topo r_topo share of the variance of
-    v5 A in live all-hit groups (Gate B3: <= 0.5)
+    v5 A in live all-hit groups (Gate B3: <= 0.5); fallback_margin_q95 = q95 of (IoU_tc of a legal answer no doctor
+    drew) - (best IoU_tc of a valid answer of its group), over groups with a valid answer; c_topo_min =
+    max(0, q95) / eps, the lower bound of c_topo (nan without a pair)
   9 runaway: share of truncated answers and their mean v5 R
  10 allmiss_grad_share: S = sum over all-miss groups of sum |A| / sum over all groups, v4 and v5, and S_v5 / S_v4
-Rule 8's c_topo lower bound (q95 of IoU vs vote minus the best same-signature IoU for undrawn signatures) is not
-computed here: the scorer returns no per-signature IoU.
+Rule 8's margin compares an undrawn-signature answer (IoU_tc = IoU vs the vote) with the best valid answer of its
+own group, the terms the scorer already returns, so no scorer change is needed.
 """
 import argparse
 import json
@@ -72,6 +74,14 @@ def variance_share(parts: dict, a: np.ndarray, rows: np.ndarray) -> dict:
     return {k: float((rloo(v)[rows] * a[rows]).sum() / tot) if tot else float("nan") for k, v in parts.items()}
 
 
+def fallback_margins(G: dict, valid: np.ndarray) -> np.ndarray:
+    """IoU_tc of every legal answer no doctor drew minus the best IoU_tc of a valid answer in its group, for the groups
+    that have a valid answer (B3.7 rule 8; the H1 hack of H2_rl_math.md s3.4)."""
+    best = np.where(valid, G["iou_tc"], -np.inf).max(1, keepdims=True)
+    fallback = (G["legal"] >= 0.5) & (G["topo_any"] == 0) & np.isfinite(best)
+    return (G["iou_tc"] - best)[fallback]
+
+
 def report(T: dict, d_over_r: np.ndarray, patients: list[str], truncated: np.ndarray, spec=REWARD_V5) -> dict:
     """The B3.7 report of score terms T (flat, K = spec.group per item), centroid distances d / r (nan for an empty
     answer), the group's patient id per group and the truncated flag per answer."""
@@ -108,6 +118,8 @@ def report(T: dict, d_over_r: np.ndarray, patients: list[str], truncated: np.nda
     s4, s5 = (float(np.abs(a[allmiss]).sum() / np.abs(a).sum()) if np.abs(a).sum() else 0.0 for a in (a4, a5))
     d_miss = dr[miss & np.isfinite(dr)]
     valid = topology_valid(G, spec)
+    margin = fallback_margins(G, valid)
+    q95 = float(np.percentile(margin, 95)) if margin.size else float("nan")
     cut = np.asarray(truncated, bool).reshape(-1, g)
     return {
         "groups": len(R), "allmiss_groups": int(allmiss.sum()),
@@ -116,7 +128,8 @@ def report(T: dict, d_over_r: np.ndarray, patients: list[str], truncated: np.nda
                        for k, a in (("v4", a4), ("v5", a5))},
         "variance_share": {"allmiss": variance_share(parts, a5, allmiss & live5)},
         "topology": {"jump": spec.c_topo * float(np.median(r_topo[valid])) if valid.any() else float("nan"),
-                     "hit_share": variance_share(parts, a5, allhit & live5)["topo"]},
+                     "hit_share": variance_share(parts, a5, allhit & live5)["topo"],
+                     "fallback_margin_q95": q95, "c_topo_min": (max(0.0, q95) if margin.size else q95) / spec.eps},
         "miss_beats_hit": float(np.mean(beats)) if beats else 0.0,
         "distance": {"median": float(np.median(d_miss)) if d_miss.size else float("nan"),
                      "q25_q75": [float(np.percentile(d_miss, q)) for q in (25, 75)] if d_miss.size else []},
