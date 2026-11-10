@@ -508,6 +508,18 @@ def test_no_test_hooks_in_this_build():
     assert gc.test_hooks() == ()
 
 
+def test_every_device_copy_is_ordered_on_its_lane_stream():
+    """box_a memcheck (2,313 "use-after-free" reports in edt): pool memory comes from cudaMallocFromPoolAsync /
+    cudaFreeAsync on a lane stream (cudaStreamNonBlocking), so a blocking cudaMemcpy on the default stream had no
+    stream order with them. No blocking cudaMemcpy / cudaMemset is left, and read_back copies on the lane stream."""
+    src = (Path(__file__).resolve().parents[1] / "cuda" / "gpucheck.cpp").read_text()
+    assert not re.findall(r"\bcudaMem(?:cpy|set)(?:2D)?\(", src)
+    assert "void read_back(void* dst, const void* src, size_t bytes, Stream st) {" in src
+    assert "cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToHost, st)" in src
+    calls = re.findall(r"^\s*read_back\((.*)\);$", src, re.M)
+    assert len(calls) == 11 and all(c.endswith(", st") for c in calls), calls
+
+
 def test_slot_polygonizer_is_archived():
     """S04 (D2 part): the dense slot polygonizer lives in archive/ only. Owner's layout (a255988, as CT-87): archive/
     is git-ignored and kept on the owner's disk, so the archived files are read only where the folder exists."""

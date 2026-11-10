@@ -181,10 +181,15 @@ void copy_device(void* dst, const void* src, size_t bytes, Stream st) {
   if (bytes) cuda_check(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToDevice, st));
 }
 
-// Device -> pageable host memory after a wait (the device is idle): cudaMemcpy returns when the copy is done, which
-// cudaMemcpyAsync to pageable memory only "might" (runtime API, API synchronization behavior). Not a counted wait.
-void read_back(void* dst, const void* src, size_t bytes) {
-  if (bytes) cuda_check(cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToHost));
+// Device -> pageable host memory after a wait (the device is idle), queued on the lane stream `st`: the pool buffer is
+// allocated and freed in stream order on `st` (cudaMallocFromPoolAsync / cudaFreeAsync on a non-blocking stream), so
+// a default-stream cudaMemcpy has no order with them (box_a memcheck). cudaMemcpyAsync to pageable memory only "might"
+// return after the copy (runtime API, API synchronization behavior); the stream sync makes it complete before `dst`
+// is read. Not a counted wait.
+void read_back(void* dst, const void* src, size_t bytes, Stream st) {
+  if (!bytes) return;
+  cuda_check(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToHost, st));
+  cuda_check(cudaStreamSynchronize(st));
 }
 
 void wait(Stream st) {
@@ -245,7 +250,7 @@ void to_device(void* dst, const void* src, size_t bytes, Stream) { if (bytes) st
 void to_host(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
 void zero(void* p, size_t bytes, Stream) { if (bytes) std::memset(p, 0, bytes); }
 void copy_device(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
-void read_back(void* dst, const void* src, size_t bytes) { if (bytes) std::memcpy(dst, src, bytes); }
+void read_back(void* dst, const void* src, size_t bytes, Stream) { if (bytes) std::memcpy(dst, src, bytes); }
 void wait(Stream) { ++counters().waits; }
 void drain_sync(Stream) { ++counters().drain_syncs; }
 void clear_error() {}
@@ -3346,11 +3351,11 @@ BuiltTables add_tables_from_raters(const std::vector<Raters>& in) {
   std::vector<i64> res(size_t(K + 2 * m));
   out.sig_start.resize(size_t(K + 1));
   out.voter.resize(size_t(K));
-  read_back(res.data(), d + o_res, sizeof(i64) * res.size());
-  read_back(out.sig_start.data(), d + o_ss, sizeof(i64) * size_t(K + 1));
-  read_back(out.voter.data(), d + o_vt, size_t(K));
+  read_back(res.data(), d + o_res, sizeof(i64) * res.size(), st);
+  read_back(out.sig_start.data(), d + o_ss, sizeof(i64) * size_t(K + 1), st);
+  read_back(out.voter.data(), d + o_vt, size_t(K), st);
   out.sig.resize(size_t(out.sig_start.back()));
-  read_back(out.sig.data(), c.aux, sizeof(i32) * out.sig.size());
+  read_back(out.sig.data(), c.aux, sizeof(i32) * out.sig.size(), st);
   out.rater_area.assign(res.begin(), res.begin() + K);
   out.n_vote.assign(res.begin() + K, res.begin() + K + m);
   out.perimeter.assign(res.begin() + K + m, res.end());
@@ -3416,7 +3421,7 @@ std::vector<float> edt(const u8* nonzero, i32 H, i32 W) {
   for_each(st, W, EdtCols{df, ptr<i64>(d, o_cs), 1});
   for_each(st, n, EdtMap{ptr<i32>(d, o_d), ptr<float>(d, o_out)});
   wait(st);
-  read_back(out.data(), d + o_out, sizeof(float) * size_t(n));
+  read_back(out.data(), d + o_out, sizeof(float) * size_t(n), st);
   return out;
 }
 
@@ -3731,12 +3736,12 @@ EvalCounts eval_sets(const Polygons& in, const EvalSets& es) {
     for_each(st, x.fcols, EdtCols{df, ptr<i64>(d, x.fcs), x.frames});
     for_each(st, x.nrows, EvalNsd{ds, ptr<i64>(d, x.ns), nb, K, k, ptr<i64>(d, x.nsd)});
     wait(st);
-    read_back(out.inter.data() + a * M * M, inter, sizeof(i64) * size_t(nb * M * M));
-    read_back(out.inter_raw.data() + a * K * K, raw_i, sizeof(i64) * size_t(nb * K * K));
-    read_back(out.band_inter.data() + a * M * M, band_i, sizeof(i64) * size_t(nb * M * M));
-    read_back(out.soft.data() + a * T * 3, d + x.soft, sizeof(i64) * size_t(nb * T * 3));
-    read_back(out.surf.data() + a * Q * 3, d + x.surf, sizeof(i64) * size_t(nb * Q * 3));
-    read_back(out.nsd.data() + a * K * k * 6, d + x.nsd, sizeof(i64) * size_t(nb * K * k * 6));
+    read_back(out.inter.data() + a * M * M, inter, sizeof(i64) * size_t(nb * M * M), st);
+    read_back(out.inter_raw.data() + a * K * K, raw_i, sizeof(i64) * size_t(nb * K * K), st);
+    read_back(out.band_inter.data() + a * M * M, band_i, sizeof(i64) * size_t(nb * M * M), st);
+    read_back(out.soft.data() + a * T * 3, d + x.soft, sizeof(i64) * size_t(nb * T * 3), st);
+    read_back(out.surf.data() + a * Q * 3, d + x.surf, sizeof(i64) * size_t(nb * Q * 3), st);
+    read_back(out.nsd.data() + a * K * k * 6, d + x.nsd, sizeof(i64) * size_t(nb * K * k * 6), st);
   }
   Scores sc;
   score_words(L, tv, vote, vws, sc, t);
