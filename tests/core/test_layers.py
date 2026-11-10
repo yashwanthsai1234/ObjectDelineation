@@ -139,6 +139,11 @@ def top_level_names(path: Path) -> set[str]:
 MODULE_STRING = re.compile(r"\bobjdel(?:\.\w+)+")
 
 
+def module_imports(path: Path) -> set[str]:
+    """Names a module binds with a top-level `import x` (a monkeypatch target may go through them)."""
+    return {a.asname or a.name for n in parse(path).body if isinstance(n, ast.Import) for a in n.names}
+
+
 def resolves(dotted: str) -> bool:
     """The longest prefix that is a module file exists, and the rest (if any) names a top-level definition in it."""
     parts = dotted.split(".")[1:]
@@ -149,7 +154,8 @@ def resolves(dotted: str) -> bool:
         for f in (base.with_suffix(".py"), base / "__init__.py"):
             if f.exists():
                 rest = parts[n:]
-                return not rest or rest[0] in top_level_names(f) or (base / f"{rest[0]}.py").exists()
+                names = top_level_names(f) | module_imports(f)
+                return not rest or rest[0] in names or (base / f"{rest[0]}.py").exists()
     return False
 
 
@@ -163,6 +169,11 @@ def unresolved_module_strings() -> list[str]:
     files = [*py_files(SRC), *py_files(EXPERIMENTS), *py_files(TESTS)]
     live = [p for p in files if "lab" not in p.relative_to(ROOT).parts]
     return sorted({f"{p.relative_to(ROOT).as_posix()}: {t}" for p in live for t in string_tokens(p) if not resolves(t)})
+
+
+def test_module_string_through_an_imported_module_resolves():
+    """A monkeypatch target such as objdel.io.subprocess.run names a module that objdel.io imports."""
+    assert resolves("objdel.io.subprocess.run") and not resolves(".".join(("objdel", "io", "no_such_name")))
 
 
 def test_module_strings_resolve():
