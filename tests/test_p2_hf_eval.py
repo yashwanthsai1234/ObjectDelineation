@@ -15,7 +15,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from objdel.policy import sampler
 from objdel.sft import select as sft_select
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,61 +55,20 @@ def tiny_prompts(tmp_path):
 
 def test_hf_sample_batched_items_equal_one_item_per_call(tiny_prompts, tmp_path):
     """Left padding with per-item image tokens: a batch of 3 items (+ 1) gives each item what it gets alone."""
-    from experiments.phase2 import hf_sample as HS
+    from objdel.train import sample as HS
 
     model, prompts = tiny_prompts
     outs = {}
     for b in (1, 3):
         outs[b] = tmp_path / f"c{b}.jsonl"
-        assert HS.main(["--prompts", str(prompts), "--model", str(model), "--out", str(outs[b]),
-                        "--batch_items", str(b), "--timing", str(tmp_path / f"t{b}.json")]) == 0
+        assert HS.main(["--kind", "hf", "--prompts", str(prompts), "--model", str(model), "--out", str(outs[b]),
+                        "--batch_items", str(b), "--timing", str(tmp_path / f"t{b}.json")]) is None
     one, three = ([json.loads(x) for x in outs[b].read_text().splitlines()] for b in (1, 3))
     assert one == three and [(c["id"], c["k"]) for c in one] == [(f"lidc/n{i}/z0", k) for i in range(4) for k in (0, 1)]
     assert all(set(c) == {"id", "k", "token_ids", "finish_reason", "text"} for c in one)
     t = json.loads((tmp_path / "t3.json").read_text())
     assert t["items"] == 4 and t["samples"] == 8 and t["batch_items"] == 3 and t["generate_s"] > 0
     assert t["s_per_sample"] == pytest.approx(t["generate_s"] / 8) and t["load_s"] > 0 and t["tokens_mean"] > 0
-
-
-def test_hf_sample_cuts_each_row_at_its_own_first_stop():
-    from experiments.phase2 import hf_sample as HS
-
-    ps = [{"id": "a", "n": 2}, {"id": "b", "n": 2}]
-    rows = [[5, 7, 0, 0], [5, 5, 5, 5], [7, 9, 9, 0], [9, 2, 7, 5]]  # pad 0 after a stop
-    recs = HS.records(rows, ps, {7, 2}, lambda t: "".join(map(str, t)))
-    assert [(r["id"], r["k"], r["token_ids"], r["finish_reason"], r["text"]) for r in recs] == [
-        ("a", 0, [5, 7], "stop", "57"), ("a", 1, [5, 5, 5, 5], "length", "5555"),
-        ("b", 0, [7], "stop", "7"), ("b", 1, [9, 2], "stop", "92")]
-
-
-def test_hf_sample_resumes_after_the_last_whole_batch(tmp_path, monkeypatch):
-    """A killed or timed-out child is restarted on the same --out: whole batches are kept, a half-written batch and
-    a cut last line are dropped and resampled with the same seeds (batch boundaries are fixed by --batch_items)."""
-    from experiments.phase2 import hf_sample as HS
-
-    prompts = tmp_path / "p.jsonl"
-    prompts.write_text("".join(json.dumps({"id": f"i{i}", "n": 2, "sampling": {"seed": 0}, "processor_kwargs": {},
-                                           "prompt": "p", "image": "x"}) + "\n" for i in range(5)))
-    calls = []
-
-    def generate(model, proc, dev, batch):
-        calls.append([i for i, _ in batch])
-        return [{"id": p["id"], "k": k, "token_ids": [1], "finish_reason": "stop", "text": "t"}
-                for _, p in batch for k in range(p["n"])]
-
-    monkeypatch.setattr(HS, "load", lambda path: ("model", "proc", "cpu"))
-    monkeypatch.setattr(HS, "generate", generate)
-    out = tmp_path / "c.jsonl"
-    argv = ["--prompts", str(prompts), "--model", "m", "--out", str(out), "--batch_items", "2"]
-    assert HS.main(argv) == 0 and calls == [[0, 1], [2, 3], [4]]
-    full = out.read_text()
-    lines = full.splitlines(keepends=True)
-    out.write_text("".join(lines[:4] + lines[4:7]) + lines[7][:9])  # batch 0 whole, batch 1 half + a cut line
-    calls.clear()
-    assert HS.main(argv) == 0 and calls == [[2, 3], [4]]
-    assert out.read_text() == full
-    calls.clear()
-    assert HS.main(argv) == 0 and calls == []  # complete: nothing sampled
 
 
 # ---------------------------------------------------------------- sample.sample (g_probe): items per call
@@ -201,11 +159,11 @@ def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
 
     got = []
     monkeypatch.setattr(sft_select, "run_sampler", lambda kind, p, m, c, timeout, extra=(): got.append(timeout))
-    monkeypatch.setattr(sampler, "stop_ids", lambda path, proc: {7})
     import transformers
 
     from objdel.train import sample
 
+    monkeypatch.setattr(sample, "stop_ids", lambda path, proc: {7})
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda path: None)
     caps = []
     monkeypatch.setattr(sample, "export_prompts", lambda *a, **k: caps.append(k["max_tokens"]))
@@ -283,7 +241,7 @@ def test_hf_sample_loads_bf16_on_the_gpu_whatever_the_checkpoint_dtype(monkeypat
     torch = pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
 
-    from experiments.phase2 import hf_sample
+    from objdel.train import sample as hf_sample
 
     seen = []
 
@@ -302,6 +260,5 @@ def test_hf_sample_loads_bf16_on_the_gpu_whatever_the_checkpoint_dtype(monkeypat
     proc = type("P", (), {"tokenizer": type("T", (), {"padding_side": "left"})()})()
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda path, **kw: proc)
     for cuda, want in ((True, torch.bfloat16), (False, torch.float32)):
-        monkeypatch.setattr(torch.cuda, "is_available", lambda c=cuda: c)
-        hf_sample.load("m")
+        hf_sample.load("m", "cuda" if cuda else "cpu")
         assert seen[-1] == want

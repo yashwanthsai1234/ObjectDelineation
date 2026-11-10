@@ -15,7 +15,6 @@ stages:
   name: eval_r5
   soft: true
   ckpt: '{rd}/ckpt'
-  train: '{data}/prepared'
   view: ['{data}/eval_views/lidc-val-shifted']
   split: [val]
   out: ['{rd}/smoke_eval_r5']
@@ -46,7 +45,6 @@ stages:
   name: eval_final
   soft: true
   ckpt: '{rd}/smoke-rl/final'
-  train: '{data}/prepared'
   view: ['{data}/eval_views/lidc-val-shifted']
   split: [val]
   out: ['{rd}/smoke_eval_final']

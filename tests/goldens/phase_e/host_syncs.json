@@ -4,5 +4,6 @@
  "train/f_check.py": 2,
  "train/fast.py": 40,
  "train/gpu_pixels.py": 3,
- "train/record.py": 5
+ "train/record.py": 5,
+ "train/sample.py": 1
 }

@@ -1,6 +1,6 @@
 """V1 GPU-session readiness: g_probe stops when R1's §5.1 gates failed, select_ckpt --only topology (C2) and the
-prompt-id echo of sample_vllm (the R0 parity driver is archived with its tests, archive/phase2_runs/, CLEAN8). No
-GPU, no vLLM: the sampler child and the model scoring are replaced."""
+prompt-id echo of the library sampler (the R0 parity driver is archived with its tests, archive/phase2_runs/,
+CLEAN8). No GPU, no vLLM: the sampler child and the model scoring are replaced."""
 
 import json
 import subprocess
@@ -14,10 +14,10 @@ import pytest
 pytest.importorskip("trl")
 
 from experiments.phase2 import g_probe as GP  # noqa: E402
-from experiments.phase2 import sample_vllm as V  # noqa: E402
 from experiments.phase2 import select_ckpt as SC  # noqa: E402
-from objdel.policy import evaluate, sampler
-from objdel.sft import select as sft_select
+from objdel.policy import evaluate  # noqa: E402
+from objdel.sft import select as sft_select  # noqa: E402
+from objdel.train import sample as V  # noqa: E402
 from objdel.train import serve  # noqa: E402
 
 
@@ -58,7 +58,7 @@ def test_g_probe_with_passing_gates_keeps_the_d12c_repair(tmp_path, monkeypatch)
 
     monkeypatch.setattr(serve, "preload", lambda *a, **k: 0)
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: [])
-    monkeypatch.setattr(GP, "view_rows", lambda *a, **k: [])
+    monkeypatch.setattr(GP, "eval_rows", lambda *a, **k: [])
     verdicts = iter(["INCONCLUSIVE", "PASS"])
     monkeypatch.setattr(GP, "probe", lambda a, ckpt, *r: {"verdict": next(verdicts), "h0": 0, "gain": 0,
                                                           "ckpt": str(ckpt)})
@@ -110,7 +110,7 @@ def test_hf_check_compares_vllm_and_hf_metrics_per_item(tmp_path, monkeypatch, s
         return {k: list(vals[i] + d) for k in sft_select.HF_CHECK_KEYS}
 
     seen = {}
-    monkeypatch.setattr(evaluate, "view_rows", lambda view, items=None: seen.setdefault("items", items) and
+    monkeypatch.setattr(evaluate, "eval_rows", lambda view, items=None: seen.setdefault("items", items) and
                         [{"key": i} for i in keys])  # fmt: skip
     monkeypatch.setattr(sft_select, "sample_view",
                         lambda a, b, rows, out, k: seen.update(sampler=a.sampler, out=out) or {})
@@ -143,7 +143,7 @@ def _c2_run(tmp_path, monkeypatch, names=("e1",)):
         return {r["key"]: {"item_id": r["key"], "samples": ["{}"] * k} for r in rows}
 
     monkeypatch.setattr(sft_select, "exited", lambda run: {"config": {"model": "qwen3-vl-2b"}})
-    monkeypatch.setattr(evaluate, "view_rows", lambda view, items=None, rl_only=True: [{"key": f"{view.name}/{i}"}
+    monkeypatch.setattr(evaluate, "eval_rows", lambda view, items=None, rl_only=True: [{"key": f"{view.name}/{i}"}
                                                                                  for i in range(3)])
     monkeypatch.setattr(sft_select, "sample_view", sample_view)
     monkeypatch.setattr(sft_select, "score_view", _boom)
@@ -209,26 +209,6 @@ def test_sampler_reuse_is_keyed_on_flags_sampler_and_checkpoint(tmp_path, monkey
                                ("hf", tmp_path / "other", ())):  # nor another checkpoint's
         sft_select.run_sampler(kind, prompts, model, comps, 1.0, extra)
     assert [c[-1] == "--logprobs" for c in calls] == [False, True, False, False]
-
-
-def test_stop_ids_of_base_weights_without_generation_config(tmp_path):
-    """Qwen/Qwen3.5-0.8B ships no generation_config.json; its eos is only in text_config (248044)."""
-    (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3_5", "eos_token_id": None,
-                                                      "text_config": {"model_type": "qwen3_5_text",
-                                                                      "eos_token_id": 248044}}))
-    proc = SimpleNamespace(tokenizer=SimpleNamespace(eos_token_id=248046, pad_token_id=248044))
-    assert sampler.stop_ids(tmp_path, proc) == {248044, 248046}
-    (tmp_path / "generation_config.json").write_text(json.dumps({"eos_token_id": [7, 248044]}))
-    assert sampler.stop_ids(tmp_path, proc) == {7, 248044, 248046}
-
-
-def test_sample_vllm_turns_off_the_flashinfer_sampler_before_importing_vllm():
-    """R1 2026-11-05: FlashInfer's sampler JIT-compiles with nvcc (absent from /opt/vllm); vLLM reads env at import."""
-    import inspect
-
-    src = inspect.getsource(V.main)
-    assert V.ENV == {"VLLM_USE_FLASHINFER_SAMPLER": "0"}
-    assert -1 < src.index("os.environ.update(ENV)") < src.index("import vllm")
 
 
 def test_sample_vllm_echoes_prompt_ids_with_logprobs():

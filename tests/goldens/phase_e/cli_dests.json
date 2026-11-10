@@ -109,8 +109,10 @@
   ],
   "dropped": [
    "hash_view",
+   "per_call",
    "resummarize",
-   "store"
+   "store",
+   "train"
   ]
  },
  "train_sft": {

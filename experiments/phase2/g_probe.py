@@ -14,7 +14,7 @@ sequences needs 20-51 GiB of KV cache; needs the Phase 3 single-venv image, D15)
 configs.sampling(model, "grpo") (D13);
 fast.FastGRPO (per-chunk trimmed forwards, a per-step vision cache: perf C1, C6), TRLReward on the
 preloaded caches; the probe metrics run in this process (D7). Probe set: a seeded subset of `items`
-(128) shifted-val records (policy.evaluate.view_rows), K = 8 through the trainer's own generation (sample.sample), twice
+(128) shifted-val records (policy.evaluate.eval_rows), K = 8 through the trainer's own generation (sample.sample), twice
 at step 0 (the null, h0) and once at step 20; per item the raw composite R. Verdict: prereg.g_probe, step-0 legal =
 the mean of both draws. Also: Spearman of step-0 sd_geom / r_std / mixed with the gain (D12 veto, §6.2), the
 training-log form (mean logged R, steps 1-5 vs 11-20) and the step timing.
@@ -36,7 +36,7 @@ import numpy as np
 
 from experiments.phase2.prereg import G_PROBE, g_probe
 from objdel.eval import signal
-from objdel.policy.evaluate import score_items, view_rows
+from objdel.policy.evaluate import eval_rows, score_items
 from objdel.rl.build import build_trainer
 from objdel.rl.run import save_json
 
@@ -121,7 +121,7 @@ def main(argv=None) -> int:
     from objdel.train import dataset
 
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=dataset.DISAGREEMENT_OVERSAMPLE)
-    rows = view_rows(a.probe, a.items or G_PROBE["items"])
+    rows = eval_rows(a.probe, a.items or G_PROBE["items"])
     rows = [r | {"image": Image.open(r["image"]).convert("RGB")} for r in rows]
     docs = []
     for ckpt in ckpts:  # at most the selected branch and one repair branch

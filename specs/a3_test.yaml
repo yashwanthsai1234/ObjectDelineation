@@ -10,7 +10,6 @@ stages:
 - kind: eval
   name: eval
   ckpt: '{rd}/ckpt'
-  train: '{data}/prepared'
   view: ['{data}/eval_views/lidc-test-shifted']
   split: [test]
   out: ['{rd}/eval_test']

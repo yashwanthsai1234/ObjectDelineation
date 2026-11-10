@@ -128,7 +128,7 @@ def test_g01_answers(folder, view, split, n, r5):
     val-selection items, the new test mean against R5's nodule CI, noise_floor.mean_sd. Before V3 the test part
     skips ("open (V3)")."""
     from experiments.phase2 import final_eval as FE
-    from objdel.policy.evaluate import view_rows
+    from objdel.policy.evaluate import eval_rows
 
     run = _need(A3 / folder) if split == "val" else A3 / folder
     if not run.exists():
@@ -150,7 +150,7 @@ def test_g01_answers(folder, view, split, n, r5):
     v = FE.view_identity(_jsonl(run / "metrics.jsonl"), old, groups)
     print(folder, "TOST", t, "|", v["message"])
     if split == "val":
-        sel = {r["key"] for r in view_rows(VIEWS / view, 128)}
+        sel = {r["key"] for r in eval_rows(VIEWS / view, 128)}
         keep = lambda d: {i: x for i, x in d.items() if i not in sel}  # noqa: E731
         print("TOST without the 128 R5-selection items", FE.tost(keep(new), keep(old), groups))
     else:
@@ -236,7 +236,7 @@ def test_g07_repeat(tmp_path):
     final_eval = [sys.executable, "-I", "-m", "experiments.phase2.final_eval", "--view", PREPARED]
     runs = [tmp_path / n for n in "ab"]
     for out in runs:
-        subprocess.run([*final_eval, "--train", PREPARED, "--ckpt", ckpt, "--seed", "11", "--limit", "16",
+        subprocess.run([*final_eval, "--ckpt", ckpt, "--seed", "11", "--limit", "16",
                         "--out", out], cwd=ROOT, check=True)
     a, b = (read_jsonl(r / "answers.jsonl") for r in runs)
     assert len(a) == len(b) == 16 and [sorted(x) for x in a] == [sorted(x) for x in b]

@@ -163,6 +163,7 @@ def record() -> None:
     from objdel.reward.spec import fingerprint
 
     flat = {"reference_value": reference_value(), "target_set_hash": target_hash(), "chain_argv": chain_argv(),
+            "dropped_flags": golden().get("dropped_flags", {}),
             "grpo_config": jsonable(configs_golden()),
             "fingerprint": {"value": fingerprint(), "versions": [np.__version__, cv2.__version__, scipy.__version__]}}
     (GOLDENS / "invariance.json").write_text(json.dumps(flat, indent=1, sort_keys=True) + "\n")
@@ -175,6 +176,19 @@ def record() -> None:
 
 def golden(name: str = "invariance.json") -> dict:
     return json.loads((GOLDENS / name).read_text())
+
+
+def drop_flags(argvs: list[list[str]]) -> list[list[str]]:
+    """Golden 5's argv lists without the flags a later commit deleted, each with its value (golden()["dropped_flags"]:
+    {module: [flag, ...]}, applied like a module rename; E4 step 3 deletes final_eval's --train)."""
+    dropped, out = golden()["dropped_flags"], []
+    for argv in argvs:
+        a = list(argv)
+        for flag in next((f for m, f in dropped.items() if m in a), ()):
+            while flag in a:
+                del a[a.index(flag):a.index(flag) + 2]
+        out.append(a)
+    return out
 
 
 def test_golden_1_reward_value_part_of_the_fingerprint():
@@ -214,6 +228,8 @@ def test_golden_4_one_update(monkeypatch, tmp_path):
 
 def test_golden_5_chain_argv_of_the_live_plans():
     got, want = json.loads(json.dumps(jsonable(chain_argv()))), json.loads(json.dumps(golden()["chain_argv"]))
+    for g in want.values():
+        g["argv"] = drop_flags(g["argv"])
     for g in (got, want):  # r1 train: `--config <yaml>` before E6, SftStage flags after (test_chain compares by value)
         del g["r1_qwen3vl2b"]["argv"][1]
     assert got == want

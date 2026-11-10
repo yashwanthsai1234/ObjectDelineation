@@ -136,7 +136,7 @@ def test_every_output_lands_under_the_run_folder_and_only_val_is_read():
     assert len(evals) == 2
     for e in evals:
         assert [e[i + 1].rsplit("/", 1)[1] for i, w in enumerate(e) if w == "--view"] == ["lidc-val-shifted"]
-        assert after(e, "--split") == "val" and after(e, "--train") == f"{DATA}/prepared"
+        assert after(e, "--split") == "val" and "--train" not in e
         assert 1 <= int(after(e, "--limit")) <= 32  # a smoke slice, not a number to quote
     assert "lidc-test" not in " ".join(" ".join(s) for s in steps())
     assert not [s for s in steps() if "--split" in s and after(s, "--split") != "val"]
@@ -157,7 +157,7 @@ def test_final_eval_steps_name_the_limit_flag_that_exists():
     pytest.importorskip("trl")
     for e in module_steps("final_eval"):
         ns = parse_step(e)
-        assert ns.limit == int(after(e, "--limit")) and ns.view and ns.ckpt and ns.train
+        assert ns.limit == int(after(e, "--limit")) and ns.view and ns.ckpt
 
 
 def test_a_missing_required_flag_fails_the_parse():

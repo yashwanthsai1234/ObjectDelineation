@@ -176,14 +176,14 @@ def test_grpo_and_bridge_get_the_same_sampling_fields():
 
 
 def _hf_sample_kwargs(tmp_path, monkeypatch):
-    """experiments.phase2.hf_sample on a mocked model / processor -> the kwargs it hands to generate."""
+    """objdel.train.sample's HF child on a mocked model / processor -> the kwargs it hands to generate."""
     torch = pytest.importorskip("torch")
     pytest.importorskip("trl")
     import transformers
     from PIL import Image
 
-    from experiments.phase2 import hf_sample as HS
     from objdel.train import configs
+    from objdel.train import sample as HS
 
     seen = {}
 
@@ -215,7 +215,8 @@ def _hf_sample_kwargs(tmp_path, monkeypatch):
     line = {"id": "a", "prompt": "p", "image": str(tmp_path / "i.png"), "processor_kwargs": {}, "sampling": s, "n": 2}
     (tmp_path / "p.jsonl").write_text(json.dumps(line) + "\n")
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    HS.main(["--prompts", str(tmp_path / "p.jsonl"), "--model", "m", "--out", str(tmp_path / "c.jsonl")])
+    HS.main(["--kind", "hf", "--prompts", str(tmp_path / "p.jsonl"), "--model", "m", "--out",
+             str(tmp_path / "c.jsonl")])
     return seen, s
 
 
@@ -330,7 +331,7 @@ def test_sampler_child_failure_stops_select(tmp_path, monkeypatch):
     cmd = sft_select.sampler_cmd("hf", tmp_path / "p", tmp_path / "m", tmp_path / "c")
     with pytest.raises(subprocess.CalledProcessError):
         subprocess.run(cmd[:2] + ["-c", "raise SystemExit(1)"], check=True)
-    assert cmd[2:4] == ["-m", "experiments.phase2.hf_sample"]
+    assert cmd[2:6] == ["-m", "objdel.train.sample", "--kind", "hf"]
 
 
 # ---------------------------------------------------------------- g_probe null

@@ -65,7 +65,7 @@ def test_b1_rows_holds_the_b1_5_steps_in_order():
     assert after(merge, "--out") == after(train, "--out") and after(merge, "--ckpt") == after(train, "--ckpt")
     assert evals[:2] == ["-m", "experiments.phase2.final_eval"]
     assert after(evals, "--ckpt") == "/workspace/runs/r/b1-rows/final"
-    assert after(evals, "--train") == "/workspace/data/lidc/prepared"
+    assert "--train" not in evals  # E4: final_eval samples with no trainer
     views = [evals[i + 1].rsplit("/", 1)[1] for i, w in enumerate(evals) if w == "--view"]
     assert views == ["lidc-val-shifted", "lidc-val-edge"]
     assert [evals[i + 1] for i, w in enumerate(evals) if w == "--split"] == ["val", "val"]
@@ -130,13 +130,13 @@ def test_a_missing_required_flag_fails_the_parse():
     train, merge, ev = (module_steps("b1_rows.yaml")[i] for i in (0, 1, 2))
     assert parse_step(merge).merge_last and parse_step(train).steps == 260
     no_model = train[:train.index("--model")] + train[train.index("--model") + 2:]
-    no_train = ev[:ev.index("--train")] + ev[ev.index("--train") + 2:]
+    no_ckpt = ev[:ev.index("--ckpt")] + ev[ev.index("--ckpt") + 2:]
     with pytest.raises(SystemExit) as e:
         parse_step(no_model)
     assert e.value.code == 2
-    from experiments.phase2 import final_eval  # --train is checked after parse_args (it is optional with --rescore)
+    from experiments.phase2 import final_eval  # one of --ckpt and --rescore (EvalStage)
     with pytest.raises(SystemExit) as e:
-        final_eval.main(no_train[2:])
+        final_eval.main(no_ckpt[2:])
     assert e.value.code == 2
 
 

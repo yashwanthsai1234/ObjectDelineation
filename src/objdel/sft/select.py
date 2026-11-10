@@ -6,10 +6,10 @@ the CLI (it keeps judge, which reads the experiment baselines, and the pre-regis
 
 Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches;
 per branch, export the prompts and run the sampler child
-(`sample_vllm.py` under /opt/vllm, or `hf_sample`; one JSONL bridge) with CUDA asserted untouched here, a timeout
+(`python -I -m objdel.train.sample --kind vllm|hf`; one JSONL bridge) with CUDA asserted untouched here, a timeout
 of 600 s + --timeout-s per item-sample, and a completeness check (every prompt id has its n samples). The
 completions' `.meta.json` stamp (prompts SHA-256, child command) is written before the child starts: a matching
-stamp means the file is reused when complete and resumed otherwise (hf_sample keeps whole finished batches), on a
+stamp means the file is reused when complete and resumed otherwise (the HF sampler keeps whole finished batches), on a
 retry or a rerun alike; another stamp empties it. An attempt that finishes no new item counts against TRIES.
 SIGTERM / SIGINT (the run cap's `timeout`) kill the child's process group before select_ckpt exits. Score them in
 this process (objdel.eval.metrics: the device work runs in one process, D7), build the B2 signal panel and run G-vision
@@ -48,11 +48,7 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.core.provenance import repo_root
-from objdel.policy import evaluate, sampler
-
-VLLM_VENV = Path("/opt/vllm")  # the phase2 image's second venv; the vllm_native image has vLLM in the running venv
-
+from objdel.policy import evaluate
 
 TRIES = 2  # sampler child attempts that finish no new item
 
@@ -92,17 +88,10 @@ def cuda_untouched() -> None:
         raise RuntimeError("CUDA is initialized in select_ckpt: the sampler child would share the GPU (D13)")
 
 
-def vllm_python() -> str:
-    """The python of the second vLLM venv when the image has one, else this interpreter."""
-    py = VLLM_VENV / "bin" / "python"
-    return str(py) if py.exists() else sys.executable
-
-
 def sampler_cmd(kind: str, prompts: Path, model: Path, out: Path, extra=()) -> list[str]:
-    """argv of one sampler child: sample_vllm.py (kind "vllm") or hf_sample, on prompts -> out."""
-    head = [vllm_python(), "-I", str(repo_root() / "experiments/phase2/sample_vllm.py")]
-    head = head if kind == "vllm" else [sys.executable, "-I", "-m", "experiments.phase2.hf_sample"]
-    return head + ["--prompts", str(prompts), "--model", str(model), "--out", str(out), *extra]
+    """The sampler child's argv: objdel.train.sample in this venv (vllm_native: vLLM and objdel share it, ADR 0023)."""
+    return [sys.executable, "-I", "-m", "objdel.train.sample", "--kind", kind, "--prompts", str(prompts), "--model",
+            str(model), "--out", str(out), *extra]
 
 
 def complete(comps: Path, want: Counter) -> bool:
@@ -191,7 +180,7 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
 
     out.mkdir(parents=True, exist_ok=True)
     proc = AutoProcessor.from_pretrained(branch)  # saved by train_sft with the run's processor kwargs
-    stop = sampler.stop_ids(branch, proc)
+    stop = sample.stop_ids(branch, proc)
     prompts, comps = out / "prompts.jsonl", out / "completions.jsonl"
     sample.export_prompts(rows, prompts, a.model, "lidc", k, processor=proc, stop_ids=stop, seed=a.seed,
                           max_tokens=a.max_tokens)
@@ -204,7 +193,7 @@ def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:
     signal panel and the per-item K-sample mean IoU_tc per structure (G-prior)."""
     from objdel.eval import signal, summarize
 
-    rows = evaluate.view_rows(view, a.items)
+    rows = evaluate.eval_rows(view, a.items)
     results, groups = evaluate.score_items(rows, sample_view(a, branch, rows, out, k), view.resolve())
     (out / "items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in results))
     iou = {r["item_id"]: {n: float(np.mean(o["iou_tc"])) for n, o in r["objects"].items()} for r in results}
@@ -230,7 +219,7 @@ def score_probe(a, branch: Path, p: str, out: Path) -> dict:
     from objdel.eval import probes
 
     d = a.probes / f"probe-{p}"
-    done = sample_view(a, branch, evaluate.view_rows(d, rl_only=False), out / f"probe-{p}", a.k)
+    done = sample_view(a, branch, evaluate.eval_rows(d, rl_only=False), out / f"probe-{p}", a.k)
     return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # ids pair the seeds (C2)
 
 
@@ -241,7 +230,7 @@ def hf_check(a, name: str, out: Path) -> dict:
     bootstrap 95 % CI (PLAN G-parity: every difference inside its CI); pass = 0 inside every CI."""
     from objdel.eval import signal
 
-    rows = evaluate.view_rows(a.shifted, HF_CHECK_ITEMS)
+    rows = evaluate.eval_rows(a.shifted, HF_CHECK_ITEMS)
     hf = argparse.Namespace(**vars(a) | {"sampler": "hf"})
     done = sample_view(hf, a.run / "branches" / name, rows, out / name / "hf-check", a.k)
     got = {"hf": {r["item_id"]: r["samples"] for r in evaluate.score_items(rows, done, a.shifted.resolve())[0]}}

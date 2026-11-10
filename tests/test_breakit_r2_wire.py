@@ -160,16 +160,13 @@ def test_noise_floor_of_one_answer_is_refused_or_finite():
 def test_view_path_ending_in_dotdot_stays_inside_out(ev, tmp_path, monkeypatch):  # noqa: F811
     (ev / "sub").mkdir()
     other = Path(f"{ev}/sub/..")
-    monkeypatch.setattr(FE, "sample_items", fake_sampler(ev))
-    monkeypatch.setattr(FE, "load_trainer", lambda a: object())
+    monkeypatch.setattr(FE, "load_sampler", fake_sampler(ev))
     out = tmp_path / "O" / "deep"
     try:
         FE.main(
             [
                 "--ckpt",
                 "c",
-                "--train",
-                str(ev),
                 "--view",
                 str(ev),
                 "--split",

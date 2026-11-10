@@ -14,7 +14,6 @@ import pytest
 from oracles.eval_oracle import pairwise_iou
 
 from experiments.phase2 import prereg as P
-from experiments.phase2 import sample_vllm as V
 from experiments.phase2 import select_ckpt as SC
 from objdel.eval import gates, metrics, probes, summarize
 from objdel.eval import signal as S
@@ -23,6 +22,7 @@ from objdel.policy import evaluate
 from objdel.reward import ExpertCache
 from objdel.sft import select as sft_select
 from objdel.targets import build_target
+from objdel.train import sample as V
 from objdel.train import serve
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -280,7 +280,7 @@ def test_select_ckpt_probe_rows_are_the_probe_items():
     root = VIEWS / "probe-topology"
     if not (root / "lidc" / "val.jsonl").is_file():
         pytest.skip("no probe-topology view")
-    rows = evaluate.view_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
+    rows = evaluate.eval_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
     assert len(rows) == len(probes.records(root)) == 680
 
 

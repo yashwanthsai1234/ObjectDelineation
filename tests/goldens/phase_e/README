@@ -72,3 +72,23 @@ Goldens 4 and 6 unchanged (build_trainer resolves the same GRPOConfig and update
 CLEAN8 (impl2-CLEAN8f, on a0e41f7): old_names re-recorded: train/configs.py loses dtype and param_groups (full
 fine-tuning retired with the 450M model; every model is LoRA). Goldens 1-6 unchanged (no reward, target, chain of a
 live plan or GRPOConfig value changes: CLEAN8 deletes only the 450M key and the full fine-tuning branches).
+E4 step 1 (impl2-E4f, on 2db0bcb, before E3b/E3c/E5): host_syncs gains train/sample.py 1 (HfSampler's generate
+.tolist(), moved from experiments/phase2/hf_sample.py); old_names re-recorded: train/sample.py gains the sampler
+interface (params_for, Sample, Sampler, VllmSampler, HfSampler, build_prompt, main and sample_vllm / hf_sample's
+helpers) and the checkpoint stop_ids, which select_ckpt loses (e_moves.json sends them all to objdel.policy.sampler).
+E4 step 2 move (impl2-E4f): old_names re-recorded: select_ckpt loses SUBSET_SEED, _score, score_items and view_rows,
+final_eval loses METRICS, SELECTION, per_item and summarize (all to objdel.train.evaluate; e_moves.json moves the
+file to objdel.policy.evaluate).
+E4 step 3 (impl2-E4f): invariance.json gains "dropped_flags" {"experiments.phase2.final_eval": ["--train"]}: golden 5
+keeps the E0 argv and test_golden_5 / tests/infra/test_chain.py drop the flag and its value before comparing (like a
+module rename); plan_argv.json is read the same way, and SAME_STAGE loses ("a3_test", 1), now equal string for string.
+cli_dests.json: final_eval's "dropped" gains per_call and train (EvalStage loses both: they only fed the trainer).
+old_names re-recorded: final_eval swaps load_trainer, sample_items and score for load_sampler, scoring, write_scored
+and SAMPLER_LABEL; select_ckpt loses ROOT, VLLM_VENV and vllm_python (the sampler child is objdel.train.sample).
+tests_import_experiments gains policy/test_sampler.py (it checks select_ckpt.sampler_cmd).
+Merge of impl2-E4f into impl2-emoves2 (after impl2-CLEAN8f, which holds E2; 2026-11-10): E2 had already made
+objdel.policy.evaluate, so E4's evaluation module lands there (objdel.train.evaluate is gone; e_moves.json loses its
+files row); E2's objdel.policy.sampler (only the checkpoint stop_ids) is deleted: the one stop_ids is E4's in
+objdel.train.sample, which the E5 split sends to objdel.policy.sampler. old_names re-recorded on the merge tree
+(select_ckpt and train_sft keep E2's CLI names, configs loses CLEAN8's dtype and param_groups);
+tests_import_experiments loses policy/test_sampler.py (it reads sft.select.sampler_cmd now).

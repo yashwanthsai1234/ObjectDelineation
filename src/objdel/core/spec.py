@@ -239,7 +239,6 @@ class EvalStage(StageBase, frozen=True, extra="forbid"):  # final_eval
 
     kind: CliSuppress[Literal["eval"]] = "eval"
     ckpt: str | None = None
-    train: str | None = None  # E4 deletes final_eval's --train
     view: tuple[str, ...] = Field(min_length=1)
     split: tuple[str, ...] = ()  # () -> every view uses "val"; else one split per view
     out: tuple[str, ...] = Field(min_length=1)  # one per view, or one
@@ -247,7 +246,6 @@ class EvalStage(StageBase, frozen=True, extra="forbid"):  # final_eval
     adapter: str | None = None  # ckpt's base plus this LoRA folder (a lora-seqmask run), served unmerged
     k: int = Field(8, ge=2)
     seed: int = 11
-    per_call: int = Field(64, gt=0)
     rescore: str | None = None
     limit: int | None = Field(None, ge=1)  # smoke runs: at most N items per view
 
@@ -296,7 +294,7 @@ FLAG_ORDER = {
     "probe": ("model", "ckpt", "select", "train", "probe", "out", "items", "grpo", "compile", "shared_prefix", "plain",
               "trace", "lr", "log_by_prompt", *(f for f in TRAINER_ORDER if f not in ("compile", "plain",
                                                                                                "trace"))),
-    "eval": ("ckpt", "train", "views", "model", "adapter", "k", "seed", "per_call", "rescore", "limit"),
+    "eval": ("ckpt", "views", "model", "adapter", "k", "seed", "rescore", "limit"),
 }
 
 

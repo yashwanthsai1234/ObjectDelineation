@@ -191,11 +191,11 @@ def _ticks(rel: str) -> set[str]:
 
 
 def _a9_items():
-    """Key sets of the schema-2 files, taken from the code: final_eval.summarize on fake items, one metrics() call."""
+    """Key sets of the schema-2 files, taken from the code: evaluate.summarize on fake items, one metrics() call."""
     import numpy as np
 
-    from experiments.phase2 import final_eval as FE
     from objdel.eval import metrics
+    from objdel.policy import evaluate as FE
 
     ids = [f"lidc/p{p}/n001/z{s}" for p in range(2) for s in range(2)]
     items = [{"item_id": i, **{m: 0.5 + k / 10 for m in FE.METRICS}, **{m: 0.5 for m in FE.SELECTION}}
@@ -227,8 +227,8 @@ def test_output_format_page_lists_every_schema_2_key():
             *summary["paired"]["medoid_minus_mean"], *m, *m["samples"], *m["objects"]["nodule"], *m["groups"],
             "item_id", "dataset", "group_id", "W", "H", "samples", "truncated", "tokens", "partial", "seconds",
             "noise_floor", "item_sd", "mean_sd", "limit", "rescored_from", "view_manifest_sha256",
-            "view_content_sha256", "code_sha", "checker_build", "ckpt", "view", "split", "K", "seed", "metrics_absent",
-            "resummarized_from", "ci95_item", "ci95_nodule", "ci95_patient", "gate_ci"}
+            "view_content_sha256", "code_sha", "checker_build", "sampler", "ckpt", "view", "split", "K", "seed",
+            "metrics_absent", "resummarized_from", "ci95_item", "ci95_nodule", "ci95_patient", "gate_ci"}
     assert sorted(k for k in keys if k not in ticks) == []
     assert "no bare `ci95`" in page and "CODE_SHA" in page
 
