@@ -3,6 +3,7 @@ function) that exists, so moving a test file cannot leave a stale path behind.""
 
 import ast
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -11,12 +12,10 @@ SOURCES = ("pyproject.toml", "Makefile", ".github", "experiments", "specs", "src
 
 
 def live_files() -> list[Path]:
-    out = []
-    for s in SOURCES:
-        p = ROOT / s
-        out += [p] if p.is_file() else [f for f in p.rglob("*") if f.is_file() and f.suffix in (
-            ".py", ".sh", ".yaml", ".yml", ".toml", ".txt", "") and "__pycache__" not in f.parts]
-    return out
+    """Tracked files only: git-ignored local state (vast/code_files.txt from sync_up, run outputs) is not live code."""
+    names = subprocess.run(["git", "ls-files", "-z", *SOURCES], cwd=ROOT, capture_output=True, text=True,
+                           check=True).stdout.split("\0")
+    return [ROOT / n for n in names if n and Path(n).suffix in (".py", ".sh", ".yaml", ".yml", ".toml", ".txt", "")]
 
 
 def missing(paths: dict[str, list[str]]) -> list[str]:
