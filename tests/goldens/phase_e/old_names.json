@@ -56,6 +56,8 @@
  ],
  "src/objdel/train/fast.py": [
   "BUCKETS",
+  "EncoderCache",
+  "EncoderMismatch",
   "FINE",
   "FastForward",
   "FastGRPO",
@@ -73,12 +75,14 @@
   "SUMMARY",
   "SUMS",
   "VisionCache",
+  "WAKE_PHASE",
   "bounded",
   "by_group_length",
   "by_length",
   "check_meta",
   "clip_counts",
   "compile_text_layers",
+  "grid_rows",
   "group_order",
   "host_rows",
   "image_ids",
@@ -92,7 +96,6 @@
   "no_lora_input_cast",
   "one_pad_per_image",
   "packing_wins",
-  "per_row",
   "prompt_groups",
   "prompt_images",
   "raw_ratio",
@@ -103,6 +106,7 @@
   "seq_kl",
   "summary_metrics",
   "vllm_engine_kwargs",
+  "vllm_generate_checked",
   "vllm_kwargs",
   "window",
   "window_from_meta",
@@ -123,12 +127,17 @@
  ],
  "src/objdel/train/callbacks.py": [
   "BudgetStop",
+  "ExpectStep1",
   "LocGuard",
   "NoCkptLayers",
   "NvtxSteps",
   "OpsmDelta",
+  "STEP1_CLOSE",
+  "STEP1_EXACT",
   "TraceStep",
-  "slope_nw"
+  "slope_nw",
+  "step1_mismatches",
+  "step1_values"
  ],
  "src/objdel/train/sample.py": [
   "G",
@@ -140,20 +149,11 @@
   "write"
  ],
  "src/objdel/train/serve.py": [
-  "CGROUP",
   "CacheRef",
-  "POOL_CAP",
-  "SCORERS",
   "STORE",
-  "_POOLS",
-  "_Pool",
   "_first",
-  "cpus",
-  "fork_pool",
   "loader",
-  "pool_size",
-  "preload",
-  "quota"
+  "preload"
  ],
  "src/objdel/train/nvtx.py": [
   "SYNC",
@@ -165,23 +165,27 @@
   "enabled",
   "pop",
   "push",
-  "range"
+  "range",
+  "tail"
  ],
  "src/objdel/train/trl_adapter.py": [
   "ATTRS",
   "BEHAVIOURS",
   "GLOBALS",
   "KEYS",
+  "LORA_POINTS",
   "METHODS",
   "PIN",
   "PRIVATE_ATTRS",
   "TRLContractError",
   "VLLM_METHODS",
   "_GASC",
+  "_LIVE",
   "_SIGNED",
   "_TEXT",
   "_fail",
-  "check"
+  "check",
+  "check_lora"
  ],
  "src/objdel/train/gpu_pixels.py": [
   "BACKENDS",
@@ -192,19 +196,22 @@
   "_patchify",
   "fused",
   "patchify",
-  "pick_backend"
+  "pick_backend",
+  "picked"
  ],
  "src/objdel/train/vllm_sync.py": [
   "LORA_NAME",
   "PushStats",
   "_load",
   "_wake",
+  "engine_model",
   "install",
   "push_weights",
   "sync_lora",
   "write_adapter"
  ],
  "src/objdel/train/vllm_requests.py": [
+  "group_params",
   "group_requests",
   "grouped"
  ],
@@ -313,19 +320,20 @@
   "verdict"
  ],
  "experiments/phase2/train_rl.py": [
-  "_finite",
-  "_hex",
+  "BudgetFlagError",
   "_sha",
   "check_flags",
   "check_rows",
   "check_sampler",
   "cut_seq_gaps",
+  "f_check_callback",
   "heldout_rows",
   "main",
   "merge_last",
   "numerics_overrides",
   "parse",
   "rows_schedule",
+  "run_report",
   "save_final",
   "session_budget",
   "with_caps"
@@ -380,6 +388,7 @@
   "GRACE_S",
   "HERE",
   "IMPORT_CHECK",
+  "LIVE_CLIS",
   "MARGIN_S",
   "ONSTART_MAX",
   "OPS",
@@ -401,6 +410,7 @@
   "cmd_pull",
   "cmd_push_hf",
   "cmd_run",
+  "cmd_run_spec",
   "cmd_sweep_orphans",
   "cmd_sync_up",
   "cmd_teardown",
@@ -468,12 +478,14 @@
   "prompts",
   "pytest",
   "refusal",
+  "rl_stages",
   "rows_revision",
   "rows_root",
   "runbooks",
   "spec_inputs",
   "stamp_path",
   "targets",
+  "train_rl_argv",
   "trl_problems",
   "vastai_problems",
   "view_integrity"

@@ -1,6 +1,8 @@
 {
  "eval/vision.py": 2,
  "train/callbacks.py": 2,
- "train/fast.py": 32,
- "train/gpu_pixels.py": 3
+ "train/f_check.py": 2,
+ "train/fast.py": 40,
+ "train/gpu_pixels.py": 3,
+ "train/record.py": 5
 }

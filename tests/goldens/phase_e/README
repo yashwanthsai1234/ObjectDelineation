@@ -49,3 +49,11 @@ test_final_sweep.py (SWEEP) and test_v3_records.py (D7); module_strings_stale ga
 made-up module of test_final_sweep's tmp tree (a string the sweep must flag, not a live name); old_names re-recorded:
 final_eval and eval/device gain D7's single-process eval and device EDT names, final_eval loses _pool, and vllm_sync
 drops _with_adapter and engine_kwargs again (the merge had kept the lane side; B2's one option F path stands).
+Comb3 merge (impl2-comb3 = comb + fB, fC, fDA, fClean, fDoc2, Ca, Cb, Cc, DOC, L2b + impl2-E0 dcbd0f4; 2026-11-09):
+host_syncs train/fast.py 32 -> 40 (C3 EncoderCache and its shape guard, C0 --checks-from-step/--record-batches,
+B2.2 vllm_generate_checked), train/f_check.py 0 -> 2 and train/record.py 0 -> 5 (fB --f-check and Cc
+--record-batches, both off unless their flag is given); tests_import_experiments gains test_c_gpu.py,
+test_docs_content.py, test_encoder_once.py, test_f_check.py, test_phase_b_decisions.py and test_record_batches.py;
+old_names re-recorded (train_rl: E6.4 drops _finite and _hex, fB adds f_check_callback and run_report, E6.4
+BudgetFlagError; preflight: train_rl_argv and rl_stages; serve loses the fork pool (D7); fast, callbacks,
+trl_adapter, vllm_sync, vllm_requests, gpu_pixels, nvtx and policy gain the lanes' names).
