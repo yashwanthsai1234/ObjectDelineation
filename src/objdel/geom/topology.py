@@ -22,7 +22,7 @@ bit-quad Euler number (the engine's quads, checker.rings.trace) is an independen
 chi8 = b0 - b1 = sum_k (1 - holes_k).
 
 Input: any 2-D array-like; every nonzero value is foreground (NaN included). `as_mask` is the one normalisation,
-used here and by objdel.targets. A numpy bool array may hold bytes other than 0 and 1 (np.asarray(PIL "1" image,
+used here and by objdel.data.targets. A numpy bool array may hold bytes other than 0 and 1 (np.asarray(PIL "1" image,
 bool) stores 255; views of other dtypes store anything), and bool -> bool copies (asarray, astype, ascontiguousarray,
 pad) keep those bytes, while every cast to or from bool computes x != 0 [numpy casts]; so a bool array is cast
 to uint8 (5 us at 500 x 500, 10x cheaper than a != 0 comparison) and viewed back (issue I1, break-it B1-5, B2-10).

@@ -369,7 +369,7 @@ def test_crowded_in_data_and_targets_use_the_one_rule():
 
     from objdel.data import lidc
 
-    frame = importlib.import_module("objdel.targets.frame")  # `objdel.targets.frame` the name is a function
+    frame = importlib.import_module("objdel.data.targets.frame")  # `objdel.data.targets.frame` the name is a function
     others = [(5, 5, 8, 8)]
     assert lidc.crowded(SimpleNamespace(others=others), (0, 0, 6, 6)) is True
     assert lidc.crowded(SimpleNamespace(others=others), (8, 0, 20, 20)) is False

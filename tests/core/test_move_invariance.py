@@ -35,7 +35,7 @@ def reference_value() -> str:
 
 def target_hash() -> str:
     """Golden 2: target_set_hash of the 300 fixture targets of tests/test_targets_golden.py."""
-    from objdel.targets import build_target, target_set_hash
+    from objdel.data.targets.build import build_target, target_set_hash
     from tests.test_targets_golden import fixtures
 
     rows = []

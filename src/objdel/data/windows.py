@@ -11,7 +11,7 @@ each draw d, one shifted window (augment.draw at the policy side S0) and one res
 a neighbouring LADDER side), seeded per item by augment.row_rng (draw 0 with build_eval_views' keys, so draw 0 is
 the eval views' window). Every window lies inside the slice, holds every doctor pixel with CLEARANCE px and meets no
 other outlined nodule; a draw that breaks a rule is left out and counted, never replaced by another kind or side.
-Geometry only: no pixel is read or written. `disagreement` is per slice: the dataset._prepare rule (the doctors'
+Geometry only: no pixel is read or written. `disagreement` is per slice: the prepare._prepare rule (the doctors'
 joint topology answers differ) on the policy frame's masks.
 
 schedule(windows, target, steps, ...): `steps * per_step` windows in step-major order, built in blocks of
@@ -35,9 +35,9 @@ from operator import attrgetter
 
 import numpy as np
 
+from objdel.data.targets import augment
+from objdel.data.targets.frame import CLEARANCE, centred, crowded, frame, union_box
 from objdel.geom.text import SCHEMAS
-from objdel.targets import augment, frame
-from objdel.targets.frame import CLEARANCE, centred, crowded, union_box
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
 from objdel.verify.reward.score import rater_answers
 
@@ -113,7 +113,7 @@ class WindowPool:
 
 
 def _disagreement(masks, dataset: str) -> bool:
-    """dataset._prepare's rule; tau and T5 do not enter the doctors' topology answers, so they are not computed."""
+    """prepare._prepare's rule; tau and T5 do not enter the doctors' topology answers, so they are not computed."""
     names = SCHEMAS[dataset]
     return len(rater_answers({n: ExpertCache(masks[n], 1.0, 1.0) for n in names}, names)) > 1
 

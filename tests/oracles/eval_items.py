@@ -6,7 +6,7 @@ tests/goldens/d_r05_metrics.json holds metrics() of every item, written before D
 """
 import numpy as np
 
-from objdel.targets import build_target, min_areas
+from objdel.data.targets.build import build_target, min_areas
 
 BOWTIE = {"nodule": '{"nodule":[{"outer":[[300,300],[700,700],[700,300],[300,700]],"holes":[]}]}',
           "riga": '{"disc":[{"outer":[[300,300],[700,700],[700,300],[300,700]],"holes":[]}],"cup":[]}'}

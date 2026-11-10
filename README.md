@@ -70,7 +70,7 @@ make test      # test suite
 
 ```python
 import numpy as np
-from objdel.targets import build_target, min_areas
+from objdel.data.targets.build import build_target, min_areas
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_completion
 

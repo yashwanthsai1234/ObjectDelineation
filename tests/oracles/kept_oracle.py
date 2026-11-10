@@ -1,5 +1,6 @@
-"""The interval loop that objdel.targets.build used when min_area was unknown (`_kept`, removed by D4: every caller now
-passes the reward's rule). Reference for the ladder's topology test (tests only), on the scipy topology oracle.
+"""The interval loop that objdel.data.targets.build used when min_area was unknown (`_kept`, removed by D4: every
+caller now passes the reward's rule). Reference for the ladder's topology test (tests only), on the scipy topology
+oracle.
 
 kept(a, b, lo, hi): signature(a, t) == signature(b, t) for every rule t in [lo, hi]. Between consecutive rules where
 either filtered mask can change (a raw component of t' - 1 px is removed at t'; a hole of the filtered mask of t' - 1

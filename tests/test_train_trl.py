@@ -316,7 +316,7 @@ def test_controller_is_gone_and_the_live_callbacks_stay():
     for name in ("Contr" + "oller", "audit_" + "alarm", "FI" + "RED"):
         with pytest.raises(AttributeError):
             getattr(callbacks, name)
-    from objdel.eval import audit
+    from objdel.data import audit
 
     assert callable(audit.hack_audit)
     assert not hasattr(audit, "alarms" + "_for")

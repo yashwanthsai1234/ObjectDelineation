@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from objdel.eval.audit import hack_audit
+from objdel.data.audit import hack_audit
 from objdel.verify import gates
 from objdel.verify.metrics import metrics, summarize
 from objdel.verify.reward import cache as cache_mod

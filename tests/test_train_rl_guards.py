@@ -281,12 +281,13 @@ def prepared(tmp_path_factory, synthetic_items):
     """The synthetic_items fixture, not `from conftest import`: tests/verify has its own conftest, and the module
     name `conftest` is whichever one pytest loaded last."""
     pytest.importorskip("datasets")
+    from objdel.data import prepare as data_prepare
     from objdel.data import store
     from objdel.train import dataset
 
     root = tmp_path_factory.mktemp("rows")
     store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    dataset.prepare(root / "store", root / "prepared", procs=1, prompts=dataset.PROMPTS)
+    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=dataset.PROMPTS)
     return root / "prepared"
 
 

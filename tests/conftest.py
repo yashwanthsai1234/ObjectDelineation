@@ -47,7 +47,7 @@ def _synthetic_items(splits=("train",), unanimous=False):
     """Per split (numbered s = 1, 2, ...): riga/MESSIDOR/image00<s> (3 raters, nested disc and cup) and LIDC items
     lidc/1.2.<s>/n000/z001 (raters disagree: a solid disc vs a ring with a hole), z002 (no pixels), z003 (one rater)
     and, with `unanimous`, z004 (two raters, one topology). Sorted as objdel.data.store.write needs."""
-    from objdel.data import Item
+    from objdel.data.store import Item
     rng = np.random.default_rng(0)
     hu = lambda: rng.integers(-1000, 400, (100, 100), dtype=np.int16)
     out = []

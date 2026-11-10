@@ -6,8 +6,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from PIL import Image
 
-from objdel.data import Item
-from objdel.targets import FRAMES, FrameConfig, build_target, frame
+from objdel.data.store import Item
+from objdel.data.targets.build import build_target
+from objdel.data.targets.frame import FRAMES, FrameConfig, frame
 
 DIVISORS = {d for d in range(1, 501) if 1000 % d == 0}
 

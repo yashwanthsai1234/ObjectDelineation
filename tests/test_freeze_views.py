@@ -53,8 +53,8 @@ def test_render_file_drift_is_reported():
     files = FV.render_files()
     assert set(files) == set(FV.RENDER_FILES) and all(len(c) == 40 for c in files.values())
     assert FV.drift({"render_files": files}) == []
-    planted = files | {"src/objdel/targets/frame.py": "0" * 40}
-    assert FV.drift({"render_files": planted}) == ["src/objdel/targets/frame.py"]
+    planted = files | {"src/objdel/data/targets/frame.py": "0" * 40}
+    assert FV.drift({"render_files": planted}) == ["src/objdel/data/targets/frame.py"]
 
 
 def test_freeze_refuses_uncommitted_render_files(tmp_path):

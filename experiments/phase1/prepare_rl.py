@@ -7,7 +7,7 @@ the per-split counts and the answer-token evidence for issue I5 (targets over ea
 Reads untrusted data: run with python -I.
 
 References:
-- objdel.train.dataset.prepare (frames, targets, ExpertCache files, manifest) and impl/M7_train.md (I5 table)
+- objdel.data.prepare.prepare (frames, targets, ExpertCache files, manifest) and impl/M7_train.md (I5 table)
 - transformers AutoTokenizer (add_special_tokens=False counts the answer alone):
   https://huggingface.co/docs/transformers/main_classes/tokenizer
 - TRL GRPOConfig max_completion_length (generation stops there, the completion is truncated):
@@ -17,6 +17,7 @@ import argparse
 import json
 import time
 
+from objdel.data import prepare as data_prepare
 from objdel.train import dataset as D
 
 
@@ -45,7 +46,7 @@ def main():
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()
     t0 = time.time()
-    m = D.prepare(a.store, a.out, a.splits.split(","), a.procs, prompts=D.PROMPTS)
+    m = data_prepare.prepare(a.store, a.out, a.splits.split(","), a.procs, prompts=D.PROMPTS)
     print(json.dumps(m["sets"], indent=1), f"\n{time.time() - t0:.0f}s", flush=True)
     print(json.dumps(m["files"], indent=1))
     print(json.dumps(token_budget(a.out), indent=1))

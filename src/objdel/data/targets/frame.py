@@ -54,7 +54,7 @@ from typing import NamedTuple
 import numpy as np
 from PIL import Image
 
-from objdel.data import Item
+from objdel.data.store import Item
 from objdel.geom.box import boxes_meet
 from objdel.geom.topology import as_mask
 

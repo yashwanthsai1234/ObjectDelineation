@@ -171,11 +171,12 @@ def test_outputs_are_json_native():
 
 def test_group_id_stays_out_of_the_prompt_rows(tmp_path, synthetic_items):
     """U50: TRL forwards extra prompt columns to the reward functions, so group_id comes from the records."""
+    from objdel.data import prepare as data_prepare
     from objdel.data import store
     from objdel.train import dataset as D
 
     store.write(synthetic_items(), tmp_path / "store")
-    D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
     rows = D.prompts(tmp_path / "out", "lidc", "train", rl_only=False)
     assert rows and all("group_id" not in r for r in rows)
     recs = D.records(tmp_path / "out", "lidc", "train")
@@ -972,7 +973,9 @@ def test_answers_reader_memory(tmp_path):
 @pytest.mark.slow
 def test_rescore_of_300_items_is_fast(tmp_path, clean_store, monkeypatch, synthetic_items):
     """Q04 (time): the rescore of 300 synthetic items takes under 60 s."""
-    from objdel.data import Item, store
+    from objdel.data import prepare as data_prepare
+    from objdel.data import store
+    from objdel.data.store import Item
     from objdel.train import dataset as D
 
     y, x = np.ogrid[:100, :100]
@@ -983,7 +986,7 @@ def test_rescore_of_300_items_is_fast(tmp_path, clean_store, monkeypatch, synthe
                   ["1", "2"], {}) for i in range(300)]
     riga = [it for it in synthetic_items(("val",)) if it.dataset == "riga"]  # prepare builds every dataset
     store.write(riga + sorted(items, key=lambda it: it.item_id), tmp_path / "store")
-    D.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4, prompts=D.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4, prompts=D.PROMPTS)
     view = tmp_path / "view"
     run_fe(view, tmp_path / "src", monkeypatch)
     t = time.time()

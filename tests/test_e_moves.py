@@ -118,3 +118,21 @@ def test_stages_move_a_split_module_in_parts(tmp_path):
     check = f"import sys; sys.path[:0] = {paths!r}; import test_x; test_x.test_x()"
     test_run = subprocess.run([sys.executable, "-I", "-S", "-c", check], capture_output=True, text=True)
     assert test_run.returncode == 0, test_run.stderr
+
+
+def test_manual_edit_that_a_later_sub_move_takes_on_is_not_missing(tmp_path, monkeypatch, capsys):
+    """e_moves_manual: an edit whose output a later due edit rewrites (E3b's import that E3c moves on) is neither
+    reapplied nor reported; the chain applies in order on the old text; with neither text found, the last one
+    reports."""
+    from experiments.phase2.tools import e_moves_manual as M
+
+    f = tmp_path / "t.py"
+    monkeypatch.setattr(M, "EDITS", [("E3b", "t.py", "a", "b"), ("E3c", "t.py", "b", "c")])
+    monkeypatch.setattr(M, "REPLACE_ALL", [])
+    monkeypatch.chdir(tmp_path)
+    f.write_text("c\n")
+    assert M.main(["--stage", "E3c"]) == 0 and capsys.readouterr().out == "" and f.read_text() == "c\n"
+    f.write_text("a\n")
+    assert M.main(["--stage", "E3c"]) == 0 and f.read_text() == "c\n"
+    f.write_text("x\n")
+    assert M.main(["--stage", "E3c"]) == 1 and capsys.readouterr().out.count("MISSING") == 1

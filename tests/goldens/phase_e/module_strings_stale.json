@@ -4,8 +4,6 @@
  "experiments/phase2/tools/e_moves.py: objdel.policy.rows",
  "experiments/phase2/tools/e_moves_manual.py: objdel.checker",
  "experiments/phase2/tools/e_moves_manual.py: objdel.checker.__all__",
- "experiments/phase2/tools/e_moves_manual.py: objdel.data.targets",
- "experiments/phase2/tools/e_moves_manual.py: objdel.data.targets.build",
  "experiments/phase2/tools/e_moves_manual.py: objdel.policy.__file__",
  "experiments/phase2/tools/e_moves_manual.py: objdel.rl.__file__",
  "experiments/phase2/tools/e_moves_manual.py: objdel.train.__file__",

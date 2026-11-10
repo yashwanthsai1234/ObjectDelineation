@@ -96,7 +96,7 @@ def disk(cy, cx, r, hole=0, n=200):
 
 def lidc_item(item_id, discs, *, other=(), group="LIDC-IDRI-0000", n=200, image=True):
     """A synthetic LIDC slice: one doctor mask per disc (cy, cx, r[, hole]), other outlined nodules as boxes."""
-    from objdel.data import Item
+    from objdel.data.store import Item
     hu = np.random.default_rng(len(item_id)).integers(-1000, 400, (n, n), dtype=np.int16) if image else None
     return Item(item_id, "lidc", group, "train", hu, {"nodule": np.stack([disk(*d, n=n) for d in discs])},
                 [str(k + 1) for k in range(len(discs))], {"other_nodules": [list(b) for b in other]})
@@ -130,7 +130,7 @@ def box_of(it, w):
     """The window's box as the renderer frames it (frame raises if the window breaks clearance or crowding)."""
     from dataclasses import replace
 
-    from objdel.targets import frame
+    from objdel.data.targets.frame import frame
     bare = replace(it, image=None)
     return frame(bare).box if w.kind == "centred" else frame(bare, offset=(w.dx, w.dy), side=w.side).box
 
@@ -159,7 +159,7 @@ def test_pool_counts_and_keys():  # U09
 def test_pool_structure_and_geometry(items30, draws):  # P02, P03 (DG4, DG5, DG6, DG10, DG18)
     from oracles.windows_oracle import brute_admissible
 
-    from objdel.targets import frame
+    from objdel.data.targets.frame import frame
     p = Wn.pool(items30, draws=draws)
     by_id = {it.item_id: it for it in items30}
     rl = [it for it in items30 if len(it.raters) >= 2]
@@ -184,7 +184,7 @@ def test_pool_structure_and_geometry(items30, draws):  # P02, P03 (DG4, DG5, DG6
 def test_pool_window_fields_match_geometry(items30):
     from dataclasses import replace
 
-    from objdel.targets.frame import union_box
+    from objdel.data.targets.frame import union_box
     for w in Wn.pool(items30, draws=2).windows:
         it = next(i for i in items30 if i.item_id == w.item_id)
         u = union_box(replace(it, image=None))
@@ -259,9 +259,9 @@ def test_pool_order_seed_and_prefix(items30):  # P04
     assert tuple(w for w in Wn.pool([*items30, extra], draws=3).windows if w.item_id != extra.item_id) == p.windows
 
 
-def test_disagreement_is_per_slice(items30, tmp_path):  # U11: the dataset._prepare rule on the policy frame
-    from objdel.targets import frame
-    from objdel.train import dataset as D
+def test_disagreement_is_per_slice(items30, tmp_path):  # U11: the prepare._prepare rule on the policy frame
+    from objdel.data import prepare as D
+    from objdel.data.targets.frame import frame
     agree = lidc_item("lidc/1.2.50/n000/z010", [(100, 100, 12)] * 3)
     split = lidc_item("lidc/1.2.50/n000/z011", [(100, 100, 12), (100, 100, 12, 5), (100, 100, 12)])
     p = Wn.pool([*items30, agree, split], draws=2)

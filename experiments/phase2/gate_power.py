@@ -207,7 +207,7 @@ def report(items: Items, W: np.ndarray, runs: int, seed: int, lines: dict, b3_sh
 def load(items_path: Path, view: Path, store_root: Path, halves_path: Path) -> Items:
     """R5 items joined with the frozen val view (patient, offset_frac) and the store (union-box extent)."""
     from objdel.data import store
-    from objdel.targets.frame import union_box
+    from objdel.data.targets.frame import union_box
 
     rows = read_jsonl(items_path)
     with open(view / "lidc" / "val.jsonl") as f:

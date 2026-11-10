@@ -34,7 +34,7 @@ Definitions and choices:
 - Pass criterion: the reward's own validity gate (objdel.verify.reward.advantages.topology_valid: legal, a rater drew
   the topology, IoU_tc >= REWARD_V4.iou_gate for every object, score_completion's iou_min), so a RIGA answer with a good
   disc and a missed cup fails. The Phase 2 geometry gate (summarize's iou_tc_pass) is its geometric part, legal and
-  IoU_tc >= 0.5 for every object; topology is gated by the synthetic topology probe (objdel.eval.probes; plan D20).
+  IoU_tc >= 0.5 for every object; topology is gated by the synthetic topology probe (objdel.data.probes; plan D20).
 - Duplicates (GRPO groups) are outputs the reward cannot tell apart: equal format and legality flags and equal
   raw rasters of every object (device.duplicate_keys: intersection == both areas), so re-spelled texts of one mask
   (sub-pixel vertex nudges, whitespace) count as duplicates, as the reward's low-spread drop treats them (B2-6).

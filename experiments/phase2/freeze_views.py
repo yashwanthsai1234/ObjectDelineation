@@ -7,7 +7,7 @@ An entry holds the content hash (objdel.data.quality.view_content_sha256: the re
 view.side and image_sha256, so another Python or library build that renders the same windows and pixels gives the
 same hash; the manifest SHA does not), the target-set hash, the build arguments (seed, kinds, store manifest SHA-256),
 the fallback and padded counts, the commit the build ran on, each render file with its last commit (the content
-hash holds image_sha256 and the target-set hash, which come from objdel.train.dataset._prepare), the R5 code commit
+hash holds image_sha256 and the target-set hash, which come from objdel.data.prepare._prepare), the R5 code commit
 (runs/r5/CODE_SHA once A3's sync writes it, else null) and the view's known label issues (B1.7 report). Render files
 with uncommitted edits stop the freeze. --check lists the render files whose last commit moved since each entry was
 frozen (a report: the measured check is the content hash). final_eval refuses a frozen view that differs.
@@ -21,8 +21,8 @@ from objdel.data import quality as Q
 from objdel.io import code_sha, git, git_sha, read_json, write_json
 
 ROOT = Path(__file__).resolve().parents[2]
-RENDER_FILES = ("src/objdel/targets/augment.py", "src/objdel/targets/frame.py", "src/objdel/targets/build.py",
-                "src/objdel/targets/simplify.py", "src/objdel/train/dataset.py", "experiments/phase2/build_eval_views.py")
+RENDER_FILES = ("src/objdel/data/targets/augment.py", "src/objdel/data/targets/frame.py", "src/objdel/data/targets/build.py",
+                "src/objdel/data/targets/simplify.py", "src/objdel/data/prepare.py", "experiments/phase2/build_eval_views.py")
 R5_IDENTITY = {"lidc-test-shifted": (
     "equal to the R5 box view by code identity, not measured: targets/frame.py unchanged since 734b1ec; augment.py and "
     "build_eval_views.py changed in B1.6 without moving a window (their Mac rebuild of the R5 val shifted, rescaled and "

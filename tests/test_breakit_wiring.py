@@ -1,7 +1,7 @@
 """Break-it B4: end-to-end wiring of PLAN §3.1/§3.2 and the build / CI / docs around it.
 
 The unmarked end-to-end test runs the whole chain without data in ~15 s: a synthetic item store (objdel.data.store)
--> objdel.train.dataset.prepare (targets.frame, targets.build_target, reward.ExpertCache) -> grpo_rows (RIGA and LIDC
+-> objdel.data.prepare.prepare (targets.frame, targets.build_target, reward.ExpertCache) -> grpo_rows (RIGA and LIDC
 rows mixed) -> the production TRLReward on the prepared caches inside a real TRL GRPOTrainer (configs.grpo_config,
 tiny offline Llama, char-level tokenizer, a scripted policy that emits rater targets, a truncated target, junk and
 an empty answer) -> TRL's held-out evaluation -> the same completions through experiments/phase1/eval_run.py
@@ -44,6 +44,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
     from transformers import LlamaForCausalLM
     from trl import GRPOTrainer
 
+    from objdel.data import prepare as data_prepare
     from objdel.data import store
     from objdel.train import configs
     from objdel.train import dataset as D
@@ -52,7 +53,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 
     work = tmp_path_factory.mktemp("b4")
     store.write(synthetic_items(("train", "val"), unanimous=True), work / "store")
-    D.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1, prompts=D.PROMPTS)
     recs = {r["item_id"]: r for d in ("riga", "lidc") for s in ("train", "val") for r in D.records(work / "prep", d, s)}
     path, tok = char_model
     model = LlamaForCausalLM.from_pretrained(path)
@@ -253,7 +254,7 @@ def _ci_requirements() -> tuple[set[str], set[str]]:
 def test_objdel_data_imports_pyarrow_at_module_level():
     tree = ast.parse((ROOT / "src" / "objdel" / "data" / "store.py").read_text())
     top = {a.name.split(".")[0] for n in tree.body if isinstance(n, ast.Import) for a in n.names}
-    assert "pyarrow" in top  # and objdel.targets.frame, objdel.eval (via eval_run) import objdel.data
+    assert "pyarrow" in top  # and objdel.data.targets.frame, objdel.eval (via eval_run) import objdel.data
 
 
 def test_b4_2_ci_installs_what_objdel_data_imports():
@@ -277,9 +278,10 @@ def test_real_lidc_sample_prepared_equals_store_and_eval_frames(store_dir):
         pytest.skip("data/prepared absent")
     from experiments.phase1 import eval_run
     from objdel.data import store
+    from objdel.data.targets.build import build_target
+    from objdel.data.targets.frame import frame
     from objdel.geom.text import SCHEMAS
     from objdel.geom.topology import min_area
-    from objdel.targets import build_target, frame
     from objdel.train import dataset as D
     from objdel.verify import store as verify_store
     from objdel.verify.reward.cache import ExpertCache

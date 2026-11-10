@@ -6,7 +6,7 @@
 
 Input: JSONL, one line per item, {"item_id": "<dataset>/...", "samples": [text, ...], "truncated": [bool, ...],
 "tokens": [int, ...]} ("truncated" optional, default all False; "tokens" optional). With --store every item is
-framed exactly as for training (objdel.targets.frame) and its caches are built from the frame's rater masks; with
+framed exactly as for training (objdel.data.targets.frame) and its caches are built from the frame's rater masks; with
 --prepared (a data/prepared-layout directory, e.g. an eval view) the item's W, H and digest-checked caches come from
 the prepared records and caches (D25: 1.3-5x faster; `caches=` takes any key -> {object: ExpertCache} loader, e.g.
 objdel.verify.store.loader(root), default objdel.verify.store.cache_loader). Items with fewer than 2 raters cannot be
@@ -19,7 +19,7 @@ on); per-item results go to items.jsonl. Reads untrusted data: run with python -
 
 References:
 - Metrics, audit and gates: objdel.eval (plan §4.7, §7, §9; experiments/phase1/impl/M8_eval.md).
-- Training frame: objdel.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: experiments/phase2/
+- Training frame: objdel.data.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: experiments/phase2/
   EXECUTION.md §4 C-VIEW; single-rater items and prepared caches: experiments/phase1/impl/ISSUES.md I45, plan D25.
 - Process pool: https://docs.python.org/3/library/multiprocessing.html#multiprocessing.pool.Pool ; JSON without NaN
   (allow_nan=False): https://docs.python.org/3/library/json.html#json.dump
@@ -32,9 +32,9 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.data import store
-from objdel.eval.audit import hack_audit
+from objdel.data.audit import hack_audit
+from objdel.data.targets.frame import frame
 from objdel.geom.text import SCHEMAS
-from objdel.targets import frame
 from objdel.verify import gates
 from objdel.verify.metrics import metrics, summarize
 

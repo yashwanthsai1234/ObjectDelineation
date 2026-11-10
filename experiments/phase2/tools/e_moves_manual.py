@@ -1,7 +1,9 @@
 """Hand edits that follow `e_moves` on the tree of commit a255988 (the cases it reports as MANUAL).
 
 Each edit is an exact (old, new) pair tagged with its sub-move; an edit whose old text is missing is reported and
-skipped, so a re-run on a later tree shows what still needs a hand edit. Run after e_moves with the same stage:
+skipped, so a re-run on a later tree shows what still needs a hand edit. Not reported: an edit whose new text a later
+due edit of the same file starts from (that edit carries it on, as E3c's audit import after E3b's). Run after e_moves
+with the same stage:
 
     .venv/bin/python -I -m experiments.phase2.tools.e_moves_manual --stage E3a
 """
@@ -40,13 +42,10 @@ EDITS: list[tuple[str, str, str, str]] = [
      '    assert not hasattr(objdel.eval, "alarms" + "_for")',
      '    from objdel.eval import audit\n\n    assert callable(audit.hack_audit)\n'
      '    assert not hasattr(audit, "alarms" + "_for")'),
+    ("E3c", "tests/test_train_trl.py", "    from objdel.eval import audit\n\n    assert callable(audit.hack_audit)\n",
+     "    from objdel.data import audit\n\n    assert callable(audit.hack_audit)\n"),
     ("E3b", "tests/test_train_trl.py", "from pathlib import Path\n\n    import objdel.eval\n    from objdel.train import callbacks\n",
      "from pathlib import Path\n\n    from objdel.train import callbacks\n"),
-    ("E3c", "tests/test_train_trl.py",
-     '    assert all(hasattr(objdel.eval, n) for n in ("hack_audit", "gates", "metrics", "summarize", "vision"))\n'
-     '    assert not hasattr(objdel.eval, "alarms" + "_for")',
-     '    from objdel.data import audit\n\n    assert callable(audit.hack_audit)\n'
-     '    assert not hasattr(audit, "alarms" + "_for")'),
     # code inside strings (subprocess / planted sources)
     ("E3a", "tests/test_variants.py", 'CERTIFY = f"""\nfrom objdel.checker import certify\n',
      'CERTIFY = f"""\nfrom objdel.geom.certify import certify\n'),
@@ -83,7 +82,10 @@ EDITS: list[tuple[str, str, str, str]] = [
     ("E3a", "tests/test_rings.py", "    for owner in (rings, objdel.checker):", "    for owner in (rings, objdel.geom):"),
 ]
 
-# README's example imported package re-exports, which phase E removes (R-1): name the defining modules
+# README's example and a subprocess string imported package re-exports, which phase E removes (R-1): name the defining
+# modules
+EDITS.append(("E3c", "tests/test_targets.py", "from objdel.data.targets import build_target;",
+              "from objdel.data.targets.build import build_target;"))
 EDITS.append(("E3c", "README.md", "from objdel.data.targets import build_target, min_areas\n",
               "from objdel.data.targets.build import build_target, min_areas\n"))
 
@@ -117,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     due = set(STAGES[: STAGES.index(ap.parse_args(argv).stage) + 1])
     root = Path.cwd()
     missed = 0
-    for stage, rel, old, new in EDITS:
+    for i, (stage, rel, old, new) in enumerate(EDITS):
         if stage not in due:
             continue
         p = root / rel
@@ -126,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if old in text:
             p.write_text(text.replace(old, new, 1))
-        else:
+        elif not any(s in due and r == rel and o in new for s, r, o, _ in EDITS[i + 1:]):  # a later edit took it on
             print(f"MISSING: {rel}: {old[:70]!r}")
             missed += 1
     for stage, rel, old, new in REPLACE_ALL:

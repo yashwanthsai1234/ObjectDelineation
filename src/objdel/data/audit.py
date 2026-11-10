@@ -48,7 +48,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from objdel.targets import BuildConfig
+from objdel.data.targets.build import BuildConfig
 
 SLACK = BuildConfig().iou_min  # envelope [SLACK * A_min, A_max / SLACK]
 AREA_MEDIAN, AREA_TAIL, TAIL_SHARE = 1.15, 1.3, 0.10

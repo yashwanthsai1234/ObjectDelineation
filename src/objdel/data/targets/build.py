@@ -52,14 +52,13 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
+from objdel.data.targets.simplify import STEPS, lattice_path, simplify, to_grid
 from objdel.geom import engine as _gpucheck
 from objdel.geom import topology
 from objdel.geom.rings import trace
 from objdel.geom.shape import canonicalize, pack_objects
 from objdel.geom.text import GRID, MAX_RINGS, MAX_VERTICES, Objects, parse, serialize
 from objdel.geom.topology import as_mask, size_filter
-
-from .simplify import STEPS, lattice_path, simplify, to_grid
 
 MAX_SIDE = 500  # crop policy; beyond it the exact-ring fallback is no longer guaranteed (lab stress test, S = 640)
 

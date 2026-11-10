@@ -9,7 +9,8 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.extra.numpy import arrays
 
-from objdel.data import Item, store
+from objdel.data import store
+from objdel.data.store import Item
 
 
 def riga_item(i, split="train", h=37, w=45):

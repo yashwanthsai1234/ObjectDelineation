@@ -2,7 +2,7 @@
 
     .venv/bin/python -I -m experiments.phase1.build_targets [--store data/store] [--out data/targets] [--procs 3]
 
-Per item: objdel.targets.frame (crop policy), then one target per rater with the reward's size filter
+Per item: objdel.data.targets.frame (crop policy), then one target per rater with the reward's size filter
 (min_area of the raters' union per structure, and of the rim union for RIGA). Every target is re-checked from its
 text alone (parse -> polycore -> signature, IoU), and its answer length is counted with the tokenizers of the three
 screened models. Writes <out>/<dataset>/<split>.jsonl (item_id, rater, W, H, box, scale, text), <out>/manifest.json
@@ -11,7 +11,7 @@ Reads untrusted data: run with python -I.
 
 References:
 - Plan §4.4 (SFT targets, D11) and §7 (K5-K7, R1): experiments/phase1/PLAN.md; implementation note
-  experiments/phase1/impl/M5_targets.md. The target algorithms and their sources: objdel.targets (build, simplify).
+  experiments/phase1/impl/M5_targets.md. The target algorithms and their sources: objdel.data.targets (build, simplify).
 - Tokenizers (answer length without special tokens): transformers AutoTokenizer.from_pretrained and
   PreTrainedTokenizer.__call__(add_special_tokens=False):
   https://huggingface.co/docs/transformers/main/en/model_doc/auto ,
@@ -31,10 +31,11 @@ from pathlib import Path
 import numpy as np
 
 from objdel.data import store
+from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
+from objdel.data.targets.frame import FRAMES, frame
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS, parse, serialize
 from objdel.geom.topology import signature
-from objdel.targets import FRAMES, BuildConfig, build_target, frame, min_areas, target_set_hash
 from objdel.train.configs import MODELS  # the three screened models; their tokenizers measure answer lengths
 
 PINS = ("numpy", "numba", "opencv-python-headless", "objdel", "transformers")

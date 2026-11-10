@@ -11,12 +11,13 @@ import numpy as np
 import pytest
 
 from objdel.data import store
+from objdel.data.targets import augment
+from objdel.data.targets.build import build_target, min_areas, target_set_hash
+from objdel.data.targets.frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, FrameConfig, frame, union_box, upscale
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS, parse
 from objdel.geom.topology import signature
 from objdel.hashing import pixels_sha256
-from objdel.targets import FRAMES, LUNG_WINDOW, FrameConfig, augment, build_target, frame, min_areas, target_set_hash
-from objdel.targets.frame import CLEARANCE, DIVISORS, union_box, upscale
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
@@ -60,7 +61,7 @@ def _reference(it, offset, side, window, op, sigma=0.0, seed=0):
     cfg = FrameConfig(**{**FRAMES[it.dataset].__dict__, "image_side": None})
     f = frame(replace(it, image=img), cfg, offset=offset, side=side, window=window)
     out = np.moveaxis(augment.apply(np.moveaxis(f.image, -1, 0), op), 0, -1)
-    from objdel.targets.frame import upscale
+    from objdel.data.targets.frame import upscale
     return upscale(np.ascontiguousarray(out), FRAMES[it.dataset].image_side)
 
 
@@ -79,7 +80,7 @@ def test_offset_moves_the_window_and_the_crop(items):
     assert f.box == (base.box[0] + 5, base.box[1] - 7, base.box[2] + 5, base.box[3] - 7)
     x0, y0, x1, y1 = f.box
     assert np.array_equal(f.masks["nodule"], it.masks["nodule"][:, y0:y1, x0:x1])
-    from objdel.targets.frame import hu_window, upscale
+    from objdel.data.targets.frame import hu_window, upscale
     crop = hu_window(it.image[y0:y1, x0:x1]).astype(np.uint8)
     assert np.array_equal(f.image, upscale(np.repeat(crop[..., None], 3, 2), 512))
 
@@ -710,11 +711,12 @@ def val_view(tmp_path_factory, synthetic_items):
     """The prepared root (centred frames of train and val) and the shifted val view of the same val items."""
     pytest.importorskip("datasets")
     from experiments.phase2 import build_eval_views as BE
+    from objdel.data import prepare as data_prepare
     from objdel.train import dataset as D
 
     root = tmp_path_factory.mktemp("val_view")
     store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    D.prepare(root / "store", root / "prepared", procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=D.PROMPTS)
     BE.build(root / "store", root / "views", ("lidc",), "val", seed=0, procs=1)
     return root / "prepared", root / "views" / "lidc-val-shifted"
 

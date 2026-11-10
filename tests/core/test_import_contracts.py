@@ -50,7 +50,8 @@ def test_the_real_tree_keeps_every_contract():
         ("data/__init__.py", "import torch", "never imports the ML stack"),  # (a)
         ("data/__init__.py", "def f():\n    import torch", "never imports the ML stack"),  # (d) function level
         ("geom/__init__.py", "import objdel.train", "objdel layers (current packages) BROKEN"),  # (b)
-        ("data/lidc.py", "import objdel.targets", "objdel layers (current packages) BROKEN"),  # (e): not on the list
+        # (e): the ignored edge's target from a module not on the list
+        ("data/lidc.py", "import objdel.train.dataset", "objdel layers (current packages) BROKEN"),
     ],
 )
 def test_a_planted_violation_breaks_a_contract(scratch, rel, line, broken):

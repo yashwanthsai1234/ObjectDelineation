@@ -11,10 +11,11 @@ import pytest
 from oracles import reward_harness as H
 
 from objdel.data import store
-from objdel.eval.audit import hack_audit
+from objdel.data.audit import hack_audit
+from objdel.data.targets.build import build_target, min_areas
+from objdel.data.targets.frame import frame
 from objdel.geom.text import SCHEMAS
 from objdel.geom.topology import signature
-from objdel.targets import build_target, frame, min_areas
 from objdel.verify.metrics import metrics
 from objdel.verify.reward.cache import ExpertCache
 

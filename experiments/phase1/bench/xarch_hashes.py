@@ -43,12 +43,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from objdel.data import Item, splits
 from objdel.data import riga as riga_mod
+from objdel.data import splits
+from objdel.data.store import Item
+from objdel.data.targets.build import BuildConfig, build_target, target_set_hash
+from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_masks
 from objdel.geom.text import SCHEMAS, parse, serialize
 from objdel.geom.topology import betti, instance_topology, min_area, signature, size_filter
-from objdel.targets import BuildConfig, build_target, frame, target_set_hash
 from objdel.verify.metrics import metrics
 from objdel.verify.reward.advantages import advantages_v4, topology_reward
 from objdel.verify.reward.cache import ExpertCache
@@ -249,7 +251,7 @@ def run() -> dict:
         f = frame(it)
         sec["frame.masks"].append(_h(it.item_id, f.W, f.H, f.box, f.scale, *(f.masks[n] for n in names)))
         sec["frame.image"].append(_h(it.item_id, f.image))
-        ok, png = cv2.imencode(".png", cv2.cvtColor(f.image, cv2.COLOR_RGB2BGR))  # as dataset.prepare writes it
+        ok, png = cv2.imencode(".png", cv2.cvtColor(f.image, cv2.COLOR_RGB2BGR))  # as data.prepare writes it
         sec["png"].append(_h(it.item_id, bool(ok), png))
         stacks = dict(f.masks) | ({"rim": f.masks["disc"] & ~f.masks["cup"]} if it.dataset == "riga" else {})
         ma = {n: min_area(int(s.any(0).sum())) for n, s in stacks.items()}

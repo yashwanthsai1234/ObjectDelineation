@@ -11,7 +11,7 @@ order, and a manifest written only when every hard B data gate passes.
    pool are the windows of the larger pool with draw < value, so one pool pass serves the table). A value passes when
    the schedule does not raise and DG7-DG9 hold on every block prefix; the rule takes the smallest passing value
    that reuses no disagreement window, else the smallest passing value. `--draws N` uses N instead (it must pass).
-3. Each scheduled window is materialized once by `objdel.train.dataset.window_record` (item id = window_id: its own
+3. Each scheduled window is materialized once by `objdel.data.prepare.window_record` (item id = window_id: its own
    PNG and cache folder) in a spawn `multiprocessing.Pool(procs)`.
 4. `lidc/train.jsonl` in schedule order (a reused disagreement window repeats its record); the gates of
    `experiments.phase2.audit_data.audit` run on the root with this plan; the manifest (build_eval_views' fields plus
@@ -78,9 +78,9 @@ def choose(table: dict[int, dict]) -> int | None:
 
 
 def _record(job):
-    from objdel.train import dataset as D  # lazy: needs the train extra
+    from objdel.data import prepare as data_prepare
     out, item, window = job
-    return D.window_record(out, item, window)
+    return data_prepare.window_record(out, item, window)
 
 
 def materialize(store_root, out: Path, scheduled, procs: int) -> dict[str, dict]:
@@ -106,7 +106,8 @@ def files_digest(root: Path) -> tuple[int, str]:
 
 def build(a) -> int:
     from experiments.phase2 import audit_data
-    from objdel.targets import target_set_hash
+    from objdel.data import prepare as data_prepare
+    from objdel.data.targets.build import target_set_hash
     from objdel.train import dataset as D
     from objdel.verify.reward.spec import fingerprint
 
@@ -172,7 +173,7 @@ def build(a) -> int:
     m = {"view": out.name, "seed": a.seed,
          "store_manifest_sha256": _sha(Path(a.store, "manifest.json").read_bytes()),
          "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
-         "versions": {"python": platform.python_version(), **{p: version(p) for p in D._PINS}},
+         "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
          "files": {rel: {"sha256": _sha(text.encode())}},
          "sets": {"lidc/train": {
              "items": len(rows), "windows": len(uniq), "skipped_no_image": 0, "targets": len(triples),

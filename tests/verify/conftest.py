@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from objdel.targets import build_target
+from objdel.data.targets.build import build_target
 from objdel.verify.reward.cache import ExpertCache
 
 SIDE = 50

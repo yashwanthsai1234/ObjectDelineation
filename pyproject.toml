@@ -81,7 +81,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-# Measure code run in multiprocessing.Pool workers (objdel.train.dataset.prepare) and threads.
+# Measure code run in multiprocessing.Pool workers (objdel.data.prepare.prepare) and threads.
 # https://coverage.readthedocs.io/en/latest/config.html#run-concurrency
 concurrency = ["multiprocessing", "thread"]
 parallel = true
@@ -158,12 +158,10 @@ id = "layers-interim"  # each move commit sets its own list (Implementation.md E
 name = "objdel layers (current packages)"
 type = "layers"
 containers = ["objdel"]
-layers = ["infra", "train", "eval", "targets", "data", "verify", "geom", "core"]
+layers = ["infra", "train", "eval", "data", "verify", "geom", "core"]
 exhaustive = false
 ignore_imports = [
     "objdel.eval.vision -> objdel.train.dataset",  # cycle edge; E5 removes it (vision moves to policy)
-    "objdel.data.windows -> objdel.targets.**",  # B1.1; E3c removes it (targets merges into data)
-    "objdel.data.quality -> objdel.targets.**",  # B1.3; E3c removes it
 ]
 broken_contract_guidance = "Move the import down or the code up."
 
@@ -171,6 +169,6 @@ broken_contract_guidance = "Move the import down or the code up."
 id = "pure-core"
 name = "the verifier side never imports the ML stack"
 type = "forbidden"
-source_modules = ["objdel.geom", "objdel.verify", "objdel.targets", "objdel.data"]
+source_modules = ["objdel.geom", "objdel.verify", "objdel.data"]
 forbidden_modules = ["torch", "trl", "transformers", "peft", "vllm", "datasets", "accelerate"]
 broken_contract_guidance = "torch and friends live in the train/policy layers only."

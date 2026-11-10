@@ -12,8 +12,8 @@ from hypothesis import strategies as st
 from oracles import reward_harness as H
 from oracles.eval_oracle import band, boundary_iou, pairwise_iou
 
-from objdel.eval.audit import hack_audit
-from objdel.targets import BuildConfig, build_target, min_areas
+from objdel.data.audit import hack_audit
+from objdel.data.targets.build import BuildConfig, build_target, min_areas
 from objdel.verify import gates, select
 from objdel.verify.metrics import (
     _ZEROED,

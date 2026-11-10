@@ -5,16 +5,16 @@ normal builders and compare each target_set_sha256 byte for byte.
 
 Without manifests it checks the recorded sets: data/prepared, data/targets, data/eval_views/lidc-val-{shifted,
 rescaled,rotated} and data/views/lidc-train-{shifted,rescaled}. Two layouts:
-- prepared (objdel.train.dataset.prepare, build_eval_views, build_rl_rows: a rows record names its store item in
+- prepared (objdel.data.prepare.prepare, build_eval_views, build_rl_rows: a rows record names its store item in
   "source_item_id"): sets["<ds>/<split>"].target_set_sha256 over the records
   of <dir>/<ds>/<split>.jsonl; each record's store item is framed as it was built (the policy frame, or the record's
   "view": offset, side and op; a rotated window through build_eval_views._rotated);
 - targets (experiments.phase1.build_targets): files["<ds>/<split>.jsonl"].sha256 over every store item of the split,
   and target_set_sha256 over all four.
-Per rater: objdel.targets.build_target with the reward's size rule (min_areas of the frame masks), as both builders
-call it; a rater whose build raises ValueError has no target, as there. A store whose manifest SHA-256 differs from
-the recorded one is a mismatch (its targets differ for another reason). Prints one line per set; exit 1 on any
-mismatch. Writes nothing. Reads untrusted data: run with python -I.
+Per rater: objdel.data.targets.build.build_target with the reward's size rule (min_areas of the frame masks), as both
+builders call it; a rater whose build raises ValueError has no target, as there. A store whose manifest SHA-256
+differs from the recorded one is a mismatch (its targets differ for another reason). Prints one line per set; exit 1
+on any mismatch. Writes nothing. Reads untrusted data: run with python -I.
 """
 import argparse
 import hashlib
@@ -25,9 +25,10 @@ from pathlib import Path
 
 from experiments.phase2.build_eval_views import _rotated
 from objdel.data import store
+from objdel.data.targets.build import build_target, min_areas, target_set_hash
+from objdel.data.targets.frame import frame
 from objdel.geom.text import SCHEMAS
 from objdel.io import read_json
-from objdel.targets import build_target, frame, min_areas, target_set_hash
 
 MANIFESTS = ("data/prepared/manifest.json", "data/targets/manifest.json",
              *(f"data/eval_views/lidc-val-{k}/manifest.json" for k in ("shifted", "rescaled", "rotated")),

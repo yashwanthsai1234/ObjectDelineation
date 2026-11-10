@@ -8,7 +8,7 @@ Writes <out>/{riga,lidc}/{train,val,test}.parquet, manifest.json (SHA-256 per fi
 the store stays local.
 
 Wave-6 fixes (experiments/phase1/impl/fixes/F4.md): RIGA items with a reconstructed reference have no image (B3-1);
-LIDC copied outlines count once (B3-3) and items whose model frame (objdel.targets.frame) overlaps another
+LIDC copied outlines count once (B3-3) and items whose model frame (objdel.data.targets.frame) overlaps another
 outlined nodule on the slice are not stored (B3-2); RIGA near-duplicates also by ORB + RANSAC inliers (B3-8).
 Review fixes (experiments/phase1/impl/fixes/R1.md): the report counts the images the store gets (review #4).
 
@@ -31,9 +31,10 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.data import Item, lidc, riga, splits, store
+from objdel.data import lidc, riga, splits, store
+from objdel.data.store import Item
+from objdel.data.targets.frame import frame
 from objdel.geom.topology import min_area, signature
-from objdel.targets import frame
 
 REPO = Path(__file__).resolve().parents[2]
 LAB_SPLIT = REPO / "data" / "fixtures" / "lidc_full_meta.csv"  # the lab's patient split, for the plan's 313 / 251

@@ -252,7 +252,7 @@ def ct_window(s: Inputs) -> list[str]:
     range the training jitter covers."""
     import numpy as np
 
-    from objdel.targets.frame import LUNG_WINDOW
+    from objdel.data.targets.frame import LUNG_WINDOW
 
     bad = []
     for t in s.views:

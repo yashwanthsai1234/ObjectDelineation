@@ -145,8 +145,8 @@ def test_no_cpu_labelling_in_targets_cache_and_certify(monkeypatch):
     import cv2
     from scipy import ndimage
 
+    from objdel.data.targets.build import build_target, min_areas
     from objdel.geom.certify import certify
-    from objdel.targets import build_target, min_areas
     from objdel.verify.reward.cache import ExpertCache
 
     y, x = np.ogrid[:80, :80]
@@ -192,7 +192,8 @@ def test_rater_masks_equal_the_cv2_oracle(store_dir):
     from itertools import islice
 
     from objdel.data import store
-    from objdel.targets import frame, min_areas
+    from objdel.data.targets.build import min_areas
+    from objdel.data.targets.frame import frame
 
     masks, rules = [], []
     for ds, n in (("lidc", 250), ("riga", 20)):

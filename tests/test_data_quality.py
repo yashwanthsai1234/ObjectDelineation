@@ -19,7 +19,7 @@ from test_data_windows import lidc_item, store30
 from objdel.data import quality as Q
 from objdel.data import store
 from objdel.data import windows as Wn
-from objdel.targets import frame
+from objdel.data.targets.frame import frame
 
 SHARES = {"centred": 0.5, "shifted": 0.5, "rescaled": 0.0}
 PLAN = {"steps": 13, "per_step": 2, "block_steps": 13, "seed": 4, "draws": 1, "shares": SHARES,
@@ -46,8 +46,8 @@ def write_store(root, items):
 
 
 def write_rows(root, items, scheduled, plan=PLAN, excluded=()):
-    """A rows root as B1.4 step 3 writes it: one dataset._prepare record per scheduled window, keyed by window_id."""
-    from objdel.train import dataset as D
+    """A rows root as B1.4 step 3 writes it: one prepare._prepare record per scheduled window, keyed by window_id."""
+    from objdel.data import prepare as D
     by_id, recs = {it.item_id: it for it in items}, []
     for w in scheduled:
         it = by_id[w.item_id]

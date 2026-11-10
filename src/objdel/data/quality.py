@@ -49,12 +49,11 @@ import numpy as np
 import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
+from objdel.data import lidc, store, windows
+from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
 from objdel.hashing import file_sha256, pixels_sha256
 from objdel.io import read_json
-from objdel.targets import frame
-from objdel.targets.frame import CLEARANCE, crowded, hu_window, union_box
 
-from . import lidc, store, windows
 from .coverage import cell_coverage, mix_coverage
 from .store import SPLITS
 from .windows import KINDS, Window, cell_shares, offset_of

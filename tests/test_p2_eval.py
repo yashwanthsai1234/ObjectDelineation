@@ -12,7 +12,7 @@ from oracles.eval_oracle import nsd
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment, linprog
 
-from objdel.targets import build_target, min_areas
+from objdel.data.targets.build import build_target, min_areas
 from objdel.verify import gates
 from objdel.verify.metrics import NSD_TAU, hm_iou, metrics, min_mode_retention, summarize, tv_js
 from objdel.verify.reward.cache import ExpertCache
@@ -431,9 +431,10 @@ def test_eval_run_scores_with_the_prepared_caches(stores):
     pytest.importorskip("datasets")
     pytest.importorskip("cv2")
     from experiments.phase1 import eval_run
+    from objdel.data import prepare as data_prepare
     from objdel.train import dataset as D
     from objdel.verify import store as verify_store
-    D.prepare(stores / "store", stores / "prep", splits=("val",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(stores / "store", stores / "prep", splits=("val",), procs=1, prompts=D.PROMPTS)
     frames = eval_run.load_prepared(stores / "prep", "val")
     assert frames and all(f["prepared"] == str((stores / "prep").resolve()) for f in frames.values())
     ref = eval_run.load_frames(stores / "store", "val", list(frames))

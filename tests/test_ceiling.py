@@ -102,7 +102,7 @@ def test_k2_both_empty_scores_one_not_nan():
 
 def text_of(mask):
     """The repo's target text of a mask (exact for LIDC nodules)."""
-    from objdel.targets.build import build_target, min_areas
+    from objdel.data.targets.build import build_target, min_areas
 
     return build_target({"nodule": mask}, ("nodule",), None, min_areas({"nodule": mask[None]})).text
 
@@ -315,7 +315,9 @@ def test_summarize_refuses_answers_without_groups_and_mixed_answers():
 def _view(tmp_path, synthetic_items):
     """A prepared val root: 6 LIDC items of 3 patients, k = 2, 3, 4, one with a non-voting doctor (and conftest's
     RIGA item: prepare builds every dataset)."""
-    from objdel.data import Item, store
+    from objdel.data import prepare as data_prepare
+    from objdel.data import store
+    from objdel.data.store import Item
     from objdel.train import dataset as D
 
     S, rng = 100, np.random.default_rng(0)
@@ -333,7 +335,7 @@ def _view(tmp_path, synthetic_items):
                   [str(j + 1) for j in range(len(st))], {}) for i, st in enumerate(stacks)]
     riga = [it for it in synthetic_items(("val",)) if it.dataset == "riga"]
     store.write(riga + items, tmp_path / "store")
-    D.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=1, prompts=D.PROMPTS)
     return tmp_path / "view"
 
 

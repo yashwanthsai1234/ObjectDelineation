@@ -131,7 +131,7 @@ def test_hf_check_compares_vllm_and_hf_metrics_per_item(tmp_path, monkeypatch, s
 
 
 def _c2_run(tmp_path, monkeypatch, names=("e1",)):
-    from objdel.eval import probes
+    from objdel.data import probes
 
     run = tmp_path / "c2-a0p_seed2"
     for n in names:

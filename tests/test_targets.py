@@ -14,10 +14,10 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from scipy import ndimage
 
+from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
 from objdel.geom.shape import canonicalize, to_mask
 from objdel.geom.text import MAX_RINGS, parse, serialize
 from objdel.geom.topology import min_area, signature, size_filter
-from objdel.targets import BuildConfig, build_target, min_areas, target_set_hash
 from tests.oracles.crops_oracle import mask_sha, pad_div
 from tests.oracles.kept_oracle import kept
 from tests.oracles.polygonize_oracle import polygonize
@@ -331,7 +331,7 @@ def test_deterministic_and_input_untouched():
 
 
 def test_deterministic_across_processes():
-    code = ("import hashlib, numpy as np; from objdel.targets import build_target;"
+    code = ("import hashlib, numpy as np; from objdel.data.targets.build import build_target;"
             "y, x = np.mgrid[:200, :200]; a = np.arctan2(y - 100, x - 100);"
             "m = np.hypot(y - 100, x - 100) < 80 + 5 * np.sin(7 * a); m[90:99, 60:64] = m[120, 130:140] = False;"
             "t = build_target({'nodule': m}, ('nodule',), None, {'nodule': 5});"

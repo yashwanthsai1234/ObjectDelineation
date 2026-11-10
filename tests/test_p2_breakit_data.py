@@ -1,4 +1,4 @@
-"""Break-it BK1 (Phase 2 Stage 1): the data path store -> objdel.targets.frame (offset / side / window) -> augment
+"""Break-it BK1 (Phase 2 Stage 1): the data path store -> objdel.data.targets.frame (offset / side / window) -> augment
 (ops, render, contexts) -> build_views / build_eval_views -> dataset.view_rows (lazy render, A0, length, max_tokens,
 hash check) -> TRL vision collator -> vast/bundle. A test marked xfail(strict) exposes a defect recorded in
 experiments/phase2/impl/BK1.md; every other test is a regression guard. CI tests use synthetic items; tests marked
@@ -14,12 +14,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from objdel.data import Item, store
+from objdel.data import store
+from objdel.data.store import Item
+from objdel.data.targets import augment
+from objdel.data.targets.build import BuildConfig, build_target, min_areas
+from objdel.data.targets.frame import CLEARANCE, FRAMES, FrameConfig, centred, crowded, frame, union_box, upscale
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.geom.topology import signature
-from objdel.targets import FRAMES, BuildConfig, FrameConfig, augment, build_target, frame, min_areas
-from objdel.targets.frame import CLEARANCE, centred, crowded, union_box, upscale
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
@@ -418,12 +420,14 @@ def test_view_rows_on_a_riga_view(tmp_path, synthetic_items, D):
 def bundled(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
     from experiments.phase2 import build_views as BV
+    from objdel.data import prepare as data_prepare
     from objdel.infra import bundle as B
     from objdel.train import dataset as D
     root = tmp_path_factory.mktemp("bk1bundle")
     data = root / "data"
     store.write(synthetic_items(("train", "val")), root / "store")
-    D.prepare(root / "store", data / "prepared", procs=1, prompts=D.PROMPTS)  # both datasets, as data/prepared does
+    # both datasets, as data/prepared does
+    data_prepare.prepare(root / "store", data / "prepared", procs=1, prompts=D.PROMPTS)
     BV.build(root / "store", data / "views" / "lidc-train", procs=1)
     for n in B.LIDC_EVAL:
         (data / "eval_views" / n).mkdir(parents=True)

@@ -1,4 +1,4 @@
-"""Build the precision / topology probe eval views (objdel.eval.probes) and score sampled completions on them.
+"""Build the precision / topology probe eval views (objdel.data.probes) and score sampled completions on them.
 
     .venv/bin/python -I -m experiments.phase2.probes build [--store data/store] [--out data/eval_views] \
         [--n-test 1000] [--n-train 0] [--only precision|topology]
@@ -17,7 +17,7 @@ import json
 import time
 from pathlib import Path
 
-from objdel.eval import probes as P
+from objdel.data import probes as P
 from objdel.io import read_jsonl, write_json
 
 

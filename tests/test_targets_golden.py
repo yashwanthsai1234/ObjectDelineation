@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.targets import build_target, min_areas
+from objdel.data.targets.build import build_target, min_areas
 
 GOLDEN = Path(__file__).resolve().parent / "goldens" / "d_r02_targets.json"
 
@@ -78,5 +78,5 @@ def test_target_texts_equal_the_pre_d3_golden(monkeypatch):
 
 
 if __name__ == "__main__" and sys.argv[1:] == ["--write"]:
-    GOLDEN.write_text(json.dumps({"source": "objdel.targets.build_target before D3 (commit 7eaa9d8)",
+    GOLDEN.write_text(json.dumps({"source": "objdel.data.targets.build.build_target before D3 (commit 7eaa9d8)",
                                   "rows": results()}, indent=0) + "\n")

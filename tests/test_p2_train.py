@@ -14,10 +14,11 @@ import pytest
 pytest.importorskip("datasets")
 pytest.importorskip("trl")
 
+from objdel.data import prepare as data_prepare  # noqa: E402
 from objdel.data import store  # noqa: E402
+from objdel.data.targets.build import build_target, min_areas  # noqa: E402
 from objdel.geom.shape import canonicalize, to_mask  # noqa: E402
 from objdel.geom.text import SCHEMAS, parse, serialize  # noqa: E402
-from objdel.targets import build_target, min_areas  # noqa: E402
 from objdel.train import configs  # noqa: E402
 from objdel.train import dataset as D  # noqa: E402
 from objdel.verify import store as verify_store  # noqa: E402
@@ -67,7 +68,7 @@ def view_dir(tmp_path_factory, disc_mask):
 
 @pytest.fixture
 def fake_augment(monkeypatch):
-    """objdel.targets.augment per C-VIEW until agent V lands it: render(spec, context) -> uint8 (512, 512, 3)."""
+    """objdel.data.targets.augment per C-VIEW until agent V lands it: render(spec, context) -> uint8 (512, 512, 3)."""
     calls = []
 
     def render(spec, context):
@@ -79,9 +80,9 @@ def fake_augment(monkeypatch):
             return {k: z[k] for k in z}
 
     fake = types.SimpleNamespace(render=render, load_context=load_context, calls=calls)
-    import objdel.targets
-    monkeypatch.setitem(sys.modules, "objdel.targets.augment", fake)
-    monkeypatch.setattr(objdel.targets, "augment", fake, raising=False)
+    import objdel.data.targets
+    monkeypatch.setitem(sys.modules, "objdel.data.targets.augment", fake)
+    monkeypatch.setattr(objdel.data.targets, "augment", fake, raising=False)
     return fake
 
 
@@ -193,8 +194,8 @@ def test_view_rows_on_the_real_view_builder(tmp_path, synthetic_items, disc_mask
     """Agent V's builder (M1) on the conftest items plus an item with a sub-filter speck rater: rows render through
     the real augment.render, only voting raters are taught (I27 / B2-4), non-simple rows are repeated, A0 keeps
     every row."""
-    from objdel.data import Item
-    from objdel.targets import augment
+    from objdel.data.store import Item
+    from objdel.data.targets import augment
     build = pytest.importorskip("experiments.phase2.build_views")
     rng = np.random.default_rng(1)
     speck = np.zeros((100, 100), bool)
@@ -362,17 +363,17 @@ def test_qwen3_vl_trains_with_trls_own_template():
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep9")
     store.write(synthetic_items(), root / "store")
-    D.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
     return root / "out"
 
 
 def test_prepare_refuses_a_failed_image_write(tmp_path, synthetic_items, monkeypatch):
     """One prepare job in this process (prepare's Pool workers would not see the patch)."""
-    from objdel.targets import frame
+    from objdel.data.targets.frame import frame
     it = next(i for i in synthetic_items() if i.dataset == "lidc" and i.image is not None)
-    monkeypatch.setattr(D.cv2, "imwrite", lambda *a, **k: False)
+    monkeypatch.setattr(data_prepare.cv2, "imwrite", lambda *a, **k: False)
     with pytest.raises(OSError, match="imwrite"):
-        D._prepare((str(tmp_path), it.item_id, it.dataset, it.group_id, it.raters, frame(it)))
+        data_prepare._prepare((str(tmp_path), it.item_id, it.dataset, it.group_id, it.raters, frame(it)))
 
 
 def test_cache_loader_reads_only_the_manifests_files(prepared, tmp_path):

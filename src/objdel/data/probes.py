@@ -45,13 +45,13 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage, stats
 
+from objdel.data.targets.build import build_target
+from objdel.data.targets.frame import DIVISORS, LUNG_WINDOW
 from objdel.geom.shape import canonicalize, to_mask
 from objdel.geom.text import GRID, parse, serialize
 from objdel.geom.topology import min_area, signature, size_filter
 from objdel.hashing import pixels_sha256
 from objdel.io import read_json, read_jsonl, write_json
-from objdel.targets import build_target
-from objdel.targets.frame import DIVISORS, LUNG_WINDOW
 from objdel.verify.reward.cache import boundary  # foreground pixels with a 4-adjacent background pixel
 
 SHAPE = (0.2, 0.15)
@@ -304,7 +304,7 @@ def lidc_stats(store_root):
     geometry records of the non-simple targets after the size rule
     (archive/phase2_lab/B3 census + hole_census, same order)."""
     from objdel.data import store
-    from objdel.targets import frame
+    from objdel.data.targets.frame import frame
     from objdel.verify.reward.cache import voters
 
     diams, by_w, holes, multis = [], {}, [], []

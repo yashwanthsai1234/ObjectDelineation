@@ -12,7 +12,9 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("datasets")
 
-from objdel.data import Item, store  # noqa: E402
+from objdel.data import prepare as data_prepare  # noqa: E402
+from objdel.data import store  # noqa: E402
+from objdel.data.store import Item  # noqa: E402
 from objdel.geom.text import SCHEMAS  # noqa: E402
 from objdel.train import dataset as D  # noqa: E402
 from objdel.verify import store as verify_store  # noqa: E402
@@ -25,7 +27,7 @@ PREPARED = Path(__file__).resolve().parents[1] / "data" / "prepared"
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep")
     store.write(synthetic_items(), root / "store")
-    manifest = D.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
+    manifest = data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
     return root, manifest
 
 
@@ -103,7 +105,7 @@ def test_sft_rows_teach_only_voting_raters(tmp_path, disc_mask, synthetic_items)
                 ["1", "2", "3"], {})
     riga = [it for it in synthetic_items() if it.dataset == "riga"]  # prepare reads both datasets
     store.write([item, *riga], tmp_path / "store")
-    D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
     (rec,) = D.records(tmp_path / "out", "lidc", "train")
     assert rec["targets"][2] is not None  # certifiable: dropped for abstaining, not for lack of a target
     assert verify_store.cache_loader(tmp_path / "out")(rec["item_id"])["nodule"].voters == (0, 1)
@@ -134,16 +136,17 @@ def test_prepare_takes_the_prompt_table(prepared, tmp_path):
     import inspect
 
     root, m = prepared
-    assert inspect.signature(D.prepare).parameters["prompts"].default is inspect.Parameter.empty
+    assert inspect.signature(data_prepare.prepare).parameters["prompts"].default is inspect.Parameter.empty
     assert m["prompts"] == D.PROMPTS
     table = {ds: f"outline the {ds} structures" for ds in D.PROMPTS}
-    again = D.prepare(root / "store", tmp_path, splits=("train",), procs=1, prompts=table)
+    again = data_prepare.prepare(root / "store", tmp_path, splits=("train",), procs=1, prompts=table)
     assert again["prompts"] == table and again["files"] == m["files"]
 
 
 def test_prepare_and_rows_are_deterministic(prepared, tmp_path):
     root, m = prepared
-    again = D.prepare(root / "store", tmp_path, splits=("train",), procs=2, prompts=D.PROMPTS)  # 1 vs 2 workers
+    # 1 vs 2 workers
+    again = data_prepare.prepare(root / "store", tmp_path, splits=("train",), procs=2, prompts=D.PROMPTS)
     assert again["files"] == m["files"] and again["sets"] == m["sets"]
     for ds in ("riga", "lidc"):
         assert rows_hash(D.sft_rows(root / "out", ds, "train")) == rows_hash(D.sft_rows(tmp_path, ds, "train"))
@@ -171,7 +174,7 @@ def test_prepare_workers_survive_a_parent_that_used_cuda(prepared, tmp_path, mon
     start = multiprocessing.get_start_method()
     multiprocessing.set_start_method("fork", force=True)
     try:
-        again = D.prepare(root / "store", tmp_path, splits=("train",), procs=1, prompts=D.PROMPTS)
+        again = data_prepare.prepare(root / "store", tmp_path, splits=("train",), procs=1, prompts=D.PROMPTS)
     finally:
         multiprocessing.set_start_method(start, force=True)
     assert again["files"] == m["files"] and again["sets"] == m["sets"]

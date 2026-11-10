@@ -15,8 +15,10 @@ pytest.importorskip("datasets")
 import pyarrow.parquet as pq  # noqa: E402
 from scipy import ndimage  # noqa: E402
 
-from objdel.data import Item, store  # noqa: E402
-from objdel.targets import frame  # noqa: E402
+from objdel.data import prepare as data_prepare  # noqa: E402
+from objdel.data import store  # noqa: E402
+from objdel.data.store import Item  # noqa: E402
+from objdel.data.targets.frame import frame  # noqa: E402
 from objdel.train import dataset as D  # noqa: E402
 from objdel.verify import store as verify_store  # noqa: E402
 
@@ -37,7 +39,7 @@ def disc(h, w, cy, cx, r):
 
 def prepared(tmp_path) -> Path:
     """A synthetic store (one RIGA item, two LIDC items of one patient with different images and different nodule
-    sizes, so their frames and caches differ) run through train.dataset.prepare."""
+    sizes, so their frames and caches differ) run through data.prepare.prepare."""
     rng = np.random.default_rng(0)
     hu = lambda: rng.integers(-1000, 400, (100, 100), dtype=np.int16)  # noqa: E731
     two = lambda c: np.stack([disc(100, 100, 40 + 20 * c, 50, 8 + c + d) for d in (0, 1)])  # noqa: E731
@@ -47,7 +49,7 @@ def prepared(tmp_path) -> Path:
                 ["1", "2"], {})  # prepare needs every dataset's split file
     store.write([riga, *(Item(f"lidc/1.2.3/n00{c}/z001", "lidc", "P1", "train", hu(), {"nodule": two(c)}, ["1", "2"],
                               {}) for c in (0, 1))], tmp_path / "store")
-    D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
     return tmp_path / "out"
 
 

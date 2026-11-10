@@ -13,13 +13,14 @@ import pytest
 from oracles import raster_oracle as RO
 from test_geometry_oracle import lab_parse
 
-from objdel.data import Item
+from objdel.data.store import Item
+from objdel.data.targets.build import build_target
+from objdel.data.targets.frame import frame
 from objdel.geom import engine as _gpucheck
 from objdel.geom import shape
 from objdel.geom.shape import to_mask, to_masks
 from objdel.geom.text import parse, pattern, serialize
 from objdel.geom.topology import instance_topology, min_area, signature, size_filter
-from objdel.targets import build_target, frame
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_completion
 from tests.oracles.bitquad_oracle import bitquads

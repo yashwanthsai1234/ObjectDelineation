@@ -218,7 +218,7 @@ def prior_ci(model_iou: dict, prior_rows: list[dict]) -> dict:
 def score_probe(a, branch: Path, p: str, out: Path) -> dict:
     """Probe `p` ("precision" / "topology", every record of a.probes/probe-<p>) at K = a.k -> its scorer's result
     and the sampled item ids ("ids")."""
-    from objdel.eval import probes
+    from objdel.data import probes
 
     d = a.probes / f"probe-{p}"
     done = sample_view(a, branch, evaluate.eval_rows(d, rl_only=False), out / f"probe-{p}", a.k)

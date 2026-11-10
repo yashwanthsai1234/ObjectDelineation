@@ -343,7 +343,7 @@ def test_store_lidc_val_rows_keep_the_item_contract(store_dir):
     """Val split, every row: masks (k, 512, 512), k = len(raters) >= 2 unique raters from the cluster's readers, no
     empty layer and (B3-3) no two identical layers, int16 512 x 512 HU, group_id = patient = pylidc patient, z_mm on
     the slice; B3-2: the model frame overlaps no other outlined nodule of the slice."""
-    from objdel.targets import frame
+    from objdel.data.targets.frame import frame
     scans, n = lidc.scans(), 0
     for it in store.load("lidc", "val", store_dir):
         m, k, meta = it.masks["nodule"], len(it.raters), it.meta

@@ -5,7 +5,7 @@ Gated, per dataset (B4-5): G-format on the shifted val (parse >= 98 %, legal >= 
 on every object); G-prior (b) on both views (paired mean (model - prior) IoU_tc, 95 % CI lower bound > 0, every
 structure); G-signal on the shifted val at G = 8 (duplicates <= 10 %, sigma-share >= 50 %); on LIDC the precision
 probe (zero-shot pass, else the capacity run's pass, with a warning) and the topology probe (a) (simple controls; the
-probe's own pass rule, objdel.eval.probes). Gated once per model: G-vision. Reported, never gating: G-prior (a)
+probe's own pass rule, objdel.data.probes). Gated once per model: G-vision. Reported, never gating: G-prior (a)
 (centred win share, revision 7; gated per dataset as "G-prior-a", every structure's win share >= the threshold, only
 when `prior_a_threshold` = prereg.G_PRIOR_A_THRESHOLD is set before V1), topology-probe hole recall (decided by C2),
 truncation share and mean / p95 tokens beside G-format, the signal panel, and G-probe (not PASS -> a warning handed

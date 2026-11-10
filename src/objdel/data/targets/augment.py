@@ -30,9 +30,19 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.data import Item
-
-from .frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, centred, crowded, pixels, policy_side, rgb, union_box
+from objdel.data.store import Item
+from objdel.data.targets.frame import (
+    CLEARANCE,
+    DIVISORS,
+    FRAMES,
+    LUNG_WINDOW,
+    centred,
+    crowded,
+    pixels,
+    policy_side,
+    rgb,
+    union_box,
+)
 
 OPS = ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")
 DATASET_OPS = {"lidc": OPS, "riga": ("id", "fh")}

@@ -1,13 +1,13 @@
-"""Synthetic probe answerers and helpers used only by the tests (moved out of objdel.eval.probes): exact, noisy,
+"""Synthetic probe answerers and helpers used only by the tests (moved out of objdel.data.probes): exact, noisy,
 shifted, centred-prior and hole-free (A0) answers to a probe record, and the image / mask hashing helpers."""
 
 import cv2
 import numpy as np
 
-from objdel.eval import probes as P
+from objdel.data import probes as P
+from objdel.data.targets.build import build_target
 from objdel.geom.text import GRID, parse
 from objdel.geom.topology import min_area
-from objdel.targets import build_target
 
 
 def image_sha(path):

@@ -6,7 +6,7 @@
 Per dataset and named kind (default the first three) the directory <out>/<dataset>-<split>-<kind>, in the
 data/prepared layout (images/, caches/, <dataset>/<split>.jsonl, manifest.json with each jsonl's SHA-256 and the target-set hash), so
 objdel.train.dataset.records / cache_loader / grpo_rows, objdel.verify.store.preload and eval_run read them
-unchanged. Each record is objdel.train.dataset._prepare's (frame image as PNG, one certified target per rater,
+unchanged. Each record is objdel.data.prepare._prepare's (frame image as PNG, one certified target per rater,
 ExpertCache.build of the view's rater stack) plus "view": {"offset": [dx, dy], "side": S, "kept_side", "fallback",
 "op", "offset_frac" (windows.offset_of of the union and window boxes), "padded" (the window leaves the slice)}.
 - shifted: the policy side S, one uniform offset per item (augment.draw with side=S: union inside with 2 px
@@ -26,7 +26,7 @@ with no admissible shifted (or uncrowded edge) window keeps the policy frame and
 also counts padded windows. objdel.train.dataset (and with it `datasets`) is imported only when building, so --help
 and the CI [dev] job run without the train extra (BK4-2). Reads untrusted data: run with python -I.
 
-References: experiments/phase2/PLAN.md §5.0, §5.1; A4 §2.5 proposal 1; objdel.train.dataset.prepare (layout).
+References: experiments/phase2/PLAN.md §5.0, §5.1; A4 §2.5 proposal 1; objdel.data.prepare.prepare (layout).
 """
 import argparse
 import hashlib
@@ -39,9 +39,10 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.data import store
+from objdel.data.targets import augment
+from objdel.data.targets.build import target_set_hash
+from objdel.data.targets.frame import FRAMES, frame, rgb, union_box
 from objdel.io import write_json
-from objdel.targets import FRAMES, augment, frame, target_set_hash
-from objdel.targets.frame import rgb, union_box
 
 KINDS = ("shifted", "rescaled", "rotated", "edge")  # --kinds default: the first three
 ROTATION = {"lidc": "r90"}  # the rotated view's op per dataset; no rotated RIGA view
@@ -55,8 +56,8 @@ def _rotated(it, offset, side, op):
 
 
 def _record(job):
+    from objdel.data import prepare as data_prepare
     from objdel.data.windows import offset_of  # lazy: objdel.verify.reward -> scipy fails in the [dev]-only job
-    from objdel.train import dataset as D  # lazy: needs the train extra (BK4-2)
     out, it, kind, seed = job
     bare = replace(it, image=None)
     S0 = frame(bare).W
@@ -69,7 +70,7 @@ def _record(job):
         got = got or augment.draw(bare, rng, side=S0)
     (dx, dy), S = got or ((0, 0), S0)
     f = _rotated(it, (dx, dy), S, ROTATION[it.dataset]) if kind == "rotated" else frame(it, offset=(dx, dy), side=S)
-    rec = D.window_record(out, it, f=f)
+    rec = data_prepare.window_record(out, it, f=f)
     H, W = next(iter(it.masks.values())).shape[-2:]
     x0, y0, x1, y1 = f.box
     rec["view"] = {"offset": [dx, dy], "side": S, "kept_side": kept and kind == "rescaled", "fallback": got is None,
@@ -80,6 +81,7 @@ def _record(job):
 
 def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2, limit=None,
           kinds=KINDS[:3]) -> dict:
+    from objdel.data import prepare as data_prepare
     from objdel.train import dataset as D  # lazy: needs the train extra (BK4-2)
     from objdel.verify.reward.spec import fingerprint
     manifests = {}
@@ -102,7 +104,7 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
                 m = {"view": name, "seed": seed, "kinds": list(kinds),
                      "store_manifest_sha256": hashlib.sha256(Path(store_root, "manifest.json").read_bytes()).hexdigest(),
                      "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
-                     "versions": {"python": platform.python_version(), **{p: version(p) for p in D._PINS}},
+                     "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
                      "files": {rel: {"sha256": hashlib.sha256(text.encode()).hexdigest()}},
                      "sets": {f"{ds}/{split}": {
                          "items": len(recs), "skipped_no_image": 0, "targets": len(triples),

@@ -47,7 +47,7 @@ def test_gaps_ignore_rare_exam_categories():
 def test_coverage_lives_in_the_data_layer_only():
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("objdel.eval.coverage")
-    importlib.import_module("objdel.eval.audit")
+    importlib.import_module("objdel.data.audit")
 
 
 def _rows(counts: dict, kind="shifted", offset=0.1):

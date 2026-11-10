@@ -91,7 +91,7 @@ def test_paired_equals_b2():
 def test_live_b2_functions_and_group_scoring():
     """Live per_item and group against the lab B2 outputs recorded in tests/goldens/p2_lab_refs.json
     (record_p2_lab_refs.py in archive/phase2_lab); group is checked on synthetic items scored through metrics."""
-    from objdel.targets import build_target
+    from objdel.data.targets.build import build_target
     from objdel.verify.reward.cache import ExpertCache
 
     g = rand_groups(np.random.default_rng(3))

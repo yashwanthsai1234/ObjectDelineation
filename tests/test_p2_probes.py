@@ -1,4 +1,4 @@
-"""M4b probe tests (PLAN §7 M4, probe parts): objdel.eval.probes and the experiments/phase2 probes / baselines CLIs.
+"""M4b probe tests (PLAN §7 M4, probe parts): objdel.data.probes and the experiments/phase2 probes / baselines CLIs.
 
 Synthetic tests build small probe directories on synthetic lung patches; the `data` tests use the real store."""
 
@@ -11,7 +11,7 @@ import numpy as np
 import probe_models as M
 import pytest
 
-from objdel.eval import probes as P
+from objdel.data import probes as P
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"

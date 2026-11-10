@@ -40,11 +40,13 @@ from pathlib import Path
 import numpy as np
 
 from objdel.data import store
+from objdel.data.targets import augment
+from objdel.data.targets.build import BuildConfig, build_target, min_areas
+from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS
 from objdel.geom.topology import signature
 from objdel.io import write_json
-from objdel.targets import BuildConfig, augment, build_target, frame, min_areas
 from objdel.verify.reward.cache import voters
 
 NO_JITTER = {"window": None, "noise_sigma": 0.0, "noise_seed": 0}
