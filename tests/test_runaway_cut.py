@@ -1,7 +1,9 @@
 """C7 outline limit and C11 per-row answer cap: the cap rule, per-row sampling params, the run guards and the sizing
-script (U-RC1, U-RC2, U-RC4, U-RC5, U-CO4)."""
+script (U-RC1, U-RC2, U-RC4, U-RC5, U-RC6, U-CO4)."""
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -132,3 +134,20 @@ def test_runaway_cap_refuses_group_requests():
         a = args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}')
         a.group_requests = True
         train_rl.check_flags(a)
+
+
+@pytest.mark.data
+def test_the_g_rc0_model_loads_its_config_tokenizer_and_processor():
+    """U-RC6 (C.9.4): the start checkpoint that G-RC0 and G-GR1 load on the box (HF revision rl-full-3ep) has its
+    config, tokenizer and processor files and loads them offline. Local copy: $OBJDEL_RL_CKPT, else
+    runs/rl/train_rl/final; a missing copy skips (make test-data runs it with the data in place)."""
+    from transformers import AutoConfig, AutoProcessor
+
+    ckpt = Path(os.environ.get("OBJDEL_RL_CKPT", Path(__file__).resolve().parents[1] / "runs/rl/train_rl/final"))
+    if not (ckpt / "config.json").is_file():
+        pytest.skip(f"no local copy of rl-full-3ep at {ckpt}")
+    cfg = AutoConfig.from_pretrained(ckpt, local_files_only=True)
+    proc = AutoProcessor.from_pretrained(ckpt, local_files_only=True, **configs.processor_kwargs("qwen3-vl-2b", "lidc"))
+    assert cfg.model_type == "qwen3_vl" and cfg.text_config.max_position_embeddings >= 256  # G-RC0's max_model_len
+    ids = proc.tokenizer("Outline of object A:")["input_ids"]
+    assert ids and proc.tokenizer.pad_token_id is not None and proc.image_processor.patch_size == 16
