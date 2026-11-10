@@ -249,7 +249,7 @@ def prior_ci(model_iou: dict, prior_rows: list[dict]) -> dict:
 
     prior = {r["item_id"]: r["iou_tc"] for r in prior_rows}
     ids = [i for i in model_iou if i in prior]
-    out, D = {}, signal.draws(ids)
+    out, D = {}, signal.point_or_draws(ids)
     for n in model_iou[ids[0]] if ids else ():
         mean, lo, hi = signal.ci(np.array([model_iou[i][n] - prior[i][n] for i in ids]), D)
         out[n] = {"diff": mean, "ci": [lo, hi], "items": len(ids)}
@@ -308,7 +308,7 @@ def hf_check(a, name: str, out: Path, pool) -> dict:
     lines = (out / name / "shifted" / "items.jsonl").read_text().splitlines()
     got["vllm"] = {r["item_id"]: r["samples"] for r in map(json.loads, lines)}
     ids = [i for i in got["hf"] if i in got["vllm"]]
-    D = signal.draws(ids)
+    D = signal.point_or_draws(ids)
     diff = {k: signal.ci(np.array([np.mean(got["vllm"][i][k]) - np.mean(got["hf"][i][k]) for i in ids]), D)
             for k in HF_CHECK_KEYS}  # fmt: skip
     return {"branch": name, "items": len(ids), "k": a.k, "vllm_minus_hf": diff,

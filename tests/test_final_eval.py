@@ -671,7 +671,7 @@ def test_code_sha_precedence(tmp_path, monkeypatch):
         seen.append(cmd)
         return SimpleNamespace(stdout="f" * 40 + "\n", returncode=0)
 
-    monkeypatch.setattr(FE.subprocess, "run", git)
+    monkeypatch.setattr("objdel.io.subprocess.run", git)  # code_sha calls git through objdel.io
     (tmp_path / "CODE_SHA").write_text("")
     assert FE.code_sha(tmp_path) == "f" * 40 and seen == [["git", "rev-parse", "HEAD"]]
     (tmp_path / "CODE_SHA").unlink()
@@ -680,7 +680,7 @@ def test_code_sha_precedence(tmp_path, monkeypatch):
     def missing(cmd, **k):
         raise FileNotFoundError("git")
 
-    monkeypatch.setattr(FE.subprocess, "run", missing)
+    monkeypatch.setattr("objdel.io.subprocess.run", missing)
     assert FE.code_sha(tmp_path) is None
     (tmp_path / ".git").rmdir()
     assert FE.code_sha(tmp_path) is None and json.dumps(FE.code_sha(tmp_path)) == "null"

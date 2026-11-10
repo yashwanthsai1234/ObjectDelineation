@@ -101,10 +101,14 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     """Schema 2: per METRICS key the items hold, the mean and its item, nodule and patient (with `groups`,
     {item_id: group_id}) 95 % bootstrap intervals; the median of iou_tc; the miss rate. One draw set per unit."""
     ids = [it["item_id"] for it in items]
+    if not ids:
+        raise ValueError("summarize: no items")
     if len(set(ids)) != len(ids):
         raise ValueError("summarize: duplicate item_id")
-    D = {"ci95_nodule": signal.draws(ids, draws, seed),
-         "ci95_patient": None if groups is None else signal.draws(ids, draws, seed, key=groups.__getitem__)}
+    def unit_draws(sub, key=signal.cluster):
+        return signal.point_or_draws(sub, draws, seed, key)
+
+    D = {"ci95_nodule": unit_draws(ids), "ci95_patient": None if groups is None else unit_draws(ids, groups.__getitem__)}
     idx = np.random.default_rng(seed).integers(0, len(items), (draws, len(items)))
 
     def cis(v: np.ndarray) -> dict:
@@ -133,9 +137,8 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     fids = [i for i, f in zip(ids, found, strict=True) if f]
     out["iou_found"] = None if not fids else {
         "mean": float(iou[found].mean()), "items": len(fids),
-        "ci95_patient": None if groups is None else signal.ci(iou[found], signal.draws(
-            fids, draws, seed, key=groups.__getitem__))[1:],
-        "ci95_nodule": signal.ci(iou[found], signal.draws(fids, draws, seed))[1:]}
+        "ci95_patient": None if groups is None else signal.ci(iou[found], unit_draws(fids, groups.__getitem__))[1:],
+        "ci95_nodule": signal.ci(iou[found], unit_draws(fids))[1:]}
 
     def paired(arm: str) -> dict | None:  # the per-item difference arm - sel_mean_of_k under the same draws
         if arm not in out:
@@ -155,7 +158,7 @@ def gate_a(val: dict, test: dict | None) -> dict:
     difference has the val sign; None without a test summary) is a direction line only: test never chooses."""
     def passes(arm: str) -> bool:
         p = val["paired"][arm]
-        if p is None:
+        if p is None or val.get("patients", 2) in (0, 1):  # one patient's point interval proves nothing
             return False
         ci = p[val["gate_ci"]]
         if ci is None:

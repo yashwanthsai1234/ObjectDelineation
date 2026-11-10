@@ -79,9 +79,10 @@ def g_probe_verdict(gain_ci, null_ci, legal_drop: float, sigma_share: float) -> 
 def g_probe(r20, r0a, r0b, ids, legal0: float, legal20: float, sigma20: float, boot=signal.BOOT, seed=signal.SEED):
     """Per-item raw composite R at step 20 and the two step-0 draws -> null CI, h0, gain CI and the verdict."""
     r20, r0a, r0b = (np.asarray(x, float) for x in (r20, r0a, r0b))
-    D = signal.draws(ids, boot, seed)
+    D = signal.point_or_draws(ids, boot, seed)
     null, gain = signal.ci(r0a - r0b, D), signal.ci(r20 - (r0a + r0b) / 2, D)
-    verdict = g_probe_verdict(gain[1:], null[1:], legal0 - legal20, sigma20)
+    one = len(set(map(signal.cluster, ids))) < 2  # a point interval proves nothing (a CPU smoke run)
+    verdict = "INCONCLUSIVE" if one else g_probe_verdict(gain[1:], null[1:], legal0 - legal20, sigma20)
     return {
         "null": null,
         "h0": (null[2] - null[1]) / 2,
