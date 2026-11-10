@@ -648,6 +648,8 @@ def write_seq_gaps(out_dir: str, values: list[float], rows: int) -> None:
                                                  "valid_tokens"], "steps": steps}) + "\n")  # fmt: skip
 
 
+
+
 def no_lora_input_cast(model) -> int:
     """Turns off PEFT's cast of each LoRA layer's input to its fp32 adapter dtype; returns the layers changed. Only
     under bf16 autocast: there the adapter matmul casts the input straight back to bf16, so the fp32 copy (one per

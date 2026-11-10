@@ -323,3 +323,16 @@ def test_no_stale_procs_for_train_rl():
     text = (ROOT / "docs/runbooks/troubleshooting.md").read_text()
     row = next(x for x in text.splitlines() if "BrokenProcessPool" in x)
     assert all(m in row for m in ("select_ckpt", "g_probe", "final_eval")) and "train_rl" not in row
+
+
+def test_resume_truncates_seq_gaps_to_the_checkpoint_step(stub):
+    """B2.0 handoff: --resume from checkpoint-2 keeps 2 steps of <out>/trainer/seq_gaps.f32 before training appends."""
+    from objdel.train.fast import write_seq_gaps
+
+    trainer = stub.out / "trainer"
+    (trainer / "checkpoint-2").mkdir(parents=True)
+    for k in range(3):
+        write_seq_gaps(str(trainer), [float(k)] * 6, 2)
+    assert stub.run(*stub.train, "--resume") == 0
+    assert (trainer / "seq_gaps.f32").stat().st_size == 2 * 2 * 3 * 4
+    assert json.loads((trainer / "seq_gaps.json").read_text())["steps"] == 2

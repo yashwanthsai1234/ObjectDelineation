@@ -40,6 +40,7 @@ CHECKER_TESTS = ["tests/test_checker.py", "tests/test_checker_oracle.py", "tests
 QUICK_TESTS = ["tests/test_data_coverage.py", "tests/test_preflight.py", "tests/test_p2_scripts.py",
                "tests/test_train_configs.py", "tests/test_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
 DRY_RUN = "tests/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select on a tiny model, CPU
+VASTAI_VERSION = "1.11.0"  # the CLI pin (CLEAN13): an isolated `uv tool`, never in pyproject.toml
 HF_RATE = {"lfm2.5-vl-450m": "hf-rate-lfm", "qwen3-vl-2b": "hf-rate-qwen3vl"}  # runs/<run>/<dir>/hf_rate.json (R0)
 
 
@@ -283,6 +284,20 @@ def trl_problems() -> list[str]:
     return []
 
 
+def vastai_problems() -> list[str]:
+    """`vastai --version` must print the pinned token (exactly, not as a prefix): [] or one message. It is a local call,
+    never the Vast API."""
+    fix = f"install it with: uv tool install vastai=={VASTAI_VERSION}"
+    try:
+        p = subprocess.run(["vastai", "--version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return [f"vastai {VASTAI_VERSION} is required, but `vastai --version` did not run ({e}); {fix}"]
+    if p.returncode == 0 and VASTAI_VERSION in p.stdout.split():
+        return []
+    return [f"vastai {VASTAI_VERSION} is required, found {p.stdout.strip() or 'no output'!r} "
+            f"(exit {p.returncode}); {fix}"]  # fmt: skip
+
+
 def checker_tests(a, cfg) -> list[str]:
     cuda = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "tests").glob("test_cuda_checker*.py"))
     return pytest("-m", "not slow", *cuda, "tests/test_gpu_scoring.py", *CHECKER_TESTS)  # CUDA equivalence first
@@ -333,6 +348,7 @@ CHECKS = [
     ("DATA coverage of the exam views", coverage), ("DATA ROWS root", rows_root), ("DATA ROWS revision", rows_revision),
     ("CHECKER CPU exactness (+ CUDA equivalence)", checker_tests),
     ("CODE TRL private names", lambda a, cfg: trl_problems()),
+    ("CODE vastai version", lambda a, cfg: vastai_problems()),
     ("CODE kernel runbooks", runbooks), ("CODE quick tests", lambda a, cfg: pytest("-m", "not slow", *QUICK_TESTS)),
     ("CODE CPU dry run train -> select", lambda a, cfg: pytest(DRY_RUN)),
     ("CODE projected GPU hours and dollars", projection),

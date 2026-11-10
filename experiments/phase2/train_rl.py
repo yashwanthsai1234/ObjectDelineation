@@ -326,7 +326,8 @@ def main(argv=None) -> int:
     last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
     if a.resume and last is None:
         print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
-    cut_seq_gaps(a.out / "trainer", int(Path(last).name.split("-")[1]) if last else 0)
+    start = int(Path(last).name.split("-")[1]) if last else 0
+    cut_seq_gaps(a.out / "trainer", start)
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
@@ -345,7 +346,7 @@ def main(argv=None) -> int:
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
     save_final(trainer.accelerator.unwrap_model(trainer.model), proc, a.out)
-    done, start = trainer.state.global_step, int(Path(last).name.split("-")[1]) if last else 0
+    done = trainer.state.global_step
     log, cfg = trainer.state.log_history, trainer.args
     rows = schedule and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
                          "ids_sha256": schedule["ids_sha256"]}
