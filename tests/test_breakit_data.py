@@ -47,7 +47,7 @@ def prepared(tmp_path) -> Path:
                 ["1", "2"], {})  # prepare needs every dataset's split file
     store.write([riga, *(Item(f"lidc/1.2.3/n00{c}/z001", "lidc", "P1", "train", hu(), {"nodule": two(c)}, ["1", "2"],
                               {}) for c in (0, 1))], tmp_path / "store")
-    D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1)
+    D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
     return tmp_path / "out"
 
 

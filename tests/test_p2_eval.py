@@ -433,7 +433,7 @@ def test_eval_run_scores_with_the_prepared_caches(stores):
     from experiments.phase1 import eval_run
     from objdel.train import dataset as D
     from objdel.verify import store as verify_store
-    D.prepare(stores / "store", stores / "prep", splits=("val",), procs=1)
+    D.prepare(stores / "store", stores / "prep", splits=("val",), procs=1, prompts=D.PROMPTS)
     frames = eval_run.load_prepared(stores / "prep", "val")
     assert frames and all(f["prepared"] == str((stores / "prep").resolve()) for f in frames.values())
     ref = eval_run.load_frames(stores / "store", "val", list(frames))

@@ -330,7 +330,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     model = _tiny_vlm(tmp_path / "tiny", name)
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
-    dataset.prepare(tmp_path / "store", tmp_path / "evalview", procs=1)  # eval-view layout
+    dataset.prepare(tmp_path / "store", tmp_path / "evalview", procs=1, prompts=dataset.PROMPTS)  # eval-view layout
     run = tmp_path / "run"
     cfg = {"model": name, "model_path": str(model), "view": str(tmp_path / "view"), "output_dir": str(run),
            "branches": [0.5, 1.0], "steps_per_epoch": 8, "run_dir": str(tmp_path), "sft": CPU_SFT,

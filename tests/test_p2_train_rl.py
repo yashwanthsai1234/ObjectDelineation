@@ -24,7 +24,7 @@ def test_full_rl_saves_resumes_and_leaves_a_merged_tuned_model(tmp_path, synthet
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")  # LoRA (configs.lora), like the real run
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    dataset.prepare(tmp_path / "store", tmp_path / "prepared", procs=1)
+    dataset.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=dataset.PROMPTS)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
 
     def run(steps, *extra):
@@ -65,7 +65,7 @@ def test_full_rl_runs_with_the_shared_prefix_forward(tmp_path, synthetic_items):
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    dataset.prepare(tmp_path / "store", tmp_path / "prepared", procs=1)
+    dataset.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=dataset.PROMPTS)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
     r = _module("experiments.phase2.train_rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
                 str(tmp_path / "prepared"), "--out", str(out), "--steps", "2", "--save-steps", "100",
@@ -108,7 +108,7 @@ def rows_run(tmp_path, synthetic_items):
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    dataset.prepare(tmp_path / "store", tmp_path / "prepared", procs=1)
+    dataset.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=dataset.PROMPTS)
     root, keys, sha = schedule_root(tmp_path / "prepared", tmp_path / "rows")
     env = os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
 

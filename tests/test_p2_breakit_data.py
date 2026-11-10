@@ -423,7 +423,7 @@ def bundled(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("bk1bundle")
     data = root / "data"
     store.write(synthetic_items(("train", "val")), root / "store")
-    D.prepare(root / "store", data / "prepared", procs=1)  # both datasets, as data/prepared on the Mac
+    D.prepare(root / "store", data / "prepared", procs=1, prompts=D.PROMPTS)  # both datasets, as data/prepared does
     BV.build(root / "store", data / "views" / "lidc-train", procs=1)
     for n in B.LIDC_EVAL:
         (data / "eval_views" / n).mkdir(parents=True)

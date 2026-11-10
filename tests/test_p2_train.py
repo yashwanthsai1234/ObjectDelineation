@@ -362,7 +362,7 @@ def test_qwen3_vl_trains_with_trls_own_template():
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep9")
     store.write(synthetic_items(), root / "store")
-    D.prepare(root / "store", root / "out", splits=("train",), procs=1)
+    D.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
     return root / "out"
 
 

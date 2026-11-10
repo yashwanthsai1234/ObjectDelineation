@@ -286,7 +286,7 @@ def prepared(tmp_path_factory, synthetic_items):
 
     root = tmp_path_factory.mktemp("rows")
     store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    dataset.prepare(root / "store", root / "prepared", procs=1)
+    dataset.prepare(root / "store", root / "prepared", procs=1, prompts=dataset.PROMPTS)
     return root / "prepared"
 
 

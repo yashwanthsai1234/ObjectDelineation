@@ -45,7 +45,7 @@ def main():
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()
     t0 = time.time()
-    m = D.prepare(a.store, a.out, a.splits.split(","), a.procs)
+    m = D.prepare(a.store, a.out, a.splits.split(","), a.procs, prompts=D.PROMPTS)
     print(json.dumps(m["sets"], indent=1), f"\n{time.time() - t0:.0f}s", flush=True)
     print(json.dumps(m["files"], indent=1))
     print(json.dumps(token_budget(a.out), indent=1))

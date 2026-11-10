@@ -175,7 +175,7 @@ def test_group_id_stays_out_of_the_prompt_rows(tmp_path, synthetic_items):
     from objdel.train import dataset as D
 
     store.write(synthetic_items(), tmp_path / "store")
-    D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1)
+    D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
     rows = D.prompts(tmp_path / "out", "lidc", "train", rl_only=False)
     assert rows and all("group_id" not in r for r in rows)
     recs = D.records(tmp_path / "out", "lidc", "train")
@@ -983,7 +983,7 @@ def test_rescore_of_300_items_is_fast(tmp_path, clean_store, monkeypatch, synthe
                   ["1", "2"], {}) for i in range(300)]
     riga = [it for it in synthetic_items(("val",)) if it.dataset == "riga"]  # prepare builds every dataset
     store.write(riga + sorted(items, key=lambda it: it.item_id), tmp_path / "store")
-    D.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4)
+    D.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4, prompts=D.PROMPTS)
     view = tmp_path / "view"
     run_fe(view, tmp_path / "src", monkeypatch)
     t = time.time()

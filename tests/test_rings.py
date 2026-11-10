@@ -261,7 +261,7 @@ def built(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("hashes")
     items = [it for it in synthetic_items(("train", "val")) if it.image is not None]
     store.write(items, root / "store")
-    D.prepare(root / "store", root / "prepared", procs=1)
+    D.prepare(root / "store", root / "prepared", procs=1, prompts=D.PROMPTS)
     BE.build(root / "store", root / "views", ("lidc", "riga"), "val", seed=0, procs=1)
     prep = json.loads((root / "prepared" / "manifest.json").read_text())
     every = [(r["item_id"], k, t) for ds, split in (s.split("/") for s in prep["sets"])

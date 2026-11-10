@@ -52,7 +52,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 
     work = tmp_path_factory.mktemp("b4")
     store.write(synthetic_items(("train", "val"), unanimous=True), work / "store")
-    D.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1)
+    D.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1, prompts=D.PROMPTS)
     recs = {r["item_id"]: r for d in ("riga", "lidc") for s in ("train", "val") for r in D.records(work / "prep", d, s)}
     path, tok = char_model
     model = LlamaForCausalLM.from_pretrained(path)

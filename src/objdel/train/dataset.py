@@ -1,6 +1,6 @@
 """Training data: prepare frames, SFT targets and expert caches once, then build TRL rows from them.
 
-prepare(store, out) reads the item store (objdel.data.store) and writes, per item that has pixels:
+prepare(store, out, prompts=...) reads the item store (objdel.data.store) and writes, per item that has pixels:
 - images/<item_id>.png: the model input of objdel.targets.frame (uint8 RGB; PNG is lossless);
 - caches/<item_id>/<object>.npz: objdel.verify.reward.cache.ExpertCache.save of the frame's rater stack (items with >= 2
   raters, rl_eligible); loaded lazily by cache_loader, never serialized into a dataset;
@@ -9,8 +9,9 @@ prepare(store, out) reads the item store (objdel.data.store) and writes, per ite
   disagreement (the raters' joint topology answers differ), the SHA-256 of the image pixels and each cache digest;
 - manifest.json: SHA-256 of every jsonl (which pins every image and cache through their hashes), per split the
   target-set hash (objdel.targets.target_set_hash), counts (items, targets, RL items and targets, disagreement
-  items, items skipped for lack of pixels, target errors), the store manifest's SHA-256, the reward fingerprint and
-  library versions. Re-running gives the same manifest (rows sorted by item_id, content hashes).
+  items, items skipped for lack of pixels, target errors), the store manifest's SHA-256, the reward fingerprint, the
+  prompt table the caller passes and library versions. Re-running gives the same manifest (rows sorted by item_id,
+  content hashes).
 Items without a model image (Item.image None: RIGA BinRushed1 reconstructions, break-it B3-1; LIDC series without CT)
 are skipped and counted.
 
@@ -53,7 +54,7 @@ https://huggingface.co/docs/trl/main/en/dataset_formats
 import hashlib
 import json
 import platform
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version
 from itertools import batched
@@ -141,12 +142,14 @@ def _jobs(store_root, out, dataset, split, skipped):
         yield str(out), it.item_id, dataset, it.group_id, it.raters, frame(it)
 
 
-def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), procs: int = 3) -> dict:
-    """Build images, targets and caches of every item with pixels; returns (and writes) the manifest."""
+def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), procs: int = 3, *,
+            prompts: Mapping[str, str]) -> dict:
+    """Build images, targets and caches of every item with pixels; returns (and writes) the manifest, which stores
+    `prompts` (the caller's prompt table: data names no prompt module)."""
     out = Path(out_root)
     out.mkdir(parents=True, exist_ok=True)
     manifest = {"store_manifest_sha256": hashlib.sha256(Path(store_root, "manifest.json").read_bytes()).hexdigest(),
-                "reward_fingerprint": fingerprint(), "prompts": PROMPTS,
+                "reward_fingerprint": fingerprint(), "prompts": dict(prompts),
                 "versions": {"python": platform.python_version(), **{p: version(p) for p in _PINS}},
                 "files": {}, "sets": {}}
     with get_context("spawn").Pool(procs) as pool:  # a fork of a parent that used CUDA fails in the engine

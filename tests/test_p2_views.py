@@ -714,7 +714,7 @@ def val_view(tmp_path_factory, synthetic_items):
 
     root = tmp_path_factory.mktemp("val_view")
     store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    D.prepare(root / "store", root / "prepared", procs=1)
+    D.prepare(root / "store", root / "prepared", procs=1, prompts=D.PROMPTS)
     BE.build(root / "store", root / "views", ("lidc",), "val", seed=0, procs=1)
     return root / "prepared", root / "views" / "lidc-val-shifted"
 
