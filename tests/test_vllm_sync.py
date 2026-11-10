@@ -139,9 +139,50 @@ def test_option_f_sync_order_and_adapter_folder(monkeypatch, tmp_path, lora_requ
 def test_install_lora_seqmask_routes_to_the_f_sync(monkeypatch, tmp_path, lora_request):
     m = _lora_bf16()
     vg, log = fake_vg(m, monkeypatch, sleeping=False)
+    vg.llm.generate = lambda *a, **kw: None
     t = SimpleNamespace(vllm_generation=vg, accelerator=SimpleNamespace(num_processes=1))
     with pytest.raises(ValueError, match="adapter_dir"):
         vllm_sync.install(t, "lora-seqmask")
     assert vllm_sync.install(t, "lora-seqmask", tmp_path)
     vg.sync_weights()
     assert [e[0] for e in log] == ["add_lora", "reset_prefix_cache"]
+
+
+def test_install_lora_seqmask_generate_carries_the_policy_adapter_without_inplace(monkeypatch, tmp_path, lora_request):
+    """U70: every generate call carries LoRARequest("policy", 1, dir) with load_inplace=False; once (idempotent)."""
+    m = _lora_bf16()
+    vg, _ = fake_vg(m, monkeypatch, sleeping=False)
+    calls = []
+    vg.llm.generate = lambda prompts, *a, **kw: calls.append(kw) or ["out"]
+    t = SimpleNamespace(vllm_generation=vg, accelerator=SimpleNamespace(num_processes=1))
+    vllm_sync.install(t, "lora-seqmask", tmp_path)
+    vllm_sync.install(t, "lora-seqmask", tmp_path)
+    assert vg.llm.generate(["p"], sampling_params=1) == ["out"]
+    (kw,) = calls
+    req = kw["lora_request"]
+    assert (req.lora_name, req.lora_int_id, req.lora_path, req.load_inplace) == ("policy", 1, str(tmp_path), False)
+    assert kw["sampling_params"] == 1
+
+
+def test_other_presets_leave_generate_alone(monkeypatch):
+    m = _lora_bf16()
+    vg, _ = fake_vg(m, monkeypatch, sleeping=False)
+    gen = vg.llm.generate = lambda prompts, **kw: kw
+    vllm_sync.install(SimpleNamespace(vllm_generation=vg, accelerator=SimpleNamespace(num_processes=1)))
+    assert vg.llm.generate is gen
+
+
+def test_engine_kwargs_patch_trls_llm_and_restore_it(monkeypatch):
+    import trl.generation.vllm_generation as vgen
+
+    seen = []
+    orig = lambda **kw: seen.append(kw)  # noqa: E731
+    monkeypatch.setattr(vgen, "LLM", orig, raising=False)
+    with vllm_sync.engine_kwargs(enable_lora=True, max_lora_rank=16):
+        vgen.LLM(model="m")
+    assert seen == [{"model": "m", "enable_lora": True, "max_lora_rank": 16}] and vgen.LLM is orig
+    with pytest.raises(RuntimeError), vllm_sync.engine_kwargs(enable_lora=True):
+        raise RuntimeError
+    assert vgen.LLM is orig
+    with vllm_sync.engine_kwargs():  # no kwargs: nothing patched
+        assert vgen.LLM is orig
