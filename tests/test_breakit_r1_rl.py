@@ -160,7 +160,7 @@ def test_nan_term_does_not_reach_trl_as_nan_advantages(monkeypatch):
     g = 8
     iou = np.linspace(0.2, 0.9, g)
     iou[3] = np.nan
-    monkeypatch.setattr(rewards, "_score", lambda jobs: _fake_terms(len(jobs), iou))
+    monkeypatch.setattr(rewards, "score_jobs", lambda jobs: _fake_terms(len(jobs), iou))
     r = rewards.TRLReward(lambda k: {}, stop_ids=[2])
     funcs, _ = r.funcs()
     agg = funcs[-1]
