@@ -206,6 +206,7 @@ def noise_floor(results: list[dict], groups: dict[str, str], draws: int = 2000, 
 
 
 def _paired(new: dict[str, float], old: dict[str, float], ids: list[str]) -> np.ndarray:
+    """The old run's values in `ids` order; ValueError unless both runs hold the same items."""
     lost = [i for i in ids if i not in old] + [i for i in old if i not in new]
     if lost:
         raise ValueError(f"{len(lost)} items are not in both runs, first {lost[0]}")
@@ -270,6 +271,7 @@ def view_manifest_sha256(view: Path) -> str:
 
 
 def _view_records(view: Path) -> list[dict]:
+    """Every LIDC record of the view, file by file in name order."""
     return [json.loads(line) for f in sorted(Path(view, "lidc").glob("*.jsonl")) for line in f.read_text().splitlines()]
 
 
@@ -317,6 +319,7 @@ def hash_view(view: Path, out: Path) -> None:
 
 
 def _lines(rows: list[dict]) -> str:
+    """Rows as JSON lines."""
     return "".join(json.dumps(r) + "\n" for r in rows)
 
 
@@ -452,6 +455,7 @@ def score(view: Path, split: str, out: Path, rows: list[dict], answers: list[dic
 
 
 def _identity(view: Path, split: str) -> dict:
+    """The run keys that name the view and the code (module docstring, Run keys)."""
     return {"view": str(view), "split": split, "view_manifest_sha256": view_manifest_sha256(view),
             "view_content_sha256": Q.view_content_sha256(view), "code_sha": code_sha(),
             "checker_build": _gpucheck.build()}
@@ -497,6 +501,7 @@ def no_model(argv: list[str]) -> None:
 
 
 def main(argv=None) -> None:
+    """The no-model forms, --rescore, or sample and score every view (module docstring)."""
     from objdel.core.spec import EvalStage, cli_stage
 
     argv = sys.argv[1:] if argv is None else list(argv)

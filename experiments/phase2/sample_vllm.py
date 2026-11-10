@@ -32,6 +32,7 @@ FREE = 0.90  # of total device memory, before the engine starts (D13)
 
 
 def check_memory(mem_get_info, need: float = FREE) -> None:
+    """Exit unless mem_get_info() reports at least `need` of the device free (D13: no other process on the GPU)."""
     free, total = mem_get_info()
     if free < need * total:
         raise SystemExit(f"sample_vllm: {100 * free / total:.0f} % of GPU memory free, need {100 * need:.0f} % "
@@ -55,6 +56,7 @@ def requests(lines: list[dict], SamplingParams, open_image, logprobs: bool = Fal
 
 
 def outputs(lines: list[dict], results):
+    """One output record per completion of vLLM's results, in prompt-line and k order (module docstring)."""
     for x, res in zip(lines, results, strict=True):
         for k, c in enumerate(res.outputs):
             rec = {"id": x["id"], "k": k, "text": c.text, "token_ids": list(c.token_ids),
@@ -66,6 +68,7 @@ def outputs(lines: list[dict], results):
 
 
 def write(recs, path) -> None:
+    """Write the records as JSON lines."""
     Path(path).write_text("".join(json.dumps(r) + "\n" for r in recs))
 
 
@@ -73,6 +76,7 @@ ENV = {"VLLM_USE_FLASHINFER_SAMPLER": "0"}  # the PyTorch sampler: no JIT build 
 
 
 def main(argv=None) -> None:
+    """Sample the prompts file with vLLM and write the completions and their .meta.json (module docstring)."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--prompts", required=True, help="JSONL from objdel.train.sample.export_prompts")
     ap.add_argument("--model", required=True, help="merged checkpoint directory (with its processor)")

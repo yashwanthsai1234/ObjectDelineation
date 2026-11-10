@@ -95,6 +95,7 @@ def todo(out: Path, batches: list[list[tuple[int, dict]]]) -> list:
 
 
 def main(argv=None) -> int:
+    """Sample the prompts file with HF generate, resuming --out from its whole batches (module docstring)."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--prompts", type=Path, required=True)
     ap.add_argument("--model", type=Path, required=True)
