@@ -3,11 +3,11 @@ checker it replaced (polycore, archived in archive/cpu_checker), recorded per ca
 before the archive; for masks, the numpy polygonizer (tests/oracles/polygonize_oracle.py, never the engine under
 test), the bit-quad oracle (tests/oracles/bitquad_oracle.py) and cv2's 8-connected labels (ring parts), run here.
 
-Shared by tests/test_cuda_checker*.py, tests/test_checker_host.py, tests/test_gpu_scoring.py and
+Shared by tests/geom/test_cuda_checker*.py, tests/geom/test_checker_host.py, tests/verify/test_gpu_scoring.py and
 experiments/cuda_checker/eval.py. The packed formats are those of data/checker_eval
 (archive/cpu_checker/experiments/prepare_data.py): polygons as (xy, ring_start, shape_start, roles, W, H), masks as
-(bits, hw, start). The case generators are the repo's existing ones (tests/oracles, tests/test_topology.py), imported,
-not copied; the rollout, int32-extreme and at-the-caps families are defined here.
+(bits, hw, start). The case generators are the repo's existing ones (tests/oracles, tests/geom/test_topology.py),
+imported, not copied; the rollout, int32-extreme and at-the-caps families are defined here.
 """
 import binascii
 import functools
@@ -135,7 +135,7 @@ def polygon_reference(rings, roles, W, H, G=1000) -> dict:
     before the CPU checker was archived. roles: one per ring (-1 = outer). A case never recorded (the K1 "holes"
     generator rounds math.cos/sin, whose last bit differs between platforms: R3 met 4 such cases of ~7,600 on Linux)
     takes its reference from the exact integer oracles instead (tests/oracles: crossing parity, ref_totals), which
-    the recorded results equal (tests/test_checker_oracle.py)."""
+    the recorded results equal (tests/geom/test_checker_oracle.py)."""
     if (got := goldens().get(case_key(rings, roles, W, H, G))) is not None:
         defects, evenodd = got
         return dict(defects=defects, evenodd=evenodd)
@@ -299,8 +299,8 @@ def fuzz_polygons(n_per_family: int, seed: int = 0):
 
 
 def fuzz_masks(n: int, seed: int = 0):
-    """[(family, mask)]: tests/test_topology.random_masks (ten families, 1-200 px) plus fixed edge cases."""
-    from test_topology import random_masks
+    """[(family, mask)]: tests/geom/test_topology.random_masks (ten families, 1-200 px) plus fixed edge cases."""
+    from tests.geom.test_topology import random_masks
     edge = {"empty_0x0": np.zeros((0, 0), bool), "empty_0x5": np.zeros((0, 5), bool), "pixel": np.ones((1, 1), bool),
             "full": np.ones((9, 7), bool), "checker": (np.indices((12, 13)).sum(0) % 2) == 0,
             "saddle_6": np.array([[0, 1], [1, 0]], bool), "saddle_9": np.array([[1, 0], [0, 1]], bool),

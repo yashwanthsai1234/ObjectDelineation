@@ -7,7 +7,7 @@ stages:
 - kind: cmd
   name: build
   argv: [bash, -c, 'bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c "import objdel._gpucheck
-      as g; assert g.build() == ''cuda''" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_gpu_scoring.py']
+      as g; assert g.build() == ''cuda''" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/verify/test_gpu_scoring.py']
 - kind: cmd
   name: env_check
   argv: [bash, experiments/phase2/docker/env_check.sh, '{rd}/ckpt', '{rd}/env_check.json']
@@ -19,4 +19,4 @@ stages:
 - kind: cmd
   name: gpu_smoke
   soft: true
-  argv: [-m, pytest, -m, gpu, 'tests/rl/test_trl_adapter_equivalence.py::test_g02_is_summary_no_sync', 'tests/rl/test_trl_adapter_equivalence.py::test_g08a_smoke']
+  argv: [-m, pytest, -m, gpu, 'tests/experiments/test_trl_adapter_equivalence.py::test_g02_is_summary_no_sync', 'tests/experiments/test_trl_adapter_equivalence.py::test_g08a_smoke']

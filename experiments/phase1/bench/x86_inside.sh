@@ -9,7 +9,7 @@
 #   fast     pytest -q -m "not slow and not data" (data/ is absent, so data tests would skip anyway)
 #   hashes   experiments.phase1.bench.xarch_hashes -> /io/hashes-x86.json; hashes2: a second run (x86 run-to-run);
 #            noipp: the same with OpenCV's Intel IPP HAL off (diagnostic, impl/M9_x86.md)
-#   slow     the K1/K2 exhaustive checker oracle gates (pytest -m slow tests/test_checker_oracle.py), or reduced
+#   slow     the K1/K2 exhaustive checker oracle gates (pytest -m slow tests/geom/test_checker_oracle.py), or reduced
 #            with SLOW=0
 #   wheel    pip wheel of the same source, then auditwheel show and abi3audit --strict
 #
@@ -58,7 +58,7 @@ step hashes python -I -m experiments.phase1.bench.xarch_hashes --out "$IO/hashes
 step hashes2 python -I -m experiments.phase1.bench.xarch_hashes --out "$IO/hashes-x86-run2.json"
 step noipp python -I -m experiments.phase1.bench.xarch_hashes --opencv no-ipp --out "$IO/hashes-x86-noipp.json"
 if [ "${SLOW:-1}" = 1 ]; then
-    step slow python -m pytest -q -s -m slow -p no:cacheprovider tests/test_checker_oracle.py --durations=0
+    step slow python -m pytest -q -s -m slow -p no:cacheprovider tests/geom/test_checker_oracle.py --durations=0
 fi
 mkdir -p "$IO/wheel"
 step wheel bash -c "rm -f $IO/wheel/*.whl && \

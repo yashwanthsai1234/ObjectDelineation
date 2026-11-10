@@ -19,7 +19,8 @@ Context crops (C-VIEW): per item the image region every admissible window of eve
 (and the policy window) can show, clipped to the image: int16 Hounsfield units for LIDC (window
 jitter and noise act on raw HU, D10), uint8 RGB for RIGA. render(spec, context) = frame(item, offset, side, window)
 on the context with the spec's HU noise added, the op applied at frame resolution, then the Pillow upscale; with
-op "id", sigma 0 and the policy window and side it is the prepared PNG byte for byte (tests/test_p2_views.py).
+op "id", sigma 0 and the policy window and side it is the prepared PNG byte for byte
+(tests/experiments/test_p2_views.py).
 
 Row seeds: row_rng(*keys) seeds numpy from SHA-256 of the keys, so every row's draw depends only on (seed, epoch,
 item_id, rater_index, rep), not on the order or subset of items built.

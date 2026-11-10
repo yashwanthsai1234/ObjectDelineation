@@ -793,7 +793,7 @@ def run(root: Path, apply: bool, stage: str = STAGES[-1]) -> int:
     before: set[str] = set()  # every line of the scanned Python files before the move (wrap_prose keeps them)
     for p in py_files:
         rel = str(p.relative_to(root))
-        if rel in ("experiments/phase2/tools/e_moves.py", "tests/test_e_moves.py"):  # their old names are planted
+        if rel in ("experiments/phase2/tools/e_moves.py", "tests/experiments/test_e_moves.py"):  # their old names are planted
             continue
         text = p.read_text()
         before.update(text.splitlines())

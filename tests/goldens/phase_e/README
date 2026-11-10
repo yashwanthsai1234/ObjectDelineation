@@ -1,8 +1,8 @@
-Move-invariance goldens of phase E (tests/core/test_move_invariance.py).
+Move-invariance goldens of phase E (tests/experiments/test_move_invariance.py).
 
 Record them on the E0 commit, never on an older tree (phases A-D change rewards, targets and the trainer on purpose):
 
-    .venv/bin/python -I -c "import tests.core.test_move_invariance as t; t.record()"
+    .venv/bin/python -I -c "import tests.experiments.test_move_invariance as t; t.record()"
 
 invariance.json            platform independent: goldens 1 (reward value), 2 (target set hash), 5 (chain argv and
                            vision refs of the live plans) and 6 (resolved GRPOConfig). "fingerprint" (optional, with
@@ -158,3 +158,14 @@ already main only. Goldens 1-6, host_syncs and tests_import_experiments unchange
 Merge impl2-emoves2 into impl2-final (2026-11-10): the GPU retest fix's DATA upload bundle check (BUNDLE_DIR,
 CACHE_SAMPLE, bundle, sampled, --bundle-dir) moves with the rest of the library into objdel.infra.preflight;
 old_names re-recorded: experiments/phase2/preflight.py keeps only main. The other goldens are unchanged.
+E8.3 (impl2-e8tests, tests mirror the layers): the top-level tests/test_*.py files move by git mv into tests/{geom,
+verify,data,policy,rl,sft,infra,core}/; every test file that imports `experiments` (and test_experiment_scripts.py)
+moves to tests/experiments/, with core/test_move_invariance.py and rl/test_trl_adapter_equivalence.py (record command
+above now names tests.experiments.test_move_invariance). tests_import_experiments re-recorded: [] (0 at E8).
+invariance.json "renamed_paths" gains every moved file {old: new} (test_train_fast.py now maps straight to
+tests/experiments/test_trl_adapter_equivalence.py), so golden 5 and plan_argv.json map the chain's pytest paths
+instead of re-recording. module_strings_stale re-recorded on its own tree: the same 23 tokens, their test files under
+their new paths. Goldens 1-6 values, host_syncs and old_names unchanged by the move.
+Merge impl2-e8tests into impl2-final (2026-11-10): the moved tests carry impl2's edits (test_preflight's upload bundle
+tests, test_vast's watchdog test, test_gpu_chain's post_commit archive ids now at tests/geom/test_cuda_checker.py;
+run_box.sh keeps SEL's post_commit). No golden re-recorded: old_names re-read unchanged, the rest pass as merged.

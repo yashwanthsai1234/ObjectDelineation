@@ -19,7 +19,8 @@ later stages are not run:
            as the rl stage its words parse to, rl_stages): the root built locally passes the B data gates
            (objdel.data.quality.audit) with the manifest
            SHA-256 the stage pins, and the pinned HF revision holds exactly the local root's files
-  CHECKER  tests/test_cuda_checker*.py when they exist, the scorers on the CUDA checker (tests/test_gpu_scoring.py:
+  CHECKER  tests/geom/test_cuda_checker*.py when they exist, the scorers on the CUDA checker
+           (tests/verify/test_gpu_scoring.py:
            equal to the host scorer it replaced), then the checker's exactness tests (the slow exact oracles, the
            archived CPU checker's recorded results, topology, geometry)
   CODE     the private TRL names the adapter relies on (objdel.rl.trl_adapter), a quick test subset, the CPU dry run
@@ -47,12 +48,13 @@ from objdel.core.provenance import repo_root
 
 # the exam views policy.chain passes to select_ckpt (gates: shifted, rescaled; report: rotated; probes)
 EXAMS = ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-precision", "probe-topology")
-CHECKER_TESTS = ["tests/test_checker.py", "tests/test_checker_oracle.py", "tests/test_checker_host.py",
-                 "tests/test_topology.py", "tests/test_geometry.py", "tests/test_geometry_mask.py",
-                 "tests/test_geometry_oracle.py"]  # fmt: skip
-QUICK_TESTS = ["tests/test_data_coverage.py", "tests/test_preflight.py", "tests/test_p2_scripts.py",
-               "tests/test_train_configs.py", "tests/test_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
-DRY_RUN = "tests/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select on a tiny model, CPU
+CHECKER_TESTS = ["tests/geom/test_checker.py", "tests/geom/test_checker_oracle.py", "tests/geom/test_checker_host.py",
+                 "tests/geom/test_topology.py", "tests/geom/test_geometry.py", "tests/geom/test_geometry_mask.py",
+                 "tests/geom/test_geometry_oracle.py"]  # fmt: skip
+QUICK_TESTS = ["tests/data/test_data_coverage.py", "tests/experiments/test_preflight.py",
+               "tests/experiments/test_p2_scripts.py", "tests/policy/test_train_configs.py", "tests/infra/test_vast.py",
+               "tests/experiments/test_p2_v1_select.py"]  # fmt: skip
+DRY_RUN = "tests/experiments/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select, tiny model, CPU
 VASTAI_VERSION = "1.11.0"  # the CLI pin (CLEAN13): an isolated `uv tool`, never in pyproject.toml
 BUNDLE_DIR = repo_root() / "build" / "bundles"  # sync_up's --bundle-dir default (objdel.infra.vast CLI); --bundle-dir
 CACHE_SAMPLE = 16  # expert caches whose fingerprint the bundle check reads (of ~12.7k in the LIDC bundle)
@@ -442,8 +444,8 @@ def vastai_problems() -> list[str]:
 def checker_tests(s: Inputs) -> list[str]:
     """The CUDA checker tests, the GPU scoring test and CHECKER_TESTS (CUDA equivalence first)."""
     root = repo_root()
-    cuda = sorted(p.relative_to(root).as_posix() for p in (root / "tests").glob("test_cuda_checker*.py"))
-    return pytest("-m", "not slow", *cuda, "tests/test_gpu_scoring.py", *CHECKER_TESTS)  # CUDA equivalence first
+    cuda = sorted(p.relative_to(root).as_posix() for p in (root / "tests/geom").glob("test_cuda_checker*.py"))
+    return pytest("-m", "not slow", *cuda, "tests/verify/test_gpu_scoring.py", *CHECKER_TESTS)  # CUDA equivalence first
 
 
 def runbooks(s: Inputs, root: Path | None = None) -> list[str]:

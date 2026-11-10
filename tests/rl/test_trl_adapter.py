@@ -324,7 +324,7 @@ def test_check_trainer_names_the_missing_attribute(item):
 
 def test_a_built_grpo_trainer_has_the_trainer_attributes(tmp_path):
     """The attribute check on a tiny trainer built here (TRL sets both in GRPOTrainer.__init__)."""
-    from tests.rl.test_trl_adapter_equivalence import tiny_loop_vllm_fake
+    from tests.experiments.test_trl_adapter_equivalence import tiny_loop_vllm_fake
 
     with pytest.MonkeyPatch.context() as mp:
         T.check_trainer(tiny_loop_vllm_fake(mp, tmp_path, steps=1))

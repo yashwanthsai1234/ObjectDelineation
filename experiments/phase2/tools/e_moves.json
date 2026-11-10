@@ -302,7 +302,7 @@
   },
   "gpucheck_keep": [
     "experiments/phase2/perf/bench_checker.py",
-    "tests/test_bench_checker.py",
+    "tests/experiments/test_bench_checker.py",
     "src/objdel/geom/engine.py"
   ],
   "scan_roots": [

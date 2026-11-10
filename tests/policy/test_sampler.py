@@ -188,9 +188,9 @@ def test_build_prompt_ids_equal_trls_own_on_64_validation_rows():
 def tiny(tmp_path):
     pytest.importorskip("trl")
     from PIL import Image
-    from test_p2_scripts import _tiny_vlm
 
     from objdel.policy.prompt import _user
+    from tests.experiments.test_p2_scripts import _tiny_vlm
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
     rng, rows = np.random.default_rng(0), []

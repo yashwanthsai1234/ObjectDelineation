@@ -138,8 +138,9 @@ def to_masks(objs: Sequence[tuple[list[Part], int, int]]) -> list[Geometry]:
     all of them, which returns the even-odd masks bit-packed (unpack_rows). On a CUDA box it runs on the GPU (`make
     cuda`; policy.chain builds it before any scoring stage); elsewhere the same source is compiled for the CPU. Masks
     and defects equal those of the archived CPU checker, polycore (recorded in tests/goldens/polycore.npz:
-    tests/test_gpu_scoring.py, tests/test_checker_host.py). The reward never calls this: it scores on the device
-    (objdel.verify.reward.score.score_many); targets, probes and the exam's item-level metrics read these masks."""
+    tests/verify/test_gpu_scoring.py, tests/geom/test_checker_host.py). The reward never calls this: it scores on the
+    device (objdel.verify.reward.score.score_many); targets, probes and the exam's item-level metrics read these
+    masks."""
     r = _gpucheck.check_polygons(*pack_objects(objs), GRID)
     out = []
     for i, (_, W, H) in enumerate(objs):

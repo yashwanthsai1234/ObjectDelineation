@@ -52,7 +52,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
       - run: uv venv --python 3.12
       - run: uv pip install -e ".[dev]"
-      - run: .venv/bin/python -m pytest -q -s -m slow tests/test_checker_oracle.py
+      - run: .venv/bin/python -m pytest -q -s -m slow tests/geom/test_checker_oracle.py
 
   docs:
     name: docs site (strict build)

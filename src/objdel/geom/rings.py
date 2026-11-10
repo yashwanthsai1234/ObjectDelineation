@@ -8,7 +8,7 @@ A ring's part is the raster rank (by first pixel) of the 8-connected foreground 
 outer ring, the surrounding one for a hole. One engine call also gives each mask's bit-quad counts and Betti numbers
 from the same run labeller (so certify takes b0, b1 from an independent one).
 The numpy references are tests/oracles/polygonize_oracle.py and bitquad_oracle.py; the engine equals them on all
-37,093 LIDC crops and the fuzz families (tests/test_rings.py; docs/implementation2.0/kernels/K1/results).
+37,093 LIDC crops and the fuzz families (tests/experiments/test_rings.py; docs/implementation2.0/kernels/K1/results).
 """
 from collections.abc import Sequence
 from dataclasses import dataclass

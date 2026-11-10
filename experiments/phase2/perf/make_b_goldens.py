@@ -1,5 +1,5 @@
 """Goldens of the scorer sums gate (B3.1, B.9.5 G01): the scorer's results on fixed inputs, written on the Mac CPU build
-and compared on the box (tests/test_scorer_sums.py), since one venv holds one build.
+and compared on the box (tests/experiments/test_scorer_sums.py), since one venv holds one build.
 
 Sets (`b_sets`): `random` = 200 random masks plus all-zero, all-one and one-pixel 64 x 64 masks; `polygons_<G>` = the
 first 10,000 fuzz polygons of tests/oracles/cuda_parity.py but the K1 "holes" family (`polygon_cases`), one

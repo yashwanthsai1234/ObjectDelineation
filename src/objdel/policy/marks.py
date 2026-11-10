@@ -7,7 +7,7 @@ CUDA query runs at the first `enabled()` call (the first range) and is cached fo
 OBJDEL_NVTX_SYNC (read once, here): "1" (default) keeps FastGRPO.timed's end-of-phase device sync, as production
 runs; "0" times each phase with a CUDA event pair instead, so a trace shows the real overlap between phases.
 
-Range names are fixed (tests/test_nvtx.py scans for them): step, loader, micro, batch, generate, sync, wake,
+Range names are fixed (tests/experiments/test_nvtx.py scans for them): step, loader, micro, batch, generate, sync, wake,
 wake_weights, wake_kv, sleep, rewards, checker, logps, forward, optimizer, log, vision_cache, rope_cache,
 rope_template, image_memo, encoder_once.
 Plus `generate/tail` (C11, see `tail`), opened inside `generate`.

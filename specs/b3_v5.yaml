@@ -7,10 +7,10 @@ stages:
 - kind: cmd
   name: build
   argv: [bash, -c, 'bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c "import objdel._gpucheck
-      as g; assert g.build() == ''cuda''" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_gpu_scoring.py']
+      as g; assert g.build() == ''cuda''" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/verify/test_gpu_scoring.py']
 - kind: cmd
   name: smoke
-  argv: [bash, -c, 'OBJDEL_DATA_ROOT={data} /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider -m gpu tests/rl/test_trl_adapter_equivalence.py::test_g08b_smoke']
+  argv: [bash, -c, 'OBJDEL_DATA_ROOT={data} /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider -m gpu tests/experiments/test_trl_adapter_equivalence.py::test_g08b_smoke']
 - kind: eval
   name: eval_b1
   ckpt: '{rd}/b1/final'
@@ -43,4 +43,4 @@ stages:
 - kind: cmd
   name: rc0
   soft: true
-  argv: [-m, pytest, -q, -p, 'no:cacheprovider', -m, gpu, 'tests/test_c_gpu.py::test_g_rc0_per_row_caps']
+  argv: [-m, pytest, -q, -p, 'no:cacheprovider', -m, gpu, 'tests/rl/test_c_gpu.py::test_g_rc0_per_row_caps']

@@ -9,7 +9,7 @@ otherwise), so a wrong load is red, never a silent pass.
 
 `python -I -m tests.variants` (make test-order) builds every variant and applies the pass rules: order1, order2 and
 poison pass the mask tests; alias (a planted scan alias under the poison) must fail them, which proves the poison
-check can go red; mutfg4 is used by tests/test_variants.py, run with OBJDEL_REQUIRE_VARIANTS=1. Not collected by
+check can go red; mutfg4 is used by tests/geom/test_variants.py, run with OBJDEL_REQUIRE_VARIANTS=1. Not collected by
 pytest (no test_ prefix)."""
 import json
 import os
@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VARIANTS = {"order1": ("K1_ORDER=1",), "order2": ("K1_ORDER=2",), "poison": ("GC_POISON_SCAN",),
             "alias": ("GC_POISON_SCAN", "GC_ALIAS_SCAN_FOR_TEST"), "mutfg4": ("K1_MUTATE_FG4",)}
-MASK_TESTS = ("-q", "-p", "no:cacheprovider", "tests/test_cuda_checker.py", "-k", "masks",
+MASK_TESTS = ("-q", "-p", "no:cacheprovider", "tests/geom/test_cuda_checker.py", "-k", "masks",
               "-m", "not slow and not data")
 EXPECT = {"order1": 0, "order2": 0, "poison": 0, "alias": 1}  # pytest exit codes: 0 passed, 1 tests failed
 
@@ -93,8 +93,8 @@ def main() -> int:
             bad.append(name)
     env = {**os.environ, "OBJDEL_REQUIRE_VARIANTS": "1"}
     got = subprocess.run([sys.executable, "-I", "-m", "pytest", "-q", "-p", "no:cacheprovider",
-                          "tests/test_variants.py"], cwd=ROOT, env=env).returncode
-    print(f"variant mutfg4: tests/test_variants.py exit {got} (want 0)")
+                          "tests/geom/test_variants.py"], cwd=ROOT, env=env).returncode
+    print(f"variant mutfg4: tests/geom/test_variants.py exit {got} (want 0)")
     if got:
         bad.append("mutfg4")
     print("test-order:", "FAIL " + " ".join(bad) if bad else "OK")
