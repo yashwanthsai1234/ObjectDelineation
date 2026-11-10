@@ -136,3 +136,46 @@ def test_manual_edit_that_a_later_sub_move_takes_on_is_not_missing(tmp_path, mon
     assert M.main(["--stage", "E3c"]) == 0 and f.read_text() == "c\n"
     f.write_text("x\n")
     assert M.main(["--stage", "E3c"]) == 1 and capsys.readouterr().out.count("MISSING") == 1
+
+
+def test_wrap_leaves_a_line_that_was_long_before_the_move():
+    """A line already past 120 columns before the move (a URL, a noqa'd import) is not the move's doing: kept as is
+    and not reported; a long line the rename made is still wrapped."""
+    old = "# " + "x" * 130 + "\n"
+    new_long = "# " + "word " * 30 + "\n"
+    new, left = E.wrap_prose(old + new_long, keep={old.rstrip("\n")})
+    assert new.splitlines()[0] == old.rstrip("\n") and left == []
+    assert all(len(x) <= 120 for x in new.splitlines()[1:])
+
+
+def test_split_carries_type_checking_imports(tmp_path, monkeypatch):
+    """An `if TYPE_CHECKING:` block of imports is an import group: each new module gets the guarded imports its code
+    names, under its own `if TYPE_CHECKING:`. The `__main__` guard goes with the one new module whose names it calls."""
+    root = tmp_path
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    (root / "src/objdel/train").mkdir(parents=True)
+    (root / "src/objdel/train/__init__.py").write_text('"""t."""\n')
+    (root / "src/objdel/train/configs.py").write_text(
+        '"""C."""\nfrom typing import TYPE_CHECKING\n\n'
+        'if TYPE_CHECKING:\n    from trl import GRPOConfig, SFTConfig\n\n\n'
+        'def sft() -> "SFTConfig":\n    return 1\n\n\ndef grpo() -> "GRPOConfig":\n    return 2\n\n\n'
+        'if __name__ == "__main__":\n    grpo()\n')
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    table = {"files": {}, "splits": {"src/objdel/train/configs.py": {"objdel.sft.config": ["sft"],
+                                                                     "objdel.rl.config": ["grpo"]}},
+             "drop_reexports": [], "delete_packages": ["src/objdel/train"],
+             "packages": {"src/objdel/sft/__init__.py": '"""s."""\n', "src/objdel/rl/__init__.py": '"""r."""\n'},
+             "engine": {"path": "src/objdel/geom/engine.py", "names": []}, "gpucheck_keep": [],
+             "scan_roots": ["src"], "text_globs": ["*.py"], "text_extra": [], "docstring_to": {}}
+    tab = root / "table.json"
+    tab.write_text(E.json.dumps(table))
+    monkeypatch.setattr(E, "TABLE", tab)
+    assert E.run(root, apply=True, stage="E5") == 0
+    sft = (root / "src/objdel/sft/config.py").read_text()
+    rl = (root / "src/objdel/rl/config.py").read_text()
+    assert "if TYPE_CHECKING:\n    from trl import SFTConfig\n" in sft and "GRPOConfig" not in sft
+    assert "if TYPE_CHECKING:\n    from trl import GRPOConfig\n" in rl and "SFTConfig" not in rl
+    assert "from typing import TYPE_CHECKING" in sft and "from typing import TYPE_CHECKING" in rl
+    assert rl.endswith('if __name__ == "__main__":\n    grpo()\n') and "__main__" not in sft
+    for text in (sft, rl):
+        compile(text, "x", "exec")
