@@ -11,8 +11,8 @@
 #   3b train_rl --merge-last: final/ from the last checkpoint when 3 did not reach its own save; no-op otherwise
 #   4  one final_eval process: the B1 final model on lidc-val-shifted, then lidc-val-edge (A3's repeated --view)
 # R5 on lidc-val-edge is a3_measure.yaml (front item 4), run right after this plan's EXIT.
-# --rows-revision and --rows-manifest-sha256 are zero placeholders until B1.4 step 5 writes the uploaded root's
-# commit and manifest SHA-256 here; train_rl and preflight refuse the zeros (manifest SHA-256 mismatch).
+# --rows-manifest-sha256 is the built root's (B1.4). --rows-revision stays a zero placeholder until B1.4 step 5 writes
+# the uploaded root's commit here; train_rl and preflight refuse the zero revision.
 #   fetch_hf.sh <run> rl-full-3ep && fetch_hf.sh <run> --rows <rows_revision> lidc-train-b1
 #   run.sh <run> experiments/phase2/configs/b1_rows.yaml
 # {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc.
@@ -23,7 +23,7 @@ steps:
   - ["~", -m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/rows/lidc-train-b1",
      --out, "{rd}/b1-rows", --steps, "260", --save-steps, "50", --shared-prefix, --lr, "5e-5",
      --rows-revision, "0000000000000000000000000000000000000000",
-     --rows-manifest-sha256, "0000000000000000000000000000000000000000000000000000000000000000", --budget-usd, "2.05"]
+     --rows-manifest-sha256, "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4", --budget-usd, "2.05"]
   - [-m, experiments.phase2.train_rl, --merge-last, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --out, "{rd}/b1-rows"]
   - [-m, experiments.phase2.final_eval, --ckpt, "{rd}/b1-rows/final", --train, "{data}/prepared",
      --view, "{data}/eval_views/lidc-val-shifted", --split, val, --out, "{rd}/eval_b1_val_shifted",

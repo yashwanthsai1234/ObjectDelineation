@@ -971,7 +971,7 @@ def test_bundle_real_lidc_selection():
     d = ROOT / "data"
     if not all((d / p).is_dir() for p in ("prepared", "views", *(f"eval_views/{n}" for n in LIDC_EVAL))):
         pytest.skip("real prepared / view directories absent")
-    files = B.members("lidc", d)
+    files = B.members("lidc", d, ["lidc-bundle-v3"])  # the launch view; no names ships every lidc-* view
     size = sum(len(p) if isinstance(p, bytes) else p.stat().st_size for _, p in files)
     assert 0.5e9 < size < 4e9, size  # §4.4: images 1.3 GB + views + eval views
     assert not [n for n, _ in files if "riga" in n] and len({n for n, _ in files}) == len(files)
