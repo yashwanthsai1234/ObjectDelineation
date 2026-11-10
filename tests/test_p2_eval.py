@@ -215,7 +215,7 @@ def test_summarize_reports_truncation_tokens_hm_iou_and_nsd():
 def _ds(objs, iou):
     return {"items": 10, "samples": 640, "format": 0.99, "legal": 0.95, "iou_tc_pass": 0.8, "group": 8,
             "dup_rate": 0.05, "signal_share": 0.6, "truncated": 0.01, "tokens": {"mean": 80.0, "p95": 150.0},
-            "topo_any_unanimous": 0.0, "objects": {n: {"iou_tc_median": iou[n]} for n in objs}}
+            "objects": {n: {"iou_tc_median": iou[n]} for n in objs}}
 
 
 def _summary():
@@ -284,7 +284,6 @@ def test_phase2_entry_fail_cases(path, value, gate):
     (("prior", "centred", "lidc", "nodule", "win_share"), 0.1),  # G-prior (a): report-only (revision 7)
     (("probes", "topology", "hole_recall"), 0.0),  # G-topology (b): report-only, decided by C2
     (("views", "centred", "summary", "datasets", "lidc", "format"), 0.1),  # centred view gates nothing
-    (("views", "shifted", "summary", "datasets", "lidc", "topo_any_unanimous"), 0.0),  # gate removed (D18)
     (("views", "shifted", "summary", "datasets", "lidc", "truncated"), 0.9),  # reported beside G-format
 ])
 def test_report_only_values_never_fail(path, value):
@@ -294,11 +293,7 @@ def test_report_only_values_never_fail(path, value):
 
 
 def test_topo_any_unanimous_is_not_read():
-    r = full_report()
-    for v in r["views"].values():
-        for d in v["summary"]["datasets"].values():
-            del d["topo_any_unanimous"]
-    g = gates.phase2_entry(r)
+    g = gates.phase2_entry(full_report())  # summarize no longer gives it (X2-5); no gate asks for it
     assert g["pass"] is True and "G-topology-a" in g["gates"]
     assert not any("unanimous" in k for gate in g["gates"].values() for k in gate["values"])
 

@@ -380,7 +380,7 @@ def test_area_tail_is_relative_to_the_baseline(nod):
 def good_report():
     """A one-view (shifted) report as eval_run writes it; the full §5.1 schema is tested in test_p2_eval.py."""
     def ds(objs, iou):
-        return {"items": 10, "samples": 640, "format": 0.99, "legal": 0.95, "topo_any_unanimous": 0.95,
+        return {"items": 10, "samples": 640, "format": 0.99, "legal": 0.95,
                 "iou_tc_pass": 0.8, "group": 8, "dup_rate": 0.05, "signal_share": 0.6,
                 "objects": {n: {"iou_tc_median": iou[n]} for n in objs}}
     return {"views": {"shifted": {"summary": {"datasets": {
@@ -426,7 +426,7 @@ def test_summary_of_the_raters_own_targets(nod, riga):
     lidc, rg = s["datasets"]["lidc"], s["datasets"]["riga"]
     assert lidc["format"] == 1.0 and lidc["legal"] == 1.0 and lidc["pass_rate"] == 1.0 and lidc["tv"] == 0.0
     assert lidc["disagreement"]["items"] == 1 and lidc["disagreement"]["min_mode"] == 1.0
-    assert rg["topo_any_unanimous"] == 1.0 and rg["objects"]["cup"]["iou_tc_median"] >= 0.99
+    assert "topo_any_unanimous" not in rg and rg["objects"]["cup"]["iou_tc_median"] >= 0.99  # X2-5: dropped
     assert rg["disagreement"]["items"] == 0 and rg["disagreement"]["tv"] is None
     assert lidc["pass_at_k"] == {"1": 1.0, "2": 1.0, "4": 1.0}
 

@@ -127,7 +127,7 @@ def markdown(report: dict, title: str) -> str:
     for ds, d in report["summary"]["datasets"].items():
         pk = ", ".join(f"{k}: {v:.3f}" for k, v in d["pass_at_k"].items())
         L.append(f"| {ds} | {d['items']} | {d['samples']} | {_f(d['format'], 1)} | {_f(d['legal'], 1)} | "
-                 f"{_f(d['topo_any'], 1)} | {_f(d['topo_any_unanimous'], 1)} | {_f(d['pass_rate'], 1)} | {pk} |")
+                 f"{_f(d['topo_any'], 1)} | n/a | {_f(d['pass_rate'], 1)} | {pk} |")
     L += ["", "| dataset | TV | JS | coverage | disagreement items | TV (dis.) | JS (dis.) | min-mode (dis.) | "
               "group | duplicates | groups with σ > floor |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for ds, d in report["summary"]["datasets"].items():
