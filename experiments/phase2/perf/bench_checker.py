@@ -6,6 +6,7 @@ Run as a module with -I (it reads data, which is untrusted):
     python -I -m experiments.phase2.perf.bench_checker --dump-replay OUT.npz [--synthetic N]
     python -I -m experiments.phase2.perf.bench_checker --replay OUT.npz --out replay.json [--engine current|old]
     python -I -m experiments.phase2.perf.bench_checker --rungs runs/d1/rungs.json
+    python -I -m experiments.phase2.perf.bench_checker --compare DIR
 
 Workloads (check_masks): lesion512_b1, lesion512_b256, lesion512_b8192 (512 x 512 frames with two lesion-like blobs,
 generated, seed 20261108) and crops (the 37,093 crops of checker_eval/masks.npz). Each runs `--warmup` untimed calls,
@@ -27,6 +28,12 @@ go into the JSON so two engines can be compared.
 built by run_box.sh --gpu-check from old_engine.tar; Implementation.md D-G7) and this environment, so both engines
 read the same root. That venv has no objdel.geom, objdel.verify.reward, cv2 or scipy: the module-level imports below are
 the standard library, numpy and objdel._gpucheck only; --dump-replay and --rungs import the rest inside their functions.
+
+--compare DIR (run_box.sh --gpu-check step 6) reads bench_{old,current}.json and replay_{old,current}.json in DIR and
+prints the D-G7 and D-G8 table (median, IQR, ratio, limit, same outputs, pass); exit 1 when a pass rule fails. D-G7: new
+median <= 0.9 x old on lesion512_b256 and crops, <= 1.05 x old elsewhere, results_sha256 equal. D-G8: score_polygons
+median <= 1.05 x old, per-object results equal, and one call's waits and drain_syncs equal the old engine's (the D1
+baseline: the old tree is the tag pre-d2, which holds D1).
 
 --rungs (D1 step 3, input to the D6 grid decision): the vertex count of every certified rung (the target texts of
 the first 500 rows of data/targets/{lidc,riga}/train.jsonl under ROOT) and its validity time on this build.
@@ -275,6 +282,35 @@ def write(path: Path, result: dict) -> None:
         json.dump(result, f, indent=1)
 
 
+LIMIT = {"lesion512_b256": 0.9, "crops": 0.9}  # D-G7; every other workload and the replay: 1.05
+
+
+def compare(folder: Path) -> int:
+    """Print the D-G7 and D-G8 table of the four arms in `folder`; 1 when a row fails."""
+    def arm(name: str) -> dict:
+        path = folder / f"{name}.json"
+        if not path.is_file():
+            sys.exit(f"bench_checker: missing {path} (run_box.sh --gpu-check step 6 writes it)")
+        with open(path) as f:
+            return json.load(f)
+
+    old, new = arm("bench_old")["workloads"], arm("bench_current")["workloads"]
+    rows = [("D-G7", w, old[w], new[w], LIMIT.get(w, 1.05), old[w]["results_sha256"] == new[w]["results_sha256"])
+            for w in old]
+    o, n = arm("replay_old")["replay"], arm("replay_current")["replay"]
+    same = o["results"] == n["results"] and all(o["stats"][k] == n["stats"][k] for k in ("waits", "drain_syncs"))
+    rows.append(("D-G8", "score_polygons", o, n, 1.05, same))
+    print("gate  workload        old_ms  old_iqr  new_ms  new_iqr  ratio  limit  same  result")
+    failed = 0
+    for gate, w, o, n, limit, same in rows:
+        ratio = n["median_ms"] / o["median_ms"]
+        ok = same and ratio <= limit
+        failed += not ok
+        print(f"{gate}  {w:15} {o['median_ms']:.3f} {o['iqr_ms']:.3f} {n['median_ms']:.3f} {n['iqr_ms']:.3f} "
+              f"{ratio:.3f} {limit:.2f} {'yes' if same else 'no'} {'pass' if ok else 'FAIL'}")
+    return int(failed > 0)
+
+
 def run_old(a, argv) -> int:
     """This script by path under the old engine's Python, this environment, --engine current."""
     if not Path(a.old_python).is_file():
@@ -305,8 +341,12 @@ def main(argv=None) -> None:
     ap.add_argument("--synthetic", type=int, metavar="N")
     ap.add_argument("--replay", type=Path, metavar="FILE")
     ap.add_argument("--rungs", type=Path, metavar="OUT")
-    ap.add_argument("--out", type=Path, required=not ({"--dump-replay", "--rungs"} & {x.split("=")[0] for x in argv}))
+    ap.add_argument("--compare", type=Path, metavar="DIR")
+    ap.add_argument("--out", type=Path,
+                    required=not ({"--dump-replay", "--rungs", "--compare"} & {x.split("=")[0] for x in argv}))
     a = ap.parse_args(argv)
+    if a.compare:
+        sys.exit(compare(a.compare))
     if a.engine == "old":
         sys.exit(run_old(a, argv))
     if a.dump_replay:

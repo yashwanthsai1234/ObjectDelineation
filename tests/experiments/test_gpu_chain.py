@@ -1,6 +1,7 @@
 """The GPU check chain on the Mac at $0 (Implementation.md D8): `make gpu-check DRY=1` prints every box step in order
-and collects D_GPU_TESTS; each entry of the list collects a test, and the sanitizer selection is the corpus. Reads no
-data/. The JUnit skip check fails the box on any skip; d_gpu_test.yaml calls the chain and A's two box tests."""
+(old-engine build and benches included), collects D_GPU_TESTS and runs S08, S10 and S15; each entry of the list
+collects a test, and the sanitizer selection is the corpus. Reads no data/. The JUnit skip check fails the box on any
+skip; d_gpu_test.yaml calls the chain and A's two box tests."""
 import re
 import subprocess
 from pathlib import Path
@@ -29,13 +30,24 @@ def test_dry_chain_prints_the_box_steps_in_order_and_collects_the_list():
     assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
     steps = [line[2:] for line in out.stdout.splitlines() if line.startswith("+ ")]
     want = ["uv pip install", "CUDA_HOME=", '[ -e "$CUDA_HOME/lib64" ]', "ln -sf libcudart", "export CUDACXX=",
-            "make cuda", '"$PY" -I -c "import objdel._gpucheck', '[ -f "$OBJDEL_DATA_ROOT/checker_eval/masks.npz" ]',
-            '"$PY" -I -m pytest -q -p no:cacheprovider $D_GPU_TESTS -m "$SEL" --junitxml "$OUT/gpu.xml"',
-            '"$PY" -I -m experiments.cuda_checker.junit_skips "$OUT/gpu.xml"',
-            *(f"--tool {t} --error-exitcode 99" for t in ("memcheck", "initcheck", "synccheck", "racecheck"))]
+            "make cuda", '"$PY" -I -c "import objdel._gpucheck',
+            'for f in $R_D2_PAYLOAD; do [ -e "$OBJDEL_DATA_ROOT/$f" ]', '"$PY" -I -m pytest -q -p no:cacheprovider '
+            '$D_GPU_TESTS -m "$SEL" --junitxml "$OUT/gpu.xml"', '"$PY" -I -m experiments.cuda_checker.junit_skips',
+            *(f"--tool {t} --error-exitcode 99" for t in ("memcheck", "initcheck", "synccheck", "racecheck")),
+            "sha256sum -c old_engine.tar.sha256", "tar -xf old_engine.tar -C /opt/old_src", "uv venv",
+            "uv pip install --python /opt/old/bin/python", "make -C /opt/old_src cuda PY=/opt/old/bin/python",
+            '--dump-replay "$OUT/replay_inputs.npz"', '--engine old --out "$OUT/bench_old.json"',
+            '--engine old --replay "$OUT/replay_inputs.npz" --out "$OUT/replay_old.json"',
+            '--engine current --out "$OUT/bench_current.json"',
+            '--engine current --replay "$OUT/replay_inputs.npz" --out "$OUT/replay_current.json"',
+            'bench_checker --compare "$OUT"']
     assert len(steps) == len(want) and all(w in s for w, s in zip(want, steps, strict=True)), steps
     assert not any("--leak-check" in s for s in steps)
+    assert steps.index("export CUDACXX=$CUDA_HOME/bin/nvcc") < min(i for i, s in enumerate(steps) if "make " in s)
     assert sum("::" in line for line in out.stdout.splitlines()) > 100  # the collect-only listing
+    assert "old-engine tar: skipped, no pre-d2 tag" in out.stdout or "pre-d2" in subprocess.run(
+        ["git", "tag", "-l", "pre-d2"], cwd=ROOT, capture_output=True, text=True).stdout
+    assert re.search(r"^\d+ passed", out.stdout.splitlines()[-1])  # S08, S10, S15
 
 
 def test_every_listed_entry_collects_a_test_and_the_sanitizer_corpus_is_selected():

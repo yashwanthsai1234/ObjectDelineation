@@ -244,3 +244,49 @@ def test_recorded_rungs_schema():
     r = json.loads(path.read_text())
     _check_rungs(r)
     assert {g["dataset"] for g in r["rungs"]} == {"lidc", "riga"}
+
+
+# ------------------------------------------------------------------ --compare: the D-G7 and D-G8 table (S11)
+
+def _arms(folder: Path, new: dict, sha: str = "s", waits: int = 4) -> None:
+    """Planted bench_{old,current}.json and replay_{old,current}.json: old medians 10 ms, new medians from `new`."""
+    for engine, med, h, w in (("old", {}, "s", 4), ("current", new, sha, waits)):
+        work = {k: {"median_ms": med.get(k, 10.0), "iqr_ms": 0.5, "results_sha256": h}
+                for k in ("lesion512_b1", "lesion512_b256", "crops")}
+        (folder / f"bench_{engine}.json").write_text(json.dumps({"workloads": work}))
+        rep = {"median_ms": med.get("replay", 10.0), "iqr_ms": 0.5, "results": {"iou_tc": [0.5]},
+               "stats": {"waits": w, "drain_syncs": 2}}
+        (folder / f"replay_{engine}.json").write_text(json.dumps({"replay": rep}))
+
+
+def _compare(folder: Path, capsys) -> tuple[int, list[str]]:
+    with pytest.raises(SystemExit) as e:
+        B.main(["--compare", str(folder)])
+    return e.value.code, capsys.readouterr().out.splitlines()
+
+
+def test_compare_passes_within_the_limits(tmp_path, capsys):
+    _arms(tmp_path, {"lesion512_b1": 10.5, "lesion512_b256": 9.0, "crops": 8.0, "replay": 10.5})
+    code, out = _compare(tmp_path, capsys)
+    rows = {ln.split()[1]: ln.split() for ln in out if ln.startswith("D-G")}
+    assert code == 0 and set(rows) == {"lesion512_b1", "lesion512_b256", "crops", "score_polygons"}
+    assert rows["lesion512_b256"][0] == "D-G7" and rows["score_polygons"][0] == "D-G8"
+    assert rows["lesion512_b256"][2:] == ["10.000", "0.500", "9.000", "0.500", "0.900", "0.90", "yes", "pass"]
+    assert rows["lesion512_b1"][-3:] == ["1.05", "yes", "pass"]
+
+
+@pytest.mark.parametrize("new, sha, waits, bad", [
+    ({"lesion512_b256": 9.5}, "s", 4, "lesion512_b256"),  # 0.95 x old: over the 0.9 limit
+    ({"lesion512_b1": 10.6}, "s", 4, "lesion512_b1"),  # 1.06 x old: over 1.05
+    ({}, "t", 4, "crops"),  # outputs differ
+    ({}, "s", 5, "score_polygons"),  # one wait more than the old engine (the D1 baseline)
+])
+def test_compare_fails_a_slow_or_different_arm(tmp_path, capsys, new, sha, waits, bad):
+    _arms(tmp_path, new, sha, waits)
+    code, out = _compare(tmp_path, capsys)
+    assert code == 1 and any(ln.split()[1] == bad and ln.endswith("FAIL") for ln in out if ln.startswith("D-G"))
+
+
+def test_compare_needs_no_out_and_names_a_missing_arm(tmp_path):
+    p = _run(["--compare", tmp_path], tmp_path, check=False)
+    assert p.returncode == 1 and str(tmp_path / "bench_old.json") in p.stderr
