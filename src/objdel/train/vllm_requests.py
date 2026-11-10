@@ -20,11 +20,22 @@ def group_requests(prompts: list[dict], G: int) -> list[dict]:
 
 def grouped(generate, G: int):
     """generate(prompts, sampling_params=...) sending group_requests(prompts, G) with a clone of the sampling params
-    at n = G; the returned RequestOutputs (one per block, G completions each) flatten to TRL's row order k*G + j."""
+    at n = G; the returned RequestOutputs (one per block, G completions each) flatten to TRL's row order k*G + j.
+    A list of per-row params (C11 caps) is cut the same way: one clone per block, n = G, the block's one max_tokens."""
 
     def call(prompts, *args, sampling_params, **kwargs):
-        sp = sampling_params.clone()
-        sp.n = G
+        if isinstance(sampling_params, list):
+            if len(sampling_params) != len(prompts):
+                raise ValueError(f"{len(sampling_params)} params for {len(prompts)} prompts")
+            for k in range(0, len(prompts), G):
+                if len({p.max_tokens for p in sampling_params[k:k + G]}) > 1:
+                    raise ValueError(f"block {k // G} (rows {k}..{k + G - 1}) has two caps: n = {G} needs one")
+            sp = [p.clone() for p in sampling_params[::G]]
+            for p in sp:
+                p.n = G
+        else:
+            sp = sampling_params.clone()
+            sp.n = G
         return generate(group_requests(prompts, G), *args, sampling_params=sp, **kwargs)
 
     return call
