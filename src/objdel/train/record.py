@@ -20,6 +20,11 @@ def open_dir(path) -> Path:
     return path
 
 
+def file_name(step: int) -> str:
+    """The record file of optimizer step `step` (1-based)."""
+    return f"step{step:04d}.pt"
+
+
 def positions(base, batch: dict) -> torch.Tensor:
     """(3, rows, width) rope positions of HF's get_rope_index (`base`: the Qwen-VL module) on prompt + answer."""
     ids = torch.cat([batch["prompt_ids"], batch["completion_ids"]], 1).cpu()

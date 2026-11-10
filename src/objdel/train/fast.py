@@ -1010,9 +1010,8 @@ class FastGRPO(FastForward, GRPOTrainer):
                         check_meta(batch)
                     self.rope_check = self.check_due(self.check_rope_every)
                 if self.record_dir and self.model.training and self.state.global_step + 1 >= self.checks_from_step:
-                    name = f"step{self.state.global_step + 1:04d}.pt"
                     torch.save(record.batch_record(batch, self.meta, self.rope and self.rope.base),
-                               self.record_dir / name)
+                               self.record_dir / record.file_name(self.state.global_step + 1))
             return batch
         finally:
             self.rows, self.meta = None, None
