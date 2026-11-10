@@ -121,6 +121,8 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     trainer.check_meta_every = getattr(a, "check_meta_every", 50)
     trainer.check_rope_every = getattr(a, "check_rope_every", 50)  # C2
     trainer.prompt_memo = bool(getattr(a, "prompt_memo", False))  # C2
+    if getattr(a, "encoder_once", False) and not trainer.use_encoder_once():  # C3, after host_meta
+        raise ValueError("--encoder-once needs a Qwen-VL vision tower, base and image processor")
     if getattr(a, "gpu_pixels", "off") == "auto":  # C1: 8 training images for the start-up self-check
         imgs = [train[i]["image"] for i in range(min(8, len(train)))]
         print(f"gpu_pixels/backend={trainer.use_gpu_pixels(imgs, getattr(a, 'allow_cpu_pixels', False))}")

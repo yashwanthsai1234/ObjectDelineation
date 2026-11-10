@@ -26,15 +26,15 @@ IMG, START, END = 100, 102, 103
 PATCH = 3 * 2 * 16 * 16  # channels x temporal patch x patch x patch
 
 
-def tiny_model():
+def tiny_model(vocab_size=128, img=IMG, video=101, start=START, end=END):
     torch.manual_seed(0)
     cfg = Qwen3VLConfig(
-        text_config=dict(vocab_size=128, hidden_size=32, intermediate_size=64, num_hidden_layers=3,
+        text_config=dict(vocab_size=vocab_size, hidden_size=32, intermediate_size=64, num_hidden_layers=3,
                          num_attention_heads=2, num_key_value_heads=1, head_dim=16,
                          rope_scaling={"rope_type": "default", "mrope_section": [2, 3, 3], "mrope_interleaved": True}),
         vision_config=dict(depth=2, hidden_size=32, intermediate_size=64, num_heads=2, out_hidden_size=32,
                            patch_size=16, spatial_merge_size=2, temporal_patch_size=2, deepstack_visual_indexes=[0]),
-        image_token_id=IMG, video_token_id=101, vision_start_token_id=START, vision_end_token_id=END)  # fmt: skip
+        image_token_id=img, video_token_id=video, vision_start_token_id=start, vision_end_token_id=end)  # fmt: skip
     m = Qwen3VLForConditionalGeneration(cfg).eval()
     add_fused_lm_head(m, outputs=("log_probs", "entropy"))
     return m

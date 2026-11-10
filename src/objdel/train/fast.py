@@ -13,6 +13,8 @@ few shapes. The window is computed from the attention mask with one host read pe
 `VisionCache` (C6): the G = 8 answers of a prompt share its image, so one generation batch holds 32 images 256 times,
 and the frozen vision tower ran on every copy in every pass (old, reference, update). The cache encodes each distinct
 image once per generation batch. Valid because LoRA leaves the tower and projector out (configs.lora, D6).
+`EncoderCache` (C3, --encoder-once) takes over its tower: the batch's distinct images in one call, no pixel values in
+any forward.
 """
 
 import contextlib
@@ -162,10 +164,12 @@ def per_row(pv, rows, nimg) -> list | None:
     return out
 
 
-def prompt_groups(prompt_ids, prompt_mask, pix) -> list[tuple[int, int]] | None:
-    """Runs [a, b) of consecutive rows with the same prompt tokens, padding and pixels (exact compares, one host
-    read), or None when no run has two rows (nothing to share)."""
+def prompt_groups(prompt_ids, prompt_mask, pix, image_ids=None) -> list[tuple[int, int]] | None:
+    """Runs [a, b) of consecutive rows with the same prompt tokens, padding and pixels, or image ids under
+    --encoder-once (exact compares, one host read), or None when no run has two rows (nothing to share)."""
     same = (prompt_ids[1:] == prompt_ids[:-1]).all(1) & (prompt_mask[1:] == prompt_mask[:-1]).all(1)
+    if image_ids is not None:
+        same &= torch.as_tensor(image_ids[1:] == image_ids[:-1], device=same.device)
     if pix is not None:
         if len({p.shape for p in pix}) == 1:
             px = torch.stack(pix).flatten(1)
@@ -212,7 +216,10 @@ class FastForward:
         n = input_ids.size(0)
         size = batch_size or n
         pv, grid, nimg = kw.pop("pixel_values", None), kw.pop("image_grid_thw", None), kw.pop("num_images", None)
-        rows = grid.prod(-1).tolist() if grid is not None else None  # pixel rows per image (one host read)
+        enc = getattr(self, "encoder", None) if grid is not None else None
+        if enc is not None:  # C3: each row's features from the generation batch's one tower call, never pixels
+            pv, ids = None, enc.check_rows(meta.image_id if meta is not None else self.row_image_ids, nimg, model)
+        rows = grid.prod(-1).tolist() if pv is not None else None  # pixel rows per image (one host read)
         P = input_ids.size(1) - logits_to_keep
         rope = getattr(self, "rope", None)
         pos = None
@@ -229,10 +236,11 @@ class FastForward:
             e = min(s + size, n)
             if self.shared_prefix and pos is not None and not compute_aux_loss and rope.hooks(model):
                 k = sum(nimg[s:e])
-                r = sum(rows[img:img + k])
-                pix = per_row(pv[row:row + r], rows[img:img + k], nimg[s:e])
+                r = 0 if rows is None else sum(rows[img:img + k])
+                pix = None if enc is not None else per_row(pv[row:row + r], rows[img:img + k], nimg[s:e])
+                chunk_ids = None if enc is None else ids[s:e]
                 if meta is None:
-                    runs = prompt_groups(input_ids[s:e, :P], attention_mask[s:e, :P], pix)
+                    runs = prompt_groups(input_ids[s:e, :P], attention_mask[s:e, :P], pix, chunk_ids)
                     lengths = torch.cat([attention_mask[s:e, :P].sum(1), attention_mask[s:e, P:].sum(1)]).tolist()
                     plen, lens = lengths[:e - s], lengths[e - s:]
                 else:
@@ -242,7 +250,7 @@ class FastForward:
                     smask = kw["sampling_mask"][s:e] if kw.get("sampling_mask") is not None else None
                     lp, ent = self.packed_chunk(model, input_ids[s:e], P, plen, lens, pos[:, s:e],
                                                 kw["mm_token_type_ids"][s:e], runs, pix, grid[img:img + k],
-                                                nimg[s:e], smask, compute_entropy)  # fmt: skip
+                                                nimg[s:e], smask, compute_entropy, chunk_ids)  # fmt: skip
                     img, row = img + k, row + r
                     lps.append(lp)
                     if compute_entropy:
@@ -256,9 +264,14 @@ class FastForward:
                 sub["sampling_mask"] = kw["sampling_mask"][s:e, :keep]
             if grid is not None:
                 k = sum(nimg[s:e])
-                r = sum(rows[img:img + k])
-                sub |= {"pixel_values": pv[row:row + r], "image_grid_thw": grid[img:img + k], "num_images": nimg[s:e]}
-                img, row = img + k, row + r
+                if enc is not None:  # taken by the base's forward (EncoderCache.inject): TRL passes no such kwarg
+                    enc.pending = (enc.outputs(ids[s:e]), grid[img:img + k])
+                else:
+                    r = sum(rows[img:img + k])
+                    sub |= {"pixel_values": pv[row:row + r], "image_grid_thw": grid[img:img + k],
+                            "num_images": nimg[s:e]}  # fmt: skip
+                    row += r
+                img += k
             if pos is not None:
                 rope.pending = pos[:, s:e, cols]  # the chunk's slice, taken by the model's forward (RopeCache.inject)
             try:
@@ -268,6 +281,8 @@ class FastForward:
             finally:
                 if pos is not None:
                     rope.pending = None
+                if enc is not None:
+                    enc.pending = None
             lps.append(F.pad(lp, (0, logits_to_keep - keep)))
             if compute_entropy:
                 ents.append(F.pad(ent, (0, logits_to_keep - keep)))
@@ -276,7 +291,8 @@ class FastForward:
         return (torch.cat(lps), torch.cat(ents) if compute_entropy else None,
                 torch.stack(auxs).mean() if compute_aux_loss else None)  # fmt: skip
 
-    def packed_chunk(self, model, ids, P, plen, lens, pos, mm, runs, pix, grid, nimg, sampling_mask, compute_entropy):
+    def packed_chunk(self, model, ids, P, plen, lens, pos, mm, runs, pix, grid, nimg, sampling_mask, compute_entropy,
+                     image_ids=None):  # fmt: skip
         """One packed row per group of rows sharing a prompt and image (prompt_groups' runs):
             [prompt minus its last token] + for each answer: [last prompt token, answer tokens]
         The last prompt token is repeated at the head of each answer block with its own position, so its hidden
@@ -285,7 +301,8 @@ class FastForward:
         block k, -1 = padding) lets the prompt attend causally and each block attend to the prompt and causally to
         itself, never to another answer. Positions are the rows' own (RopeCache), sliced. `plen` and `lens` are the
         rows' real prompt and answer lengths (host lists). Returns (rows, answer width) log-probs and entropies laid
-        out as TRL's, 0 off the answers."""
+        out as TRL's, 0 off the answers. `image_ids` (--encoder-once): the rows' image ids, each group's features from
+        EncoderCache instead of `pix`."""
         dev, T = ids.device, ids.size(1) - P
         toks, poss, mms, labs, segs, gi, pi, ri, ci = [], [], [], [], [], [], [], [], []
         for g, (a, b) in enumerate(runs):
@@ -334,11 +351,14 @@ class FastForward:
         else:
             raise NotImplementedError(f"shared_prefix needs sdpa or eager attention, not {impl}")
         inputs = {"input_ids": tok, "attention_mask": m4, "mm_token_type_ids": mmt, "labels": lab}
-        if pix is not None:
+        if pix is not None or image_ids is not None:
             heads = [a for a, _ in runs]
             img0 = [sum(nimg[:a]) for a in heads]
-            inputs["pixel_values"] = torch.cat([pix[a] for a in heads])
             inputs["image_grid_thw"] = torch.cat([grid[i:i + nimg[a]] for i, a in zip(img0, heads, strict=True)])
+            if image_ids is None:
+                inputs["pixel_values"] = torch.cat([pix[a] for a in heads])
+            else:
+                inputs["mm_encoder_outputs"] = {"image": self.encoder.outputs(image_ids[heads])}
         if sampling_mask is not None:
             sup = sampling_mask.new_full((c, W, sampling_mask.size(-1)), -1)
             sup[idx[0], idx[1] + 1] = sampling_mask[idx[2], idx[3]]  # aligned with the tokens, shifted like labels
@@ -511,6 +531,76 @@ class RopeCache:
                     hf = hf[:, torch.as_tensor(bad, device=input_ids.device)]
                 out[:, torch.as_tensor(np.flatnonzero(bad), device=input_ids.device)] = hf
             return out, int(bad.sum())
+
+
+class EncoderMismatch(RuntimeError):
+    """A vision tower call whose pixel rows are not its grid's (C3: e.g. 32 images of pixels cut by a 256-row grid)."""
+
+
+class EncoderCache:
+    """C3 (--encoder-once): `encode` runs the generation batch's distinct images through the frozen tower in one call
+    (FastGRPO._generate, after vLLM returns); `outputs(image_ids)` gives each row's features as Qwen3VLModel.forward
+    takes them in `mm_encoder_outputs`. TRL's forward passes no such kwarg, so `pending` reaches the base through a
+    pre-hook (like RopeCache's positions). Takes over VisionCache's tower wrapper: any other tower call passes the
+    shape guard and runs uncached."""
+
+    hooks = RopeCache.hooks  # whether a model holds the hooked base
+
+    def __init__(self, vision: VisionCache, base):
+        if any(p.requires_grad for p in vision.visual.parameters()):
+            raise ValueError("--encoder-once needs a frozen vision tower: its features are computed once a batch")
+        self.visual, self.tower, self.base = vision.visual, vision.encode, base
+        self.feats = self.pending = None
+        vision.visual.forward = self.guard
+        base.register_forward_pre_hook(self.inject, with_kwargs=True)
+
+    def clear(self):
+        """Drop the previous generation batch's features."""
+        self.feats = None
+
+    def guard(self, pixel_values, grid_thw=None, **kw):
+        """The tower, refusing pixel rows that are not the grid's (a TRL change that cuts the per-image pixels by
+        the per-row grid)."""
+        if pixel_values.size(0) != int(grid_thw.prod(-1).sum()):
+            raise EncoderMismatch(f"{pixel_values.size(0)} pixel rows for a grid of {len(grid_thw)} images")
+        return self.tower(pixel_values, grid_thw=grid_thw, **kw)
+
+    def encode(self, patches, grid) -> None:
+        """The distinct images' pixel rows and (t, h, w) grid rows (image id order) in one no-grad tower call."""
+        with nvtx.range("encoder_once"), torch.no_grad():
+            out = self.tower(patches.to(self.visual.device, self.visual.dtype), grid_thw=grid.to(self.visual.device),
+                             return_dict=True)  # fmt: skip
+        merged = (grid.prod(-1) // self.visual.spatial_merge_size**2).tolist()
+        self.kind = type(out)
+        self.feats = out.pooler_output.split(merged), [f.split(merged) for f in out.deepstack_features]
+
+    def check_rows(self, image_ids, nimg, model):
+        """The forward's per-row image ids, refusing a missing or misaligned field, rows of other than one image and
+        a model without the hooked base (a separate reference model would get no image features)."""
+        if image_ids is None:
+            raise RuntimeError("--encoder-once: no image ids for these rows")
+        if len(image_ids) != len(nimg) or any(k != 1 for k in nimg):
+            raise ValueError(f"--encoder-once: {len(image_ids)} image ids for {len(nimg)} rows of one image each")
+        if not self.hooks(model):
+            raise RuntimeError("--encoder-once: the model does not hold the hooked Qwen-VL base")
+        return image_ids
+
+    def outputs(self, image_ids):
+        """The rows' features in row order: a tuple per row (pooler_output) and per DeepStack level."""
+        if self.feats is None:
+            raise RuntimeError("--encoder-once: no image encoded in this generation batch")
+        embeds, levels = self.feats
+        bad = [int(i) for i in image_ids if not 0 <= i < len(embeds)]
+        if bad:
+            raise KeyError(f"image ids {bad} outside the {len(embeds)} encoded images")
+        return self.kind(pooler_output=tuple(embeds[i] for i in image_ids),
+                         deepstack_features=[tuple(lv[i] for i in image_ids) for lv in levels])  # fmt: skip
+
+    def inject(self, module, args, kwargs):
+        """Forward pre-hook: the pending chunk's features and grid in place of pixel values."""
+        if self.pending is not None:
+            kwargs["mm_encoder_outputs"], kwargs["image_grid_thw"] = {"image": self.pending[0]}, self.pending[1]
+        return args, kwargs
 
 
 class RopeTemplate(typing.NamedTuple):
@@ -911,6 +1001,8 @@ class FastGRPO(FastForward, GRPOTrainer):
     is_stats = None  # C10, B2.1: the generation batch's merged is_summary, on the device until `log`
     seq_gaps = []  # B2.1: the step's per-sequence (seq_kl, advantage, valid tokens) rows (train mode), on the device
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
+    encoder = None  # C3, train_rl --encoder-once: EncoderCache in place of VisionCache (use_encoder_once)
+    row_image_ids = None  # C3: the generation batch's per-row image ids, for its reference and old passes
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
     host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
     check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
@@ -952,6 +1044,16 @@ class FastGRPO(FastForward, GRPOTrainer):
         self.images.gpu = None if backend is None else (backend, "cuda")
         return backend or "cpu"
 
+    def use_encoder_once(self) -> bool:
+        """C3, train_rl --encoder-once (needs --host-meta: the update's rows carry their image ids): EncoderCache takes
+        over VisionCache's tower. False without a Qwen-VL tower, base and image processor."""
+        if not self.host_meta:
+            raise ValueError("--encoder-once needs --host-meta")
+        if any(x is None for x in (self.vision, self.rope, self.images)):
+            return False
+        self.encoder, self.vision = EncoderCache(self.vision, self.rope.base), None
+        return True
+
     def sync_without_merge(self) -> bool:
         """vLLM weight sync through lora_merged_params (the base weights are never written), on one process; FSDP and
         ZeRO-3 keep TRL's gathered path."""
@@ -991,7 +1093,7 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.train_dataset = rows
 
     def _generate_and_score_completions(self, inputs):
-        for cache in (self.vision, self.rope):
+        for cache in (self.vision, self.rope, self.encoder):
             if cache is not None:
                 cache.clear()
         self.rows = inputs
@@ -1001,6 +1103,8 @@ class FastGRPO(FastForward, GRPOTrainer):
         try:
             with self.timed("batch"):
                 batch = super()._generate_and_score_completions(inputs)
+            if self.encoder is not None:  # C3: the update takes the encoder's features; TRL would cut these by grid
+                batch.pop("pixel_values", None)
             if self.meta is not None:
                 batch["host_meta"] = host_rows(self.meta)
                 n = self.check_meta_every
@@ -1010,7 +1114,7 @@ class FastGRPO(FastForward, GRPOTrainer):
                 self.rope_check = bool(n) and self.state.global_step % n == 0
             return batch
         finally:
-            self.rows, self.meta = None, None
+            self.rows, self.meta, self.row_image_ids = None, None, None
             if skip:
                 self.vllm_importance_sampling_correction = True
 
@@ -1105,6 +1209,8 @@ class FastGRPO(FastForward, GRPOTrainer):
             if self.last_log is not None:
                 m["time/step_s"].append(now - self.last_log)
             self.last_log = now
+            if torch.cuda.is_available():  # G-MEM (C3 step 4): the peak so far, read after the update
+                m["perf/max_memory_gb"].append(torch.cuda.max_memory_allocated() / 2**30)
             if self.is_stats is not None:
                 rows = torch.cat(self.seq_gaps) if train and self.seq_gaps else None
                 parts = [self.is_stats]
@@ -1151,6 +1257,7 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     def _generate(self, prompts):
         if self.images is not None:  # the previous batch's images
+            self.images.per_image = self.encoder is not None  # C3: one pixel block per distinct image
             self.images.clear()
             flat = [x for row in prompt_images(prompts) for x in row] if self.prompt_memo else []
             if flat:  # pass 1 prepares no image with --prompt-memo: fill the memo with pass 2's kwargs (C1)
@@ -1169,9 +1276,22 @@ class FastGRPO(FastForward, GRPOTrainer):
                                  self.mask_truncated_completions, eos_and_pad,
                                  [getattr(r.get("image"), "size", None) for r in self.rows],
                                  [v for v in vision if v is not None])  # fmt: skip
+        if self.encoder is not None and self.rows is not None:
+            self.encode_images()
         self.prefetch_rewards(out[3], out[1])
         self.log_capped(out[1])
         return out
+
+    def encode_images(self) -> None:
+        """C3: the generation batch's distinct images (the memo's pass-2 entries, prepared here when missing) through
+        the tower in one call; row_image_ids then gives the reference and old passes each row's image. Nothing for
+        rows without an image."""
+        imgs = list({id(r.get("image")): r.get("image") for r in self.rows}.values())
+        if any(x is None for x in imgs):
+            return
+        self.row_image_ids = np.asarray(image_ids(self.rows), dtype=np.int32)
+        px = self.images(imgs, return_tensors="pt")
+        self.encoder.encode(px["pixel_values"], px["image_grid_thw"])
 
     def log_capped(self, completion_ids):
         """C11: completions/capped_share, the share of this batch's answers that reached their row's cap."""
