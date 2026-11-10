@@ -1292,6 +1292,22 @@ def test_g08b_fp16_dtype():
     assert llm.llm_engine.model_config.dtype == torch.float16
 
 
+@pytest.mark.gpu
+@CUDA
+def test_g08b_smoke():
+    """G08b smoke (b3_v5.yaml step 1): the G01 checks on the first 1,000 crops of checker_eval/masks.npz, so the
+    reward v5 sums are right on the box before they train anything: sum_x and sum_y equal np.nonzero's, and every
+    other field equals the `windows_1000` entry of tests/goldens/b_g01.json."""
+    from experiments.phase2.perf.make_b_goldens import windows
+    from tests.test_scorer_sums import GOLDEN, _masks_npz, _old_fields_ok, _sums_ok
+
+    gold = json.loads(GOLDEN.read_text())
+    sha, ms, r = windows(_masks_npz())
+    assert len(ms) == 1000 and sha == gold["windows_1000"]["input_sha256"]
+    _sums_ok(r, ms)
+    _old_fields_ok(r, gold, "windows_1000")
+
+
 def test_log_by_prompt_adds_the_per_prompt_rewards_to_train_logs_only(monkeypatch):
     from collections import defaultdict
     from types import SimpleNamespace

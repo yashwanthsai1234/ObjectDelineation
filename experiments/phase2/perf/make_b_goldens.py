@@ -79,13 +79,18 @@ def b_sets(masks_npz, n_masks=203, n_polys=None, n_crops=1000) -> dict:
         caches = [b_tables(m) for m in ms]
         out[f"polygons_{g}"] = (_sha(*args, np.int64(g)), ms,
                                 G.score_polygons(*args, g, np.array([c.device() for c in caches], np.int64)))
+    out["windows_1000"] = windows(masks_npz, n_crops)
+    return out
+
+
+def windows(masks_npz, n_crops=1000) -> tuple:
+    """(input SHA-256, the first n_crops crops of checker_eval/masks.npz, score_masks result): G01's `windows_1000`."""
     with np.load(masks_npz) as z:  # bits: one byte (0/1) per pixel; hw int32; start int64
         st = z["start"][:n_crops + 1]
         packed = (z["bits"][:st[n_crops]], z["hw"][:n_crops], st)
     ms = [packed[0][st[k]:st[k + 1]].view(bool).reshape(packed[1][k]) for k in range(n_crops)]
     sha, r = score_masks_of(ms, packed)
-    out["windows_1000"] = (sha, ms, r)
-    return out
+    return sha, ms, r
 
 
 def fields(r: dict) -> dict:
