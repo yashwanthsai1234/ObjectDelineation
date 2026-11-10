@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from objdel.eval import probes as P
-from objdel.io import read_jsonl
+from objdel.io import read_jsonl, write_json
 
 
 def build(a):
@@ -40,7 +40,7 @@ def build(a):
         pt = P.patches(a.store, "val", n=200)
         man = P.build_topology(out / "probe-topology", pt, stats["holes"], stats["multis"], stats["diams"])
         man["sets"]["lidc/val"]["fidelity_seed_2027"] = P.fidelity(stats["holes"], stats["multis"], 2027)
-        (out / "probe-topology" / "manifest.json").write_text(json.dumps(man, indent=1, sort_keys=True) + "\n")
+        write_json(out / "probe-topology" / "manifest.json", man)
         print(f"topology: {man['sets']['lidc/val']} ({time.time() - t0:.0f} s)", flush=True)
 
 

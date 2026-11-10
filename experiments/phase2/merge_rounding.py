@@ -23,6 +23,8 @@ import numpy as np
 import torch
 from safetensors import safe_open
 
+from objdel.io import read_json
+
 SAMPLE = 50_000  # elements per module for the median
 DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16}
 
@@ -69,7 +71,7 @@ def main(argv=None) -> int:
     rows, names = [], set()
     for step in a.steps:
         ck = a.run / f"trainer/checkpoint-{step}"
-        cfg = json.loads((ck / "adapter_config.json").read_text())
+        cfg = read_json(ck / "adapter_config.json")
         adapter = safe_open(ck / "adapter_model.safetensors", "pt")
         names |= {k.removesuffix(".lora_A.weight") for k in adapter.keys() if k.endswith(".lora_A.weight")}
         scale = cfg["lora_alpha"] / cfg["r"]

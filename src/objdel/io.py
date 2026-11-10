@@ -1,4 +1,4 @@
-"""JSONL reading, atomic file writing and the git code identity, shared (no heavy imports)."""
+"""JSON and JSONL reading, atomic file writing and the git code identity, shared (no heavy imports)."""
 
 import hashlib
 import json
@@ -20,6 +20,20 @@ def write_atomic(path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text)
     os.replace(tmp, path)
+
+
+def read_json(path):
+    """A whole JSON file."""
+    return json.loads(Path(path).read_text())
+
+
+def write_json(path, doc, atomic: bool = True) -> None:
+    """doc as JSON with indent 1, sorted keys and a trailing newline (the manifests' bytes); atomic: write_atomic."""
+    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
+    if atomic:
+        write_atomic(path, text)
+    else:
+        Path(path).write_text(text)
 
 
 def _git(args, root) -> bytes:

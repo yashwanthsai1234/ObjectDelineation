@@ -41,6 +41,7 @@ import numpy as np
 from objdel.checker import signature
 from objdel.data import store
 from objdel.geometry import SCHEMAS, to_mask
+from objdel.io import write_json
 from objdel.reward import voters
 from objdel.targets import BuildConfig, augment, build_target, frame, min_areas
 
@@ -127,7 +128,7 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
                    "fallback_windows": stats["fallback"], "per_op": per_op,
                    "side": {k.split("/")[1]: v for k, v in sorted(stats.items()) if k.startswith("side/")}},
         "view_hash": hashlib.sha256(text.encode()).hexdigest(), "contexts": contexts}
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+    write_json(out / "manifest.json", manifest)
     ctx = [Path(out, "context", i + ".npz") for i in contexts]
     report = {"view": out.name, "wall_s": round(time.time() - t0, 1),
               "parent_cpu_s": round(time.process_time() - cpu0, 1), "procs": procs, "context_files": len(ctx),

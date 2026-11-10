@@ -21,6 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.io import read_json
+
 REL_ERR_LORA = 0.2  # rule 0: B2.0 bf16 relative error at step 100, at or above it -> lora-seqmask
 FP16_HALF = 0.5  # rule 1: fp16 logp difference at most this share of B1's
 OPSM_VETO = 0.02  # rule 3: share of sequences masked at delta 0.5 above which the start delta is raised
@@ -93,7 +95,7 @@ def opsm_counterfactual(gaps: np.ndarray) -> tuple[float, float]:
 def load_seq_gaps(trainer_dir: Path) -> np.ndarray:
     """(steps, rows, 3) float32 from seq_gaps.f32 and the row count in seq_gaps.json."""
     d = Path(trainer_dir)
-    rows = json.loads((d / "seq_gaps.json").read_text())["rows_per_step"]
+    rows = read_json(d / "seq_gaps.json")["rows_per_step"]
     flat = np.fromfile(d / "seq_gaps.f32", dtype="<f4")
     if flat.size % (rows * 3):
         raise ValueError(f"{d}/seq_gaps.f32: {flat.size} values is not whole steps of {rows} x 3")
@@ -127,7 +129,7 @@ def b1_inputs(rl: dict, gaps: np.ndarray) -> dict:
 
 def rel_err_100(path: Path) -> float:
     """B2.0 table: the step-100 bf16 relative error."""
-    for row in json.loads(Path(path).read_text())["rows"]:
+    for row in read_json(path)["rows"]:
         if row["step"] == 100:
             return row["bf16"]["rel_err"]
     raise ValueError(f"{path}: no step 100 row")
@@ -169,7 +171,7 @@ def _read(run: Path) -> dict:
     path = Path(run) / "rl.json"
     if not path.is_file():
         raise FileNotFoundError(f"{path}: no rl.json (is the run finished?)")
-    return json.loads(path.read_text())
+    return read_json(path)
 
 
 def _by_prompt(rl: dict, name: str) -> np.ndarray:
@@ -200,7 +202,7 @@ def fp16_record(fp16_run: Path, b1_run: Path) -> dict:
     """The `fp16` argument of the decision functions: Gate B2's fp16 rules (the run's f_check.json `passed`, which
     holds NaN/inf = 0 and the engine dtype, and the bootstrap bound) and the logp difference over steps 41-60."""
     out = summary(fp16_run, b1_run)
-    f_check = json.loads((Path(fp16_run) / "f_check.json").read_text())
+    f_check = read_json(Path(fp16_run) / "f_check.json")
     return {"passed_gate": bool(f_check["passed"] and out["bootstrap_lower"] > FP16_BOUND),
             "logp_diff_41_60": out["means"]["fp16"]["sampling/sampling_logp_difference/mean"],
             "s_per_step": out["s_per_step"]["fp16"]}
@@ -209,7 +211,7 @@ def fp16_record(fp16_run: Path, b1_run: Path) -> dict:
 def decide(b1_run: Path, merge_rounding: Path, fp16: dict | None = None) -> dict:
     """Both presets (ADR-0013), computed before the run: the start preset, and the one a failed F check restarts
     under (the F check can only fail under lora-seqmask or fp16-seqmask)."""
-    rl = json.loads((Path(b1_run) / "rl.json").read_text())
+    rl = read_json(Path(b1_run) / "rl.json")
     gaps = load_seq_gaps(Path(b1_run) / "trainer")
     cf, b1, err = cf_medians(rl["log"]), b1_inputs(rl, gaps), rel_err_100(merge_rounding)
     start = start_preset(cf, err, fp16, b1)

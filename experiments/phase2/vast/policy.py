@@ -45,7 +45,7 @@ import time
 from pathlib import Path
 
 from objdel.core.spec import RunSpec, fill, load_spec, to_argv
-from objdel.io import git_sha
+from objdel.io import git_sha, read_json
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -185,7 +185,7 @@ def ledger(**row) -> None:
 def load(name: str) -> dict:
     """A JSON state file under VAST_HOME ({} when absent): active_runs.json, .vast-allowlist, offers/<id>.json."""
     f = home() / name
-    return json.loads(f.read_text()) if f.exists() else {}
+    return read_json(f) if f.exists() else {}
 
 
 def active(update: dict | None = None) -> dict:
@@ -417,7 +417,7 @@ def code_files() -> list[str]:
 
 def cmd_sync_up(a) -> None:
     run = get_run(a.run_id)
-    o, allow = json.loads((home() / "offers" / f"{run['offer']}.json").read_text()), load(".vast-allowlist")
+    o, allow = read_json(home() / "offers" / f"{run['offer']}.json"), load(".vast-allowlist")
     if why := governance(a.bundle, o, allow):
         die("H-GOV refuses: " + "; ".join(why))
     name = "bundle-riga.tar.age" if a.bundle == "riga" else f"bundle-{a.bundle}.tar"
@@ -560,7 +560,7 @@ def cmd_run_spec(a) -> None:
            "git_sha": sha.read_text().strip() if sha.is_file() else "unknown",
            **{p: version(p) for p in ("trl", "torch", "transformers")}, "reward_fingerprint": fingerprint()}
     out = Path(a.out)
-    if out.is_file() and json.loads(out.read_text())["spec"] != rec["spec"]:
+    if out.is_file() and read_json(out)["spec"] != rec["spec"]:
         die(f"{out} holds a different spec: use a new run id")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rec, indent=1, allow_nan=False))

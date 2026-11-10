@@ -22,10 +22,11 @@ Reference: https://huggingface.co/docs/huggingface_hub/guides/upload#upload-file
 """
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
+
+from objdel.io import read_json
 
 REPO = "svenk029/objdel-sft"  # the owner's private model repo (2026-11-02)
 TOKEN_OK = {"repo.content.read", "repo.write"}
@@ -126,7 +127,7 @@ def rl_ops(out: Path, hub, repo: str) -> list:
             sys.exit(f"hf_push: {out}/{d} missing (train_rl --merge-last writes both from the last checkpoint)")
     if not hub.repo_info(repo, repo_type="model").private:
         sys.exit(f"hf_push: {repo} is not private")
-    doc = json.loads((out / "rl.json").read_text())
+    doc = read_json(out / "rl.json")
     base = configs.MODELS[doc["model"]]
     lic, meta = base_card(base)
     files = [(f.relative_to(out / "final"), f) for f in sorted((out / "final").rglob("*")) if f.is_file()]
@@ -176,7 +177,7 @@ def card_only(a, token: str) -> int:
     if not hub.repo_info(a.repo, repo_type="model").private:
         sys.exit(f"hf_push: {a.repo} is not private")
     old = Path(hf_hub_download(a.repo, "README.md", revision=a.revision, token=token)).read_text()
-    new = card_update(old, json.loads(a.headline.read_text()))
+    new = card_update(old, read_json(a.headline))
     hub.upload_file(path_or_fileobj=new.encode(), path_in_repo="README.md", repo_id=a.repo, revision=a.revision,
                     repo_type="model", commit_message="card: headline from docs/results/headline.json")
     print(f"hf_push: card of {a.repo}@{a.revision} updated")
@@ -207,11 +208,11 @@ def main(argv=None) -> int:
                           revision=a.revision, repo_type="model")  # fmt: skip
         print(f"hf_push: {a.rl} -> {a.repo}@{a.revision}")
         return 0
-    sel = json.loads((a.run / "select" / "selected.json").read_text())
+    sel = read_json(a.run / "select" / "selected.json")
     if not sel["selected"]:
         sys.exit(f"hf_push: {a.run}: no branch selected (none passed D12); nothing to upload")
-    man = json.loads((a.run / "manifest.json").read_text())
-    view = json.loads(((a.view or Path(man["config"]["view"])) / "manifest.json").read_text())
+    man = read_json(a.run / "manifest.json")
+    view = read_json((a.view or Path(man["config"]["view"])) / "manifest.json")
     if view["view_hash"] != man["view"]["view_hash"]:
         sys.exit(f"hf_push: {a.view}: view_hash {view['view_hash']} is not the run's {man['view']['view_hash']}")
     if (ds := view["dataset"]) != "lidc":

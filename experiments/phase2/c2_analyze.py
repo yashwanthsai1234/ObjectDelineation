@@ -23,6 +23,7 @@ from scipy import stats
 
 from objdel.eval.probes import stratified_ci
 from objdel.eval.signal import DIGITS
+from objdel.io import read_json
 
 from . import prereg as P
 
@@ -66,7 +67,7 @@ def analyze(seeds: list[dict], seed: int = 0, boot: int = 2000) -> dict:
 
 def load(paths) -> list[dict]:
     """Each seed's probes.topology from select_ckpt --only topology's report.json, items checked equal."""
-    seeds = [json.loads(Path(p).read_text())["probes"]["topology"] for p in paths]
+    seeds = [read_json(p)["probes"]["topology"] for p in paths]
     if any(s["ids"] != seeds[0]["ids"] for s in seeds):
         raise SystemExit(f"c2_analyze: the seeds sampled different topology probe items: {list(paths)}")
     return seeds

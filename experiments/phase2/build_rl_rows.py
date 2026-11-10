@@ -37,6 +37,7 @@ import numpy as np
 from objdel.data import quality as Q
 from objdel.data import store, windows
 from objdel.data.coverage import cell_coverage
+from objdel.io import write_json
 
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "docs" / "reference"
@@ -184,10 +185,9 @@ def build(a) -> int:
              "kinds": dict(Counter(r["view"]["kind"] for r in rows)),
              "side": {str(s): n for s, n in sorted(Counter(r["view"]["side"] for r in rows).items())}}},
          "schedule": plan | {"gates": [asdict(g) for g in gs], "files_count": count, "files_sha256": digest}}
-    doc = json.dumps(m, indent=1, sort_keys=True) + "\n"
-    (out / "manifest.json").write_text(doc)
+    write_json(out / "manifest.json", m)
     print(json.dumps({"root": str(out), "rows": len(rows), "windows": len(uniq), "files_count": count,
-                      "files_sha256": digest, "manifest_sha256": _sha(doc.encode()), "draws": draws,
+                      "files_sha256": digest, "manifest_sha256": _sha((out / "manifest.json").read_bytes()), "draws": draws,
                       "materialize_s": round(t_mat), "total_s": round(time.time() - t0)}, indent=1))
     return 0
 

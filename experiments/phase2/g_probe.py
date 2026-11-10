@@ -38,6 +38,7 @@ import numpy as np
 from experiments.phase2.prereg import G_PROBE, g_probe
 from experiments.phase2.select_ckpt import score_items, view_rows
 from objdel.eval import signal
+from objdel.io import read_json
 
 SEEDS = (11, 12, 13)  # step-0 draw a, step-0 draw b, step 20
 
@@ -174,7 +175,7 @@ def main(argv=None) -> int:
     out = Path(a.out)
     ckpts = [Path(a.ckpt)] if a.ckpt else []
     if a.select:
-        sel = json.loads((Path(a.select) / "selected.json").read_text())
+        sel = read_json(Path(a.select) / "selected.json")
         if not (sel["gates_pass"] and sel["selected"]):  # R1 failed §5.1: a probe would not change the outcome
             why = ", ".join(sel.get("gates_failed") or ["no eligible branch (D12)"])
             return save(out, {"verdict": None, "skipped": f"§5.1 gates failed: {why}", "probed": [],

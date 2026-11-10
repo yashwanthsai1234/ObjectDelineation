@@ -17,6 +17,7 @@ from pathlib import Path
 
 from experiments.phase2 import r0_parity
 from experiments.phase2 import select_ckpt as SC
+from objdel.io import read_json
 
 
 def main(argv=None) -> int:
@@ -33,7 +34,7 @@ def main(argv=None) -> int:
     w, timing = r0_parity.weights(a.model), a.out / "timing.json"
     a.out.mkdir(parents=True, exist_ok=True)
     SC.sample_view(a, w, SC.view_rows(a.view, a.items), a.out / "samples", a.k, extra=("--timing", str(timing)))
-    doc = json.loads(timing.read_text()) | {"model": a.model, "weights": str(w), "view": str(a.view)}
+    doc = read_json(timing) | {"model": a.model, "weights": str(w), "view": str(a.view)}
     (a.out / "hf_rate.json").write_text(json.dumps(doc, indent=1) + "\n")
     print(json.dumps(doc))
     return 0

@@ -37,7 +37,7 @@ import numpy as np
 
 from objdel.data.windows import OFFSET_EDGES, SIZE_EDGES  # B1.1 cells
 from objdel.eval import signal
-from objdel.io import read_jsonl
+from objdel.io import read_json, read_jsonl
 
 K = 8
 MISS = signal.MISS
@@ -220,7 +220,7 @@ def load(items_path: Path, view: Path, store_root: Path, halves_path: Path) -> I
     ids = [r["item_id"] for r in rows]
     names = np.array([recs[i]["group_id"] for i in ids])
     off = np.array([recs[i]["view"]["offset_frac"] for i in ids])
-    halves = json.loads(halves_path.read_text())["halves"]
+    halves = read_json(halves_path)["halves"]
     items = Items(ids, np.array([r["iou_tc"] for r in rows], float), np.unique(names, return_inverse=True)[1],
                   cell_of(off, np.array([extent[i] for i in ids])), off > FAR, off < NEAR,
                   np.array([halves[g] == "select" for g in names]))

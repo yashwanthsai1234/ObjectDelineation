@@ -28,6 +28,8 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.io import read_json
+
 ROOT = Path(__file__).resolve().parents[2]
 STEPS, ITEMS = 4, 8
 ARMS = {  # most important first: profile.json is written after each arm, so a run cut by its cap keeps these
@@ -131,7 +133,7 @@ def run_arm(arm: str, a) -> dict:
     res = {"exit": code, "wall_s": time.time() - t, "arm": ARMS[arm], "smi": smi_mean(d / "smi.csv")}
     try:  # a malformed output is recorded; the next arm still runs
         if (d / "g_probe.json").exists() and arm in TIMED:
-            res |= summary(json.loads((d / "g_probe.json").read_text())["log"])
+            res |= summary(read_json(d / "g_probe.json")["log"])
         if (d / "trace" / "trace.json.gz").exists():
             with gzip.open(d / "trace" / "trace.json.gz", "rt") as f:
                 res["traced_step"] = busy(json.load(f))

@@ -26,6 +26,7 @@ from pathlib import Path
 from experiments.phase2.build_eval_views import _rotated
 from objdel.data import store
 from objdel.geometry import SCHEMAS
+from objdel.io import read_json
 from objdel.targets import build_target, frame, min_areas, target_set_hash
 
 MANIFESTS = ("data/prepared/manifest.json", "data/targets/manifest.json",
@@ -71,7 +72,7 @@ def _rebuild(pool, store_root, ds, split, views=None) -> list:
 def check(path, store_root, pool) -> list[tuple[str, str, str]]:
     """(name, recorded, rebuilt) per target set of one manifest."""
     path = Path(path)
-    m = json.loads(path.read_text())
+    m = read_json(path)
     have = hashlib.sha256(Path(store_root, "manifest.json").read_bytes()).hexdigest()
     if m["store_manifest_sha256"] != have:
         return [(f"{path} store", m["store_manifest_sha256"], have)]

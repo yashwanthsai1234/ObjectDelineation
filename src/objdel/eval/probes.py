@@ -49,7 +49,7 @@ from objdel.checker import signature, size_filter
 from objdel.checker.topology import min_area
 from objdel.geometry import GRID, canonicalize, parse, serialize, to_mask
 from objdel.hashing import pixels_sha256
-from objdel.io import read_jsonl
+from objdel.io import read_json, read_jsonl, write_json
 from objdel.reward.cache import boundary  # foreground pixels with a 4-adjacent background pixel
 from objdel.targets import build_target
 from objdel.targets.frame import DIVISORS, LUNG_WINDOW
@@ -410,7 +410,7 @@ def _write(out, name, split, items, patch_list, seed, meta):
     text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in recs)
     (out / "lidc" / f"{split}.jsonl").write_text(text)
     mpath = out / "manifest.json"
-    man = json.loads(mpath.read_text()) if mpath.is_file() else {"files": {}, "sets": {}}
+    man = read_json(mpath) if mpath.is_file() else {"files": {}, "sets": {}}
     man["files"][f"lidc/{split}.jsonl"] = {"sha256": hashlib.sha256(text.encode()).hexdigest()}
     fam = {f: sum(r["probe"]["family"] == f for r in recs) for f in sorted({r["probe"]["family"] for r in recs})}
     man["sets"][f"lidc/{split}"] = {
@@ -420,7 +420,7 @@ def _write(out, name, split, items, patch_list, seed, meta):
         "seed": seed,
         **meta,
     }
-    mpath.write_text(json.dumps(man, indent=1, sort_keys=True) + "\n")
+    write_json(mpath, man)
     return man
 
 

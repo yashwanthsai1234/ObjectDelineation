@@ -16,6 +16,7 @@ from pathlib import Path
 
 from objdel.data import quality as Q
 from objdel.data import splits, store, windows
+from objdel.io import read_json
 
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "docs" / "reference"
@@ -31,7 +32,7 @@ def tokenizer(model: str):
 
 
 def _json(path: Path) -> dict:
-    return json.loads(path.read_text()) if path.is_file() else {}
+    return read_json(path) if path.is_file() else {}
 
 
 def audit(rows, store_root=ROOT / "data/store", eval_views=ROOT / "data/eval_views", val_view=None,
@@ -41,7 +42,7 @@ def audit(rows, store_root=ROOT / "data/store", eval_views=ROOT / "data/eval_vie
     """The report that quality.gates reads, for the rows root `rows` (module docstring). `plan`: the schedule dict
     (build_rl_rows passes it before the manifest exists); default the manifest's `schedule`."""
     rows, store_root, eval_views, exclusions = Path(rows), Path(store_root), Path(eval_views), Path(exclusions)
-    plan = plan or json.loads((rows / "manifest.json").read_text())["schedule"]
+    plan = plan or read_json(rows / "manifest.json")["schedule"]
     ex = _json(exclusions)
     pool = windows.pool(store.load("lidc", "train", store_root), plan["draws"], plan["seed"],
                         frozenset(plan["excluded_ids"]))
@@ -63,7 +64,7 @@ def audit(rows, store_root=ROOT / "data/store", eval_views=ROOT / "data/eval_vie
         "tokens": Q.tokens(rows, tok, limit),
         "agreement": Q.agreement(rows, wn["low_contrast"]),
         "frozen": Q.frozen(eval_views, _json(Path(frozen))),
-        "z": Q.dg17(json.loads(z.read_text()), ex, Q.file_sha256(store_root / "lidc/train.parquet"))
+        "z": Q.dg17(read_json(z), ex, Q.file_sha256(store_root / "lidc/train.parquet"))
         if z.is_file() else [f"no contour-to-slice report {z}: run check_series_z"],
     }
 

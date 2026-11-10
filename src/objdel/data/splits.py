@@ -42,12 +42,13 @@ References:
 """
 import functools
 import hashlib
-import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+from objdel.io import read_json
 
 LIDC_FRACTIONS = (("train", 0.7), ("val", 0.1), ("test", 0.2))
 RIGA_VAL_FRACTION = 0.1
@@ -140,7 +141,7 @@ def val_half_table(records, max_s=1000) -> dict:
 
 @functools.cache
 def _val_halves() -> dict:
-    return json.loads((Path(__file__).resolve().parents[3] / "docs/reference/val_halves.json").read_text())["halves"]
+    return read_json(Path(__file__).resolve().parents[3] / "docs/reference/val_halves.json")["halves"]
 
 
 def val_half(group_id: str) -> str:

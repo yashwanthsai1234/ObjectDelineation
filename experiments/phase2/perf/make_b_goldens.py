@@ -13,7 +13,6 @@ except `sum_x`, `sum_y`, which the test checks against np.nonzero sums instead.
 import argparse
 import hashlib
 import itertools
-import json
 import os
 from pathlib import Path
 
@@ -22,6 +21,7 @@ import numpy as np
 from experiments.cuda_checker import compare as C
 from objdel import _gpucheck as G
 from objdel.geometry.shape import unpack_rows
+from objdel.io import write_json
 from objdel.reward import ExpertCache
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -112,7 +112,7 @@ def main(argv=None) -> None:
         raise SystemExit("make_b_goldens writes the CPU-build golden: run it on the Mac build")
     sets = b_sets(a.masks)
     gold = {name: {"input_sha256": sha, "fields": fields(r)} for name, (sha, _, r) in sets.items()}
-    a.out.write_text(json.dumps(gold, indent=1, sort_keys=True) + "\n")
+    write_json(a.out, gold)
     print(f"wrote {a.out}: " + ", ".join(f"{name} ({len(ms)} objects)" for name, (_, ms, _) in sets.items()))
 
 

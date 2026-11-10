@@ -39,6 +39,7 @@ from multiprocessing import Pool
 from pathlib import Path
 
 from objdel.data import store
+from objdel.io import write_json
 from objdel.targets import FRAMES, augment, frame, target_set_hash
 from objdel.targets.frame import rgb, union_box
 
@@ -115,7 +116,7 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
                          "padded": sum(r["view"]["padded"] for r in recs),
                          "side": {str(s): sum(r["view"]["side"] == s for r in recs)
                                   for s in sorted({r["view"]["side"] for r in recs})}}}}
-                (out / "manifest.json").write_text(json.dumps(m, indent=1, sort_keys=True) + "\n")
+                write_json(out / "manifest.json", m)
                 manifests[name] = m
     return manifests
 

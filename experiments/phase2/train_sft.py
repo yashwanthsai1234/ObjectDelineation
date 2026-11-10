@@ -57,7 +57,6 @@ References:
 
 import gc
 import hashlib
-import json
 import math
 import os
 import re
@@ -69,7 +68,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from objdel.hashing import file_sha256
-from objdel.io import git_sha, write_atomic
+from objdel.io import git_sha, read_json, write_json
 
 ABORTED = 3  # exit code of a G-vision abort
 WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator and loader warm-up)
@@ -108,7 +107,7 @@ def timing(stamps: list[float], batch: int) -> dict:
 
 def probed_depth(path: Path) -> float:
     """The depth (epochs) of the checkpoint that received g_probe's final verdict: its "ckpt" is <run>/branches/e<b>."""
-    doc = json.loads(path.read_text()) if path.is_file() else {}
+    doc = read_json(path) if path.is_file() else {}
     if doc.get("verdict") and (m := re.fullmatch(r"e(\d+(\.\d+)?)", Path(doc.get("ckpt") or "").name)):
         return float(m[1])
     why = doc.get("skipped") or "missing or unfinished R2"
@@ -134,7 +133,7 @@ def reference(ref, model: str | None, set_sha256: str) -> float:
     """The G-vision base reference: a number, or R0's JSON for this model (when given) and fixed set."""
     if not isinstance(ref, str):
         return float(ref)
-    doc = json.loads(Path(ref).read_text())
+    doc = read_json(ref)
     if (doc["model"], doc["set_sha256"]) != (model or doc["model"], set_sha256):
         raise ValueError(f"{ref}: reference of {doc['model']} on set {doc['set_sha256'][:12]}, not this run's")
     return doc["reference"]
@@ -202,10 +201,6 @@ def code_hashes() -> dict:
             "files": len(files)}
 
 
-def write_json(path, doc) -> None:
-    write_atomic(path, json.dumps(doc, indent=1, sort_keys=True, default=str) + "\n")
-
-
 def latest(d) -> str | None:
     """The newest complete Trainer checkpoint in d (trainer_state.json is written last)."""
     done = [c for c in Path(d).glob("checkpoint-*") if (c / "trainer_state.json").exists()]
@@ -247,7 +242,7 @@ def validate(args) -> dict:
     out = Path(args.output_dir)
     if BOX_RUNS.is_dir() and BOX_RUNS.resolve() not in out.resolve().parents:
         raise ValueError(f"{out}: on a Vast box outputs go under {BOX_RUNS}/<RUN_ID> (pull.sh): set OBJDEL_RUN_DIR")
-    view = json.loads(Path(args.view, "manifest.json").read_text())
+    view = read_json(Path(args.view, "manifest.json"))
     deep = max((b * (1 + configs.DECAY) for b in args.branches), default=1.0)
     if view["config"]["epochs"] < math.ceil(deep):
         raise ValueError(f"{args.view}: {view['config']['epochs']} view epoch(s), the deepest branch decays to "
@@ -259,7 +254,7 @@ def resume_manifest(args, out: Path, view: dict) -> dict:
     """The run manifest (config, code, view identity, pid, status "running"). A run already in out is refused unless
     --resume, which needs a crashed run ("running") of the same config (SAME_RUN) and view, and carries its G-vision
     log, logs, start, timing and peak memory over."""
-    old = json.loads((out / "manifest.json").read_text()) if (out / "manifest.json").exists() else None
+    old = read_json(out / "manifest.json") if (out / "manifest.json").exists() else None
     if old and not args.resume:
         raise ValueError(f"{out} holds a run: --resume continues it, or pick another output_dir")
     man = {"config": args.model_dump(mode="json", exclude={"kind", "name", "soft"}), "code": code_hashes(), "vision": [], "log": {},

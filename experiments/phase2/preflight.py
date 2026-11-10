@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from objdel.hashing import file_sha256
+from objdel.io import read_json
 
 ROOT = Path(__file__).resolve().parents[2]
 # the exam views policy.chain passes to select_ckpt (gates: shifted, rescaled; report: rotated; probes)
@@ -105,7 +106,7 @@ def hashes(cfg: Path) -> dict:
     from experiments.phase2 import train_sft as TS
 
     s = inputs(cfg)
-    views = [json.loads((t / "manifest.json").read_text())["view_hash"] for t in s.views]
+    views = [read_json(t / "manifest.json")["view_hash"] for t in s.views]
     exams = [file_sha256(s.root / "eval_views" / v / "manifest.json") for v in EXAMS]
     exams.append(file_sha256(s.root / "checker_eval" / "manifest.json"))
     manifests = []
@@ -128,7 +129,7 @@ def refusal(cfg: Path) -> str | None:
     if not path.is_file():
         return f"no preflight stamp: run `make preflight CONFIG={cfg}` first"
     try:  # a stamp of the wrong shape (null, a list, hashes: null) is a refusal, never a traceback in cmd_launch
-        stamp, now = json.loads(path.read_text()), hashes(cfg)
+        stamp, now = read_json(path), hashes(cfg)
         if stamp.get("config") != str(Path(cfg).resolve()):
             return f"{path} was written for another spec path ({stamp.get('config')}): run `make preflight CONFIG={cfg}`"
         if not stamp.get("pass"):
@@ -165,7 +166,7 @@ def view_integrity(s: Inputs) -> list[str]:
 
     bad = []
     for vdir in s.views:
-        man, rows = json.loads((vdir / "manifest.json").read_text()), lines(vdir / "rows.jsonl")
+        man, rows = read_json(vdir / "manifest.json"), lines(vdir / "rows.jsonl")
         if file_sha256(vdir / "rows.jsonl") != man["view_hash"]:
             bad.append(f"{vdir}/rows.jsonl does not match the manifest's view_hash")
         try:
@@ -174,7 +175,7 @@ def view_integrity(s: Inputs) -> list[str]:
             bad.append(str(e))
     for v in EXAMS:
         d = s.root / "eval_views" / v
-        for name, f in json.loads((d / "manifest.json").read_text())["files"].items():
+        for name, f in read_json(d / "manifest.json")["files"].items():
             if not (d / name).is_file() or file_sha256(d / name) != f["sha256"]:
                 bad.append(f"{d / name} does not match its manifest")
     return bad
@@ -233,7 +234,7 @@ def prompts(s: Inputs) -> list[str]:
 
     want = next(c["text"] for c in D._user("lidc")["content"] if c.get("type") == "text")
     return [f"{v}: exam prompt differs from the training prompt"
-            for v in EXAMS if json.loads((s.root / "eval_views" / v / "manifest.json").read_text())
+            for v in EXAMS if read_json(s.root / "eval_views" / v / "manifest.json")
             .get("prompts", {"lidc": want})["lidc"] != want]  # fmt: skip  (probe manifests carry no prompt)
 
 

@@ -22,6 +22,8 @@ import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 
+from objdel.io import read_json
+
 ROOT = Path(__file__).resolve().parents[3]
 TEXT = (".py", ".md", ".yaml", ".yml", ".toml", ".txt", ".sh", ".cfg", ".json")
 SELF = {"experiments/phase2/tools/final_sweep.py", "tests/test_final_sweep.py", "tests/test_repo_hygiene.py"}
@@ -352,9 +354,9 @@ def clean_record(ctx: Ctx) -> list[Finding]:
         dest = ctx.root / "runs/clean/after.json"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(json.dumps(after, indent=1))
-    out = compare(json.loads(path.read_text()), after) if path else ["no runs/clean/before*.json: nothing to compare"]
+    out = compare(read_json(path), after) if path else ["no runs/clean/before*.json: nothing to compare"]
     if path:
-        b = json.loads(path.read_text())
+        b = read_json(path)
         out.append(f"info: vs {path.name}: tracked {b.get('tracked')} -> {after['tracked']}, "
                    f"code_files {b.get('code_files')} -> {after.get('code_files')}")
     return out

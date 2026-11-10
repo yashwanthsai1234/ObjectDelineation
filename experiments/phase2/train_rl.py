@@ -52,6 +52,8 @@ import sys
 import time
 from pathlib import Path
 
+from objdel.io import read_json
+
 
 def parse(argv=None):
     """The RlStage of the flags (or of --spec/--stage), and the rules that need objdel.train; exit 2 on a broken one.
@@ -223,7 +225,7 @@ def cut_seq_gaps(trainer_dir: Path, step: int) -> None:
         f.unlink(missing_ok=True)
         meta.unlink(missing_ok=True)
         return
-    m = json.loads(meta.read_text())
+    m = read_json(meta)
     with open(f, "r+b") as fh:
         fh.truncate(min(f.stat().st_size, step * m["rows_per_step"] * 3 * 4))
     m["steps"] = f.stat().st_size // (m["rows_per_step"] * 3 * 4)

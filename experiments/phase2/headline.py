@@ -14,6 +14,8 @@ import json
 import sys
 from pathlib import Path
 
+from objdel.io import read_json
+
 METRICS = ("iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote", "legal")
 
 
@@ -21,7 +23,7 @@ def section(path: Path, split: str) -> tuple[dict, str, str]:
     """One final_eval.json -> (headline section, ci_unit, schema key); ValueError when it may not be a headline."""
     if not path.is_file():
         raise ValueError(f"{path} missing")
-    f = json.loads(path.read_text())
+    f = read_json(path)
     if f.get("split") != split:
         raise ValueError(f"{path} has split {f.get('split')!r}, expected {split!r}")
     if not f.get("view"):
