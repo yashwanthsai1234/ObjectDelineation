@@ -46,12 +46,14 @@ def test_check_passes_on_the_pin_without_vllm_and_quickly():
 
 
 def test_all_items_is_the_one_count_of_the_contract():
-    ALL_ITEMS = tuple((kind, name) for kinds in (T._SIGNED, T._TEXT) for kind, items in kinds.items() for name in items)
-    parts = (T.METHODS, T.GLOBALS, T.VLLM_METHODS, T.PRIVATE_ATTRS, T.ATTRS, T.KEYS, T.BEHAVIOURS)
+    ALL_ITEMS = tuple((kind, name) for kinds in (T._SIGNED, T._TEXT, T._LIVE) for kind, items in kinds.items()
+                      for name in items)  # fmt: skip
+    parts = (T.METHODS, T.GLOBALS, T.VLLM_METHODS, T.PRIVATE_ATTRS, T.ATTRS, T.KEYS, T.BEHAVIOURS, T.LORA_POINTS)
     assert len(ALL_ITEMS) == sum(map(len, parts)) and len(set(ALL_ITEMS)) == len(ALL_ITEMS)
     # Phase A 29 (6 + 1 + 1 + 2 + 13 + 4 + 2), plus C5's _llm_weights_sleeping, plus BR1-rl's 3 reward-kwarg behaviours,
-    # plus B2.1's set_is_ratio reads (attribute off_policy_mask_threshold, key advantages)
-    assert len(ALL_ITEMS) == 35
+    # plus B2.1's set_is_ratio reads (attribute off_policy_mask_threshold, key advantages), plus B2.2 F step 3's 4
+    # option-F vLLM names (add_lora, remove_lora, lora_index_to_id, lora_a_stacked / lora_b_stacked; lora-seqmask only)
+    assert len(ALL_ITEMS) == 39
     assert len(T.METHODS) + len(T.GLOBALS) + len(T.VLLM_METHODS) + len(T.PRIVATE_ATTRS) == 10  # private names
     doc = ROOT / "docs/reference/trl-coupling.md"  # A9 writes it: one table row per item (header and rule excluded)
     if doc.is_file():
@@ -249,3 +251,46 @@ def test_fast_grpo_refuses_another_trl_version_without_the_opt_in(monkeypatch):
     monkeypatch.setattr(trl, "__version__", "1.18.0")
     with pytest.raises(T.TRLContractError, match="1.18.0"):
         fast.FastGRPO()
+
+
+def lora_engine(**drop):
+    """A fake vg.llm carrying the four option-F vLLM names; `drop` sets one of them to None or a wrong value."""
+    stacked = SimpleNamespace(lora_a_stacked=(), lora_b_stacked=())
+    model = SimpleNamespace(named_modules=lambda: iter([("", SimpleNamespace()), ("layers.0.qkv_proj", stacked)]))
+    if "stacked" in drop:
+        model = SimpleNamespace(named_modules=lambda: iter([("layers.0.qkv_proj", SimpleNamespace(lora_a_stacked=()))]))
+    manager = SimpleNamespace(lora_index_to_id=drop.get("index", [None, 1]))
+    runner = SimpleNamespace(model=model, lora_manager=SimpleNamespace(_adapter_manager=manager))
+    engine = SimpleNamespace(add_lora=drop.get("add", lambda r: True), remove_lora=drop.get("remove", lambda i: True),
+                             model_executor=SimpleNamespace(driver_worker=SimpleNamespace(model_runner=runner)))
+    return SimpleNamespace(llm_engine=engine)
+
+
+@pytest.mark.parametrize("drop,item", [({"add": None}, "add_lora"), ({"remove": 3}, "remove_lora"),
+                                       ({"index": None}, "lora_index_to_id"),
+                                       ({"stacked": True}, "lora_a_stacked / lora_b_stacked")])
+def test_check_lora_names_the_missing_option_f_vllm_name(drop, item):
+    T.check_lora(lora_engine())
+    with pytest.raises(T.TRLContractError, match=f"option-F vLLM name {re.escape(item)}:"):
+        T.check_lora(lora_engine(**drop))
+
+
+def test_fast_grpo_checks_the_option_f_names_only_under_lora_seqmask(monkeypatch):
+    import contextlib
+
+    seen = []
+    monkeypatch.setattr(T, "check_lora", lambda llm: seen.append(llm))
+    monkeypatch.setattr(GRPOTrainer, "__init__", lambda self, *a, **k: None)
+    monkeypatch.setattr(T, "check", lambda: None)
+    monkeypatch.setattr(fast, "vllm_kwargs", lambda **kw: contextlib.nullcontext())  # no vLLM LLM class on the Mac
+    for name in ("check_engine_dtype", "drop_lora_input_cast", "sync_without_merge"):
+        monkeypatch.setattr(fast.FastGRPO, name, lambda self: None)
+    monkeypatch.setattr(fast.VisionCache, "install", classmethod(lambda cls, m: None))
+    monkeypatch.setattr(fast.RopeCache, "install", classmethod(lambda cls, m: None))
+    monkeypatch.setattr(fast.ImageMemo, "install", classmethod(lambda cls, p: None))
+    for lora in (False, True):
+        t = object.__new__(fast.FastGRPO)
+        t.args, t.vllm_generation, t.model, t.processing_class = SimpleNamespace(vllm_lora=lora), \
+            SimpleNamespace(llm="engine"), None, None
+        fast.FastGRPO.__init__(t, args=t.args)
+    assert seen == ["engine"]

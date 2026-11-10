@@ -875,6 +875,19 @@ def one_pad_per_image(prompts: list[dict], pad: int) -> list[dict]:
     return out
 
 
+def vllm_generate_checked(generate, prompts: list[dict], pad: int, *args, **kw):
+    """generate(one_pad_per_image(prompts, pad), ...) with vLLM's own `generate`, then each multimodal row's
+    expanded ids checked against the trainer's processor-expanded ids (B2.2 F step 4b.3: the patch_vllm_prompts
+    wrapper and the F comparator both send prompts through here, never raw)."""
+    outputs = generate(one_pad_per_image(prompts, pad), *args, **kw)
+    for row, o in zip(prompts, outputs, strict=True):
+        if "multi_modal_data" in row and list(o.prompt_token_ids) != list(row["prompt_token_ids"]):
+            n, m = list(o.prompt_token_ids).count(pad), list(row["prompt_token_ids"]).count(pad)
+            raise RuntimeError(f"vLLM expanded the image to {n} pads, the trainer's processor to {m}: "
+                               "vLLM would sample from other image features than the trainer scores")
+    return outputs
+
+
 def prompt_images(prompts) -> list[list]:
     """Each conversational prompt's image objects, in order, as TRL extracts them (grpo_trainer.py 1760-1771)."""
     return [[c["image"] for m in p if isinstance(m["content"], list)
@@ -1047,6 +1060,8 @@ class FastGRPO(FastForward, GRPOTrainer):
         with vllm_kwargs(**vllm_engine_kwargs(kwargs.get("args"))):  # TRL builds its vLLM engine without these
             super().__init__(*args, **kwargs)
         self.check_engine_dtype()
+        if getattr(self.args, "vllm_lora", False) and getattr(self, "vllm_generation", None) is not None:
+            trl_adapter.check_lora(self.vllm_generation.llm)  # option F's vLLM names (B2.2 F step 3)
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
         self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
@@ -1455,13 +1470,7 @@ class FastGRPO(FastForward, GRPOTrainer):
                 from objdel.train.vllm_sync import LORA_NAME
 
                 kwargs["lora_request"] = LoRARequest(LORA_NAME, 1, str(self.lora_dir))
-            outputs = generate(one_pad_per_image(prompts, pad), *args, **kwargs)
-            for row, o in zip(prompts, outputs, strict=True):
-                if "multi_modal_data" in row and list(o.prompt_token_ids) != list(row["prompt_token_ids"]):
-                    n, m = list(o.prompt_token_ids).count(pad), list(row["prompt_token_ids"]).count(pad)
-                    raise RuntimeError(f"vLLM expanded the image to {n} pads, the trainer's processor to {m}: "
-                                       "vLLM would sample from other image features than the trainer scores")
-            return outputs
+            return vllm_generate_checked(generate, prompts, pad, *args, **kwargs)
 
         one_pad.one_pad = True
         send = one_pad
@@ -1484,6 +1493,63 @@ class FastGRPO(FastForward, GRPOTrainer):
 
         send.one_pad = True
         llm.generate = send
+
+    def comparator_prompts(self, rows: list[dict], G: int) -> list[dict]:
+        """B2.2 F step 4, the 32 x 8 batch: each dataset row G times, through TRL's own prompt path (the image into
+        the conversational prompt, then `_tokenize_prompts`, ImageMemo on), in TRL's vLLM form: the trainer's
+        processor-expanded ids and multi_modal_data (send them only through vllm_generate_checked)."""
+        rows = [r for r in rows for _ in range(G)]
+        prompts = [trl_grpo.prepare_multimodal_messages(r["prompt"], images=[r["image"]]) for r in rows]
+        ids, images, _ = self._tokenize_prompts(prompts)
+        return [{"prompt_token_ids": list(i)} | ({"multi_modal_data": {"image": im[0] if len(im) == 1 else im}}
+                if im else {}) for i, im in zip(ids, images or [None] * len(ids), strict=True)]  # fmt: skip
+
+    @torch.no_grad()
+    def way_b_gap(self, prompts: list[dict], outputs, adapter: bool) -> float:
+        """B2.3b way (b): mean |vLLM logp - trainer logp| over every answer token of `outputs` (vLLM RequestOutputs of
+        `prompts`), the trainer scoring with TRL's plain forward (no FastGRPO patch), the active adapter on
+        (adapter True) or disabled. One forward per run of rows sharing a prompt."""
+        def same_prompt(a, b):  # same ids and the same image object (comparator_prompts repeats each row G times)
+            img = ("multi_modal_data" in a and a["multi_modal_data"]["image"]) is (
+                "multi_modal_data" in b and b["multi_modal_data"]["image"])
+            return img and a["prompt_token_ids"] == b["prompt_token_ids"]
+
+        pad = self.model.config.image_token_id
+        total = n = 0.0
+        i = 0
+        while i < len(prompts):
+            j = i
+            while j < len(prompts) and same_prompt(prompts[j], prompts[i]):
+                j += 1
+            ids_p = torch.tensor(prompts[i]["prompt_token_ids"])
+            outs = [o.outputs[0] for o in outputs[i:j]]
+            T = max(len(o.token_ids) for o in outs)
+            comp = torch.full((j - i, T), self._tokenizer.pad_token_id)
+            cmask = torch.zeros(j - i, T, dtype=torch.long)
+            vlp = torch.zeros(j - i, T, dtype=torch.float64)
+            for r, o in enumerate(outs):
+                k = len(o.token_ids)
+                comp[r, :k], cmask[r, :k] = torch.tensor(list(o.token_ids)), 1
+                vlp[r, :k] = torch.tensor([lp[t].logprob for t, lp in zip(o.token_ids, o.logprobs, strict=True)])
+            ids = torch.cat([ids_p.expand(j - i, -1), comp], 1)
+            mask = torch.cat([torch.ones(j - i, len(ids_p), dtype=torch.long), cmask], 1)
+            kw = {"mm_token_type_ids": (ids == pad).long()}
+            image = prompts[i].get("multi_modal_data", {}).get("image")
+            if image is not None:
+                px = self.processing_class.image_processor(images=[image] * (j - i), return_tensors="pt")
+                kw |= {"pixel_values": px["pixel_values"], "image_grid_thw": px["image_grid_thw"],
+                       "num_images": [1] * (j - i)}  # fmt: skip
+            dev = self.accelerator.device
+            kw = {k: v.to(dev) if torch.is_tensor(v) else v for k, v in kw.items()}
+            off = self.model.disable_adapter() if not adapter else contextlib.nullcontext()
+            with off:
+                lp = GRPOTrainer._get_per_token_logps_and_entropies(self, self.model, ids.to(dev), mask.to(dev), T,
+                                                                    batch_size=j - i, **kw)[0]
+            m = cmask.bool()
+            total += (lp.double().cpu() - vlp).abs()[m].sum().item()
+            n += int(m.sum())
+            i = j
+        return total / max(n, 1)
 
     def floating_point_ops(self, inputs):
         """FLOP count: always 0, which skips the Trainer's per-micro-batch module walk."""
