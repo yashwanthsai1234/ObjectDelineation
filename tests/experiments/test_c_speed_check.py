@@ -378,3 +378,161 @@ def test_pixel_compare_counts_mismatches_and_names_the_first():
     bad = Off(patch_size=16, temporal_patch_size=2, merge_size=2)
     r = C.compare_pixels(imgs, bad, "cpu", "torch", chunk=32)
     assert (r["mismatches"], r["first"]) == (1, 64)  # the chunk starting at view 64: its first image differs
+
+
+# --- C3: --encoder (G-EN0, G-EN1, G-IM2); the CUDA memory measurement itself runs on the box ------------------------
+
+
+def test_floors_read_only_the_answer_tokens():
+    a = torch.tensor([[0.0, 1.0, 5.0], [2.0, 2.0, 2.0]])
+    b = torch.tensor([[0.0, 1.5, 0.0], [2.0, 1.0, 2.0]])
+    mask = torch.tensor([[1, 1, 0], [1, 1, 1]])  # the 5.0 difference is off the answer
+    fmax, p99 = C.floors(a, b, mask)
+    assert fmax == 1.0 and p99 == pytest.approx(np.quantile([0, 0.5, 0, 1, 0], 0.99))
+    assert C.floors(a, b, torch.zeros_like(mask)) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize("diff, floor, ok", [
+    ((0.0, 0.0), (0.0, 0.0), True), ((1e-9, 0.0), (0.0, 0.0), False),  # floor 0: equality only
+    ((0.2, 0.02), (0.1, 0.01), True), ((0.21, 0.02), (0.1, 0.01), False), ((0.2, 0.021), (0.1, 0.01), False)])
+def test_within_floor_is_two_times_both_floors(diff, floor, ok):
+    assert C.within_floor(diff, floor) is ok
+
+
+def test_feature_diff_sees_one_changed_deepstack_value():
+    def entry(seed):
+        g = torch.Generator().manual_seed(seed)
+        return torch.randn(4, 8, generator=g), [torch.randn(4, 8, generator=g)]
+
+    a = [entry(0), entry(1)]
+    b = [(e.clone(), [x.clone() for x in lv]) for e, lv in a]
+    assert C.feature_diff(a, b) == (True, 0.0)
+    b[1][1][0][2, 3] += 0.25
+    eq, mx = C.feature_diff(a, b)
+    assert not eq and mx == pytest.approx(0.25)
+
+
+def test_batch_tensors_type_only_real_prompt_image_tokens():
+    from tests.experiments.test_trl_adapter_equivalence import IMG
+
+    rec = {"prompt_ids": torch.tensor([[IMG, 5, IMG, IMG]]), "prompt_mask": torch.tensor([[0, 1, 1, 1]]),
+           "completion_ids": torch.tensor([[IMG, 7]]), "completion_mask": torch.tensor([[1, 0]]),
+           "meta": {f: torch.tensor([1]) for f in ("prompt_len", "completion_len", "image_id", "group", "layout",
+                                                    "rope_bad", "pixel_rows")}}  # fmt: skip
+    ids, mask, T, mm, meta = C.batch_tensors(rec, IMG)
+    assert ids.tolist() == [[IMG, 5, IMG, IMG, IMG, 7]] and mask.tolist() == [[0, 1, 1, 1, 1, 0]] and T == 2
+    assert mm.tolist() == [[0, 0, 1, 1, 0, 0]]  # the masked pad position and the answer's image id are text
+    assert meta.image_id.dtype == np.int32 and meta.pixel_rows.tolist() == [1]
+
+
+def _tiny_check(shared_prefix):
+    """The tiny Qwen3-VL (LoRA, frozen tower) behind a trainer with VisionCache and RopeCache, on 4 groups of 4."""
+    from peft import get_peft_model
+
+    from objdel.policy import caches
+    from objdel.policy import models as configs
+    from tests.experiments.test_encoder_once import BUCKETS, distinct, four_groups
+    from tests.experiments.test_trl_adapter_equivalence import Fast, meta_for, tiny_model, trainer
+
+    m = get_peft_model(tiny_model(), configs.lora("qwen3-vl-2b"))
+    g = torch.Generator().manual_seed(1)
+    for n, p in m.named_parameters():
+        if "lora_" in n:
+            p.data = torch.randn(p.shape, generator=g) * 0.05
+    t = trainer(Fast, buckets=BUCKETS, vision=caches.VisionCache.install(m), rope=caches.RopeCache.install(m),
+                shared_prefix=shared_prefix)  # fmt: skip
+    ids, mask, T, kw = four_groups()
+    adv = C.centred_advantages(1)[0, :16]
+    return t, m, (ids, mask, T, kw, meta_for(mask, T, 4), distinct(kw), adv)
+
+
+@pytest.mark.parametrize("shared_prefix", [False, True])
+def test_grouping_check_passes_on_the_tiny_model_and_writes_what_encode_check_reads(shared_prefix, tmp_path):
+    """G-EN0 + G-EN1 on CPU: the encoder-once path equals the pixel path fed the one-call features (reference pass,
+    every micro-batch, LoRA grads), one tower call; the record's bits_equal is a JSON boolean train_rl accepts."""
+    import json
+
+    from objdel.policy.callbacks import ExpectStep1
+    from objdel.rl.run import save_json
+
+    t, m, args = _tiny_check(shared_prefix)
+    r = C.grouping_check(t, m, *args, chunk=4)
+    assert r["deterministic"] and r["G-EN1"]["passed"], r
+    assert r["G-EN1"]["tower_calls"] == 1 and t.encoder is not None and t.vision is None
+    assert type(r["bits_equal"]) is bool and r["max_abs"] >= 0 and r["floor_max"] >= r["floor_p99"] >= 0
+    assert r["bits_equal"] == (r["max_abs"] == 0)
+    save_json(tmp_path / "encoder.json", r, ("passed",))
+    from objdel.policy.callbacks import STEP1_CLOSE, STEP1_EXACT
+
+    log = {"log": [{"step": 1} | dict.fromkeys(STEP1_EXACT + STEP1_CLOSE, 1.0)]}
+    (tmp_path / "rl.json").write_text(json.dumps(log))
+    got = ExpectStep1.from_files(tmp_path / "rl.json", tmp_path / "encoder.json", tmp_path)
+    assert got.bits_equal is r["bits_equal"]
+
+
+def test_grouping_check_fails_an_encoder_path_that_gives_rows_the_wrong_image(monkeypatch):
+    from objdel.policy import caches
+
+    t, m, args = _tiny_check(False)
+    real = caches.EncoderCache.outputs
+    monkeypatch.setattr(caches.EncoderCache, "outputs", lambda self, ids: real(self, [(int(i) + 1) % 4 for i in ids]))
+    r = C.grouping_check(t, m, *args, chunk=4)
+    assert not r["G-EN1"]["equal"] and not r["G-EN1"]["passed"]
+
+
+def test_grouping_check_fails_a_second_tower_call(monkeypatch):
+    from objdel.policy import caches
+
+    t, m, args = _tiny_check(False)
+    real = caches.EncoderCache.encode
+    monkeypatch.setattr(caches.EncoderCache, "encode", lambda self, pv, grid: [real(self, pv, grid) for _ in "ab"][0])
+    r = C.grouping_check(t, m, *args, chunk=4)
+    assert r["G-EN1"]["tower_calls"] == 2 and r["G-EN1"]["equal"] and not r["G-EN1"]["passed"]
+
+
+MEM = {"memo_b": 200 * MB, "distinct_b": 200 * MB, "call_b": 300 * MB, "out_b": 201 * MB, "full": 0,
+       "peak_b": 20 << 30}  # fmt: skip
+
+
+def test_memory_verdict_passes_the_plan_budget():
+    assert C.memory_verdict(**MEM)["passed"]
+
+
+@pytest.mark.parametrize("kw", [
+    {"memo_b": 221 * MB},  # the memo holds more than the distinct images + 10 %
+    {"call_b": 400 * MB},  # the pass-2 call raised max_memory_allocated by 400 MB
+    {"call_b": 302 * MB, "out_b": 201 * MB},  # 101 MB beyond its own output
+    {"full": 1},  # a 256-row patch tensor lives
+    {"peak_b": (30 << 30) + 1}])  # fmt: skip
+def test_memory_verdict_fails_each_rule(kw):
+    assert not C.memory_verdict(**MEM | kw)["passed"]
+
+
+def test_encoder_needs_the_pixels_batch(tmp_path):
+    with pytest.raises(FileNotFoundError, match="--pixels"):
+        C.encoder_batch(None, None, 170, tmp_path)
+
+
+def test_parse_takes_encoder_and_main_refuses_a_val_root():
+    flag, _ = C.parse(["--encoder", "--model", "qwen3vl2b", "--ckpt", "c", "--out", "o", "--train", "t",
+                        "--steps", "1"])
+    assert flag.encoder and not flag.pixels
+    with pytest.raises(ValueError, match="val"):
+        C.main(["--encoder", "--model", "m", "--ckpt", "c", "--out", "o", "--steps", "20",
+                "--train", "data/eval_views/lidc-val-shifted"])
+
+
+def test_main_runs_encoder_and_writes_encoder_json(tmp_path, monkeypatch):
+    """main's --encoder writes RUN/c_check/encoder.json (the file --encode-check names) and exits on `passed`."""
+    import json
+
+    from objdel.rl import build
+
+    monkeypatch.setattr(dataset, "grpo_rows", lambda *a: [])
+    monkeypatch.setattr(dataset, "OpenOnce", lambda rows: rows)
+    monkeypatch.setattr(build, "build_trainer", lambda *a: SimpleNamespace(trainer=None))
+    for passed, code in ((True, 0), (False, 1)):
+        monkeypatch.setattr(C, "run_encoder", lambda *a, p=passed: {"bits_equal": True, "passed": p})
+        assert C.main(["--encoder", "--model", "qwen3-vl-2b", "--ckpt", "c", "--out", str(tmp_path), "--steps", "20",
+                       "--train", "t"]) == code  # fmt: skip
+        assert json.loads((tmp_path / "c_check" / "encoder.json").read_text())["passed"] is passed

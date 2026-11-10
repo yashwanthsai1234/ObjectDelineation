@@ -35,9 +35,9 @@ def share(intervals, start: int, end: int) -> float:
     return float(np.clip(covered, 0, None).sum() / (end - start))
 
 
-def from_sqlite(path, start: int, end: int) -> dict:
-    """share() of the export's kernel, memcpy, memset and graph-run rows; names the graph tables used and the GRAPH
-    tables without start/end columns (ignored)."""
+def sqlite_rows(path) -> tuple[list, list, list]:
+    """(the export's kernel, memcpy, memset and graph-run (start, end) rows, the graph tables used, the GRAPH tables
+    without start/end columns: ignored). c0_summary reads the same rows."""
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         names = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
@@ -47,6 +47,12 @@ def from_sqlite(path, start: int, end: int) -> dict:
         rows = [r for n in [*TABLES, *graph] if n in cols for r in db.execute(f'SELECT start, end FROM "{n}"')]
     finally:
         db.close()
+    return rows, graph, ignored
+
+
+def from_sqlite(path, start: int, end: int) -> dict:
+    """share() of sqlite_rows; names the graph tables used and the GRAPH tables without start/end columns."""
+    rows, graph, ignored = sqlite_rows(path)
     return {"share": share(rows, start, end), "graph_table": graph or None, "ignored_tables": ignored}
 
 

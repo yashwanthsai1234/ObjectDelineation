@@ -90,7 +90,8 @@ def build_trainer(model: str, ckpt: Path, rows, out: Path, roots: Sequence[Path]
     trainer.check_rope_every = flags.check_rope_every  # C2
     trainer.checks_from_step = flags.checks_from_step  # C0: the check flags and recording act from step S
     trainer.record_dir = Path(record_dir) if record_dir else None
-    trainer.prompt_memo = flags.prompt_memo  # C2
+    if flags.prompt_memo:  # C2
+        trainer.use_prompt_memo()
     if flags.encoder_once and not trainer.use_encoder_once():  # C3, after host_meta
         raise ValueError("--encoder-once needs a Qwen-VL vision tower, base and image processor")
     if flags.gpu_pixels == "auto":  # C1: 8 training images for the start-up self-check

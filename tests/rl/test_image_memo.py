@@ -176,3 +176,50 @@ def test_an_unsupported_image_falls_back_to_the_processor_and_is_counted(counted
     memo = policy_caches.ImageMemo(ip, gpu=("torch", "cpu"))
     got = memo(rows, return_tensors="pt")
     assert all(torch.equal(got[k], want[k]) for k in want) and memo.fallback_calls == 1 and seen == [1]
+
+
+def test_identity_keying_holds_each_image_until_clear_and_kwargs_never_share_results(counted):  # U-IM4
+    import weakref
+
+    ip, seen = counted
+    plain = Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)
+    memo = policy_caches.ImageMemo(ip)
+    a = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+    old = memo([a], return_tensors="pt")["pixel_values"].clone()
+    ref = weakref.ref(a)
+    a_id = id(a)
+    del a
+    import gc
+
+    gc.collect()
+    assert ref() is not None  # the memo keeps the image alive, so its id() is not reused while cached
+    a = ref()
+    assert id(a) == a_id
+    a[:] = 255 - a  # an in-place edit without clear(): the OLD patches (documented: the memo keys the object)
+    assert torch.equal(memo([a], return_tensors="pt")["pixel_values"], old)
+    memo.clear()
+    new = memo([a], return_tensors="pt")["pixel_values"]
+    assert torch.equal(new, plain([a], return_tensors="pt")["pixel_values"]) and not torch.equal(new, old)
+    n = len(seen)
+    for kw in ({}, {"do_resize": False}, {"size": {"shortest_edge": 3136, "longest_edge": 1003520}}):
+        got = memo([a], **kw)
+        want = plain([a], **kw)
+        assert all(np.array_equal(np.asarray(got[k]), np.asarray(want[k])) for k in want)
+    assert len(seen) == n + 3  # each kwargs set prepared on its own, none served another call's result
+
+
+def test_clear_empties_the_memo_and_releases_the_images(counted):  # U-IM6
+    import gc
+    import weakref
+
+    ip, _ = counted
+    memo = policy_caches.ImageMemo(ip, gpu=("torch", "cpu"))
+    a = image(0)
+    memo([a, a], return_tensors="pt")
+    ref = weakref.ref(a)
+    del a
+    gc.collect()
+    assert ref() is not None and memo.memo
+    memo.clear()
+    gc.collect()
+    assert memo.memo == {} and ref() is None
