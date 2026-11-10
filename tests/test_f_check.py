@@ -1,6 +1,6 @@
 """B2.2 F step 5, B2.4 rule 0 (U76, Mac twin of G05): the F check record, its pass rules and the `train_rl --f-check`
-flag, with fake probes (no engine). The comparator arms, the packed-layout equality and the base restore need vLLM
-and are not built yet."""
+flag, with fake probes; then the engine half with a fake vLLM engine (no vLLM on the Mac): the comparator's order,
+prompts, timing and restore, the packed-layout equality, the after-sync probe, way (b) scoring and train_rl's wiring."""
 import json
 from types import SimpleNamespace
 
