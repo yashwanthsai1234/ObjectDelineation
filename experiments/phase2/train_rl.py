@@ -134,6 +134,9 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--allow-cpu-pixels", action="store_true",
                     help="with --gpu-pixels auto: keep the CPU processor when no GPU backend passes, instead of failing")
     a = ap.parse_args(argv)
+    for flag in ("steps", "save_steps", "heldout_every", "heldout_items"):
+        if getattr(a, flag) is not None and getattr(a, flag) < 1:
+            ap.error(f"--{flag.replace('_', '-')} must be >= 1")
     if not a.merge_last and (a.train is None or a.steps is None):
         ap.error("--train and --steps are required (except with --merge-last)")
     for k in ("steps", "save_steps", "heldout_every"):  # TRL reads max_steps <= 0 as "train num_train_epochs"
@@ -197,6 +200,9 @@ def rows_schedule(root: Path, manifest_sha256: str | None) -> dict | None:
     pinned value; a schedule root needs it."""
     raw = (Path(root) / "manifest.json").read_bytes()
     schedule = json.loads(raw).get("schedule")
+    if schedule is not None and not (isinstance(schedule, dict) and all(
+            k in schedule for k in ("steps", "per_step", "block_steps", "ids_sha256"))):
+        raise ValueError(f"{root}/manifest.json: `schedule` needs steps, per_step, block_steps and ids_sha256")
     if schedule is not None and manifest_sha256 is None:
         raise ValueError(f"{root}: a rows root with a schedule needs --rows-manifest-sha256")
     if manifest_sha256 is not None and _sha(raw) != manifest_sha256:
@@ -339,8 +345,8 @@ def main(argv=None) -> int:
     check_flags(a)
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
     stop = budget_stop(a)
-    train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule else dataset.DISAGREEMENT_OVERSAMPLE)
-    if schedule:
+    train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule is not None else dataset.DISAGREEMENT_OVERSAMPLE)
+    if schedule is not None:
         check_rows(train["key"], schedule)
     if a.runaway_cap:
         train = with_caps(train, a)
@@ -358,9 +364,9 @@ def main(argv=None) -> int:
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
     over = {"save_strategy": "steps", "save_steps": a.save_steps} | numerics_overrides(a)
-    over |= {"shuffle_dataset": False} if schedule else {}
+    over |= {"shuffle_dataset": False} if schedule is not None else {}
     over |= {"eval_strategy": "steps", "eval_steps": a.heldout_every, "num_generations_eval": 8} if a.heldout else {}
-    check = (lambda cfg: check_sampler(cfg, schedule, a.steps)) if schedule else None
+    check = (lambda cfg: check_sampler(cfg, schedule, a.steps)) if schedule is not None else None
     from objdel.reward import REWARDS, reward_fingerprint
     from objdel.train.callbacks import LocGuard
 
@@ -374,7 +380,7 @@ def main(argv=None) -> int:
     save_final(trainer.accelerator.unwrap_model(trainer.model), proc, a.out)
     done = trainer.state.global_step
     log, cfg = trainer.state.log_history, trainer.args
-    rows = schedule and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
+    rows = schedule is not None and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
                          "ids_sha256": schedule["ids_sha256"]}
     return save_json(a.out / "rl.json", {
         "model": a.model, "steps": done, "lr": lr, "ckpt": str(a.ckpt), "resumed_from": last,
