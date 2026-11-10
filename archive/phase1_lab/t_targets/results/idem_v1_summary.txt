@@ -1,8 +1,0 @@
-hyb3@0.99@retol riga 100 idem 0.060 conv 0.870 fix_topo 1.000 fix_iou_min 0.9756
-hyb3@0.99@retol lidc 301 idem 1.000 conv 1.000 fix_topo 1.000 fix_iou_min 1.0000
-exact riga 100 idem 1.000 conv 1.000 fix_topo 1.000 fix_iou_min 1.0000
-exact lidc 301 idem 1.000 conv 1.000 fix_topo 1.000 fix_iou_min 1.0000
-dp5 riga 100 idem 0.020 conv 0.050 fix_topo 1.000 fix_iou_min 0.9224
-dp5 lidc 301 idem 1.000 conv 1.000 fix_topo 1.000 fix_iou_min 1.0000
-potrace riga 100 idem 0.010 conv 0.320 fix_topo 1.000 fix_iou_min 0.9858
-potrace lidc 301 idem 0.764 conv 1.000 fix_topo 1.000 fix_iou_min 0.9643

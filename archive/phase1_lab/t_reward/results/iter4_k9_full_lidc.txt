@@ -1,9 +1,0 @@
-item set: full-LIDC train disagreement items
-pairs: 789 from 229 items; high-IoU 697; groups with extra wrong fillers 74%
-IoU (vote) alone correct: 57.7% [53.9%, 61.3%]
-  v4 gate zero           all 98.10% [96.85%, 99.10%] | IoU>=0.5 99.00% [98.01%, 99.71%] | IoU<0.5 91.3%
-  v4 gate tauP           all 98.86% [98.02%, 99.61%] | IoU>=0.5 99.57% [99.00%, 100.00%] | IoU<0.5 93.5%
-  v4 term zero           all 98.86% [98.00%, 99.62%] | IoU>=0.5 99.71% [99.26%, 100.00%] | IoU<0.5 92.4%
-  v4 term tauP           all 98.86% [98.03%, 99.60%] | IoU>=0.5 99.57% [98.98%, 100.00%] | IoU<0.5 93.5%
-  v3 c_topo=2.0          all 98.86% [97.99%, 99.52%] | IoU>=0.5 99.57% [98.97%, 100.00%] | IoU<0.5 93.5% (n=92) | pinhole 99.0% speck 98.8% bridge nan%
-    per subset (v3): lidc-full/train-disagree 98.9%

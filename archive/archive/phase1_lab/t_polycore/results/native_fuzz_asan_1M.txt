@@ -1,2 +1,0 @@
-ok: 1000000 random shapes (raster vs brute, sweep vs brute), scratch clean, batch deterministic
-build/native/polycore_fuzz_asan 1000000  37.64s user 2.33s system 31% cpu 2:07.98 total
