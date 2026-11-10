@@ -285,7 +285,7 @@ def test_budget_block_gives_a_cap_inside_the_three_dollars(tmp_path, monkeypatch
         w.writerow({"ts": "2026-11-08T17:11:15Z", "event": "teardown", "run_id": "r5",
                     "cost_usd": b["ledger_closed_usd"]})
     assert policy.launch_refusal(offer, b["cap_hours"]) == ""
-    assert "hard stop" in policy.launch_refusal(offer, b["cap_hours"] + 5)  # past the $4.50 room
+    assert "hard stop" in policy.launch_refusal(offer, b["cap_hours"] + 10)  # past the $7.60 room
 
 
 def test_minutes_fit_the_cap_with_room_and_the_expected_spend_is_under_the_approved_amount():
