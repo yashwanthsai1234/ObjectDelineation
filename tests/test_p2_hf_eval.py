@@ -1,6 +1,6 @@
 """R1 / C2 evaluation on the D13 HF path (V1 R0, RTX 4090: vLLM failed H-A5-2, so `sampler: hf`): hf_sample batches
 items with left padding and resumes; sample.sample batches items; select_ckpt kills its sampler child on SIGTERM and
-retries without losing finished items; the R0 HF rate step and project_r1's evaluation allowance from it; k3_harness's
+retries without losing finished items; the R0 HF rate step (its reader project_r1 is archived, E6.6); k3_harness's
 exit code; c2_analyze on select_ckpt --only topology's report.json; rx8's sampler; g_probe.json without NaN."""
 
 import json
@@ -213,7 +213,7 @@ def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
     assert got == [600 + 3.0 * 800] and SC.TIMEOUT_S["hf"] == 3.0  # EV-5: 3x HF's ~1 s per answer
 
 
-# ---------------------------------------------------------------- R0 HF rate step, project_r1
+# ---------------------------------------------------------------- R0 HF rate step
 
 
 def test_hf_rate_step_samples_base_weights_and_writes_the_rate(tmp_path, monkeypatch):
@@ -249,106 +249,6 @@ def test_r0_measures_the_hf_rate_of_the_rung():
     assert [s[s.index("--model") + 1] for s in rate] == ["qwen3-vl-2b"]
     assert all(s[0] == "~" for s in rate)  # a failure leaves project_r1 without a rate (exit 2), not R0 stopped
     assert all(s[s.index("--view") + 1] == "{data}/eval_views/lidc-val-shifted" for s in rate)
-
-
-def _manifest(tmp_path, name, s_per_step, model="lfm2.5-vl-450m", workers=6, det=False, batch=32, **cfg):
-    d = tmp_path / name
-    d.mkdir()
-    cfg = {"model": model, "output_dir": str(d), "deterministic": det, "sft": {"dataloader_num_workers": workers}} | cfg
-    t = {"s_per_step": s_per_step, "batch": batch, "rows_per_epoch": 22400}
-    (d / "manifest.json").write_text(json.dumps({"config": cfg, "timing": t}))
-    return str(d / "manifest.json")
-
-
-def _rate(tmp_path, model="lfm2.5-vl-450m", s=0.05, load=20.0):
-    p = tmp_path / f"rate-{model}.json"
-    p.write_text(json.dumps({"model": model, "s_per_sample": s, "load_s": load, "samples": 256}))
-    return ["--hf_rate", str(p)]
-
-
-def test_eval_samples_follow_select_ckpt_in_the_chain():
-    """policy.chain's R1 select_ckpt with sampler hf (--items 256): 3 branches x 256 x K 8 for selection, then the
-    selected branch on the full views: shifted K 8 and K 16, rescaled, rotated, both probes (1,000 + 680)."""
-    pytest.importorskip("trl")
-    from experiments.phase2 import project_r1 as P
-
-    assert P.eval_samples(3, 256) == 3 * 256 * 8 + 1084 * 8 + 1084 * 16 + 2 * 1084 * 8 + 1680 * 8 == 62944
-    assert P.eval_samples(3, None) == 3 * 1084 * 8 + 1084 * 16 + 2 * 1084 * 8 + 1680 * 8  # selection = shifted K 8
-    assert P.sampler_calls(3, 256) == 3 + 6 and P.SUBSET == 256
-
-
-def test_project_r1_go_and_stop(tmp_path, capsys):
-    pytest.importorskip("trl")
-    from experiments.phase2 import project_r1 as P
-
-    off = _manifest(tmp_path, "r0-timing-w6-det-off", 2.0)
-    on = _manifest(tmp_path, "r0-timing-w6-det-on", 9.0, det=True)
-    w0 = _manifest(tmp_path, "r0-timing-w0-det-off", 9.0, workers=0)
-    assert P.main(["--model", "lfm2.5-vl-450m", *_rate(tmp_path), on, off, w0]) == 0  # basis: det-off workers 6
-    out = capsys.readouterr().out.splitlines()
-    doc = json.loads(out[1])
-    eval_h = (62944 * 0.05 + 9 * 20.0) / 3600  # r1_lfm.yaml: sampler hf
-    assert out[0].startswith("GO") and doc["basis"] == off and doc["r1_steps"] == 1400 + 52 + 105 + 210
-    assert doc["eval_h"] == pytest.approx(eval_h) and doc["sampler"] == "hf" and doc["eval_samples"] == 62944
-    assert doc["projected_h"] == pytest.approx(1767 * 2.0 / 3600 + eval_h) and doc["stop_h"] == 3.4
-    assert doc["arms"][on] == 9.0
-    slow = _manifest(tmp_path, "slow", 6.0)  # 1767 x 6 s = 2.95 h + 0.92 h > 3.4
-    assert P.main(["--model", "lfm2.5-vl-450m", *_rate(tmp_path), slow]) == 1
-    assert capsys.readouterr().out.startswith("STOP")
-    slow_hf = _rate(tmp_path, s=0.2)  # 62944 x 0.2 s = 3.5 h of HF sampling alone
-    assert P.main(["--model", "lfm2.5-vl-450m", *slow_hf, off]) == 1
-    capsys.readouterr()
-    qwen = _manifest(tmp_path, "r0-qwen3vl-arm", 2.7, model="qwen3-vl-2b")  # LoRA and checkpointing by model (D6, D4)
-    assert P.main(["--model", "qwen3-vl-2b", *_rate(tmp_path, "qwen3-vl-2b", s=0.08), qwen, off]) == 0
-    doc = json.loads(capsys.readouterr().out.splitlines()[1])
-    assert doc["stop_h"] == 6.0 and doc["projected_h"] < 6.0
-
-
-def test_project_r1_vllm_uses_the_r0_rate_and_adds_the_hf_check(tmp_path, capsys, monkeypatch):
-    """D13 (2026-11-05): a vLLM R1 samples every branch on the full shifted view at the R0 vLLM rate, then select_ckpt's
-    HF check re-samples HF_CHECK_ITEMS x K with HF."""
-    pytest.importorskip("trl")
-    from experiments.phase2 import project_r1 as P
-    from experiments.phase2 import select_ckpt as SC
-
-    assert P.HF_CHECK_ITEMS == SC.HF_CHECK_ITEMS
-    cfg = _yaml(CONFIGS / "r1_lfm.yaml")
-    cfg.pop("sampler")
-    (tmp_path / "r1.yaml").write_text(json.dumps(cfg))
-    monkeypatch.setitem(P.R1, "lfm2.5-vl-450m", (str(tmp_path / "r1.yaml"), 3.4))
-    assert P.main(["--model", "lfm2.5-vl-450m", *_rate(tmp_path), _manifest(tmp_path, "a", 2.0)]) == 0
-    doc = json.loads(capsys.readouterr().out.splitlines()[1])
-    n = P.eval_samples(3, None)
-    want = (n * P.VLLM_S_PER_SAMPLE + P.sampler_calls(3, None) * P.VLLM_LOAD_S + 64 * 8 * 0.05 + 20.0) / 3600
-    assert doc["sampler"] == "vllm" and doc["eval_samples"] == n and doc["eval_h"] == pytest.approx(want)
-    assert doc["hf_check_s"] == pytest.approx(64 * 8 * 0.05 + 20.0)
-
-
-@pytest.mark.parametrize("why", ["w0", "b16", "none", "no_rate", "rate_model", "freeze", "grad_ckpt", "missing"])
-def test_project_r1_exits_2_on_usage_and_data_errors(tmp_path, why, capsys):
-    pytest.importorskip("trl")
-    from experiments.phase2 import project_r1 as P
-
-    m = {"w0": lambda: _manifest(tmp_path, "w0", 2.0, workers=0),
-         "b16": lambda: _manifest(tmp_path, "b16", 2.0, batch=16),
-         "none": lambda: _manifest(tmp_path, "none", None),
-         "freeze": lambda: _manifest(tmp_path, "f", 2.0, freeze_vision=True),
-         "grad_ckpt": lambda: _manifest(tmp_path, "g", 2.0, sft={"dataloader_num_workers": 6,
-                                                                  "gradient_checkpointing": True}),
-         "missing": lambda: str(tmp_path / "nope.json")}.get(why, lambda: _manifest(tmp_path, "ok", 2.0))()
-    rate = {"no_rate": [], "rate_model": _rate(tmp_path, "qwen3-vl-2b")}.get(why, _rate(tmp_path))
-    assert P.main(["--model", "lfm2.5-vl-450m", *rate, m]) == 2
-    assert "project_r1:" in capsys.readouterr().err
-
-
-def test_project_r1_cli(tmp_path):
-    pytest.importorskip("trl")
-    m = _manifest(tmp_path, "r0-timing-w6-det-off", 2.0)
-    cmd = [sys.executable, "-I", "-m", "experiments.phase2.project_r1", "--model", "lfm2.5-vl-450m"]
-    r = subprocess.run(cmd + [*_rate(tmp_path), m], cwd=ROOT, capture_output=True, text=True, timeout=300)
-    assert r.returncode == 0 and r.stdout.startswith("GO"), r.stderr[-2000:]
-    r = subprocess.run(cmd + [m], cwd=ROOT, capture_output=True, text=True, timeout=300)
-    assert r.returncode == 2 and "hf_rate" in r.stderr
 
 
 # ---------------------------------------------------------------- k3_harness exit code
