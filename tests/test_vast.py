@@ -674,7 +674,8 @@ def test_cost_guard_allows_the_owners_extra_7_dollars(E):
 def test_cost_guard_projection_and_alarm(E):
     spent(E, 9.0)
     E.pick()
-    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "23", ok=False)  # 9 + 0.55 * 23 > HARD_STOP (23 <= the spec cap 24)
+    # 9 + 0.55 * 23 > HARD_STOP (23 <= the spec cap 24)
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "23", ok=False)
     assert "hard stop" in p.stderr
     spent(E, 1.5)
     p = E.sh("launch.sh", "111", "r1", "--cap-hours", "1", ok=False)  # 10.5 >= alarm
