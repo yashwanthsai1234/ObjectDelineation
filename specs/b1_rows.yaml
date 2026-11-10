@@ -21,7 +21,6 @@ stages:
 - kind: eval
   name: eval
   ckpt: '{rd}/b1-rows/final'
-  train: '{data}/prepared'
   view: ['{data}/eval_views/lidc-val-shifted', '{data}/eval_views/lidc-val-edge']
   split: [val, val]
   out: ['{rd}/eval_b1_val_shifted', '{rd}/eval_b1_val_edge']

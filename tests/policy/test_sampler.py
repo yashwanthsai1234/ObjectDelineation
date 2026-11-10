@@ -142,6 +142,16 @@ def test_help_runs_without_vllm():
     assert "--kind" in out.stdout and "--logprobs" in out.stdout and "--batch_items" in out.stdout
 
 
+def test_select_ckpt_runs_the_library_sampler_not_a_script():
+    from experiments.phase2 import select_ckpt as SC
+
+    for kind in ("vllm", "hf"):
+        cmd = SC.sampler_cmd(kind, Path("p"), Path("m"), Path("c"), ["--logprobs"])
+        assert cmd[:5] == [sys.executable, "-I", "-m", "objdel.train.sample", "--kind"] and cmd[5] == kind
+        assert cmd[6:] == ["--prompts", "p", "--model", "m", "--out", "c", "--logprobs"]
+        assert not any(x.endswith(".py") for x in cmd)
+
+
 @pytest.mark.data
 def test_build_prompt_ids_equal_trls_own_on_64_validation_rows():
     """TRL's GRPOTrainer._tokenize_prompts: apply_chat_template(tokenize=True) on prepare_multimodal_messages; the

@@ -8,10 +8,13 @@ import yaml
 
 from experiments.phase2.vast import policy
 from objdel.core import spec as S
+from tests.core.test_move_invariance import drop_flags
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIGS, SPECS = ROOT / "experiments/phase2/configs", ROOT / "specs"
 GOLDEN = json.loads((ROOT / "tests/goldens/phase_e/invariance.json").read_text())["chain_argv"]
+for _g in GOLDEN.values():
+    _g["argv"] = drop_flags(_g["argv"])
 
 
 @pytest.mark.parametrize("plan", ["b1_rows", "rl_full", "r5_shared"])
@@ -25,8 +28,9 @@ def test_r5_shared_keeps_its_soft_steps():
 
 
 PLAN_ARGV = json.loads((ROOT / "tests/goldens/phase_e/plan_argv.json").read_text())
+PLAN_ARGV = {plan: drop_flags(argvs) for plan, argvs in PLAN_ARGV.items()}
 # (plan, step) pairs whose old text a spec cannot write string for string; the stage they parse to is the same
-SAME_STAGE = {("a3_test", 1): "--train stood after --split", ("b3_v5", 3): "grpo JSON spacing and 2.20",
+SAME_STAGE = {("b3_v5", 3): "grpo JSON spacing and 2.20",
               ("c_speed_c6", 1): "the rows pins stood before --out"}
 
 

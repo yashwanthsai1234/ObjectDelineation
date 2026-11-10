@@ -1,19 +1,13 @@
 """Phase 2 M5: the JSONL sampling bridge (C-BRIDGE) between the training env (objdel.train.sample) and the vLLM env
-(experiments/phase2/sample_vllm.py, which imports nothing from objdel and runs without vLLM for --help)."""
-import ast
+(objdel.train.sample's vLLM request builder and output records)."""
 import json
-import subprocess
-import sys
 import types
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from experiments.phase2 import sample_vllm as V
-
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "experiments" / "phase2" / "sample_vllm.py"
 
 
 class Processor:
@@ -35,6 +29,12 @@ def rows(tmp_path):
     from objdel.train.dataset import _user
     return [{"prompt": [_user("lidc")], "image": str(tmp_path / f"im{i}.png"), "key": f"lidc/1.2.1/n000/z00{i}"}
             for i in (1, 3)]
+
+
+@pytest.fixture
+def V():
+    """objdel.train.sample, which imports TRL's data utils: the CI [dev]-only job skips the tests that use it."""
+    return pytest.importorskip("objdel.train.sample")
 
 
 def export(rows, tmp_path, model="qwen3-vl-2b", **kw):
@@ -82,7 +82,7 @@ def completion(text, ids, finish):
     return types.SimpleNamespace(text=text, token_ids=ids, finish_reason=finish, logprobs=None)
 
 
-def test_requests_echo_the_exported_sampling(rows, tmp_path):
+def test_requests_echo_the_exported_sampling(V, rows, tmp_path):
     _, lines = export(rows, tmp_path, stop_ids={1})
     opened = []
     reqs, params = V.requests(lines, SamplingParams, lambda p: opened.append(p) or f"image:{p}")
@@ -95,7 +95,7 @@ def test_requests_echo_the_exported_sampling(rows, tmp_path):
     assert V.requests(lines, SamplingParams, str, logprobs=True)[1][0].kw["logprobs"] == 0
 
 
-def test_round_trip_and_truncation_is_the_rewards_rule(rows, tmp_path):
+def test_round_trip_and_truncation_is_the_rewards_rule(V, rows, tmp_path):
     from objdel.train import rewards, sample
     _, lines = export(rows, tmp_path)
     stop = {1, 2}
@@ -141,28 +141,10 @@ def test_import_refuses_short_duplicate_or_missing_items(tmp_path):
             run(recs, **kw)
 
 
-def test_refuses_to_start_on_a_busy_gpu():
+def test_refuses_to_start_on_a_busy_gpu(V):
     V.check_memory(lambda: (95, 100))
     with pytest.raises(SystemExit, match="89"):
         V.check_memory(lambda: (89, 100))
-
-
-def test_sampler_imports_nothing_from_objdel():
-    """It runs in /opt/vllm (vLLM's own torch / numpy pins, no objdel): top-level imports are the standard library;
-    vLLM, torch and PIL are imported inside main."""
-    tree = ast.parse(SCRIPT.read_text())
-    mods = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
-    mods |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
-    assert not any(isinstance(n, ast.ImportFrom) and n.level for n in ast.walk(tree))  # no relative imports
-    assert mods <= set(sys.stdlib_module_names) | {"vllm", "torch", "PIL"}
-    top = {a.name for n in tree.body if isinstance(n, ast.Import) for a in n.names}
-    top |= {n.module for n in tree.body if isinstance(n, ast.ImportFrom)}
-    assert top <= set(sys.stdlib_module_names)
-
-
-def test_sampler_help_without_vllm():
-    r = subprocess.run([sys.executable, "-I", str(SCRIPT), "--help"], capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0 and "--prompts" in r.stdout and "--gpu-memory-utilization" in r.stdout
 
 
 def test_parity_help():

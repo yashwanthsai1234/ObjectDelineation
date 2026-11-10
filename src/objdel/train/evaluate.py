@@ -13,13 +13,15 @@ per-item and summary statistics of final_eval (policy/evaluate.py after the E5 m
 
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from objdel.eval import metrics, select, signal
 from objdel.train import serve
-from objdel.train.sample import Sampler
+
+if TYPE_CHECKING:  # the sampler module imports TRL's data utils; a rescore loads no ML stack
+    from objdel.train.sample import Sampler
 
 SUBSET_SEED = 0  # eval_rows' `items`: one fixed subset for every branch and rung
 
@@ -129,7 +131,7 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     return out
 
 
-def evaluate(sampler: Sampler, rows: Sequence[Mapping], params: Mapping[str, Any], view_root: Path,
+def evaluate(sampler: "Sampler", rows: Sequence[Mapping], params: Mapping[str, Any], view_root: Path,
              keep: Callable[[list[dict]], object] = lambda answers: None) -> dict:
     """K answers per row from `sampler` ({item_id, samples, truncated, tokens}, row order), keep(answers), then their
     metrics (score_items on view_root's preloaded caches) and per-item statistics: {"answers", "results", "items"}."""

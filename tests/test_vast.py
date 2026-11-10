@@ -1307,6 +1307,7 @@ def test_bundle_imports_standalone(tmp_path):
     ext = Path(importlib.util.find_spec("objdel._gpucheck").origin)
     shutil.copy2(ext, tmp_path / "src" / "objdel" / ext.name)
     mods = [m.strip() for m in P.IMPORT_CHECK.removeprefix("import ").split(",")] + ["objdel", *P.LIVE_CLIS]
+    mods.remove("vllm")  # the box image's, not the bundle's
     # -S: without it the editable install's .pth files serve objdel and tests from the repo, whatever sys.path says
     code = (
         "import sys, json, importlib\n"
@@ -1385,24 +1386,6 @@ def test_launch_is_bounded_by_the_spec_compute(E):
 def test_allowlist_image_is_the_vllm_native_pin():
     image = json.loads((VAST / ".vast-allowlist").read_text())["image"]
     assert re.fullmatch(r"ghcr\.io/yashwanthsai1234/objdel-gpu:vllm_native-[0-9a-f]{12}@sha256:[0-9a-f]{64}", image)
-
-
-def test_sampler_python_uses_the_vllm_venv_when_present(tmp_path, monkeypatch):
-    from experiments.phase2 import select_ckpt as SC
-
-    (tmp_path / "bin").mkdir()
-    (tmp_path / "bin" / "python").write_text("")
-    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path)
-    assert SC.vllm_python() == str(tmp_path / "bin" / "python")
-    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("o"))[0] == str(tmp_path / "bin" / "python")
-
-
-def test_sampler_python_else_the_running_python(tmp_path, monkeypatch):
-    from experiments.phase2 import select_ckpt as SC
-
-    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path / "absent")
-    assert SC.vllm_python() == sys.executable
-    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("o"))[0] == sys.executable
 
 
 def test_image_check_handles_one_and_two_venvs():

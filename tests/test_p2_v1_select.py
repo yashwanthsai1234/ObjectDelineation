@@ -1,6 +1,6 @@
 """V1 GPU-session readiness: g_probe stops when R1's §5.1 gates failed, select_ckpt --only topology (C2), the R0
 parity driver (experiments/phase2/r0_parity.py, PLAN §4.7 step 7 / G-parity) and the prompt-id echo it needs from
-sample_vllm. No GPU, no vLLM: the sampler child and the model scoring are replaced."""
+the library sampler. No GPU, no vLLM: the sampler child and the model scoring are replaced."""
 
 import json
 import subprocess
@@ -15,8 +15,8 @@ pytest.importorskip("trl")
 
 from experiments.phase2 import g_probe as GP  # noqa: E402
 from experiments.phase2 import parity  # noqa: E402
-from experiments.phase2 import sample_vllm as V  # noqa: E402
 from experiments.phase2 import select_ckpt as SC  # noqa: E402
+from objdel.train import sample as V  # noqa: E402
 from objdel.train import serve  # noqa: E402
 
 
@@ -206,15 +206,6 @@ def test_sampler_reuse_is_keyed_on_flags_sampler_and_checkpoint(tmp_path, monkey
                                ("hf", tmp_path / "other", ())):  # nor another checkpoint's
         SC.run_sampler(kind, prompts, model, comps, 1.0, extra)
     assert [c[-1] == "--logprobs" for c in calls] == [False, True, False, False]
-
-
-def test_sample_vllm_turns_off_the_flashinfer_sampler_before_importing_vllm():
-    """R1 2026-11-05: FlashInfer's sampler JIT-compiles with nvcc (absent from /opt/vllm); vLLM reads env at import."""
-    import inspect
-
-    src = inspect.getsource(V.main)
-    assert V.ENV == {"VLLM_USE_FLASHINFER_SAMPLER": "0"}
-    assert -1 < src.index("os.environ.update(ENV)") < src.index("import vllm")
 
 
 def test_sample_vllm_echoes_prompt_ids_with_logprobs():

@@ -1,10 +1,10 @@
 """Final evaluation of a tuned model on a whole split: K samples per item, scored by the checker.
 
     python -I -m experiments.phase2.final_eval --ckpt DIR --view data/eval_views/lidc-val-shifted --split val \
-        --train data/prepared --out runs/eval/val [-k 8] [--seed 11] [--per-call 64]
-    python -I -m experiments.phase2.final_eval --ckpt DIR --train data/prepared --view V1 --split val --out O1 \
+        --out runs/eval/val [-k 8] [--seed 11] [--adapter LORA_DIR]
+    python -I -m experiments.phase2.final_eval --ckpt DIR --view V1 --split val --out O1 \
         --view V2 --split val --out O2          # several views, one model load (one --out: O/<view name>/)
-    python -I -m experiments.phase2.final_eval --ckpt DIR --train data/prepared --view V --split val --out O \
+    python -I -m experiments.phase2.final_eval --ckpt DIR --view V --split val --out O \
         --limit 32                              # a GPU smoke: 32 evenly spaced items, not a result
     python -I -m experiments.phase2.final_eval --rescore runs/a3/eval_val --view V --split val --out O
     python -I -m experiments.phase2.final_eval --hash-view data/eval_views/lidc-test-shifted \
@@ -17,15 +17,17 @@ The model forms read their flags as an objdel.core.spec.EvalStage (cli_stage: ke
 --hash-view and --resummarize load no model and are read before it.
 
 Every RL-eligible item of the view's <split> records (the G-probe uses a 128-item subset of the val view; this uses
-all of them, and runs on the test split's view built by build_eval_views --split test). Samples with vLLM through
-g_probe.make_trainer and objdel.train.sample (T = 1, as the G-probe; torch seeded before each view; vLLM's engine seed
-is set once, at build), scores with objdel.train.evaluate.score_items in this process (D7: one CUDA context, after
-sampling). Write order per view, so a crash in scoring keeps the paid sampling:
+all of them, and runs on the test split's view built by build_eval_views --split test). Samples with
+objdel.train.sample.VllmSampler, no trainer (E4: vllm_native image only; one engine per process, built from --ckpt,
+serving --adapter unmerged when given; params_for's sampling at T = 1 with the checkpoint's stop ids; torch seeded
+before each view, each request seeded request_seed(seed, item_id)) and scores through objdel.train.evaluate.evaluate
+(score_items in this process: D7, one CUDA context, after sampling). Until V4 passes every result carries
+"sampler": SAMPLER_LABEL (E-G10 open). Write order per view, so a crash in scoring keeps the paid sampling:
 1. <out>/answers.jsonl (item_id, group_id, W, H, samples, truncated, tokens per item) and a partial
    <out>/final_eval.json ("partial": true, the run keys, seconds.load_and_sample);
 2. after scoring, <out>/metrics.jsonl (the whole metrics() result per item), <out>/items.jsonl (per-item metrics) and
    the full <out>/final_eval.json (summary, schema 2, "partial": false). Every file goes through a temp file.
-Run keys: ckpt, view, split, K, seed, view_manifest_sha256 (manifest.json bytes), view_content_sha256 (B1.6's
+Run keys: ckpt, view, split, K, seed, sampler, view_manifest_sha256 (manifest.json bytes), view_content_sha256 (B1.6's
 content hash, view_content_sha256), code_sha (<repo>/CODE_SHA, written by vast sync_up on the box; else git HEAD;
 else null), checker_build ("cuda" or "cpu").
 Per item the K-sample mean; then the mean over items with three 95 % percentile bootstrap intervals (B = 2,000,
@@ -74,7 +76,7 @@ from objdel.geom import engine as _gpucheck
 from objdel.hashing import file_sha256
 from objdel.io import git, read_jsonl
 from objdel.io import write_atomic as _write
-from objdel.train.evaluate import METRICS, per_item, score_items, summarize
+from objdel.train.evaluate import METRICS, evaluate, per_item, score_items, summarize
 
 ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VIEWS = ROOT / "docs/reference/frozen_views.json"  # /workspace/src on the box
@@ -82,6 +84,7 @@ FROZEN_VIEWS = ROOT / "docs/reference/frozen_views.json"  # /workspace/src on th
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 TOPOLOGY_PERIOD_S = 5.0  # D-G17 (a): the sampler thread's period during scoring
 GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
+SAMPLER_LABEL = "VllmSampler; sampler not box-verified (E-G10 open)"  # until V4's deterministic check passes
 
 
 def gate_a(val: dict, test: dict | None) -> dict:
@@ -262,34 +265,14 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
     (out / "final_eval.json").write_text(json.dumps(res, indent=1))
 
 
-def load_trainer(a):
-    """The vLLM trainer of the stage's ckpt (g_probe.make_trainer on the training rows), built once per process."""
-    from experiments.phase2 import g_probe
-    from objdel.core.spec import ProbeStage
-    from objdel.train import dataset
-
-    train = dataset.grpo_rows(a.train, "lidc", "train", oversample=dataset.DISAGREEMENT_OVERSAMPLE)
-    probe = ProbeStage(model=a.model, ckpt=a.ckpt, train=a.train, probe=a.view[0], out=a.out[0])
-    if not a.adapter:
-        return g_probe.make_trainer(probe, Path(a.ckpt), train, 1)[0]
-    from peft import set_peft_model_state_dict  # option F: vLLM serves the adapter unmerged, as in training
-    from safetensors.torch import load_file
-
-    trainer = g_probe.make_trainer(probe, Path(a.ckpt), train, 1, numerics="lora-seqmask")[0]
-    set_peft_model_state_dict(trainer.model, load_file(Path(a.adapter) / "adapter_model.safetensors"))
-    return trainer
-
-
-def sample_items(trainer, rows: list[dict], a) -> list[dict]:
-    """K answers per row (objdel.train.sample: item_id, samples, truncated, tokens), torch seeded per view."""
-    import torch
-    from PIL import Image
-
+def load_sampler(a):
+    """(VllmSampler of the stage's ckpt, built once per process, serving a.adapter unmerged when given; params_for's
+    dict at K = a.k and seed a.seed with the checkpoint's stop ids)."""
     from objdel.train import sample
 
-    torch.manual_seed(a.seed)
-    rows = [r | {"image": Image.open(r["image"]).convert("RGB")} for r in rows]
-    return sample.sample(trainer, rows, a.k, items=a.per_call)
+    s = sample.VllmSampler(Path(a.ckpt), a.model, adapter=a.adapter and Path(a.adapter))
+    stop = sorted(sample.stop_ids(Path(a.ckpt), s.processor))
+    return s, sample.params_for(a.model, n=a.k, seed=a.seed, stop_token_ids=stop)
 
 
 def _smi(query: str) -> list[str]:
@@ -356,13 +339,17 @@ def engine_record() -> dict:
             "max_memory_reserved": torch.cuda.max_memory_reserved() if torch else 0}
 
 
-def score(view: Path, split: str, out: Path, rows: list[dict], answers: list[dict], run: dict, t0: float):
-    """Scores the answers (engine counters reset first, the topology sampler around it) and writes metrics.jsonl,
-    items.jsonl and the full final_eval.json (schema 2, with the view's engine record)."""
+@contextlib.contextmanager
+def scoring(view: Path):
+    """Around one view's scoring: the engine counters reset first, the topology sampler around it."""
     _gpucheck.reset_stats()
     device.eval_sets_s = 0.0
     with topology(view.name):
-        results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view.resolve())
+        yield
+
+
+def write_scored(view: Path, split: str, out: Path, results: list[dict], run: dict, t0: float):
+    """Writes metrics.jsonl, items.jsonl and the full final_eval.json (schema 2, with the view's engine record)."""
     items, groups = [per_item(r) for r in results], view_groups(view, split)
     doc = run | summarize(items, groups) | {"noise_floor": noise_floor(results, groups), "partial": False,
                                             "engine": engine_record()}
@@ -397,11 +384,13 @@ def rescore(src: Path, view: Path, split: str, out: Path) -> None:
     answers = read_jsonl(src / "answers.jsonl")
     by_key = {r["key"]: r for r in dataset.prompts(view, "lidc", split)}
     rows = [by_key[d["item_id"]] for d in answers]
-    run = {k: old[k] for k in ("ckpt", "K", "seed")} | _identity(view, split) | {"rescored_from": str(src),
+    run = {k: old[k] for k in ("ckpt", "K", "seed", "sampler") if k in old} | _identity(view, split) | {"rescored_from": str(src),
                                                                                  "seconds": {}}
     serve.preload(view, ["lidc"])
     _write(out / "answers.jsonl", _lines(answers))
-    score(view, split, out, rows, answers, run, t0)
+    with scoring(view):
+        results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view.resolve())
+    write_scored(view, split, out, results, run, t0)
 
 
 def no_model(argv: list[str]) -> None:
@@ -433,8 +422,6 @@ def main(argv=None) -> None:
         print(f"final_eval: error: {msg}", file=sys.stderr)
         sys.exit(2)
 
-    if a.ckpt and not a.train:
-        error("--ckpt needs --train")
     for name in ("adapter_config.json", "adapter_model.safetensors") if a.adapter else ():
         if not (Path(a.adapter) / name).is_file():
             error(f"--adapter {a.adapter}: {name} is missing")
@@ -451,28 +438,36 @@ def main(argv=None) -> None:
             error("--rescore takes one --view")
         return rescore(Path(a.rescore), views[0], splits[0], outs[0])
 
+    import torch
+
     from objdel.train import dataset, serve
 
     t0 = time.time()
-    for root in dict.fromkeys(Path(r).resolve() for r in (a.train, *views)):
+    for root in dict.fromkeys(v.resolve() for v in views):
         serve.preload(root, ["lidc"])
-    trainer = load_trainer(a)
+    sampler, params = load_sampler(a)
     for view, split, out in zip(views, splits, outs, strict=True):
         rows = limit_rows(dataset.prompts(view, "lidc", split), a.limit)
-        answers = sample_items(trainer, rows, a)
         groups = view_groups(view, split)
-        lines = [{"item_id": r["key"], "group_id": groups[r["key"]], "W": r["W"], "H": r["H"],
-                  **{k: d[k] for k in ("samples", "truncated", "tokens")}}
-                 for r, d in zip(rows, answers, strict=True)]
-        run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed} | (
+        run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed, "sampler": SAMPLER_LABEL} | (
             {"adapter": str(a.adapter), "adapter_sha256": file_sha256(Path(a.adapter) / "adapter_model.safetensors")}
-            if a.adapter else {}) | _identity(view, split) | {
-            "seconds": {"load_and_sample": time.time() - t0}} | ({"limit": a.limit} if a.limit else {})
-        _write(out / "answers.jsonl", _lines(lines))  # before scoring: a scoring crash keeps the sampling
-        _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
-        score(view, split, out, rows, lines, run, t0)
-        t0 = time.time()
+            if a.adapter else {}) | _identity(view, split) | ({"limit": a.limit} if a.limit else {})
+        with contextlib.ExitStack() as stack:
 
+            def keep(answers, run=run, stack=stack, out=out, view=view, groups=groups):
+                """answers.jsonl and the partial final_eval.json before scoring (a crash keeps the sampling)."""
+                lines = [{"item_id": d["item_id"], "group_id": groups[d["item_id"]], "W": r["W"], "H": r["H"],
+                          **{k: d[k] for k in ("samples", "truncated", "tokens")}}
+                         for r, d in zip(rows, answers, strict=True)]
+                run["seconds"] = {"load_and_sample": time.time() - t0}
+                _write(out / "answers.jsonl", _lines(lines))
+                _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
+                stack.enter_context(scoring(view))
+
+            torch.manual_seed(a.seed)
+            results = evaluate(sampler, rows, params, view.resolve(), keep)["results"]
+        write_scored(view, split, out, results, run, t0)
+        t0 = time.time()
 
 if __name__ == "__main__":
     main()

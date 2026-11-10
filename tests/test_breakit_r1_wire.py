@@ -94,11 +94,10 @@ def test_check_view_frozen_check_survives_an_alias(ev, tmp_path, monkeypatch):  
 def test_multi_view_one_out_does_not_collide(ev, tmp_path, monkeypatch):  # noqa: F811
     other = tmp_path / "elsewhere" / ev.name
     shutil.copytree(ev, other)
-    monkeypatch.setattr(FE, "sample_items", __import__("tests.test_final_eval", fromlist=["x"]).fake_sampler(ev))
-    monkeypatch.setattr(FE, "load_trainer", lambda a: object())
+    monkeypatch.setattr(FE, "load_sampler", __import__("tests.test_final_eval", fromlist=["x"]).fake_sampler(ev))
     out = tmp_path / "O"
     try:
-        FE.main(["--ckpt", "c", "--train", str(ev), "--view", str(ev), "--split", "val", "--view", str(other),
+        FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--view", str(other),
                  "--split", "val", "--out", str(out)])
     except SystemExit:
         return  # refusing is fine

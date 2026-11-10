@@ -2,7 +2,7 @@
 
 `--help` for each script; the WSD step plan; the G-vision abort / warn rule (mocked check results); select_ckpt's
 "train_sft has exited" and "CUDA untouched" guards; R-B with the eligibility floors on the B2 fixture panels; the
-WSD-branch mechanism (stable checkpoint + resumed decay = one uninterrupted WSD run, bit for bit); sample_vllm's
+WSD-branch mechanism (stable checkpoint + resumed decay = one uninterrupted WSD run, bit for bit); the sampler's
 free-memory refusal (mocked); and a slow CPU smoke on a tiny random LFM2-VL (cached processor, no download):
 synthetic store -> build_views -> train_sft (2 stable steps, 2 branches) -> select_ckpt with the HF sampler.
 """
@@ -50,7 +50,7 @@ def _module(*args, env=None, timeout=900):
                           timeout=timeout)
 
 
-@pytest.mark.parametrize("script", ["train_sft", "select_ckpt", "g_probe", "train_rl", "hf_sample"])
+@pytest.mark.parametrize("script", ["train_sft", "select_ckpt", "g_probe", "train_rl"])
 def test_help(script):
     pytest.importorskip("trl")
     r = _module(f"experiments.phase2.{script}", "--help", timeout=300)
@@ -129,16 +129,7 @@ def test_select_refuses_sampler_after_cuda_init(monkeypatch):
     with pytest.raises(RuntimeError, match="CUDA is initialized"):
         SC.cuda_untouched()
     cmd = SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))
-    assert cmd[:2] == [sys.executable, "-I"] and cmd[2].endswith("sample_vllm.py")  # vllm_native: one venv
-
-
-def test_sampler_uses_the_second_venv_when_the_image_has_one(monkeypatch, tmp_path):
-    from experiments.phase2 import select_ckpt as SC
-
-    (tmp_path / "bin").mkdir()
-    (tmp_path / "bin" / "python").touch()
-    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path)
-    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))[0] == str(tmp_path / "bin" / "python")
+    assert cmd[:4] == [sys.executable, "-I", "-m", "objdel.train.sample"]  # vllm_native: one venv
 
 
 def _summary(fmt=1.0, legal=0.95, dup=0.0, sigma=0.9):
@@ -288,17 +279,6 @@ def test_g_probe_repair_is_the_next_earlier_eligible_branch():
     sel = {"selected": "e2", "branches": {"e0.5": b(0.5, True), "e1": b(1.0, False), "e2": b(2.0, True)}}
     assert GP.candidates(sel) == ["e2", "e0.5"]
     assert GP.candidates(sel | {"selected": "e0.5"}) == ["e0.5"]  # no selection: g_probe skips (test_p2_v1_select)
-
-
-def test_sample_vllm_refuses_below_90_percent_free():
-    """sample_vllm's start check on a mocked torch.cuda.mem_get_info (D13: free >= 90 % before LLM(...))."""
-    import runpy
-
-    path = ROOT / "experiments/phase2/sample_vllm.py"
-    check = runpy.run_path(str(path), run_name="sample_vllm")["check_memory"]
-    with pytest.raises(SystemExit, match="free"):
-        check(lambda: (int(0.89 * 24e9), int(24e9)))
-    check(lambda: (int(0.95 * 24e9), int(24e9)))  # passes
 
 
 # ---------------------------------------------------------------- CPU smoke (slow)

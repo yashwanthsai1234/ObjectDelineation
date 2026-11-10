@@ -434,30 +434,38 @@ def answer_texts(rec, K=8):
     return ((good * K)[:K - 4] + [BOWTIE, "garbage", "[]", good[0]])[:K] if K >= 4 else (good * K)[:K]
 
 
-def fake_sampler(view, K=8, calls=None):
+def fake_sampler(view, K=8, calls=None, loads=None):
+    """A load_sampler stand-in: a Sampler answering answer_texts (answer 7 flagged truncated), tokens len + 1."""
     from objdel.train import dataset as D
+    from objdel.train.sample import Sample
 
     recs = {r["item_id"]: r for r in D.records(view, "lidc", "val")}
 
-    def sample_items(trainer, rows, a):
-        if calls is not None:
-            calls.append([r["key"] for r in rows])
-        out = []
-        for r in rows:
-            texts = answer_texts(recs[r["key"]], a.k)
-            out.append({"item_id": r["key"], "samples": texts, "truncated": [i == 7 for i in range(a.k)],
-                        "tokens": [len(t) + 1 for t in texts]})
-        return out
+    class Fake:
+        def sample(self, rows, params):
+            if calls is not None:
+                calls.append([r["key"] for r in rows])
+            k, out = params["n"], []
+            for r in rows:
+                texts = answer_texts(recs[r["key"]], k)
+                out.append(Sample(r["key"], tuple(texts), tuple(tuple(range(len(t) + 1)) for t in texts),
+                                  tuple(i == 7 for i in range(k))))
+            return out
 
-    return sample_items
+    def load_sampler(a):
+        if loads is not None:
+            loads.append(1)
+        return Fake(), {"n": a.k}
+
+    return load_sampler
 
 
 def run_fe(ev, out, monkeypatch, *extra, scorer=None, K=8, loads=None):
-    monkeypatch.setattr(FE, "sample_items", fake_sampler(ev, K))
-    monkeypatch.setattr(FE, "load_trainer", lambda a: loads.append(1) if loads is not None else object())
+    monkeypatch.setattr(FE, "load_sampler", fake_sampler(ev, K, loads=loads))
     if scorer:
-        monkeypatch.setattr(FE, "score_items", scorer)
-    return FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--train", str(ev), "--out", str(out),
+        monkeypatch.setattr(FE, "score_items", scorer)  # --rescore
+        monkeypatch.setattr(EV, "score_items", scorer)  # evaluate
+    return FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--out", str(out),
                     "-k", str(K), *extra])
 
 
@@ -605,10 +613,10 @@ def test_rescore_guards_the_view_and_the_source(ev, tmp_path, monkeypatch, capsy
 
 
 def test_cli_modes_need_exactly_one_source(capsys):
-    """A3: exactly one of --ckpt and --rescore; --ckpt needs --train; exit 2."""
-    for argv in (["--view", "v", "--train", "t", "--out", "o"],
-                 ["--ckpt", "c", "--rescore", "r", "--view", "v", "--train", "t", "--out", "o"],
-                 ["--ckpt", "c", "--view", "v", "--out", "o"]):
+    """A3: exactly one of --ckpt and --rescore; --train is gone (E4: no trainer); exit 2."""
+    for argv in (["--view", "v", "--out", "o"],
+                 ["--ckpt", "c", "--rescore", "r", "--view", "v", "--out", "o"],
+                 ["--ckpt", "c", "--train", "t", "--view", "v", "--out", "o"]):
         with pytest.raises(SystemExit) as e:
             FE.main(argv)
         assert e.value.code == 2
@@ -647,20 +655,19 @@ def test_limit_rows_is_an_even_deterministic_slice():
 
 def test_limit_flag_samples_and_scores_the_slice_only(ev, tmp_path, monkeypatch, capsys):
     calls = []
-    monkeypatch.setattr(FE, "sample_items", fake_sampler(ev, calls=calls))
-    monkeypatch.setattr(FE, "load_trainer", lambda a: object())
-    FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--train", str(ev), "--out", str(tmp_path / "o"),
+    monkeypatch.setattr(FE, "load_sampler", fake_sampler(ev, calls=calls))
+    FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--out", str(tmp_path / "o"),
              "--limit", "2"])
     assert len(calls) == 1 and len(calls[0]) == 2
     doc = json.loads((tmp_path / "o" / "final_eval.json").read_text())
     assert doc["limit"] == 2 and doc["items"] == 2 and len(jsonl(tmp_path / "o" / "answers.jsonl")) == 2
     with pytest.raises(SystemExit) as e:
-        FE.main(["--ckpt", "c", "--view", str(ev), "--train", str(ev), "--out", str(tmp_path / "x"), "--limit", "0"])
+        FE.main(["--ckpt", "c", "--view", str(ev), "--out", str(tmp_path / "x"), "--limit", "0"])
     assert e.value.code == 2 and "--limit" in capsys.readouterr().err
 
 
 def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
-    """U59: one trainer and one preload per root; one folder per view, each equal to a single-view call; flag
+    """U59: one sampler and one preload per root; one folder per view, each equal to a single-view call; flag
     counts that do not match exit 2 with no output."""
     import shutil
 
@@ -671,9 +678,8 @@ def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
     real = serve.preload
     monkeypatch.setattr(serve, "preload", lambda root, *a, **k: roots.append(Path(root).resolve()) or real(root, *a,
                                                                                                           **k))
-    monkeypatch.setattr(FE, "sample_items", fake_sampler(ev, calls=calls))
-    monkeypatch.setattr(FE, "load_trainer", lambda a: loads.append(1))
-    base = ["--ckpt", "c", "--train", str(ev)]
+    monkeypatch.setattr(FE, "load_sampler", fake_sampler(ev, calls=calls, loads=loads))
+    base = ["--ckpt", "c"]
     FE.main([*base, "--view", str(ev), "--split", "val", "--view", str(v2), "--split", "val",
              "--out", str(tmp_path / "O")])
     assert loads == [1] and sorted(roots) == sorted({ev.resolve(), v2.resolve()}) and len(calls) == 2
@@ -1032,7 +1038,7 @@ def test_final_eval_refuses_a_changed_frozen_view(frozen, mutate, key, tmp_path)
     d, _ = frozen
     mutate(d)
     with pytest.raises(SystemExit) as e:
-        FE.main(["--ckpt", "c", "--view", str(d), "--split", "test", "--train", "t", "--out", str(tmp_path / "o")])
+        FE.main(["--ckpt", "c", "--view", str(d), "--split", "test", "--out", str(tmp_path / "o")])
     assert key in str(e.value.code) and d.name in str(e.value.code)
     assert not (tmp_path / "o").exists()
 
@@ -1070,7 +1076,7 @@ def test_the_test_view_needs_the_explicit_split_flag(frozen, tmp_path):
     """I28: --split defaults to val, so a test view is read only with --split test."""
     d, _ = frozen
     with pytest.raises(SystemExit, match="--split test"):
-        FE.main(["--ckpt", "c", "--view", str(d), "--train", "t", "--out", str(tmp_path / "o")])
+        FE.main(["--ckpt", "c", "--view", str(d), "--out", str(tmp_path / "o")])
 
 
 def test_no_phase_b_script_but_final_eval_scores_the_test_view():
@@ -1116,22 +1122,26 @@ def test_adapter_folder_without_its_config_exits_2_naming_the_file(ev, tmp_path,
     assert e.value.code == 2 and "adapter_config.json" in capsys.readouterr().err
 
 
-def test_load_trainer_serves_the_adapter_under_option_f_and_loads_its_weights(tmp_path, monkeypatch):
-    import sys
+def test_load_sampler_serves_the_adapter_unmerged_with_the_checkpoints_stop_ids(tmp_path, monkeypatch):
+    """E4 step 3: one VllmSampler of --ckpt (no trainer), serving --adapter unmerged (option F) when given; params_for
+    at K and seed with the checkpoint's stop ids."""
     from types import SimpleNamespace as NS
 
-    from experiments.phase2 import g_probe
-    from objdel.train import dataset
+    from objdel.train import sample
 
-    made, loaded = [], []
-    trainer = NS(model="M")
-    monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: None)
-    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: made.append(k) or (trainer,))
-    monkeypatch.setitem(sys.modules, "peft", NS(set_peft_model_state_dict=lambda m, sd: loaded.append((m, sd))))
-    monkeypatch.setitem(sys.modules, "safetensors.torch", NS(load_file=lambda p: {"k": str(p)}))
-    base = dict(model="qwen3-vl-2b", ckpt="c", train=str(tmp_path), view=[str(tmp_path)], out=[str(tmp_path)])
-    FE.load_trainer(NS(**base, adapter=None))
-    assert made == [{}] and loaded == []  # the B1 control: merged sync, no adapter
-    FE.load_trainer(NS(**base, adapter=tmp_path))
-    weights = {"k": str(tmp_path / "adapter_model.safetensors")}
-    assert made[1] == {"numerics": "lora-seqmask"} and loaded == [("M", weights)]
+    made = []
+
+    class Fake:
+        processor = "P"
+
+        def __init__(self, ckpt, model, adapter=None):
+            made.append((ckpt, model, adapter))
+
+    monkeypatch.setattr(sample, "VllmSampler", Fake)
+    monkeypatch.setattr(sample, "stop_ids", lambda path, proc: {9, 2} if (path, proc) == (Path("c"), "P") else None)
+    base = dict(model="qwen3-vl-2b", ckpt="c", k=8, seed=11)
+    s, params = FE.load_sampler(NS(**base, adapter=None))
+    assert made == [(Path("c"), "qwen3-vl-2b", None)]
+    assert params == sample.params_for("qwen3-vl-2b", n=8, seed=11, stop_token_ids=[2, 9])
+    FE.load_sampler(NS(**base, adapter=str(tmp_path)))
+    assert made[1] == (Path("c"), "qwen3-vl-2b", tmp_path)

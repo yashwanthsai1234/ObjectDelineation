@@ -227,8 +227,8 @@ def test_output_format_page_lists_every_schema_2_key():
             *summary["paired"]["medoid_minus_mean"], *m, *m["samples"], *m["objects"]["nodule"], *m["groups"],
             "item_id", "dataset", "group_id", "W", "H", "samples", "truncated", "tokens", "partial", "seconds",
             "noise_floor", "item_sd", "mean_sd", "limit", "rescored_from", "view_manifest_sha256",
-            "view_content_sha256", "code_sha", "checker_build", "ckpt", "view", "split", "K", "seed", "metrics_absent",
-            "resummarized_from", "ci95_item", "ci95_nodule", "ci95_patient", "gate_ci"}
+            "view_content_sha256", "code_sha", "checker_build", "sampler", "ckpt", "view", "split", "K", "seed",
+            "metrics_absent", "resummarized_from", "ci95_item", "ci95_nodule", "ci95_patient", "gate_ci"}
     assert sorted(k for k in keys if k not in ticks) == []
     assert "no bare `ci95`" in page and "CODE_SHA" in page
 

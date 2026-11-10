@@ -3,11 +3,12 @@
     python -I -m experiments.phase2.hf_rate --model lfm2.5-vl-450m --view <eval_views>/lidc-val-shifted \
         --out <run_dir>/hf-rate-lfm [--items 32] [--k 8]
 
-The seeded --items subset (objdel.train.evaluate.eval_rows) at n = --k through select_ckpt.sample_view with the HF sampler, as
-R1's select_ckpt runs it (hf_sample at its default --batch_items; CUDA untouched here). hf_sample --timing ->
-<out>/hf_rate.json: s_per_sample (generate seconds per item-sample), load_s (one child's model load), tokens_mean
-and length_share (base weights answer unlike a trained branch, and a batch runs as long as its longest sample, so
-the rate holds for the base model's answer lengths), plus model, weights and view.
+The seeded --items subset (objdel.train.evaluate.eval_rows) at n = --k through select_ckpt.sample_view with the HF
+sampler, as R1's select_ckpt runs it (the HF sampler child at its default --batch_items; CUDA untouched here).
+objdel.train.sample --kind hf --timing -> <out>/hf_rate.json: s_per_sample (generate seconds per item-sample),
+load_s (one child's model load), tokens_mean and length_share (base weights answer unlike a trained branch, and a
+batch runs as long as its longest sample, so the rate holds for the base model's answer lengths), plus model,
+weights and view.
 """
 
 import argparse

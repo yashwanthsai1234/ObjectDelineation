@@ -10,10 +10,10 @@ The flags are an objdel.core.spec.SelectStage (cli_stage): K is -k and the sampl
 
 Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches;
 per branch, export the prompts and run the sampler child
-(`sample_vllm.py` under /opt/vllm, or `hf_sample`; one JSONL bridge) with CUDA asserted untouched here, a timeout
+(`python -I -m objdel.train.sample --kind vllm|hf`; one JSONL bridge) with CUDA asserted untouched here, a timeout
 of 600 s + --timeout-s per item-sample, and a completeness check (every prompt id has its n samples). The
 completions' `.meta.json` stamp (prompts SHA-256, child command) is written before the child starts: a matching
-stamp means the file is reused when complete and resumed otherwise (hf_sample keeps whole finished batches), on a
+stamp means the file is reused when complete and resumed otherwise (the HF sampler keeps whole finished batches), on a
 retry or a rerun alike; another stamp empties it. An attempt that finishes no new item counts against TRIES.
 SIGTERM / SIGINT (the run cap's `timeout`) kill the child's process group before select_ckpt exits. Score them in
 this process (objdel.eval.metrics: the device work runs in one process, D7), build the B2 signal panel and run G-vision
@@ -56,8 +56,6 @@ from objdel.geom import engine as _gpucheck
 from objdel.train import serve
 from objdel.train.evaluate import eval_rows, score_items
 
-ROOT = Path(__file__).resolve().parents[2]
-VLLM_VENV = Path("/opt/vllm")  # the phase2 image's second venv; the vllm_native image has vLLM in the running venv
 TRIES = 2  # sampler child attempts that finish no new item
 # sampler child timeout per item-sample, plus 600 s: 3x the measured time (EV-5), so a hung engine is killed in
 # minutes, not hours. HF (~1 s per answer) resumes from its whole batches. vLLM writes once at the end, so a retry
@@ -89,15 +87,10 @@ def cuda_untouched() -> None:
         raise RuntimeError("CUDA is initialized in select_ckpt: the sampler child would share the GPU (D13)")
 
 
-def vllm_python() -> str:
-    py = VLLM_VENV / "bin" / "python"
-    return str(py) if py.exists() else sys.executable
-
-
 def sampler_cmd(kind: str, prompts: Path, model: Path, out: Path, extra=()) -> list[str]:
-    head = [vllm_python(), "-I", str(ROOT / "experiments/phase2/sample_vllm.py")]
-    head = head if kind == "vllm" else [sys.executable, "-I", "-m", "experiments.phase2.hf_sample"]
-    return head + ["--prompts", str(prompts), "--model", str(model), "--out", str(out), *extra]
+    """The sampler child's argv: objdel.train.sample in this venv (vllm_native: vLLM and objdel share it, ADR 0020)."""
+    return [sys.executable, "-I", "-m", "objdel.train.sample", "--kind", kind, "--prompts", str(prompts), "--model",
+            str(model), "--out", str(out), *extra]
 
 
 def complete(comps: Path, want: Counter) -> bool:

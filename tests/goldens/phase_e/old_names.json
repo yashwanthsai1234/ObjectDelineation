@@ -277,10 +277,8 @@
   "HF_CHECK_ITEMS",
   "HF_CHECK_KEYS",
   "PATHS",
-  "ROOT",
   "TIMEOUT_S",
   "TRIES",
-  "VLLM_VENV",
   "complete",
   "cuda_untouched",
   "dump",
@@ -299,8 +297,7 @@
   "score_view",
   "topology_only",
   "vision_check",
-  "vision_config",
-  "vllm_python"
+  "vision_config"
  ],
  "experiments/phase2/train_sft.py": [
   "ABORTED",
@@ -363,6 +360,7 @@
   "GATE_A_GAIN",
   "ROOT",
   "RUN_KEYS",
+  "SAMPLER_LABEL",
   "TOPOLOGY_PERIOD_S",
   "_identity",
   "_lines",
@@ -378,19 +376,19 @@
   "gate_a",
   "hash_view",
   "limit_rows",
-  "load_trainer",
+  "load_sampler",
   "main",
   "no_model",
   "noise_floor",
   "rescore",
   "resummarize",
-  "sample_items",
-  "score",
+  "scoring",
   "topology",
   "tost",
   "view_groups",
   "view_identity",
-  "view_manifest_sha256"
+  "view_manifest_sha256",
+  "write_scored"
  ],
  "experiments/phase2/vast/policy.py": [
   "BAD_MACHINES",

@@ -71,7 +71,8 @@ FIELDS = tuple(
 SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
-IMPORT_CHECK = "import objdel._gpucheck, experiments.phase1.reward_gates, tests.oracles.reward_harness"
+IMPORT_CHECK = ("import objdel._gpucheck, experiments.phase1.reward_gates, tests.oracles.reward_harness, vllm, "
+                "objdel.train.sample")  # vllm: the vllm_native image, one venv (ADR 0023)
 LIVE_CLIS = ("experiments.phase2.train_rl", "experiments.phase2.g_probe", "experiments.phase2.select_ckpt",
              "experiments.phase2.final_eval")  # the CLIs the box runs; test_bundle_imports_standalone imports them
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep

@@ -175,8 +175,8 @@ def test_b1_rows_reads_the_bundle_view_and_one_rows_root(rows_cfg):
     assert s.views == (rows_cfg.data / "views/lidc-bundle-v3",)
     assert [(st.name, PF.local(st.train)) for st in s.rows] == [("train", rows_cfg.root)]
     assert PF.given_inputs(s) == []
-    assert PF.spec_inputs(s.spec) == ["{data}/rows/lidc-train-b1", "{data}/prepared",
-                                      "{data}/eval_views/lidc-val-shifted", "{data}/eval_views/lidc-val-edge"]
+    assert PF.spec_inputs(s.spec) == ["{data}/rows/lidc-train-b1", "{data}/eval_views/lidc-val-shifted",
+                                      "{data}/eval_views/lidc-val-edge"]
 
 
 def test_specs_b1_rows_passes_on_fixture_data_and_refuses_an_edit(rows_cfg, monkeypatch):
@@ -196,7 +196,7 @@ def test_a_missing_data_input_fails_spec_inputs(rows_cfg):
 
 
 def test_a_cmd_and_eval_spec_has_no_training_view_and_no_rows_root(cfg, tmp_path):
-    ev = {"kind": "eval", "name": "eval", "ckpt": "{rd}/ckpt", "train": "{data}/prepared",
+    ev = {"kind": "eval", "name": "eval", "ckpt": "{rd}/ckpt",
           "view": ["{data}/eval_views/lidc-val-shifted"], "out": ["{rd}/eval"]}
     spec = tiny_spec(tmp_path, stages=(CMD, ev), bundle_view=None)
     s = PF.inputs(spec)

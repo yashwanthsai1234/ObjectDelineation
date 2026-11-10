@@ -97,9 +97,8 @@ def _two_views(ev, tmp_path, monkeypatch):
     from tests.test_final_eval import fake_sampler
 
     v2 = shutil.copytree(ev, tmp_path / "lidc-val-two")
-    monkeypatch.setattr(FE, "sample_items", fake_sampler(ev))
-    monkeypatch.setattr(FE, "load_trainer", lambda a: object())
-    return ["--ckpt", "c", "--train", str(ev), "--view", str(ev), "--split", "val", "--view", str(v2), "--split",
+    monkeypatch.setattr(FE, "load_sampler", fake_sampler(ev))
+    return ["--ckpt", "c", "--view", str(ev), "--split", "val", "--view", str(v2), "--split",
             "val", "--out", str(tmp_path / "O")], [ev.name, v2.name]
 
 

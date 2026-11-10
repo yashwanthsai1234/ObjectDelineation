@@ -236,7 +236,7 @@ def test_g07_repeat(tmp_path):
     final_eval = [sys.executable, "-I", "-m", "experiments.phase2.final_eval", "--view", PREPARED]
     runs = [tmp_path / n for n in "ab"]
     for out in runs:
-        subprocess.run([*final_eval, "--train", PREPARED, "--ckpt", ckpt, "--seed", "11", "--limit", "16",
+        subprocess.run([*final_eval, "--ckpt", ckpt, "--seed", "11", "--limit", "16",
                         "--out", out], cwd=ROOT, check=True)
     a, b = (read_jsonl(r / "answers.jsonl") for r in runs)
     assert len(a) == len(b) == 16 and [sorted(x) for x in a] == [sorted(x) for x in b]
