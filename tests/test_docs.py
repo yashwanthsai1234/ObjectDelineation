@@ -56,7 +56,7 @@ def put(root: Path, rel: str, text: str = "") -> Path:
 
 # ---------------------------------------------------------------- the glob matcher
 def test_frozen_globs_match_by_path_part():
-    assert is_frozen("docs/research/reports/x.md") and is_frozen("experiments/phase2/lab/B5/x.py")
+    assert is_frozen("docs/research/reports/x.md") and is_frozen("experiments/phase2/impl/B5/x.py")
     assert is_frozen("experiments/phase2/PLAN.md") and not is_frozen("experiments/phase2/sub/PLAN.md")
     assert not is_frozen("experiments/phase1/prepare_rl.py") and not is_frozen("experiments/cuda_checker/run_box.sh")
     assert glob_re("a/*.md").match("a/b.md") and not glob_re("a/*.md").match("a/b/c.md")

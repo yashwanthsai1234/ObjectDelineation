@@ -43,7 +43,7 @@ ATTRS = {
         ("vllm_importance_sampling_mode", "FastGRPO.set_is_ratio"),
         ("vllm_importance_sampling_clip_min", "FastGRPO.set_is_ratio"),
         ("vllm_importance_sampling_clip_max", "FastGRPO.set_is_ratio"),
-        ("vllm_generation", "FastGRPO.sync_without_merge"))},
+        ("vllm_generation", "FastGRPO.sync_without_merge"), ("off_policy_mask_threshold", "FastGRPO.set_is_ratio"))},
     "llm": (("VLLMGeneration",), "self.llm =", "FastGRPO.time_vllm_phases, FastGRPO.patch_vllm_prompts"),
     "model": (("VLLMGeneration",), "self.model =", "FastGRPO.sync_without_merge"),
     "sync_weights": (("VLLMGeneration",), "def sync_weights", "FastGRPO.time_vllm_phases"),
@@ -54,6 +54,7 @@ KEYS = {
     "sampling_per_token_logps": ((_GASC,), '"sampling_per_token_logps"', "FastGRPO.set_is_ratio"),
     "completion_mask": ((_GASC,), '"completion_mask"', "FastGRPO.set_is_ratio"),
     "tool_mask": ((_GASC,), '"tool_mask"', "FastGRPO.set_is_ratio"),
+    "advantages": ((_GASC,), '"advantages"', "FastGRPO.set_is_ratio"),
     "importance_sampling_ratio": ((_GASC, "GRPOTrainer._compute_loss"), '"importance_sampling_ratio"',
                                   "FastGRPO.set_is_ratio, FastGRPO._compute_loss"),
 }  # fmt: skip

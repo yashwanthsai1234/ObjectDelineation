@@ -5,7 +5,8 @@ normal builders and compare each target_set_sha256 byte for byte.
 
 Without manifests it checks the recorded sets: data/prepared, data/targets, data/eval_views/lidc-val-{shifted,
 rescaled,rotated} and data/views/lidc-train-{shifted,rescaled}. Two layouts:
-- prepared (objdel.train.dataset.prepare, build_eval_views): sets["<ds>/<split>"].target_set_sha256 over the records
+- prepared (objdel.train.dataset.prepare, build_eval_views, build_rl_rows: a rows record names its store item in
+  "source_item_id"): sets["<ds>/<split>"].target_set_sha256 over the records
   of <dir>/<ds>/<split>.jsonl; each record's store item is framed as it was built (the policy frame, or the record's
   "view": offset, side and op; a rotated window through build_eval_views._rotated);
 - targets (experiments.phase1.build_targets): files["<ds>/<split>.jsonl"].sha256 over every store item of the split,
@@ -33,7 +34,7 @@ MANIFESTS = ("data/prepared/manifest.json", "data/targets/manifest.json",
 
 
 def _triples(job) -> list[tuple[str, str, str]]:
-    it, view = job
+    it, out_id, view = job
     if view is None:
         f = frame(it)
     elif view["op"] != "id":
@@ -43,20 +44,24 @@ def _triples(job) -> list[tuple[str, str, str]]:
     names, ma, out = SCHEMAS[it.dataset], min_areas(f.masks), []
     for r, rater in enumerate(it.raters):
         try:
-            out.append((it.item_id, rater, build_target({n: f.masks[n][r] for n in names}, names, None, ma).text))
+            out.append((out_id, rater, build_target({n: f.masks[n][r] for n in names}, names, None, ma).text))
         except ValueError:
             pass
     return out
 
 
 def _rebuild(pool, store_root, ds, split, views=None) -> list:
-    """Target triples of one split: the items of `views` ({item_id: view or None}), or every store item. Items go
-    to the pool in batches, which bounds memory."""
-    jobs = ((it, None if views is None else views[it.item_id]) for it in store.load(ds, split, store_root)
-            if views is None or it.item_id in views)
+    """Target triples of one split: the records of `views` ({record item_id: (store item id, view)}; a rows root
+    holds several windows of one store item), or every store item. Items go to the pool in batches, which bounds
+    memory."""
+    by_source = {}
+    for out_id, (source, view) in (views or {}).items():
+        by_source.setdefault(source, []).append((out_id, view))
+    jobs = ((it, o, v) for it in store.load(ds, split, store_root)
+            for o, v in ([(it.item_id, None)] if views is None else by_source.get(it.item_id, ())))
     out, seen = [], set()
     for batch in batched(jobs, 12):  # prepare._BATCH: RIGA items hold 6 x 1584 x 2376 masks
-        seen.update(it.item_id for it, _ in batch)
+        seen.update(o for _, o, _ in batch)
         out += [t for ts in pool.map(_triples, batch) for t in ts]
     if views is not None and seen != set(views):
         raise ValueError(f"{ds}/{split}: {len(set(views) - seen)} recorded items are not in the store")
@@ -74,7 +79,7 @@ def check(path, store_root, pool) -> list[tuple[str, str, str]]:
         rows = []
         for key, s in m["sets"].items():
             with open(path.parent / f"{key}.jsonl") as f:
-                views = {r["item_id"]: r.get("view") for r in map(json.loads, f)}
+                views = {r["item_id"]: (r.get("source_item_id", r["item_id"]), r.get("view")) for r in map(json.loads, f)}
             rows.append((f"{path} {key}", s["target_set_sha256"],
                          target_set_hash(_rebuild(pool, store_root, *key.split("/"), views))))
         return rows

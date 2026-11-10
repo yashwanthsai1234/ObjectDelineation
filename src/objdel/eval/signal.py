@@ -118,6 +118,13 @@ def draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: Callable[
     return [np.concatenate([groups[g] for g in rng.integers(0, len(groups), len(groups))]) for _ in range(boot)]
 
 
+def point_or_draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: Callable[[str], str] = cluster
+                   ) -> list[np.ndarray]:
+    """draws(), or one identity draw when the ids hold a single cluster: nothing to resample, so the interval is the
+    point (a smoke run or a one-nodule subset). Gates never see this: they run on hundreds of clusters."""
+    return draws(ids, boot, seed, key) if len(set(map(key, ids))) > 1 else [np.arange(len(ids))]
+
+
 def _ci(f, n: int, D: list[np.ndarray]) -> list[float]:
     reps, point = np.array([f(d) for d in D]), float(f(np.arange(n)))
     if np.isnan(point):  # a NaN item: no finite interval from the draws that missed it
@@ -152,7 +159,7 @@ def panel(groups: Sequence[dict], boot: int = BOOT, seed: int = SEED) -> dict:
     IoU_tc kept for paired median comparisons. JSON-native."""
     ids = [g["item_id"] for g in groups]
     m = per_item(groups)
-    D = draws(ids, boot, seed)
+    D = point_or_draws(ids, boot, seed)
     iou = [list(map(float, g["iou_tc"])) for g in groups]
     return {
         "items": len(ids),
@@ -171,7 +178,7 @@ def paired(a: dict, b: dict, key: str, boot: int = BOOT, seed: int = SEED) -> li
     ia = [j for j, i in enumerate(a["ids"]) if i in ib]
     ids = [a["ids"][j] for j in ia]
     jb = [ib[i] for i in ids]
-    D = draws(ids, boot, seed)
+    D = point_or_draws(ids, boot, seed)
     if key == "iou_median":
         A, B = np.asarray(a["iou_tc"], float)[ia], np.asarray(b["iou_tc"], float)[jb]
         return _ci(lambda d: np.median(A[d]) - np.median(B[d]), len(ids), D)
@@ -229,5 +236,5 @@ def select_rb(branches: Sequence[dict]) -> tuple[str | None, dict]:
 def spearman_ci(x, y, ids: Sequence[str] | None = None, boot: int = BOOT, seed: int = SEED) -> list[float]:
     """[rho, lo, hi]: Spearman's rank correlation (scipy) with a nodule-cluster (ids given) or item bootstrap CI."""
     x, y = np.asarray(x, float), np.asarray(y, float)
-    D = draws([str(i) for i in range(len(x))] if ids is None else ids, boot, seed)
+    D = point_or_draws([str(i) for i in range(len(x))] if ids is None else ids, boot, seed)
     return _ci(lambda d: stats.spearmanr(x[d], y[d]).statistic, len(x), D)

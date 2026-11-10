@@ -123,7 +123,7 @@ def grpo_config_dict(argv: list[str], **over) -> dict:
     from experiments.phase2 import train_rl
     from experiments.phase2.g_probe import make_trainer
 
-    budget = ["--session-start", "0", "--rate-usd-per-h", "1"] if "--budget-usd" in argv else []  # run.sh exports them
+    budget = ["--session-start", "0", "--rate-usd-per-h", "0.5"] if "--budget-usd" in argv else []  # as run.sh
     a, seen = train_rl.parse([*argv, *budget]), []
 
     def stop(cfg):

@@ -10,6 +10,7 @@ from test_data_quality import PLAN, SHARES, Tok, stub_ceiling, world  # noqa: F4
 
 from objdel.data import quality as Q
 from objdel.data import windows as Wn
+from objdel.hashing import pixels_sha256
 
 
 @pytest.fixture
@@ -71,7 +72,7 @@ def test_each_window_has_its_own_png_and_caches_and_they_load(built):
     assert len(pngs) == len(uniq) and all(p.is_file() for p in pngs)
     for i, r in uniq.items():
         im = cv2.imread(str(built.out / "images" / f"{i}.png"), cv2.IMREAD_COLOR)
-        assert Q.image_sha256(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) == r["image_sha256"]
+        assert pixels_sha256(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) == r["image_sha256"]
         assert r["view"]["kind"] in Wn.KINDS and r["view"]["op"] == "id" and "~" in i
         for name, digest in r["caches"].items():
             ExpertCache.load(built.out / "caches" / i / f"{name}.npz", digest)
@@ -113,3 +114,13 @@ def test_choose_prefers_no_reuse_then_smallest_passing():
     assert R.choose(t) == 4
     assert R.choose({2: {"ok": True, "max_reuse": 3}, 4: {"ok": True, "max_reuse": 2}}) == 2
     assert R.choose({1: {"ok": False, "max_reuse": None}}) is None
+
+
+def test_hash_gate_rebuilds_a_rows_root(built, world):  # noqa: F811
+    """verify_target_hashes follows source_item_id: a rows root keys records by window id, several per store item."""
+    from experiments.phase2 import verify_target_hashes as V
+    assert V.main([str(built.out / "manifest.json"), "--store", str(world.store), "--procs", "1"]) == 0
+    m = json.loads((built.out / "manifest.json").read_text())
+    m["sets"]["lidc/train"]["target_set_sha256"] = "0" * 64
+    (built.out / "manifest.json").write_text(json.dumps(m))
+    assert V.main([str(built.out / "manifest.json"), "--store", str(world.store), "--procs", "1"]) == 1

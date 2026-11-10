@@ -49,8 +49,9 @@ def test_all_items_is_the_one_count_of_the_contract():
     ALL_ITEMS = tuple((kind, name) for kinds in (T._SIGNED, T._TEXT) for kind, items in kinds.items() for name in items)
     parts = (T.METHODS, T.GLOBALS, T.VLLM_METHODS, T.PRIVATE_ATTRS, T.ATTRS, T.KEYS, T.BEHAVIOURS)
     assert len(ALL_ITEMS) == sum(map(len, parts)) and len(set(ALL_ITEMS)) == len(ALL_ITEMS)
-    # Phase A 29 (6 + 1 + 1 + 2 + 13 + 4 + 2), plus C5's _llm_weights_sleeping, plus BR1-rl's 3 reward-kwarg behaviours
-    assert len(ALL_ITEMS) == 33
+    # Phase A 29 (6 + 1 + 1 + 2 + 13 + 4 + 2), plus C5's _llm_weights_sleeping, plus BR1-rl's 3 reward-kwarg behaviours,
+    # plus B2.1's set_is_ratio reads (attribute off_policy_mask_threshold, key advantages)
+    assert len(ALL_ITEMS) == 35
     assert len(T.METHODS) + len(T.GLOBALS) + len(T.VLLM_METHODS) + len(T.PRIVATE_ATTRS) == 10  # private names
     doc = ROOT / "docs/reference/trl-coupling.md"  # A9 writes it: one table row per item (header and rule excluded)
     if doc.is_file():
@@ -76,7 +77,8 @@ def setsig(monkeypatch, name, fn):
 GASC, LOSS = GRPOTrainer._generate_and_score_completions, GRPOTrainer._compute_loss
 ATTR_NAMES = ("use_vllm", "loss_type", "num_iterations", "num_generations", "top_entropy_quantile",
               "vllm_importance_sampling_correction", "vllm_importance_sampling_mode",
-              "vllm_importance_sampling_clip_min", "vllm_importance_sampling_clip_max", "vllm_generation")  # fmt: skip
+              "vllm_importance_sampling_clip_min", "vllm_importance_sampling_clip_max", "vllm_generation",
+              "off_policy_mask_threshold")  # fmt: skip
 BREAKS = [
     ("delete _prepare_inputs", lambda m: m.delattr(GRPOTrainer, "_prepare_inputs"), "_prepare_inputs"),
     ("_compute_loss extra param", lambda m: setsig(m, "_compute_loss", lambda self, model, inputs, extra: 0),
@@ -105,7 +107,7 @@ BREAKS = [
     ("VLLMGeneration without self.model", lambda m: drop(m, VLLMGeneration, "self.model"), "model"),
     *[(f"no self.{n} =", lambda m, n=n: drop(m, GRPOTrainer, f"self.{n} ="), n) for n in ATTR_NAMES],
     *[(f"no {k}", lambda m, k=k: drop(m, GASC, f'"{k}"'), k)
-      for k in ("sampling_per_token_logps", "completion_mask", "tool_mask", "importance_sampling_ratio")],
+      for k in ("sampling_per_token_logps", "completion_mask", "tool_mask", "importance_sampling_ratio", "advantages")],
     ("_compute_loss source without the ratio key", lambda m: drop(m, LOSS, '"importance_sampling_ratio"'),
      "importance_sampling_ratio"),
     ("no C10 gate", lambda m: drop(m, GASC, "self.use_vllm and self.vllm_importance_sampling_correction"),

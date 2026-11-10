@@ -29,7 +29,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
-from objdel.train import nvtx, trl_adapter, vllm_requests
+from objdel.train import nvtx, runaway, trl_adapter, vllm_requests
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -57,16 +57,19 @@ def window(attention_mask: torch.Tensor, logits_to_keep: int, buckets=BUCKETS) -
 class RowMeta:
     """Host facts of a generation batch's rows (C4), int32 arrays of shape (B,): real prompt tokens, real answer
     tokens (0 for a truncated row under mask_truncated_completions, as TRL zeroes its completion_mask), the row's
-    distinct image (first-appearance index) and its group of G answers."""
+    distinct image (first-appearance index), its group of G answers, its prompt layout (dense id of prompt ids and
+    image size: one rope template each, C2) and the host's rope routing (1: the HF path, rope_bad_rows)."""
 
     prompt_len: np.ndarray
     completion_len: np.ndarray
     image_id: np.ndarray
     group: np.ndarray
+    layout: np.ndarray
+    rope_bad: np.ndarray
 
 
 def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_truncated: bool,
-             eos_and_pad_ids) -> RowMeta:  # fmt: skip
+             eos_and_pad_ids, sizes=None, vision_ids=()) -> RowMeta:  # fmt: skip
     """RowMeta from the host lists TRL already holds. A row is truncated when its last id is not in eos_and_pad_ids
     (TRL's own rule, grpo_trainer.py 2604-2606, with TRL's list)."""
     if any(not c for c in completion_ids_list):
@@ -74,8 +77,12 @@ def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_trunc
     ends = set(eos_and_pad_ids)
     clen = [0 if mask_truncated and c[-1] not in ends else len(c) for c in completion_ids_list]
     i32 = functools.partial(np.asarray, dtype=np.int32)
+    seen: dict[tuple, int] = {}
+    layout = [seen.setdefault((tuple(p), z), len(seen))
+              for p, z in zip(prompt_ids_list, sizes or [None] * len(clen), strict=True)]  # fmt: skip
+    bad = rope_bad_rows(prompt_ids_list, completion_ids_list, prompt_ids_list, vision_ids)
     return RowMeta(i32([len(p) for p in prompt_ids_list]), i32(clen), i32(image_ids),
-                   i32([i // G for i in range(len(clen))]))  # fmt: skip
+                   i32([i // G for i in range(len(clen))]), i32(layout), i32(bad))  # fmt: skip
 
 
 class MetaRow(typing.NamedTuple):
@@ -85,6 +92,8 @@ class MetaRow(typing.NamedTuple):
     completion_len: int
     image_id: int
     group: int
+    layout: int
+    rope_bad: int
 
 
 def host_rows(meta: RowMeta) -> list[MetaRow]:
@@ -120,6 +129,15 @@ def window_from_meta(meta: RowMeta, rows, P: int, logits_to_keep: int, buckets=B
     width = min(next((b for b in buckets if b >= prompt + longest), W), W)
     keep = min(logits_to_keep, width - prompt)
     return P + keep - width, keep
+
+
+def meta_runs(meta: RowMeta, rows: slice) -> list[tuple[int, int]] | None:
+    """prompt_groups() of the chunk `rows` from the host: runs of consecutive rows of one group (one prompt and
+    image), or None when no run has two rows."""
+    g = meta.group[rows]
+    cut = [0, *(np.flatnonzero(g[1:] != g[:-1]) + 1).tolist(), len(g)]
+    runs = list(zip(cut[:-1], cut[1:], strict=True))
+    return runs if any(b - a > 1 for a, b in runs) else None
 
 
 def length_order(meta: RowMeta) -> np.ndarray:
@@ -186,6 +204,7 @@ class FastForward:
 
     def _get_per_token_logps_and_entropies(self, model, input_ids, attention_mask, logits_to_keep, batch_size=None,
                                            compute_entropy=False, compute_aux_loss=False, **kw):  # fmt: skip
+        meta = kw.pop("host_meta", None)  # C4: the micro-batch's RowMeta (FastGRPO._compute_loss), None elsewhere
         if any(kw.get(k) is not None for k in OTHER_VISION) or (
                 kw.get("pixel_values") is not None and kw.get("image_grid_thw") is None):
             return super()._get_per_token_logps_and_entropies(  # not a grid (Qwen-VL style) model: TRL's path
@@ -196,8 +215,14 @@ class FastForward:
         rows = grid.prod(-1).tolist() if grid is not None else None  # pixel rows per image (one host read)
         P = input_ids.size(1) - logits_to_keep
         rope = getattr(self, "rope", None)
-        pos = (rope.positions(input_ids, attention_mask, kw["mm_token_type_ids"], grid, nimg)
-               if rope is not None and grid is not None and kw.get("mm_token_type_ids") is not None else None)
+        pos = None
+        if rope is not None and grid is not None and kw.get("mm_token_type_ids") is not None:
+            if meta is None:
+                pos = rope.positions(input_ids, attention_mask, kw["mm_token_type_ids"], grid, nimg)
+            else:  # C2: templates per prompt layout, the host's bad rows on HF's path
+                pos, nbad = rope.template_positions(input_ids, attention_mask, kw["mm_token_type_ids"], grid, nimg, P,
+                                                    meta, getattr(self, "rope_check", False))  # fmt: skip
+                self._metrics["train" if self.model.training else "eval"]["rope/fallback_rows"].append(nbad)
         lps, ents, auxs = [], [], []
         img = row = 0
         for s in range(0, n, size):
@@ -206,9 +231,13 @@ class FastForward:
                 k = sum(nimg[s:e])
                 r = sum(rows[img:img + k])
                 pix = per_row(pv[row:row + r], rows[img:img + k], nimg[s:e])
-                runs = prompt_groups(input_ids[s:e, :P], attention_mask[s:e, :P], pix)
-                lengths = torch.cat([attention_mask[s:e, :P].sum(1), attention_mask[s:e, P:].sum(1)]).tolist()
-                plen, lens = lengths[:e - s], lengths[e - s:]
+                if meta is None:
+                    runs = prompt_groups(input_ids[s:e, :P], attention_mask[s:e, :P], pix)
+                    lengths = torch.cat([attention_mask[s:e, :P].sum(1), attention_mask[s:e, P:].sum(1)]).tolist()
+                    plen, lens = lengths[:e - s], lengths[e - s:]
+                else:
+                    runs = meta_runs(meta, slice(s, e))
+                    plen, lens = meta.prompt_len[s:e].tolist(), meta.completion_len[s:e].tolist()
                 if runs is not None and packing_wins(sum(plen) / len(plen), lens, len(runs)):
                     smask = kw["sampling_mask"][s:e] if kw.get("sampling_mask") is not None else None
                     lp, ent = self.packed_chunk(model, input_ids[s:e], P, plen, lens, pos[:, s:e],
@@ -219,7 +248,8 @@ class FastForward:
                     if compute_entropy:
                         ents.append(ent)
                     continue
-            start, keep = window(attention_mask[s:e], logits_to_keep, self.buckets)
+            start, keep = (window(attention_mask[s:e], logits_to_keep, self.buckets) if meta is None
+                           else window_from_meta(meta, slice(s, e), P, logits_to_keep, self.buckets))
             cols = slice(start, P + keep)
             sub = {k: kw[k][s:e, cols] for k in ROW_KEYS if kw.get(k) is not None}
             if kw.get("sampling_mask") is not None:
@@ -278,8 +308,12 @@ class FastForward:
             toks.append(torch.cat(t)), poss.append(torch.cat(p, 1))
             mms.append(torch.cat(m)), labs.append(torch.cat(lab)), segs.append(seg)
         W, c = max(map(len, segs)), len(runs)
-        seg = torch.tensor([x + [-1] * (W - len(x)) for x in segs], device=dev)  # one copy each, before the forward
-        idx = torch.tensor([gi, pi, ri, ci], dtype=torch.long, device=dev)
+        host = np.concatenate([np.asarray([x + [-1] * (W - len(x)) for x in segs]).ravel(),
+                               np.asarray([gi, pi, ri, ci]).ravel()]).astype(np.int64)  # fmt: skip
+        stage = torch.empty(host.size, dtype=torch.int64, pin_memory=dev.type == "cuda")  # fresh per chunk (C4 step 4)
+        stage.numpy()[:] = host
+        flat = stage.to(dev, non_blocking=True)  # one copy; the caching host allocator keeps `stage` until it ends
+        seg, idx = flat[:c * W].view(c, W), flat[c * W:].view(4, -1)
         tok = torch.zeros(c, W, dtype=ids.dtype, device=dev)
         lab = torch.full((c, W), -100, dtype=ids.dtype, device=dev)
         mmt = torch.zeros(c, W, dtype=mm.dtype, device=dev)
@@ -441,6 +475,42 @@ class RopeCache:
                 for j, i in enumerate(miss):
                     self.store[keys[i]] = pos[:, j]
             return torch.stack([self.store[k] for k in keys], dim=1)
+
+
+    def template_positions(self, input_ids, attention_mask, mm_token_type_ids, grid, nimg, P: int, meta: RowMeta,
+                           check: bool) -> tuple[torch.Tensor, int]:  # fmt: skip
+        """C2: (positions (3, rows, width), bad row count). One rope_template per new prompt layout (built from
+        its first row's real prompt), rope_positions for the rows meta marks good, HF's path (positions) for the
+        rest. With `check` (--check-rope-every) every row is compared with HF and the device `bad` with the host."""
+        with nvtx.range("rope_template"):
+            first = np.cumsum([0, *nimg])
+            bad = meta.rope_bad.astype(bool)
+            out = torch.zeros(3, *input_ids.shape, dtype=torch.long, device=input_ids.device)
+            for lay in np.unique(meta.layout[~bad]):
+                rows = np.flatnonzero((meta.layout == lay) & ~bad)
+                key = ("layout", int(lay))
+                if key not in self.store:
+                    i, f = rows[0], P - int(meta.prompt_len[rows[0]])
+                    self.store[key] = rope_template(self.base, input_ids[i, f:P], mm_token_type_ids[i, f:P],
+                                                    grid[first[i]:first[i + 1]])  # fmt: skip
+                r = torch.as_tensor(rows, device=input_ids.device)
+                out[:, r], dev_bad = rope_positions(self.store[key], input_ids[r], attention_mask[r],
+                                                    mm_token_type_ids[r])  # fmt: skip
+                if check and dev_bad.any():
+                    raise AssertionError(f"rope rows {rows[dev_bad.cpu().numpy()].tolist()} bad on the device, "
+                                         "good on the host")  # fmt: skip
+            rows = np.arange(len(nimg)) if check else np.flatnonzero(bad)
+            if rows.size:
+                r = torch.as_tensor(rows, device=input_ids.device)
+                g = torch.cat([grid[first[i]:first[i + 1]] for i in rows])
+                hf = self.positions(input_ids[r], attention_mask[r], mm_token_type_ids[r], g, [nimg[i] for i in rows])
+                if check:
+                    real, good = attention_mask.bool(), torch.as_tensor(~bad, device=input_ids.device)
+                    if not torch.equal(torch.where(real, out, 0)[:, good], torch.where(real, hf, 0)[:, good]):
+                        raise AssertionError("rope positions differ from HF")
+                    hf = hf[:, torch.as_tensor(bad, device=input_ids.device)]
+                out[:, torch.as_tensor(np.flatnonzero(bad), device=input_ids.device)] = hf
+            return out, int(bad.sum())
 
 
 class RopeTemplate(typing.NamedTuple):
@@ -648,6 +718,8 @@ def write_seq_gaps(out_dir: str, values: list[float], rows: int) -> None:
                                                  "valid_tokens"], "steps": steps}) + "\n")  # fmt: skip
 
 
+
+
 def no_lora_input_cast(model) -> int:
     """Turns off PEFT's cast of each LoRA layer's input to its fp32 adapter dtype; returns the layers changed. Only
     under bf16 autocast: there the adapter matmul casts the input straight back to bf16, so the fp32 copy (one per
@@ -709,6 +781,12 @@ def one_pad_per_image(prompts: list[dict], pad: int) -> list[dict]:
     return out
 
 
+def prompt_images(prompts) -> list[list]:
+    """Each conversational prompt's image objects, in order, as TRL extracts them (grpo_trainer.py 1760-1771)."""
+    return [[c["image"] for m in p if isinstance(m["content"], list)
+             for c in m["content"] if c["type"] == "image"] for p in prompts]  # fmt: skip
+
+
 class ImageMemo:
     """The processor's image step once per distinct image per generation batch (perf: images prepared 2-3 times).
 
@@ -757,8 +835,11 @@ class ImageMemo:
         self.hits = self.misses = self.fallback_calls = 0
 
     def prefill(self, images, **kwargs) -> None:
-        """Prepare the distinct images of a generation batch before TRL's processor calls (C1: on the GPU)."""
-        self(images, **kwargs)
+        """Prepare the distinct images of a generation batch before TRL's processor calls (C1: on the GPU); counts
+        one miss per distinct image and no hit."""
+        from transformers.image_utils import make_flat_list_of_images
+
+        self(list({id(x): x for x in make_flat_list_of_images(images)}.values()), **kwargs)
 
     def prepare(self, miss: list, kwargs: dict):
         """(pixel_values, image_grid_thw) of the missed images: gpu_pixels.patchify when self.gpu is set and every
@@ -803,27 +884,54 @@ class ImageMemo:
             return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
 
 
+@contextlib.contextmanager
+def vllm_kwargs(**kw):
+    """Inside the block TRL's module-level `LLM` (imported at trl/generation/vllm_generation.py top) gets these
+    keyword arguments; no `kw` leaves it alone."""
+    if not kw:
+        yield
+        return
+    import trl.generation.vllm_generation as vg
+
+    orig = vg.LLM
+    vg.LLM = functools.partial(orig, **kw)
+    try:
+        yield
+    finally:
+        vg.LLM = orig
+
+
 class FastGRPO(FastForward, GRPOTrainer):
     """GRPOTrainer with the per-chunk windows, the vision cache (cleared per generation batch), rewards scored while
     the old and reference logprobs run (C9), phase timers and no FLOP count."""
 
     rows = None  # the generation batch's dataset rows; None outside one (g_probe's step-0 sampling calls _generate)
     loss_inputs = None  # the micro-batch inside _compute_loss (C10: its forward sets the IS ratio)
+    loss_meta = None  # the micro-batch's RowMeta inside _compute_loss under host_meta (C4: its forward reads it)
     is_stats = None  # C10, B2.1: the generation batch's merged is_summary, on the device until `log`
     seq_gaps = []  # B2.1: the step's per-sequence (seq_kl, advantage, valid tokens) rows (train mode), on the device
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
     host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
     check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
+    check_rope_every = 50  # C2, train_rl --check-rope-every N: compare template rope positions with HF (0: never)
+    rope_check = False  # this generation batch's forwards run the rope check (FastForward reads it)
     meta = None  # the generation batch's RowMeta, from _generate to the batch
+    prompt_memo = False  # C2, train_rl --prompt-memo: _tokenize_prompts tokenizes one row per prompt layout
     count_syncs = False  # C0, train_rl --count-syncs: perf/host_syncs/<phase> per timed phase
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
     group_requests = False  # C6, train_rl --group-requests: vLLM gets one n = G request per prompt (vllm_requests)
+    opsm_watch = None  # B2.4 rule 4: callbacks.OpsmDelta, fed the train-mode per-sequence (seq_kl, advantage) rows
+    log_by_prompt = False  # B2.3: train logs also hold rewards/iou_tc/by_prompt (one mean per prompt of the step)
+    runaway_cap = False  # C11, train_rl --runaway-cap: max_tokens per prompt from the rows' `cap` (runaway)
 
     def __init__(self, *args, **kwargs):
         trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
-        super().__init__(*args, **kwargs)
+        fp16 = getattr(kwargs.get("args"), "fp16", False)
+        with vllm_kwargs(**({"dtype": "float16"} if fp16 else {})):  # TRL builds its vLLM engine without a dtype
+            super().__init__(*args, **kwargs)
+        self.check_engine_dtype()
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
         self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
@@ -855,9 +963,18 @@ class FastGRPO(FastForward, GRPOTrainer):
         vg._iter_named_params = lambda: lora_merged_params(vg.model)
         return True
 
+    def check_engine_dtype(self) -> None:
+        """fp16 runs only: the vLLM engine must hold float16 (the vllm_kwargs patch took effect)."""
+        vg = getattr(self, "vllm_generation", None)
+        if vg is None or not getattr(self.args, "fp16", False):
+            return
+        got = vg.llm.llm_engine.model_config.dtype
+        if got != torch.float16:
+            raise RuntimeError(f"fp16 run, but the vLLM engine dtype is {got}, not torch.float16")
+
     def drop_lora_input_cast(self) -> bool:
-        """no_lora_input_cast when TRL trains in bf16 (Accelerate then runs every forward under bf16 autocast)."""
-        if not getattr(self.args, "bf16", False):
+        """no_lora_input_cast when TRL trains in bf16 or fp16 (Accelerate then runs every forward under autocast)."""
+        if not (getattr(self.args, "bf16", False) or getattr(self.args, "fp16", False)):
             return False
         no_lora_input_cast(self.model)
         return True
@@ -889,6 +1006,8 @@ class FastGRPO(FastForward, GRPOTrainer):
                 n = self.check_meta_every
                 if n and self.state.global_step % n == 0:  # steps 1, N + 1, 2N + 1, ...
                     check_meta(batch)
+                n = self.check_rope_every
+                self.rope_check = bool(n) and self.state.global_step % n == 0
             return batch
         finally:
             self.rows, self.meta = None, None
@@ -935,13 +1054,17 @@ class FastGRPO(FastForward, GRPOTrainer):
     def _compute_loss(self, model, inputs):
         if "importance_sampling_ratio" not in inputs and self.use_vllm and self.vllm_importance_sampling_correction:
             self.loss_inputs = inputs
+        if self.host_meta:
+            self.loss_meta = meta_of({"host_meta": inputs["host_meta"]})  # KeyError: rows lost their host_meta
         try:
             with nvtx.range("forward"):
                 return super()._compute_loss(model, inputs)
         finally:
-            self.loss_inputs = None
+            self.loss_inputs = self.loss_meta = None
 
     def _get_per_token_logps_and_entropies(self, *args, **kwargs):
+        if self.loss_meta is not None:
+            kwargs["host_meta"] = self.loss_meta
         with nvtx.range("logps"):
             out = super()._get_per_token_logps_and_entropies(*args, **kwargs)
         if self.loss_inputs is not None:
@@ -963,7 +1086,10 @@ class FastGRPO(FastForward, GRPOTrainer):
         new = is_summary(logps, sampling, mask, r, adv, mode, lo, hi, self.off_policy_mask_threshold)
         self.is_stats = merge_summary(self.is_stats, new)
         if self.model.training:  # eval rows inform the eval metrics only; they never enter seq_gaps (B2.1, R01c)
-            rows = torch.stack([seq_kl(logps, sampling, mask), adv.to(logps.dtype), mask.sum(-1).to(logps.dtype)], 1)
+            kl = seq_kl(logps, sampling, mask)
+            rows = torch.stack([kl, adv.to(logps.dtype), mask.sum(-1).to(logps.dtype)], 1)
+            if self.opsm_watch is not None:
+                self.opsm_watch.add(kl, adv)
             self.seq_gaps = [*self.seq_gaps, rows.float()]
 
     def log(self, logs, start_time=None):
@@ -998,11 +1124,37 @@ class FastGRPO(FastForward, GRPOTrainer):
                 end.synchronize()  # long done: TRL's loss read and the stats read above waited for the stream
                 self._metrics[mode][f"time/{phase}_s"].append(start.elapsed_time(end) / 1e3)
             self.cuda_times = None
+            if self.log_by_prompt and train:  # B2.3; reward_funcs read only when asked (fake trainers have none)
+                reward = next((f.trl_reward for f in self.reward_funcs if hasattr(f, "trl_reward")), None)
+                if reward is not None:
+                    logs = {**logs, "rewards/iou_tc/by_prompt": reward.by_prompt}
             return super().log(logs, start_time)
+
+    def _tokenize_prompts(self, prompts):
+        """With prompt_memo on the vLLM path: TRL's own tokenization once per (rendered text, image sizes), its
+        prompt ids reused by every row of that layout, each row's own image objects. vLLM drops the multimodal
+        fields (C1 note S1), so none are built."""
+        if not (self.prompt_memo and self.use_vllm and self._is_vlm):
+            return super()._tokenize_prompts(prompts)
+        rows = [trl_grpo.prepare_multimodal_messages(p) for p in prompts]
+        images = prompt_images(rows)
+        memo, ids = {}, []
+        for prompt, row, imgs in zip(prompts, rows, images, strict=True):
+            text = self.processing_class.apply_chat_template(
+                row, chat_template=self.chat_template, tokenize=False, add_generation_prompt=True,
+                **self.chat_template_kwargs)  # fmt: skip
+            key = (text, tuple(i.size for i in imgs))
+            if key not in memo:
+                memo[key] = super()._tokenize_prompts([prompt])[0][0]
+            ids.append(memo[key])
+        return ids, ([i or None for i in images] if any(images) else None), {}
 
     def _generate(self, prompts):
         if self.images is not None:  # the previous batch's images
             self.images.clear()
+            flat = [x for row in prompt_images(prompts) for x in row] if self.prompt_memo else []
+            if flat:  # pass 1 prepares no image with --prompt-memo: fill the memo with pass 2's kwargs (C1)
+                self.images.prefill(flat, return_tensors="pt")
         if self.use_vllm:
             self.patch_vllm_prompts()
             self.time_vllm_phases()
@@ -1010,10 +1162,23 @@ class FastGRPO(FastForward, GRPOTrainer):
             out = super()._generate(prompts)
         if self.host_meta and self.rows is not None and len(self.rows) == len(out[1]):
             eos_and_pad = [*self.eos_token_ids, self._tokenizer.pad_token_id]  # TRL's truncation list
+            cfg = getattr(self.model, "config", None)
+            vision = [getattr(cfg, k, None) for k in ("image_token_id", "video_token_id", "vision_start_token_id",
+                                                      "vision_end_token_id")]  # fmt: skip
             self.meta = row_meta(out[0], out[1], image_ids(self.rows), self.num_generations,
-                                 self.mask_truncated_completions, eos_and_pad)  # fmt: skip
+                                 self.mask_truncated_completions, eos_and_pad,
+                                 [getattr(r.get("image"), "size", None) for r in self.rows],
+                                 [v for v in vision if v is not None])  # fmt: skip
         self.prefetch_rewards(out[3], out[1])
+        self.log_capped(out[1])
         return out
+
+    def log_capped(self, completion_ids):
+        """C11: completions/capped_share, the share of this batch's answers that reached their row's cap."""
+        if self.runaway_cap and self.rows is not None:
+            hit = [len(ids) >= r["cap"] for ids, r in zip(completion_ids, self.rows, strict=True)]
+            self._metrics["train" if self.model.training else "eval"]["completions/capped_share"].append(
+                sum(hit) / len(hit))
 
     def prefetch_rewards(self, completions, completion_ids):
         """Start scoring (objdel.train.rewards.TRLReward.prefetch) on the answers vLLM just returned, with the
@@ -1111,6 +1276,17 @@ class FastGRPO(FastForward, GRPOTrainer):
 
         one_pad.one_pad = True
         llm.generate = one_pad
+        if self.runaway_cap:  # C11: the generation batch's rows hold the caps; outside one (g_probe) the limit stays
+
+            def capped(prompts, *args, sampling_params=None, **kwargs):
+                if self.rows is not None:
+                    if len(self.rows) != len(prompts):
+                        raise ValueError(f"{len(self.rows)} caps for {len(prompts)} prompts")
+                    sampling_params = runaway.per_row_params(sampling_params, [r["cap"] for r in self.rows])
+                return one_pad(prompts, *args, sampling_params=sampling_params, **kwargs)
+
+            capped.one_pad = True
+            llm.generate = capped
         if self.group_requests:  # C6: outside one_pad, so its check compares the 32 sent prompts
 
             def by_group(prompts, *args, **kwargs):

@@ -39,6 +39,20 @@ def test_cells_follow_the_b1_edges_right_closed():
     assert GP.cell_of(np.array([0.0, 0.15, 0.31, 0.2]), np.array([9, 10, 40, 25])).tolist() == [0, 5, 15, 10]
 
 
+def test_cell_edges_are_the_windows_edges():
+    """The gate holds no copy of the B1.1 edges: it reads objdel.data.windows', and cell_of gives the cell index
+    4 x size bin + offset bin of windows.cell on every edge and between them."""
+    from objdel.data import windows
+
+    assert (GP.SIZE_EDGES, GP.OFFSET_EDGES) == ((10, 20, 40), (0.15, 0.2, 0.3))  # the values the copy held
+    assert GP.SIZE_EDGES is windows.SIZE_EDGES and GP.OFFSET_EDGES is windows.OFFSET_EDGES
+    sizes = np.array([0, 9.99, 10, 15, 20, 39.99, 40, 90])
+    offs = np.array([0, 0.1499, 0.15, 0.2, 0.25, 0.2999, 0.3, 0.9])
+    s, o = np.meshgrid(sizes, offs)
+    want = [4 * a + b for a, b in (windows.cell(x, y) for x, y in zip(s.ravel(), o.ravel(), strict=True))]
+    assert GP.cell_of(o.ravel(), s.ravel()).tolist() == want
+
+
 def test_weights_reproduce_the_gate_patient_bootstrap(data):
     """The vectorized CI equals signal.ci on signal.draws' patient draws (same B and seed as the gate)."""
     items, W = data

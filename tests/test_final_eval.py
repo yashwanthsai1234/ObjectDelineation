@@ -622,6 +622,31 @@ def test_k_follows_the_flag(ev, tmp_path, monkeypatch):
         run_fe(ev, tmp_path / "k1", monkeypatch, K=1)
 
 
+def test_limit_rows_is_an_even_deterministic_slice():
+    """--limit (the GPU smoke): None or a limit past the end keeps every row; otherwise at most N rows, evenly spaced
+    from the first row, the same on every call."""
+    rows = [{"key": f"i{i}"} for i in range(100)]
+    assert FE.limit_rows(rows, None) is rows and FE.limit_rows(rows, 100) is rows and FE.limit_rows(rows, 500) is rows
+    got = FE.limit_rows(rows, 32)
+    assert len(got) == 25 and got[0] is rows[0] and [r["key"] for r in got[:3]] == ["i0", "i4", "i8"]  # stride 4
+    assert got == FE.limit_rows(rows, 32)
+    assert [r["key"] for r in FE.limit_rows(rows, 1)] == ["i0"] and len(FE.limit_rows(rows, 99)) == 50
+
+
+def test_limit_flag_samples_and_scores_the_slice_only(ev, tmp_path, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(FE, "sample_items", fake_sampler(ev, calls=calls))
+    monkeypatch.setattr(FE, "load_trainer", lambda a: object())
+    FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--train", str(ev), "--out", str(tmp_path / "o"),
+             "--limit", "2"])
+    assert len(calls) == 1 and len(calls[0]) == 2
+    doc = json.loads((tmp_path / "o" / "final_eval.json").read_text())
+    assert doc["limit"] == 2 and doc["items"] == 2 and len(jsonl(tmp_path / "o" / "answers.jsonl")) == 2
+    with pytest.raises(SystemExit) as e:
+        FE.main(["--ckpt", "c", "--view", str(ev), "--train", str(ev), "--out", str(tmp_path / "x"), "--limit", "0"])
+    assert e.value.code == 2 and "--limit" in capsys.readouterr().err
+
+
 def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
     """U59: one trainer and one preload per root; one folder per view, each equal to a single-view call; flag
     counts that do not match exit 2 with no output."""
@@ -671,7 +696,7 @@ def test_code_sha_precedence(tmp_path, monkeypatch):
         seen.append(cmd)
         return SimpleNamespace(stdout="f" * 40 + "\n", returncode=0)
 
-    monkeypatch.setattr(FE.subprocess, "run", git)
+    monkeypatch.setattr("objdel.io.subprocess.run", git)  # code_sha calls git through objdel.io
     (tmp_path / "CODE_SHA").write_text("")
     assert FE.code_sha(tmp_path) == "f" * 40 and seen == [["git", "rev-parse", "HEAD"]]
     (tmp_path / "CODE_SHA").unlink()
@@ -680,7 +705,7 @@ def test_code_sha_precedence(tmp_path, monkeypatch):
     def missing(cmd, **k):
         raise FileNotFoundError("git")
 
-    monkeypatch.setattr(FE.subprocess, "run", missing)
+    monkeypatch.setattr("objdel.io.subprocess.run", missing)
     assert FE.code_sha(tmp_path) is None
     (tmp_path / ".git").rmdir()
     assert FE.code_sha(tmp_path) is None and json.dumps(FE.code_sha(tmp_path)) == "null"

@@ -45,8 +45,8 @@ import sys
 import time
 from pathlib import Path
 
-# fp16-seqmask needs fp16 weights and vLLM dtype, lora-seqmask needs LoRA serving: both are FastGRPO plumbing (B2.2)
-NEEDS_FASTGRPO = ("fp16-seqmask", "lora-seqmask")
+# lora-seqmask needs vLLM LoRA serving (option F plumbing, B2.2), not built yet
+NEEDS_FASTGRPO = ("lora-seqmask",)
 
 
 def _finite(lo_open: bool):
@@ -76,9 +76,13 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--steps", type=int, help="optimizer steps in total (a resumed run included)")
     ap.add_argument("--save-steps", type=int, default=50, help="checkpoint every N steps (default 50)")
+    ap.add_argument("--log-by-prompt", action="store_true",
+                    help="rl.json logs rewards/iou_tc/by_prompt per step (b2_summary's paired bootstrap reads it)")
     ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
     ap.add_argument("--fast-sync", action="store_true",
                     help="C5: the vLLM weight push in one load_weights call (vllm_sync), not TRL's per-parameter loop")
+    ap.add_argument("--lora-sync", type=Path, metavar="DIR",
+                    help="C5 option F: vLLM serves the adapter, written to DIR (a tmpfs folder) at each sync")
     ap.add_argument("--group-requests", action="store_true",
                     help="C6: vLLM gets one request with n = num_generations per prompt, not n = 1 per row")
     ap.add_argument("--no-ckpt-layers", type=int, metavar="K",
@@ -118,6 +122,11 @@ def parse(argv=None) -> argparse.Namespace:
                     help="C4: row lengths, image ids and groups from vLLM's host lists in the batch (host_meta)")
     ap.add_argument("--check-meta-every", type=int, default=50, metavar="N",
                     help="with --host-meta: compare host_meta with the device masks on steps 1, N+1, ... (0: never)")
+    ap.add_argument("--check-rope-every", type=int, default=50, metavar="N",
+                    help="C2, with --host-meta: compare the template rope positions with HF on steps 1, N+1, ... "
+                         "(0: never)")
+    ap.add_argument("--prompt-memo", action="store_true",
+                    help="C2: tokenize one prompt per (rendered text, image sizes) before vLLM, not every row")
     ap.add_argument("--gpu-pixels", choices=("off", "auto"), default="off",
                     help="C1: prepare pixel values on the GPU after a start-up self-check (default off: the CPU path)")
     ap.add_argument("--allow-cpu-pixels", action="store_true",
@@ -133,7 +142,7 @@ def parse(argv=None) -> argparse.Namespace:
     if a.budget_usd is not None and a.rate_usd_per_h is None:
         ap.error("--budget-usd needs a rate: --rate-usd-per-h or OBJDEL_RATE_USD_PER_H (run.sh exports it)")
     if a.numerics in NEEDS_FASTGRPO:
-        ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM dtype or LoRA serving, B2.2), not built yet")
+        ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM LoRA serving, B2.2), not built yet")
     if a.opsm_start_delta is not None and (a.numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
         ap.error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
     if "off_policy_mask_threshold" in json.loads(a.grpo):
@@ -155,6 +164,8 @@ def check_flags(a) -> None:
         raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
     if a.runaway_cap and over.get("mask_truncated_completions", True):
         raise ValueError("--runaway-cap needs --grpo '{\"mask_truncated_completions\": false}'")
+    if a.runaway_cap and a.group_requests:
+        raise ValueError("--runaway-cap and --group-requests exclude each other: one n = G request has one max_tokens")
 
 
 def numerics_overrides(a) -> dict:
@@ -288,6 +299,19 @@ def merge_last(a) -> int:
     }, keys=("steps", "partial", "merged_from"))
 
 
+def with_caps(train, a):
+    """C11: the rows plus a `cap` column (FastGRPO sends it as each prompt's max_tokens); T_i from the row's own record."""
+    from transformers import AutoProcessor
+
+    from objdel.train import configs, dataset, runaway
+
+    tok = AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs(a.model, "lidc")).tokenizer
+    caps = runaway.row_caps(train["key"], dataset.records(a.train, "lidc", "train"),
+                            lambda text: dataset.target_tokens(tok, text), json.loads(a.grpo).get("max_completion_length", configs.MAX_COMPLETION[a.model]),
+                            a.runaway_cap, runaway.MARGIN)
+    return train.add_column("cap", caps)
+
+
 def main(argv=None) -> int:
     a = parse(argv)
     if a.merge_last:
@@ -298,18 +322,19 @@ def main(argv=None) -> int:
     from objdel.train import configs, dataset, serve
 
     check_flags(a)
-    if a.runaway_cap:
-        raise SystemExit("--runaway-cap: FastGRPO does not read the `cap` column yet (C11 fast.py step; handoff)")
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
     stop = budget_stop(a)
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule else dataset.DISAGREEMENT_OVERSAMPLE)
     if schedule:
         check_rows(train["key"], schedule)
+    if a.runaway_cap:
+        train = with_caps(train, a)
     heldout = heldout_rows(a.heldout, a.heldout_items) if a.heldout else None
     last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
     if a.resume and last is None:
         print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
-    cut_seq_gaps(a.out / "trainer", int(Path(last).name.split("-")[1]) if last else 0)
+    start = int(Path(last).name.split("-")[1]) if last else 0
+    cut_seq_gaps(a.out / "trainer", start)
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
@@ -328,7 +353,7 @@ def main(argv=None) -> int:
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
     save_final(trainer.accelerator.unwrap_model(trainer.model), proc, a.out)
-    done, start = trainer.state.global_step, int(Path(last).name.split("-")[1]) if last else 0
+    done = trainer.state.global_step
     log, cfg = trainer.state.log_history, trainer.args
     rows = schedule and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
                          "ids_sha256": schedule["ids_sha256"]}

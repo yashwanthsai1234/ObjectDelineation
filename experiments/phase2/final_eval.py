@@ -4,6 +4,8 @@
         --train data/prepared --out runs/eval/val [--k 8] [--seed 11] [--per-call 64]
     python -I -m experiments.phase2.final_eval --ckpt DIR --train data/prepared --view V1 --split val --out O1 \
         --view V2 --split val --out O2          # several views, one model load (one --out: O/<view name>/)
+    python -I -m experiments.phase2.final_eval --ckpt DIR --train data/prepared --view V --split val --out O \
+        --limit 32                              # a GPU smoke: 32 evenly spaced items, not a result
     python -I -m experiments.phase2.final_eval --rescore runs/a3/eval_val --view V --split val --out O
     python -I -m experiments.phase2.final_eval --hash-view data/eval_views/lidc-test-shifted \
         --out runs/a3/pre_rental.json
@@ -101,10 +103,14 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     """Schema 2: per METRICS key the items hold, the mean and its item, nodule and patient (with `groups`,
     {item_id: group_id}) 95 % bootstrap intervals; the median of iou_tc; the miss rate. One draw set per unit."""
     ids = [it["item_id"] for it in items]
+    if not ids:
+        raise ValueError("summarize: no items")
     if len(set(ids)) != len(ids):
         raise ValueError("summarize: duplicate item_id")
-    D = {"ci95_nodule": signal.draws(ids, draws, seed),
-         "ci95_patient": None if groups is None else signal.draws(ids, draws, seed, key=groups.__getitem__)}
+    def unit_draws(sub, key=signal.cluster):
+        return signal.point_or_draws(sub, draws, seed, key)
+
+    D = {"ci95_nodule": unit_draws(ids), "ci95_patient": None if groups is None else unit_draws(ids, groups.__getitem__)}
     idx = np.random.default_rng(seed).integers(0, len(items), (draws, len(items)))
 
     def cis(v: np.ndarray) -> dict:
@@ -133,9 +139,8 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     fids = [i for i, f in zip(ids, found, strict=True) if f]
     out["iou_found"] = None if not fids else {
         "mean": float(iou[found].mean()), "items": len(fids),
-        "ci95_patient": None if groups is None else signal.ci(iou[found], signal.draws(
-            fids, draws, seed, key=groups.__getitem__))[1:],
-        "ci95_nodule": signal.ci(iou[found], signal.draws(fids, draws, seed))[1:]}
+        "ci95_patient": None if groups is None else signal.ci(iou[found], unit_draws(fids, groups.__getitem__))[1:],
+        "ci95_nodule": signal.ci(iou[found], unit_draws(fids))[1:]}
 
     def paired(arm: str) -> dict | None:  # the per-item difference arm - sel_mean_of_k under the same draws
         if arm not in out:
@@ -155,7 +160,7 @@ def gate_a(val: dict, test: dict | None) -> dict:
     difference has the val sign; None without a test summary) is a direction line only: test never chooses."""
     def passes(arm: str) -> bool:
         p = val["paired"][arm]
-        if p is None:
+        if p is None or val.get("patients", 2) in (0, 1):  # one patient's point interval proves nothing
             return False
         ci = p[val["gate_ci"]]
         if ci is None:
@@ -229,6 +234,14 @@ def view_identity(results: list[dict], old: dict[str, float], groups: dict[str, 
            f"r_obs - r_sh [{lo:.4f}, {hi:.4f}] (fails when its upper end < 0)")
     return {"r_obs": float(r_obs), "r_sh": float(r_sh), "diff_ci95_patient": [float(lo), float(hi)],
             "r_sh_ci95_patient": np.nanquantile(reps[:, 1], [.025, .975]).tolist(), "pass": ok, "message": msg}
+
+
+def limit_rows(rows: list[dict], limit: int | None) -> list[dict]:
+    """--limit: at most `limit` rows, evenly spaced through the view in record order (a smoke slice that spans the
+    patients, not the first patient); all rows without a limit. Deterministic: no seed."""
+    if limit is None or limit >= len(rows):
+        return rows
+    return rows[:: -(-len(rows) // limit)][:limit]
 
 
 def view_groups(view: Path, split: str) -> dict[str, str]:
@@ -404,7 +417,11 @@ def main(argv=None) -> None:
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--per-call", type=int, default=64, help="items per vLLM generation call")
+    ap.add_argument("--limit", type=int, help="smoke runs: sample and score at most N items per view, evenly spaced "
+                    "(limit_rows); the view checks and hashes still cover the whole view")
     a = ap.parse_args(argv)
+    if a.limit is not None and a.limit < 1:
+        ap.error("--limit must be at least 1")
     if a.resummarize:
         if a.out[0].resolve() == a.resummarize.resolve():
             ap.error("--out must not be the --resummarize folder")
@@ -437,14 +454,14 @@ def main(argv=None) -> None:
     try:
         trainer = load_trainer(a)
         for view, split, out in zip(views, splits, outs, strict=True):
-            rows = dataset.prompts(view, "lidc", split)
+            rows = limit_rows(dataset.prompts(view, "lidc", split), a.limit)
             answers = sample_items(trainer, rows, a)
             groups = view_groups(view, split)
             lines = [{"item_id": r["key"], "group_id": groups[r["key"]], "W": r["W"], "H": r["H"],
                       **{k: d[k] for k in ("samples", "truncated", "tokens")}}
                      for r, d in zip(rows, answers, strict=True)]
             run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed} | _identity(view, split) | {
-                "seconds": {"load_and_sample": time.time() - t0}}
+                "seconds": {"load_and_sample": time.time() - t0}} | ({"limit": a.limit} if a.limit else {})
             _write(out / "answers.jsonl", _lines(lines))  # before scoring: a scoring crash keeps the sampling
             _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
             score(pool, view, split, out, rows, lines, run, t0)
