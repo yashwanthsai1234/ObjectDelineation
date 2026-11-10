@@ -1,0 +1,23 @@
+[
+ "ask_contract_id",
+ "cpu_cores_effective",
+ "cpu_ram",
+ "cuda_max_good",
+ "direct_port_count",
+ "disk_space",
+ "dph_total",
+ "geolocation",
+ "gpu_name",
+ "gpu_ram",
+ "host_id",
+ "hosting_type",
+ "id",
+ "inet_down",
+ "inet_down_cost",
+ "inet_up_cost",
+ "machine_id",
+ "num_gpus",
+ "reliability2",
+ "rentable",
+ "verification"
+]
