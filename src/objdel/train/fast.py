@@ -34,6 +34,7 @@ from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
 FINE = tuple(range(64, 2049, 64))  # uncompiled: round to 64 only (BUCKETS would pad a 430-wide chunk to 512)
+WAKE_PHASE = {("weights",): "wake_weights", ("kv_cache",): "wake_kv"}  # llm.wake_up(tags) -> its time/<phase>_s
 ROW_KEYS = ("mm_token_type_ids", "token_type_ids")  # per-token, prompt + completion wide: cut like input_ids
 OTHER_VISION = ("pixel_attention_mask", "spatial_shapes", "num_tiles", "image_sizes", "image_position_ids")
 
@@ -1237,9 +1238,10 @@ class FastGRPO(FastForward, GRPOTrainer):
                 self._metrics[mode][f"time/{phase}_s"].append(time.perf_counter() - t)
 
     def time_vllm_phases(self):
-        """time/sync_s (weight push, with its weights wake-up), time/wake_s and time/sleep_s: the colocate
-        handovers where the GPU idles between generation and training. Idempotent; the engine exists only after TRL's
-        vLLM init."""
+        """time/sync_s (weight push, with its weights wake-up), time/wake_weights_s and time/wake_kv_s (by the wake_up
+        `tags`; any other call charges time/wake_s, so no wake time is lost) and time/sleep_s: the colocate handovers
+        where the GPU idles between generation and training. Idempotent; the engine exists only after TRL's vLLM
+        init."""
         vg = self.vllm_generation
         hooks = ((vg, "sync_weights", "sync"), (vg.llm, "wake_up", "wake"), (vg.llm, "sleep", "sleep"))
         for host, name, phase in hooks:
@@ -1248,6 +1250,8 @@ class FastGRPO(FastForward, GRPOTrainer):
                 continue
 
             def wrapped(*args, _fn=fn, _phase=phase, **kwargs):
+                if _phase == "wake":
+                    _phase = WAKE_PHASE.get(tuple((args[0] if args else kwargs.get("tags")) or ()), _phase)
                 with self.timed(_phase):
                     return _fn(*args, **kwargs)
 

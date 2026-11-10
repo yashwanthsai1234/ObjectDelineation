@@ -38,7 +38,7 @@ from experiments.phase2.profile import covered
 
 GPU_TABLES = ("CUPTI_ACTIVITY_KIND_KERNEL", "CUPTI_ACTIVITY_KIND_MEMCPY", "CUPTI_ACTIVITY_KIND_MEMSET")
 GRAPH_TABLES = ("CUPTI_ACTIVITY_KIND_GRAPH_TRACE",)  # the CUPTI record name; the nsys table name is unverified
-VLLM_RANGES = ("generate", "sync", "wake", "sleep")
+VLLM_RANGES = ("generate", "sync", "wake", "wake_weights", "wake_kv", "sleep")
 SYNCS = re.compile(r"(cuda|cu)(StreamSynchronize|DeviceSynchronize|CtxSynchronize|EventSynchronize|Memcpy\w*)$")
 COLS = {  # the columns read, spaces removed (nsys has written both "Start (ns)" and "Start(ns)")
     "nvtx_pushpop_trace": ("Start(ns)", "End(ns)", "Name", "TID"),

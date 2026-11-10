@@ -571,7 +571,25 @@ def test_vllm_sync_wake_and_sleep_are_timed():
     vg.sync_weights(), llm.wake_up(tags=["kv_cache"]), llm.sleep(level=2)
     assert calls == [("sync",), ("wake", ["kv_cache"]), ("sleep", 2)]
     timed = {k: len(v) for k, v in t._metrics["train"].items()}
-    assert timed == {"time/sync_s": 1, "time/wake_s": 1, "time/sleep_s": 1}
+    assert timed == {"time/sync_s": 1, "time/wake_kv_s": 1, "time/sleep_s": 1}
+
+
+def test_wake_time_is_split_by_tags_and_no_wake_time_is_lost(monkeypatch):
+    """U-MS3: ["weights"] charges time/wake_weights_s only, ["kv_cache"] time/wake_kv_s only; any other call (no tags,
+    both tags) charges time/wake_s, so the sum of the wake keys is the total."""
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    clock = iter(range(100))
+    monkeypatch.setattr(fast.time, "perf_counter", lambda: next(clock) * 1.0)
+    llm = SimpleNamespace(wake_up=lambda tags=None: None, sleep=lambda level=1: None)
+    t = object.__new__(fast.FastGRPO)
+    t.model, t.vllm_generation = SimpleNamespace(training=True), SimpleNamespace(llm=llm, sync_weights=lambda: None)
+    t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    t.time_vllm_phases()
+    llm.wake_up(tags=["weights"]), llm.wake_up(["kv_cache"]), llm.wake_up(), llm.wake_up(tags=["weights", "kv_cache"])
+    assert {k: len(v) for k, v in t._metrics["train"].items()} == {
+        "time/wake_weights_s": 1, "time/wake_kv_s": 1, "time/wake_s": 2}  # fmt: skip
 
 
 def group_batch(groups, G, lengths, pads=None, P=12, T=10, seed=3):

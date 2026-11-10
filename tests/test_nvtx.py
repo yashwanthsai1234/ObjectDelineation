@@ -239,8 +239,9 @@ def test_no_cuda_no_profiler_and_no_ranges(monkeypatch, no_nvtx_calls):
 
 # U30, U56: FastGRPO.timed ----------------------------------------------------------------------------------------
 
-NAMES = {"step", "loader", "micro", "batch", "generate", "sync", "wake", "sleep", "rewards", "checker", "logps",
-         "forward", "optimizer", "log", "vision_cache", "rope_cache", "image_memo"}
+NAMES = {"step", "loader", "micro", "batch", "generate", "sync", "wake", "wake_weights", "wake_kv", "sleep",
+         "rewards", "checker", "logps", "forward", "optimizer", "log", "vision_cache", "rope_cache", "rope_template",
+         "image_memo"}
 
 
 def fake_trainer(**attrs):
@@ -359,7 +360,7 @@ def test_timed_without_cuda_uses_the_host_clock_even_with_sync_off(monkeypatch):
 
 def range_names():
     """Every string literal passed to nvtx.range / nvtx.push / .timed under src/objdel/train (AST scan), and the
-    phase names of FastGRPO.time_vllm_phases's `hooks` table (its wrappers pass them to `timed` as `_phase`)."""
+    phase names of FastGRPO.time_vllm_phases's `hooks` table and WAKE_PHASE (its wrappers pass them to `timed`)."""
     import ast
     from pathlib import Path
 
@@ -378,6 +379,8 @@ def range_names():
                     bad.append(f"{f.name}:{node.lineno}")
             if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "hooks":
                 names |= {e.elts[2].value for e in node.value.elts}
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "WAKE_PHASE":
+                names |= {v.value for v in node.value.values}
     return names, bad
 
 
