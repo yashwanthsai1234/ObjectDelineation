@@ -20,6 +20,7 @@ import numpy as np
 from objdel.verify import select
 from objdel.verify import stats as signal
 from objdel.verify import store as serve
+from objdel.verify.api import VerifyError
 from objdel.verify.metrics import metrics
 
 if TYPE_CHECKING:  # the sampler module imports TRL's data utils; a rescore loads no ML stack
@@ -39,7 +40,11 @@ SELECTION = ("sel_mean_of_k", "sel_legal_mean", "sel_medoid", "sel_medoid_legal"
 def _score(job) -> dict:
     """One item's metrics on the preloaded caches."""
     item_id, texts, truncated, tokens, W, H, names, root = job
-    m = metrics(texts, {}, W, H, names, truncated, caches=serve.CacheRef(item_id, root), tokens=tokens)
+    try:
+        caches = serve.CacheRef(item_id, root)
+    except KeyError as e:
+        raise VerifyError("unknown_key", f"not in the view root: {e.args[0]}") from e
+    m = metrics(texts, {}, W, H, names, truncated, caches=caches, tokens=tokens)
     return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
 
 
@@ -138,8 +143,11 @@ def evaluate(sampler: "Sampler", rows: Sequence[Mapping], params: Mapping[str, A
              keep: Callable[[list[dict]], object] = lambda answers: None) -> dict:
     """K answers per row from `sampler` ({item_id, samples, truncated, tokens}, row order), keep(answers), then their
     metrics (score_items on view_root's preloaded caches) and per-item statistics: {"answers", "results", "items"}."""
+    got = list(sampler.sample(rows, params))
+    if len(got) != len(rows) or any(s.item_id != r["key"] for s, r in zip(got, rows, strict=True)):
+        raise ValueError(f"evaluate: expected one Sample per row in row order, got {[s.item_id for s in got]}")
     answers = [{"item_id": s.item_id, "samples": list(s.texts), "truncated": list(s.truncated),
-                "tokens": [len(t) for t in s.token_ids]} for s in sampler.sample(rows, params)]
+                "tokens": [len(t) for t in s.token_ids]} for s in got]
     keep(answers)
     results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view_root)
     return {"answers": answers, "results": results, "items": [per_item(r) for r in results]}

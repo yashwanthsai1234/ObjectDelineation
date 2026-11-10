@@ -41,7 +41,7 @@ class ScoreResult:
 
     id: str
     reward: float | None  # None when the outline did not parse
-    terms: Mapping[str, float]
+    terms: Mapping[str, float]  # {} when the outline did not parse (E.9.10 rule 5)
     defects: Mapping[str, int]
     error: str | None  # the parser code
 
@@ -94,8 +94,9 @@ class Verifier:
             raise VerifyError("device_error", str(e)) from e
         terms = logged_terms(T)
         w = dict(zip(TERMS, self.reward.weights, strict=True))
-        return [ScoreResult(i.id, None if T["error"][j] else float(sum(w[k] * terms[k][j] for k in w)),
-                            {k: float(v[j]) for k, v in terms.items()}, T["defects"][j], T["error"][j] or None)
+        return [ScoreResult(i.id, None, {}, T["defects"][j], T["error"][j]) if T["error"][j] else
+                ScoreResult(i.id, float(sum(w[k] * terms[k][j] for k in w)), {k: float(v[j]) for k, v in terms.items()},
+                            T["defects"][j], None)
                 for j, i in enumerate(items)]
 
     def spec(self) -> dict:
