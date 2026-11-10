@@ -57,3 +57,6 @@ test_docs_content.py, test_encoder_once.py, test_f_check.py, test_phase_b_decisi
 old_names re-recorded (train_rl: E6.4 drops _finite and _hex, fB adds f_check_callback and run_report, E6.4
 BudgetFlagError; preflight: train_rl_argv and rl_stages; serve loses the fork pool (D7); fast, callbacks,
 trl_adapter, vllm_sync, vllm_requests, gpu_pixels, nvtx and policy gain the lanes' names).
+Phase E move tool on impl2-emoves2 (from impl2-Emoves-final 7cea44c, staged per sub-move): module_strings_stale gains
+the tool's planted and target names (experiments/phase2/tools/e_moves*.py, tests/test_e_moves.py); each sub-move
+commit below re-records it on its own tree. tests_import_experiments gains test_e_moves.py.

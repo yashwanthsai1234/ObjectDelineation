@@ -31,6 +31,7 @@
  "test_data_quality.py",
  "test_data_windows.py",
  "test_docs_content.py",
+ "test_e_moves.py",
  "test_encoder_once.py",
  "test_f_check.py",
  "test_final_eval.py",
