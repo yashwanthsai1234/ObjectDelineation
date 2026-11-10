@@ -99,3 +99,195 @@ def test_f_check_flag_is_on_by_default_under_fp16_and_an_argparse_error_under_bf
     with pytest.raises(SystemExit):
         train_rl.parse([*BASE, "--f-check"])
     assert "--f-check" in capsys.readouterr().err
+
+
+# U76, the engine half (fakes; no vLLM on the Mac): the comparator's order, prompts and restore, the packed-layout
+# equality and the after-sync probe.
+torch = pytest.importorskip("torch")
+pytest.importorskip("trl")  # before the vllm stubs: trl's import probes vllm's spec
+from objdel.train import fast, vllm_sync  # noqa: E402
+
+IMG, START, END = 100, 102, 103  # tiny_model's image pad and vision start / end ids
+
+
+@pytest.fixture
+def lora_request(monkeypatch):
+    """vllm.lora.request.LoRARequest stand-in."""
+    import sys
+    import types
+
+    class LoRARequest(SimpleNamespace):
+        def __init__(self, lora_name, lora_int_id, lora_path, load_inplace=False):
+            super().__init__(lora_name=lora_name, lora_int_id=lora_int_id, lora_path=lora_path,
+                             load_inplace=load_inplace)  # fmt: skip
+
+    mods = {k: types.ModuleType(k) for k in ("vllm", "vllm.lora", "vllm.lora.request")}
+    mods["vllm.lora.request"].LoRARequest = LoRARequest
+    for k, m in mods.items():
+        monkeypatch.setitem(sys.modules, k, m)
+    return LoRARequest
+
+
+class Engine:
+    """vg.llm: stores pushed tensors by name (load_weights), logs every call, generates tagged answers; vLLM's image
+    expansion multiplies each pad by `expand`."""
+
+    def __init__(self, log, base: dict, expand: int = 2):
+        self.log, self.weights, self.expand = log, {n: t.clone() for n, t in base.items()}, expand
+        model = SimpleNamespace(load_weights=self.load_weights, named_parameters=lambda: iter(self.weights.items()))
+        runner = SimpleNamespace(model=model)
+        self.llm_engine = SimpleNamespace(model_executor=SimpleNamespace(driver_worker=SimpleNamespace(
+            model_runner=runner)), add_lora=lambda r: log.append(("add_lora", r.lora_name, r.lora_int_id)),
+            remove_lora=lambda i: log.append(("remove_lora", i)))  # fmt: skip
+
+    def load_weights(self, pairs):
+        for n, t in pairs:
+            self.weights[n] = t.clone()
+        self.log.append(("load_weights",))
+
+    def wake_up(self, tags=None):
+        self.log.append(("wake_up", tuple(tags)))
+
+    def sleep(self, level):
+        self.log.append(("sleep", level))
+
+    def reset_prefix_cache(self):
+        self.log.append(("reset_prefix_cache",))
+
+    def generate(self, rows, sampling_params=None, use_tqdm=True, lora_request=None):
+        seed, fixed = sampling_params
+        lora = lora_request and lora_request.lora_name
+        self.log.append(("generate", lora, seed, fixed, [r["prompt_token_ids"] for r in rows]))
+        n = fc.FIXED_LEN if fixed else 3
+        return [SimpleNamespace(prompt_token_ids=[x for t in r["prompt_token_ids"] for x in [t] * (
+            self.expand if t == IMG else 1)], lora=lora, outputs=[SimpleNamespace(token_ids=[1] * n)]) for r in rows]
+
+
+
+
+
+def comparator_run(tmp_path, monkeypatch, sleep_mode: bool, expand: int = 2, gap=None):
+    from test_train_fast import _lora_bf16
+
+    m = _lora_bf16()
+    m.save_pretrained(tmp_path / "b1")  # the B1 adapter: this adapter's values
+    for n, p in m.named_parameters():  # the run's own fresh adapter differs from B1
+        if "lora_B" in n:
+            p.data.zero_()
+    log = []
+    monkeypatch.setattr("trl.generation.vllm_generation.empty_cache", lambda: log.append(("empty_cache",)))
+    base = dict(fast.lora_merged_params(m, with_delta=False))
+    vg = SimpleNamespace(llm=Engine(log, base, expand), model=m, _llm_weights_sleeping=sleep_mode,
+                         enable_sleep_mode=sleep_mode, mode="colocate")  # fmt: skip
+    prompts = [{"prompt_token_ids": [START, IMG, IMG, END], "multi_modal_data": {"image": "a"}}] * 4
+    gap = gap or (lambda outs, adapter: 0.0096 if not adapter else 0.0100 if outs[0].lora == "b1" else 0.0176)
+    clock = iter(range(10_000)).__next__  # every timed generate takes 1 tick
+    fixed = fc.run_comparator(vg, m, prompts, IMG, tmp_path / "b1", tmp_path / "tmp", gap,
+                              sampling=lambda seed, fixed=False: (seed, fixed), clock=clock)
+    return fixed, log, vg, m, base
+
+
+@pytest.mark.parametrize("sleep_mode", [True, False])
+def test_comparator_order_restore_and_sleep_last(tmp_path, monkeypatch, lora_request, sleep_mode):
+    """B2.2 F 4b.4/4b.5: (ii) on slot 2 first, the floor arm, the A B A B timing (1 warm-up per arm, seeds 0-2),
+    the merged push last; the restore pushes the base, hashes it equal, removes slot 2, drops "b1", resets the
+    prefix cache and, in mode B only, sleeps at level 2 last with TRL's flag set."""
+    fixed, log, vg, m, base = comparator_run(tmp_path, monkeypatch, sleep_mode)
+    gens = [(e[1], e[2], e[3]) for e in log if e[0] == "generate"]
+    timing = [("b1", 0, True), (None, 0, True)] + [(lo, s, True) for s in fc.SEEDS for _ in range(2)
+                                                   for lo in ("b1", None)]  # fmt: skip
+    assert gens == [("b1", 0, False), (None, 0, False), *timing, (None, 0, False)]
+    names = [e[0] for e in log]
+    assert names.index("add_lora") < names.index("generate")
+    assert log[names.index("add_lora")][1:] == ("b1", fc.B1_SLOT)
+    last_gen = len(names) - 1 - names[::-1].index("generate")
+    assert names[last_gen - 2:last_gen] == ["load_weights", "reset_prefix_cache"]  # the merged push, then arm (i)
+    assert "load_weights" not in names[names.index("generate"):last_gen - 2]  # base-W arms all ran before it
+    tail = names[last_gen + 1:]
+    want = ["load_weights", "reset_prefix_cache", "remove_lora", "reset_prefix_cache"]
+    want += ["sleep"] if sleep_mode else []
+    assert tail == want and vg._llm_weights_sleeping is sleep_mode
+    if sleep_mode:
+        assert log[-1] == ("sleep", 2) and ("wake_up", ("kv_cache",)) in log
+        assert names.index("wake_up") < names.index("add_lora")  # weights woken by sync_lora before the load
+    else:
+        assert "wake_up" not in names and "sleep" not in names
+    assert fixed["base_hash_ok"] is True and fixed["prompt_expansion"] is True and fixed["fixed_len_ok"] is True
+    assert fixed["lora_over_base"] == 1.0 and fixed["comparator"]["ok"] and fixed["comparator"]["f0"] == 0.0096
+    assert list(m.peft_config) == ["default"] and m.active_adapter == "default"
+    assert all(torch.equal(vg.llm.weights[n], t) for n, t in base.items())
+
+
+def test_comparator_sends_one_pad_per_image_and_fails_on_another_expansion(tmp_path, monkeypatch, lora_request):
+    _, log, *_ = comparator_run(tmp_path, monkeypatch, True)
+    assert all(ids == [START, IMG, END] for e in log if e[0] == "generate" for ids in e[4])
+    fixed, log, *_ = comparator_run(tmp_path / "x", monkeypatch, True, expand=3)
+    assert fixed["prompt_expansion"] is False and "3 pads" in fixed["error"]
+    rec = {"preset": "lora-seqmask", "nan": 0} | fixed
+    assert fc.passes(rec) is False  # no KeyError on the missing values
+
+
+def test_comparator_base_hash_catches_a_wrong_restore(tmp_path, monkeypatch, lora_request):
+    push = vllm_sync.push_weights
+    monkeypatch.setattr(vllm_sync, "push_weights", lambda vg, model, values="merged": push(vg, model, "merged"))
+    fixed, *_ = comparator_run(tmp_path, monkeypatch, False)
+    assert fixed["base_hash_ok"] is False
+
+
+def served_modules(m, idx: int, scale_b: float = 2.0, adapter="default"):
+    """vLLM's LoRA-wrapped modules of a PEFT model: packed qkv_proj / gate_up_proj, slot `idx` of 2."""
+    from peft.tuners.lora import LoraLayer
+
+    groups = {}
+    for name, mod in m.named_modules():
+        if isinstance(mod, LoraLayer):
+            parent, leaf = name.rsplit(".", 1)
+            packed, k = fc.PACKED.get(leaf, (leaf, 0))
+            groups.setdefault(f"vllm.{parent.split('language_model.')[1]}.{packed}", {})[k] = mod
+    out = {}
+    for name, ks in groups.items():
+        a, b = [], []
+        for k in sorted(ks):
+            A, B = ks[k].lora_A[adapter].weight, ks[k].lora_B[adapter].weight
+            sa = torch.zeros(2, 1, *A.shape, dtype=torch.bfloat16)
+            sb = torch.zeros(2, 1, *B.shape, dtype=torch.bfloat16)
+            sa[idx, 0], sb[idx, 0] = A.to(torch.bfloat16), B.to(torch.bfloat16) * scale_b
+            a.append(sa)
+            b.append(sb)
+        out[name] = SimpleNamespace(lora_a_stacked=tuple(a), lora_b_stacked=tuple(b))
+    return out
+
+
+def vg_with(mods, index_to_id):
+    model = SimpleNamespace(named_modules=lambda: iter(mods.items()))
+    runner = SimpleNamespace(model=model, lora_manager=SimpleNamespace(
+        _adapter_manager=SimpleNamespace(lora_index_to_id=index_to_id)))
+    return SimpleNamespace(llm=SimpleNamespace(llm_engine=SimpleNamespace(model_executor=SimpleNamespace(
+        driver_worker=SimpleNamespace(model_runner=runner)))))
+
+
+def test_lora_equal_reads_the_packed_slices_of_the_adapters_slot():
+    from test_train_fast import _lora_bf16
+
+    m = _lora_bf16()
+    assert fc.lora_equal(vg_with(served_modules(m, 1), [None, 1]), m)
+    assert not fc.lora_equal(vg_with(served_modules(m, 0), [None, 1]), m)  # the values sit in another slot
+    assert not fc.lora_equal(vg_with(served_modules(m, 1, scale_b=1.0), [None, 1]), m)  # alpha / r not folded
+    mods = served_modules(m, 1)
+    mods.pop(next(k for k in mods if k.endswith("gate_up_proj")))
+    assert not fc.lora_equal(vg_with(mods, [None, 1]), m)  # a PEFT module without a vLLM twin
+    assert not fc.lora_equal(vg_with({}, [None, 1]), m)
+
+
+def test_after_syncs_checks_right_after_syncs_1_and_2():
+    seen = []
+    vg = SimpleNamespace(sync_weights=lambda: seen.append("sync"))
+    probe = fc.AfterSyncs(vg, lambda: seen.append("check") or True, 2)
+    assert not probe.ok()
+    for _ in range(4):
+        vg.sync_weights()
+    assert seen == ["sync", "check", "sync", "check", "sync", "sync"] and probe.ok()
+    bad = fc.AfterSyncs(SimpleNamespace(sync_weights=lambda: None), lambda: False, 2)
+    bad()
+    bad()
+    assert not bad.ok()

@@ -34,6 +34,11 @@ def _wake(vg) -> None:
         vg._llm_weights_sleeping = False
 
 
+def engine_model(vg):
+    """The in-process vLLM engine's model (load_weights, named_parameters, the LoRA-wrapped modules)."""
+    return vg.llm.llm_engine.model_executor.driver_worker.model_runner.model
+
+
 def _load(vg, pairs) -> PushStats:
     """One load_weights call on the in-process engine's model, over a generator (peak: one merged tensor)."""
     n = size = 0
@@ -45,7 +50,7 @@ def _load(vg, pairs) -> PushStats:
             yield name, t
 
     t0 = time.perf_counter()
-    vg.llm.llm_engine.model_executor.driver_worker.model_runner.model.load_weights(counted())
+    engine_model(vg).load_weights(counted())
     return PushStats(n, size, time.perf_counter() - t0)
 
 
