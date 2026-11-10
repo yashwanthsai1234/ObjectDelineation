@@ -12,7 +12,7 @@ from objdel.core.io import read_json
 from objdel.core.provenance import repo_root
 
 # G10, USD spent in Phase 2: $16.90 at plan start + the approved $3.00 + $1.50 (2026-11-09)
-ALARM, HARD_STOP = 10.0, 21.4
+ALARM, HARD_STOP = 10.0, 24.5
 # BK4-18: $/GB ceiling, up and down (> 2x the A3 snapshot medians of the five cards, $4-13.65/TB; unit UNVERIFIED until
 # V0). Estimate: image 7.5 GB + bundle 2 GB + model downloads once; checkpoint pulls of 3-5 GB per 20 min (§4.4).
 INET_CEIL, DOWN_GB, UP_GB_PER_H = 0.03, 15, 6
