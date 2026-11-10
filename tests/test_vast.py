@@ -1443,7 +1443,7 @@ def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp
     """6.1 step 0: with $16.90 closed spend, a $0.90/h offer and a 2.4 h cap (plus PULL_S) is within HARD_STOP."""
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     (tmp_path / "ledger.csv").write_text(",".join(P.FIELDS) + "\n" + "," * 13 + "16.90,\n")
-    assert P.HARD_STOP == 19.9 and P.ALARM == 10.0
+    assert P.HARD_STOP == 21.4 and P.ALARM == 10.0
     offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
     assert P.launch_refusal(offer, 2.4) == ""
     assert "hard stop" in P.launch_refusal(dict(offer, dph_total=1.5), 2.4)

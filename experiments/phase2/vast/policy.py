@@ -60,7 +60,7 @@ CARDS = {
     "A100_SXM4": {"ram": (79, 82), "ceiling": 1.80},
 }
 CPU_RAM = {"lidc": 32, "riga": 48}  # GB; RIGA caches ~4.5 GB RSS per scoring process (B4 §1)
-ALARM, HARD_STOP = 10.0, 19.9  # G10, USD spent in Phase 2: $16.90 at plan start + the approved $3.00 (2026-11-09)
+ALARM, HARD_STOP = 10.0, 21.4  # G10, USD spent in Phase 2: $16.90 at plan start + the approved $3.00 + $1.50 (2026-11-09)
 # BK4-18: $/GB ceiling, up and down (> 2x the A3 snapshot medians of the five cards, $4-13.65/TB; unit UNVERIFIED until
 # V0). Estimate: image 7.5 GB + bundle 2 GB + model downloads once; checkpoint pulls of 3-5 GB per 20 min (§4.4).
 INET_CEIL, DOWN_GB, UP_GB_PER_H = 0.03, 15, 6
