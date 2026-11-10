@@ -336,3 +336,19 @@ def test_resume_truncates_seq_gaps_to_the_checkpoint_step(stub):
     assert stub.run(*stub.train, "--resume") == 0
     assert (trainer / "seq_gaps.f32").stat().st_size == 2 * 2 * 3 * 4
     assert json.loads((trainer / "seq_gaps.json").read_text())["steps"] == 2
+
+
+def test_run_report_is_the_clipped_ratio_slope_and_the_truncated_grad_share_median_and_max(stub):
+    """B3.5 / U73: the least-squares slope of completions/clipped_ratio over the steps, the median and the max of
+    completions/truncated_grad_share; the line prints with rl.json's other keys."""
+    from experiments.phase2.train_rl import run_report
+
+    log = [{"step": s, "completions/clipped_ratio": 0.1 + 0.01 * s, "completions/truncated_grad_share": g}
+           for s, g in zip(range(1, 6), (0.0, 0.626, 0.1, 0.3, 0.2), strict=True)] + [{"step": 5, "eval_loss": 1.0}]
+    r = run_report(log)
+    assert r["clipped_ratio_slope"] == pytest.approx(0.01)
+    assert r["truncated_grad_share"] == {"median": 0.2, "max": 0.626}
+    assert run_report([{"step": 1, "reward": 0.5}]) == {"clipped_ratio_slope": None, "truncated_grad_share": None}
+    assert run_report([{"step": 1, "completions/clipped_ratio": 0.3}])["clipped_ratio_slope"] is None  # one point
+    stub.run(*stub.train)
+    assert json.loads((stub.out / "rl.json").read_text())["report"] == run_report([{"step": 1, "reward": 0.5}])

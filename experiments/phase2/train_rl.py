@@ -33,8 +33,9 @@ Held-out curve (off by default): --heldout VIEW evaluates --heldout-items val-sh
 eval view every --heldout-every steps, 8 answers each; rl.json "eval" holds eval/iou_tc and eval/allmiss_share.
 
 <out>/rl.json: steps, LR, numerics, opsm_start_delta (None outside bf16-tis-opsm), beta, reward (name, fingerprint,
-c_topo, loc_width, area_gate), rows provenance, timing and TRL's log. --reward v5 trains on reward v5 and adds
-callbacks.LocGuard (stop and save; loc_guard_stopped).
+c_topo, loc_width, area_gate), rows provenance, timing, `report` (run_report: the clipped_ratio slope, the
+truncated_grad_share median and max; printed on the result line) and TRL's log. --reward v5 trains on reward v5 and
+adds callbacks.LocGuard (stop and save; loc_guard_stopped).
 """
 import argparse
 import gc
@@ -287,6 +288,19 @@ def cut_seq_gaps(trainer_dir: Path, step: int) -> None:
     meta.write_text(json.dumps(m) + "\n")
 
 
+def run_report(log: list[dict]) -> dict:
+    """B3.5 run-report line: the least-squares slope of completions/clipped_ratio over the steps (None below two
+    steps) and the median and max of completions/truncated_grad_share (None when the run logged none)."""
+    import numpy as np
+
+    def series(key):
+        return [(h["step"], h[key]) for h in log if key in h]
+
+    clipped, share = series("completions/clipped_ratio"), [v for _, v in series("completions/truncated_grad_share")]
+    return {"clipped_ratio_slope": float(np.polyfit(*zip(*clipped, strict=True), 1)[0]) if len(clipped) > 1 else None,
+            "truncated_grad_share": {"median": float(np.median(share)), "max": float(max(share))} if share else None}
+
+
 def merge_last(a) -> int:
     """--merge-last: <out>/final from the last checkpoint when the run ended before its own save."""
     from transformers.trainer_utils import get_last_checkpoint
@@ -397,8 +411,8 @@ def main(argv=None) -> int:
         "eval": [{"step": h["step"], "eval/iou_tc": h["eval_rewards/iou_tc/mean"],
                   "eval/allmiss_share": h["eval_allmiss_share"]} for h in log if "eval_rewards/iou_tc/mean" in h],
         "timing_s": {"train": t1 - t0, "per_step": (t1 - t0) / max(1, done - start)},
-        "log": log,
-    }, keys=("steps", "lr", "resumed_from", "final", "budget_stopped"))
+        "report": run_report(log), "log": log,
+    }, keys=("steps", "lr", "resumed_from", "final", "budget_stopped", "report"))
 
 
 if __name__ == "__main__":
