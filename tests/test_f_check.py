@@ -166,7 +166,7 @@ class Engine:
 
 
 
-def comparator_run(tmp_path, monkeypatch, sleep_mode: bool, expand: int = 2, gap=None):
+def comparator_run(tmp_path, monkeypatch, sleep_mode: bool, expand: int = 2, gap=None, skip=None):
     from test_train_fast import _lora_bf16
 
     m = _lora_bf16()
@@ -183,7 +183,7 @@ def comparator_run(tmp_path, monkeypatch, sleep_mode: bool, expand: int = 2, gap
     gap = gap or (lambda outs, adapter: 0.0096 if not adapter else 0.0100 if outs[0].lora == "b1" else 0.0176)
     clock = iter(range(10_000)).__next__  # every timed generate takes 1 tick
     fixed = fc.run_comparator(vg, m, prompts, IMG, tmp_path / "b1", tmp_path / "tmp", gap,
-                              sampling=lambda seed, fixed=False: (seed, fixed), clock=clock)
+                              sampling=lambda seed, fixed=False: (seed, fixed), clock=clock, skip=skip)
     return fixed, log, vg, m, base
 
 
@@ -309,7 +309,7 @@ def test_train_rl_runs_the_full_lora_check(tmp_path, monkeypatch, sleep_mode):
     calls = {}
 
     def comparator(vg, model, prompts, pad, b1, tmp, gap, **kw):
-        calls.update(prompts=prompts, pad=pad, b1=b1, gap=gap(["o"], True))
+        calls.update(prompts=prompts, pad=pad, b1=b1, gap=gap(["o"], True), skip=kw["skip"])
         vg.llm.llm_engine.add_lora("b1")  # the comparator's own load: not counted
         return lora_fixed() | {"prompt_expansion": True}
 
@@ -325,6 +325,7 @@ def test_train_rl_runs_the_full_lora_check(tmp_path, monkeypatch, sleep_mode):
     a = train_rl.parse([*BASE, "--numerics", "lora-seqmask", "--b1-adapter", "b1", "--out", str(tmp_path)])
     cb = train_rl.f_check_callback(a, trainer, [{"k": 0}, {"k": 1}, {"k": 2}])
     assert calls["prompts"] == [{"k": 0}] * 8 + [{"k": 1}] * 8 and calls["pad"] == IMG and calls["gap"] == 0.5
+    assert calls["skip"] == "c/hf_revision.json missing: --ckpt is not a fetch_hf pull of rl-full-3ep"
     for step in range(1, 16):
         vg.sync_weights()  # TRL's sync at each step: sync_lora adds the adapter once
         engine.add_lora("policy")
@@ -388,3 +389,31 @@ def test_way_b_gap_scores_each_prompt_group_with_the_adapter_on_or_off(monkeypat
     assert seen == [((2, 6), 2, 2, True, [1, 1], 4), ((2, 5), 3, 2, True, None, 0)]
     fast.FastGRPO.way_b_gap(t, [p1], outs[:1], True)
     assert seen[-1][3] is False
+
+
+def test_comparator_skip_reads_the_ckpt_revision_marker(tmp_path):
+    """4b.1: the output-level check runs only on the --ckpt that hf_pull fetched as rl-full-3ep."""
+    assert "missing" in fc.comparator_skip(tmp_path)
+    (tmp_path / "hf_revision.json").write_text(json.dumps({"repo": "r", "revision": "r1-qwen3vl2b"}))
+    assert fc.comparator_skip(tmp_path) == "--ckpt is HF revision 'r1-qwen3vl2b', not rl-full-3ep"
+    (tmp_path / "hf_revision.json").write_text(json.dumps({"repo": "r", "revision": "rl-full-3ep"}))
+    assert fc.comparator_skip(tmp_path) is None
+
+
+def test_on_another_model_the_output_arms_are_skipped_and_the_reason_recorded(tmp_path, monkeypatch, lora_request):
+    """Only the timing (2 warm-ups + 12 timed) and the restore run; no merged push; the record still passes on the
+    other checks, with the reason in f_check.json."""
+    fixed, log, vg, m, base = comparator_run(tmp_path, monkeypatch, True, skip="--ckpt is HF revision 'x'",
+                                             gap=lambda *a: pytest.fail("no scoring on another model"))
+    gens = [e for e in log if e[0] == "generate"]
+    assert len(gens) == 14 and all(e[3] for e in gens)  # every generate is a fixed-length timing one
+    names = [e[0] for e in log]
+    assert names.count("load_weights") == 2  # sync_lora's base push (mode B) and the restore: no merged push
+    assert fixed["comparator"] == {"skipped": "--ckpt is HF revision 'x'", "informative": False, "ok": True}
+    assert fixed["base_hash_ok"] is True and log[-1] == ("sleep", 2)
+    cb = fc.FCheck(tmp_path / "out", "lora-seqmask", {"lora_equal": lambda: True}, loads=fc.count_calls(lambda: None),
+                   fixed=fixed)
+    cb.loads()
+    cb.finish()
+    rec = json.loads((tmp_path / "out/f_check.json").read_text())
+    assert rec["comparator"]["skipped"] == "--ckpt is HF revision 'x'" and rec["passed"] is True

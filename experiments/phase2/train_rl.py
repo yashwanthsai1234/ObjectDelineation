@@ -355,7 +355,8 @@ def with_caps(train, a):
 def f_check_callback(a, trainer, train):
     """f_check.FCheck of the run's preset. fp16-seqmask: NaN/inf and the engine dtype. lora-seqmask: the comparator,
     restore base hash and timing measured now, before step 1 (f_check.run_comparator on the first generation
-    batch's prompts, rows 0-31 in file order, scored by way (b)); then the LoRA loads counted on add_lora and the
+    batch's prompts, rows 0-31 in file order, scored by way (b); its output-level arms only when --ckpt is
+    rl-full-3ep, f_check.comparator_skip); then the LoRA loads counted on add_lora and the
     packed-layout equality after sync 1 and after the first sleep/wake cycle. An expansion error writes the record
     and raises here."""
     import tempfile
@@ -372,7 +373,8 @@ def f_check_callback(a, trainer, train):
     prompts = trainer.comparator_prompts([train[i] for i in range(trainer.args.generation_batch_size // G)], G)
     tmp = Path(tempfile.mkdtemp(prefix="objdel-lora-b1-", dir=Path(trainer.lora_dir).parent))
     fixed = f_check.run_comparator(vg, model, prompts, model.config.image_token_id, a.b1_adapter, tmp,
-                                   lambda outs, adapter: trainer.way_b_gap(prompts, outs, adapter))
+                                   lambda outs, adapter: trainer.way_b_gap(prompts, outs, adapter),
+                                   skip=f_check.comparator_skip(a.ckpt))
     cb = f_check.FCheck(a.out, a.numerics, {}, fixed=fixed)
     if not fixed.get("prompt_expansion", True):
         cb.finish()  # writes f_check.json and raises

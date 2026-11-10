@@ -26,6 +26,14 @@ def test_hf_pull_downloads_the_revision_with_the_stdin_token(tmp_path, monkeypat
     assert L.main(["--repo", REPO, "--revision", "r1-qwen3vl2b", "--out", str(tmp_path / "m")]) == 0
     assert got == {"repo_id": REPO, "revision": "r1-qwen3vl2b", "local_dir": str(tmp_path / "m"), "token": "hf_secret",
                    "allow_patterns": None}
+    assert json.loads((tmp_path / "m/hf_revision.json").read_text()) == {"repo": REPO, "revision": "r1-qwen3vl2b"}
+
+
+def test_hf_pull_writes_no_revision_marker_for_a_rows_pull(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "snapshot_download", lambda **kw: str(tmp_path))
+    monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
+    assert L.main(["--repo", REPO, "--revision", "a" * 40, "--out", str(tmp_path), "--allow", "rows/x/**"]) == 0
+    assert not (tmp_path / "hf_revision.json").exists()
 
 
 def test_hf_pull_refuses_without_a_token(monkeypatch):

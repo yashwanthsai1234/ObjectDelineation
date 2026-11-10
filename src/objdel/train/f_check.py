@@ -9,6 +9,16 @@ load_count, lora_over_base (plus prompt_expansion false when vLLM expanded an im
 callables; `run_comparator` measures the comparator, the restore base hash and the timing ratio before step 1 (B2.2 F
 steps 4 and 4b) and they are passed in as values; `AfterSyncs` runs the packed-layout equality (`lora_equal`) right
 after sync 1 and after the first sleep/wake cycle, while the engine is awake.
+
+Restore base hash (B2.2 F step 4b.5, C5 step 5(b) method): the reference is vLLM's own tensors right after arm (ii)'s
+sync, hashed on the host per name. In mode B that sync pushed `p.data` (no delta); in mode A they are the start-up
+load of the same --ckpt. After the restore push every tensor is hashed again and compared per name. A direct compare
+with `p.data` would need a map from PEFT names to vLLM's packed tensors (qkv_proj, gate_up_proj), unchecked here.
+
+Output-level arms only on the comparator's model (B2.2 F step 4b.1): the --ckpt whose hf_revision.json (written by
+hf_pull) names rl-full-3ep. On another model run_comparator gets `skip` (the reason): arms (0), (i), (ii) and their
+scoring are skipped, `comparator` records {"skipped": reason, "informative": false, "ok": true}, and the tensor, NaN,
+load-count, base-hash and timing checks decide.
 """
 import json
 import math
@@ -27,6 +37,7 @@ LORA_KEYS = ("comparator", "base_hash_ok", "lora_equal", "load_count", "lora_ove
 FIXED_LEN = 512  # tokens every row decodes in the timed arms (min_tokens = max_tokens, ignore_eos)
 SEEDS = (0, 1, 2)  # timing seeds; the arms (0), (i), (ii) use seed 0
 B1_SLOT = 2  # the comparator's vLLM LoRA slot; the run's own adapter is slot 1
+COMPARATOR_CKPT = "rl-full-3ep"  # the HF revision the B1 adapter was trained on: the comparator's base
 EXPANSION = "vLLM expanded the image"  # fast.vllm_generate_checked's error
 # PEFT module -> (vLLM packed module, slice): vLLM packs q, k, v into qkv_proj and gate, up into gate_up_proj
 PACKED = {"q_proj": ("qkv_proj", 0), "k_proj": ("qkv_proj", 1), "v_proj": ("qkv_proj", 2),
@@ -72,6 +83,16 @@ def count_calls(fn):
         return fn(*a, **k)
     wrapped.calls = 0
     return wrapped
+
+
+def comparator_skip(ckpt) -> str | None:
+    """None when --ckpt is the comparator's model (its hf_revision.json names rl-full-3ep), else the reason the
+    output-level check is skipped (B2.2 F step 4b.1)."""
+    marker = Path(ckpt) / "hf_revision.json"
+    if not marker.is_file():
+        return f"{marker} missing: --ckpt is not a fetch_hf pull of {COMPARATOR_CKPT}"
+    rev = json.loads(marker.read_text()).get("revision")
+    return None if rev == COMPARATOR_CKPT else f"--ckpt is HF revision {rev!r}, not {COMPARATOR_CKPT}"
 
 
 def host_hashes(vllm_model) -> dict:
@@ -159,7 +180,7 @@ def sampling_params(vg, seed: int, fixed: bool = False):
 
 
 def run_comparator(vg, model, prompts: list[dict], pad: int, b1_dir, tmp_dir, gap, sampling=None,
-                   clock=time.perf_counter) -> dict:
+                   clock=time.perf_counter, skip: str | None = None) -> dict:
     """B2.2 F steps 4 and 4b before step 1, on the run's own engine. prompts: the 32 x 8 batch in TRL's vLLM form
     (processor-expanded ids, multi_modal_data), sent only through fast.vllm_generate_checked. gap(outputs, adapter):
     mean |vLLM logp - trainer logp| of an answer set, scored by way (b) with "b1" active (adapter True) or the
@@ -169,7 +190,8 @@ def run_comparator(vg, model, prompts: list[dict], pad: int, b1_dir, tmp_dir, ga
     the merged push last; scoring; then the restore: base push, host hash of every base tensor against the
     reference, remove_lora(2), set_adapter("default"), delete_adapter("b1"), reset_prefix_cache, and in mode B
     sleep(level=2) last with TRL's flag set. Returns the FCheck fixed values (prompt_expansion False on an
-    expansion error, then no other value)."""
+    expansion error, then no other value). skip: the reason the output-level arms do not run (comparator_skip):
+    then only the timing and the restore run, and `comparator` records the reason."""
     from vllm.lora.request import LoRARequest
 
     from objdel.train.fast import vllm_generate_checked
@@ -194,8 +216,9 @@ def run_comparator(vg, model, prompts: list[dict], pad: int, b1_dir, tmp_dir, ga
         llm.wake_up(tags=["kv_cache"])  # TRL wakes the KV cache only inside its own generate
     ref = host_hashes(engine_model(vg))
     try:
-        f_lora = gen(sampling(0), slot)
-        f_base = gen(sampling(0), None)
+        if skip is None:
+            f_lora = gen(sampling(0), slot)
+            f_base = gen(sampling(0), None)
         t_a, t_b, full = [], [], True
         for lora in (slot, None):
             gen(sampling(0, True), lora)  # warm-up: fills the image and prefix caches of both arms alike
@@ -205,14 +228,16 @@ def run_comparator(vg, model, prompts: list[dict], pad: int, b1_dir, tmp_dir, ga
                     t, ok = timed(sampling(seed, True), lora)
                     times.append(t)
                     full &= ok
-        push_weights(vg, model, values="merged")  # W + d_B1 into vLLM's base tensors: every base-W arm ran before
-        f_merged = gen(sampling(0), None)
+        if skip is None:
+            push_weights(vg, model, values="merged")  # W + d_B1 into vLLM's base tensors: every base-W arm ran before
+            f_merged = gen(sampling(0), None)
     except RuntimeError as e:
         if EXPANSION not in str(e):
             raise
         return {"prompt_expansion": False, "error": str(e)}
-    fixed = {"prompt_expansion": True,
-             "comparator": comparator(gap(f_merged, True), gap(f_lora, True), gap(f_base, False)),
+    out = ({"skipped": skip, "informative": False, "ok": True} if skip is not None
+           else comparator(gap(f_merged, True), gap(f_lora, True), gap(f_base, False)))
+    fixed = {"prompt_expansion": True, "comparator": out,
              "lora_over_base": lora_over_base(t_a, t_b) if full else None, "fixed_len_ok": full}  # fmt: skip
     push_weights(vg, model, values="base")
     fixed["base_hash_ok"] = host_hashes(engine_model(vg)) == ref
