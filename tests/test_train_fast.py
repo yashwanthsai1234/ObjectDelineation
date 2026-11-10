@@ -1393,11 +1393,12 @@ def test_tokenize_prompts_with_prompt_memo_gives_trls_prompt_ids_tokenizing_each
 
 def meta_for(mask, T, G, bad=()):
     """The RowMeta host lists of a test batch: real prompt and answer tokens; image, group and prompt layout per G
-    rows; rows `bad` marked for the HF rope path."""
+    rows; rows `bad` marked for the HF rope path; 16 pixel rows (one 4 x 4-patch image) per row."""
     n, P = mask.size(0), mask.size(1) - T
     grp = np.arange(n, dtype=np.int32) // G
     return fast.RowMeta(mask[:, :P].sum(1).numpy().astype(np.int32), mask[:, P:].sum(1).numpy().astype(np.int32),
-                        grp, grp, grp, np.isin(np.arange(n), bad).astype(np.int32))  # fmt: skip
+                        grp, grp, grp, np.isin(np.arange(n), bad).astype(np.int32),
+                        np.full(n, 16, dtype=np.int32))  # fmt: skip
 
 
 def no_device_reads(monkeypatch):
@@ -1423,6 +1424,32 @@ def test_host_meta_forward_takes_windows_runs_and_lengths_from_the_host(monkeypa
         assert (lp[~real] == 0).all()
 
 
+@pytest.mark.parametrize("shared_prefix", [False, True])
+def test_host_meta_forward_never_reads_the_grid(monkeypatch, shared_prefix):
+    """C4 step 3: under host_meta each row's pixel rows come from RowMeta (image pads x merge^2), so the forward makes
+    no Tensor.tolist read of its own; without host_meta it reads the grid once, in grid_rows (control)."""
+    import sys
+
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
+    reads, real = [], torch.Tensor.tolist
+
+    def spy(x):
+        f = sys._getframe(1).f_code
+        reads.append(f.co_filename.endswith("fast.py") and f.co_name in ("_get_per_token_logps_and_entropies",
+                                                                         "grid_rows"))  # fmt: skip
+        return real(x)
+
+    monkeypatch.setattr(torch.Tensor, "tolist", spy)
+    t = shared(m) if shared_prefix else trainer(Fast, buckets=(4, 8, 12, 16))
+    lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, host_meta=meta_for(mask, T, 4), **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    assert not any(reads)
+    t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
+    assert any(reads)
+
+
 def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch):
     """C4: _compute_loss reads the micro-batch's host_meta rows (moved by TRL's split and shuffle) for its forward;
     without them under --host-meta it raises; the old and reference passes get none."""
@@ -1432,7 +1459,7 @@ def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch
     monkeypatch.setattr(GRPOTrainer, "_compute_loss",
                         lambda self, model, inputs: self._get_per_token_logps_and_entropies(model, None, None, 1))
     t = trainer(fast.FastGRPO, host_meta=True, use_vllm=False)
-    rows = [fast.MetaRow(5, 3, 0, 0, 0, 0), fast.MetaRow(4, 0, 1, 1, 1, 0)]
+    rows = [fast.MetaRow(5, 3, 0, 0, 0, 0, 16), fast.MetaRow(4, 0, 1, 1, 1, 0, 16)]
     t._compute_loss(None, {"host_meta": rows})
     t._get_per_token_logps_and_entropies(None, None, None, 1)
     assert fast.host_rows(seen[0]) == rows and seen[1] is None

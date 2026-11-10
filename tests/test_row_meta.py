@@ -174,3 +174,24 @@ def test_train_rl_and_g_probe_carry_check_rope_every(capsys):
     assert "--check-rope-every" in capsys.readouterr().out
     src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
     assert 'trainer.check_rope_every = getattr(a, "check_rope_every", 50)' in src
+
+
+def test_row_meta_counts_each_rows_pixel_rows_from_its_image_pads():
+    """C4 step 3: a row's pixel rows (its images' t*h*w) are its prompt's image pads times merge^2, a constant per
+    image size, so no forward reads the grid; 0 without an image pad id (a text model)."""
+    prompt = [[1, 9, 9, 9, 9, 2], [1, 9, 2], [3, 4]]
+    comp = [[5, EOS]] * 3
+    meta = fast.row_meta(prompt, comp, [0, 1, 2], 1, True, [EOS, PAD], image_pad=(9, 2))
+    assert meta.pixel_rows.tolist() == [16, 4, 0]
+    assert fast.row_meta(prompt, comp, [0, 1, 2], 1, True, [EOS, PAD]).pixel_rows.tolist() == [0, 0, 0]
+
+
+def test_check_meta_compares_pixel_rows_with_the_grid():
+    """C4 step 5 for step 3's field: host pixel rows equal each row's images' grid t*h*w on check steps."""
+    host = [fast.MetaRow(2, 1, 0, 0, 0, 0, 16), fast.MetaRow(2, 1, 1, 1, 1, 0, 8)]
+    batch = {"host_meta": host, "prompt_mask": torch.ones(2, 2), "completion_mask": torch.ones(2, 1),
+             "image_grid_thw": torch.tensor([[1, 4, 4], [1, 2, 4]]), "num_images": [1, 1]}  # fmt: skip
+    fast.check_meta(batch)
+    batch["host_meta"] = [host[0], host[1]._replace(pixel_rows=4)]
+    with pytest.raises(AssertionError, match="row 1: pixel_rows 4 != device 8"):
+        fast.check_meta(batch)

@@ -60,7 +60,8 @@ class RowMeta:
     """Host facts of a generation batch's rows (C4), int32 arrays of shape (B,): real prompt tokens, real answer
     tokens (0 for a truncated row under mask_truncated_completions, as TRL zeroes its completion_mask), the row's
     distinct image (first-appearance index), its group of G answers, its prompt layout (dense id of prompt ids and
-    image size: one rope template each, C2) and the host's rope routing (1: the HF path, rope_bad_rows)."""
+    image size: one rope template each, C2), the host's rope routing (1: the HF path, rope_bad_rows) and its pixel
+    rows (its images' t*h*w: image pads x merge^2, C4 step 3)."""
 
     prompt_len: np.ndarray
     completion_len: np.ndarray
@@ -68,12 +69,14 @@ class RowMeta:
     group: np.ndarray
     layout: np.ndarray
     rope_bad: np.ndarray
+    pixel_rows: np.ndarray
 
 
 def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_truncated: bool,
-             eos_and_pad_ids, sizes=None, vision_ids=()) -> RowMeta:  # fmt: skip
+             eos_and_pad_ids, sizes=None, vision_ids=(), image_pad=None) -> RowMeta:  # fmt: skip
     """RowMeta from the host lists TRL already holds. A row is truncated when its last id is not in eos_and_pad_ids
-    (TRL's own rule, grpo_trainer.py 2604-2606, with TRL's list)."""
+    (TRL's own rule, grpo_trainer.py 2604-2606, with TRL's list). image_pad: (image pad id, spatial merge size), or
+    None for a text model (pixel rows 0)."""
     if any(not c for c in completion_ids_list):
         raise ValueError("an empty answer: TRL's truncation rule reads its last id")
     ends = set(eos_and_pad_ids)
@@ -83,8 +86,10 @@ def row_meta(prompt_ids_list, completion_ids_list, image_ids, G: int, mask_trunc
     layout = [seen.setdefault((tuple(p), z), len(seen))
               for p, z in zip(prompt_ids_list, sizes or [None] * len(clen), strict=True)]  # fmt: skip
     bad = rope_bad_rows(prompt_ids_list, completion_ids_list, prompt_ids_list, vision_ids)
+    pad, merge = image_pad or (None, 0)
     return RowMeta(i32([len(p) for p in prompt_ids_list]), i32(clen), i32(image_ids),
-                   i32([i // G for i in range(len(clen))]), i32(layout), i32(bad))  # fmt: skip
+                   i32([i // G for i in range(len(clen))]), i32(layout), i32(bad),
+                   i32([list(p).count(pad) * merge**2 for p in prompt_ids_list]))  # fmt: skip
 
 
 class MetaRow(typing.NamedTuple):
@@ -96,6 +101,7 @@ class MetaRow(typing.NamedTuple):
     group: int
     layout: int
     rope_bad: int
+    pixel_rows: int
 
 
 def host_rows(meta: RowMeta) -> list[MetaRow]:
@@ -117,9 +123,14 @@ def image_ids(rows) -> list[int]:
 
 
 def check_meta(batch: dict) -> None:
-    """C4 step 5 (--check-meta-every): host_meta's lengths equal the device mask sums; raises naming field and row."""
-    for field, mask in (("prompt_len", "prompt_mask"), ("completion_len", "completion_mask")):
-        for i, (r, d) in enumerate(zip(batch["host_meta"], batch[mask].sum(1).tolist(), strict=True)):
+    """C4 step 5 (--check-meta-every): host_meta's lengths equal the device mask sums and its pixel rows the grid's;
+    raises naming field and row."""
+    dev = {f: batch[m].sum(1).tolist() for f, m in (("prompt_len", "prompt_mask"),
+                                                     ("completion_len", "completion_mask"))}  # fmt: skip
+    if batch.get("image_grid_thw") is not None:
+        dev["pixel_rows"] = grid_rows(batch["image_grid_thw"], batch["num_images"])
+    for field, vals in dev.items():
+        for i, (r, d) in enumerate(zip(batch["host_meta"], vals, strict=True)):
             if getattr(r, field) != d:
                 raise AssertionError(f"host_meta row {i}: {field} {getattr(r, field)} != device {d}")
 
@@ -152,16 +163,10 @@ def group_order(meta: RowMeta, G: int) -> np.ndarray:
     n = (meta.prompt_len.astype(np.int64) + meta.completion_len).reshape(-1, G).max(1)
     return (np.argsort(-n, kind="stable")[:, None] * G + np.arange(G)).ravel()
 
-def per_row(pv, rows, nimg) -> list | None:
-    """Each row's pixel rows (its images' slices of the chunk's pixel_values), or None without images."""
-    if pv is None:
-        return None
-    out, i, at = [], 0, 0
-    for k in nimg:
-        r = sum(rows[i:i + k])
-        out.append(pv[at:at + r])
-        i, at = i + k, at + r
-    return out
+def grid_rows(grid, nimg) -> list[int]:
+    """Each row's pixel rows (its images' t*h*w) from the image grid: one host read."""
+    per_image, cut = grid.prod(-1).tolist(), np.cumsum([0, *nimg])
+    return [sum(per_image[a:b]) for a, b in zip(cut[:-1], cut[1:], strict=True)]
 
 
 def prompt_groups(prompt_ids, prompt_mask, pix, image_ids=None) -> list[tuple[int, int]] | None:
@@ -219,7 +224,7 @@ class FastForward:
         enc = getattr(self, "encoder", None) if grid is not None else None
         if enc is not None:  # C3: each row's features from the generation batch's one tower call, never pixels
             pv, ids = None, enc.check_rows(meta.image_id if meta is not None else self.row_image_ids, nimg, model)
-        rows = grid.prod(-1).tolist() if pv is not None else None  # pixel rows per image (one host read)
+        rows = None if pv is None else meta.pixel_rows.tolist() if meta is not None else grid_rows(grid, nimg)
         P = input_ids.size(1) - logits_to_keep
         rope = getattr(self, "rope", None)
         pos = None
@@ -236,8 +241,8 @@ class FastForward:
             e = min(s + size, n)
             if self.shared_prefix and pos is not None and not compute_aux_loss and rope.hooks(model):
                 k = sum(nimg[s:e])
-                r = 0 if rows is None else sum(rows[img:img + k])
-                pix = None if enc is not None else per_row(pv[row:row + r], rows[img:img + k], nimg[s:e])
+                r = 0 if rows is None else sum(rows[s:e])
+                pix = None if pv is None else list(pv[row:row + r].split(rows[s:e]))
                 chunk_ids = None if enc is None else ids[s:e]
                 if meta is None:
                     runs = prompt_groups(input_ids[s:e, :P], attention_mask[s:e, :P], pix, chunk_ids)
@@ -267,7 +272,7 @@ class FastForward:
                 if enc is not None:  # taken by the base's forward (EncoderCache.inject): TRL passes no such kwarg
                     enc.pending = (enc.outputs(ids[s:e]), grid[img:img + k])
                 else:
-                    r = sum(rows[img:img + k])
+                    r = sum(rows[s:e])
                     sub |= {"pixel_values": pv[row:row + r], "image_grid_thw": grid[img:img + k],
                             "num_images": nimg[s:e]}  # fmt: skip
                     row += r
@@ -1267,10 +1272,12 @@ class FastGRPO(FastForward, GRPOTrainer):
             cfg = getattr(self.model, "config", None)
             vision = [getattr(cfg, k, None) for k in ("image_token_id", "video_token_id", "vision_start_token_id",
                                                       "vision_end_token_id")]  # fmt: skip
+            merge = getattr(getattr(cfg, "vision_config", None), "spatial_merge_size", None)
             self.meta = row_meta(out[0], out[1], image_ids(self.rows), self.num_generations,
                                  self.mask_truncated_completions, eos_and_pad,
                                  [getattr(r.get("image"), "size", None) for r in self.rows],
-                                 [v for v in vision if v is not None])  # fmt: skip
+                                 [v for v in vision if v is not None],
+                                 (vision[0], merge) if vision[0] is not None and merge else None)  # fmt: skip
         if self.encoder is not None and self.rows is not None:
             self.encode_images()
         self.prefetch_rewards(out[3], out[1])
