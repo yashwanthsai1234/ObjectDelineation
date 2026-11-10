@@ -319,6 +319,7 @@ def fake_trainer(**attrs):
     t.model, t._metrics = SimpleNamespace(training=True), {"train": defaultdict(list), "eval": defaultdict(list)}
     t.off_policy_mask_threshold, t.reward_funcs = None, []  # TRL's attributes
     t.accelerator = SimpleNamespace(is_main_process=False)  # log writes no seq_gaps file
+    t.state = SimpleNamespace(global_step=0, log_history=[])  # Trainer.__init__ sets one; step 0: no engine/* keys
     for k, v in attrs.items():
         setattr(t, k, v)
     return t
@@ -541,6 +542,16 @@ def test_step_time_is_the_gap_between_logs_without_a_sync(monkeypatch):
         t.log({})
         t._metrics["train"].clear()  # as TRL's log does
     assert [x.get("time/step_s") for x in logged] == [None, [30.0], [35.0]]
+
+
+def test_fake_trainer_logs_on_a_cuda_build(monkeypatch):
+    """fake_trainer's log on a CUDA build (faked) reads a Trainer's step, as the real trainer has one."""
+    from objdel import _gpucheck
+
+    logged = capture_log(monkeypatch)
+    monkeypatch.setattr(_gpucheck, "build", lambda: "cuda")
+    fake_trainer().log({})
+    assert len(logged) == 1
 
 
 def test_sync_calls_is_the_count_of_syncs_between_logs(monkeypatch):
