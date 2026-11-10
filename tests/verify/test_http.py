@@ -7,8 +7,9 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from objdel.geom import engine  # noqa: E402
 from objdel.verify import http  # noqa: E402
-from objdel.verify.api import API_VERSION, ScoreItem, Verifier, VerifyError  # noqa: E402
+from objdel.verify.api import API_VERSION, ScoreItem, Verifier  # noqa: E402
 
 
 @pytest.fixture
@@ -49,9 +50,10 @@ def test_unknown_key_is_404_and_wrong_reward_409(client, answers):
 
 
 def test_device_error_is_the_only_retryable(client, monkeypatch, answers):
-    def boom(self, items):
-        raise VerifyError("device_error", "out of memory")
-    monkeypatch.setattr(Verifier, "score", boom)
+    """U45 over HTTP: the engine's checker raising RuntimeError reaches the client as a retryable 503."""
+    def boom(*a, **k):
+        raise RuntimeError("CUDA error: out of memory")
+    monkeypatch.setattr(engine, "score_polygons", boom)
     r = client.post("/v1/score", json=body(answers))
     assert r.status_code == 503 and r.json()["error"]["retryable"] is True
 
