@@ -23,8 +23,11 @@ def check_soft_overlong(limit: int, cache: int) -> None:
 
 
 def rl_lr(model: str) -> float:
-    """The GRPO learning rate of every real run: 5e-5 for LoRA models, 5e-6 for full fine-tuning."""
-    return 5e-5 if model in _LORA else 5e-6
+    """The GRPO learning rate of every real run: 5e-5 (every model of policy.models.MODELS is LoRA, ADR-0008). An
+    unknown model raises: the full fine-tuning rate 5e-6 is a frozen record (prereg.G_PROBE), never a default."""
+    if model not in _LORA:
+        raise ValueError(f"rl_lr: unknown model {model!r}; the models are {sorted(_LORA)}")
+    return 5e-5
 
 
 # Numerics presets (B2.2, ADR-0013): the importance-sampling mode and dtype of a run. The shared parts are named first
