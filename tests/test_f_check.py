@@ -154,7 +154,7 @@ class Engine:
     def reset_prefix_cache(self):
         self.log.append(("reset_prefix_cache",))
 
-    def generate(self, rows, sampling_params=None, use_tqdm=True, lora_request=None):
+    def generate(self, rows, sampling_params=None, lora_request=None, **_):
         seed, fixed = sampling_params
         lora = lora_request and lora_request.lora_name
         self.log.append(("generate", lora, seed, fixed, [r["prompt_token_ids"] for r in rows]))
@@ -291,3 +291,100 @@ def test_after_syncs_checks_right_after_syncs_1_and_2():
     bad()
     bad()
     assert not bad.ok()
+
+
+def test_lora_seqmask_f_check_is_on_by_default_and_needs_the_b1_adapter(capsys):
+    with pytest.raises(SystemExit):
+        train_rl.parse([*BASE, "--numerics", "lora-seqmask"])
+    assert "--b1-adapter" in capsys.readouterr().err
+    a = train_rl.parse([*BASE, "--numerics", "lora-seqmask", "--b1-adapter", "b1"])
+    assert a.f_check is True and str(a.b1_adapter) == "b1"
+    assert train_rl.parse([*BASE, "--numerics", "lora-seqmask", "--no-f-check"]).f_check is False
+
+
+@pytest.mark.parametrize("sleep_mode", [True, False])
+def test_train_rl_runs_the_full_lora_check(tmp_path, monkeypatch, sleep_mode):
+    """(d): under lora-seqmask the callback carries every field (comparator values, the load count on add_lora
+    wrapped after the comparator, lora_equal after syncs 1 and 2 (mode B) or 1-3 (mode A)); the record passes."""
+    calls = {}
+
+    def comparator(vg, model, prompts, pad, b1, tmp, gap, **kw):
+        calls.update(prompts=prompts, pad=pad, b1=b1, gap=gap(["o"], True))
+        vg.llm.llm_engine.add_lora("b1")  # the comparator's own load: not counted
+        return lora_fixed() | {"prompt_expansion": True}
+
+    monkeypatch.setattr(fc, "run_comparator", comparator)
+    monkeypatch.setattr(fc, "lora_equal", lambda vg, model: True)
+    engine = SimpleNamespace(add_lora=lambda req: None)
+    vg = SimpleNamespace(llm=SimpleNamespace(llm_engine=engine), model=SimpleNamespace(
+        config=SimpleNamespace(image_token_id=IMG)), enable_sleep_mode=sleep_mode, sync_weights=lambda: None)
+    trainer = SimpleNamespace(vllm_generation=vg, num_generations=8, args=SimpleNamespace(generation_batch_size=16),
+                              lora_dir=tmp_path / "lora", comparator_prompts=lambda rows, G: [r for r in rows
+                                                                                               for _ in range(G)],
+                              way_b_gap=lambda prompts, outs, adapter: 0.5)  # fmt: skip
+    a = train_rl.parse([*BASE, "--numerics", "lora-seqmask", "--b1-adapter", "b1", "--out", str(tmp_path)])
+    cb = train_rl.f_check_callback(a, trainer, [{"k": 0}, {"k": 1}, {"k": 2}])
+    assert calls["prompts"] == [{"k": 0}] * 8 + [{"k": 1}] * 8 and calls["pad"] == IMG and calls["gap"] == 0.5
+    for step in range(1, 16):
+        vg.sync_weights()  # TRL's sync at each step: sync_lora adds the adapter once
+        engine.add_lora("policy")
+        cb.on_log(None, SimpleNamespace(global_step=step), None, {"loss": 0.1})
+        cb.on_step_end(None, SimpleNamespace(global_step=step), None)
+    rec = json.loads((tmp_path / "f_check.json").read_text())
+    assert set(fc.LORA_KEYS) <= rec.keys() and rec["load_count"] == 1 and rec["lora_equal"] is True
+    fc.check_record(rec)
+
+
+def test_train_rl_expansion_error_writes_the_record_and_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(fc, "run_comparator", lambda *a, **k: {"prompt_expansion": False, "error": "3 pads"})
+    vg = SimpleNamespace(llm=SimpleNamespace(llm_engine=SimpleNamespace(add_lora=None)),
+                         model=SimpleNamespace(config=SimpleNamespace(image_token_id=IMG)), enable_sleep_mode=True)
+    trainer = SimpleNamespace(vllm_generation=vg, num_generations=8, args=SimpleNamespace(generation_batch_size=8),
+                              lora_dir=tmp_path / "lora", comparator_prompts=lambda rows, G: rows, way_b_gap=None)
+    a = train_rl.parse([*BASE, "--numerics", "lora-seqmask", "--b1-adapter", "b1", "--out", str(tmp_path)])
+    with pytest.raises(RuntimeError, match="F check failed"):
+        train_rl.f_check_callback(a, trainer, [{"k": 0}])
+    rec = json.loads((tmp_path / "f_check.json").read_text())
+    assert rec["prompt_expansion"] is False and rec["passed"] is False
+
+
+def test_way_b_gap_scores_each_prompt_group_with_the_adapter_on_or_off(monkeypatch):
+    """Mean |vLLM logp - trainer logp| over the answer tokens only; one forward per prompt group; the image prepared
+    once per row of the group; adapter False runs under disable_adapter."""
+    import contextlib
+
+    from trl import GRPOTrainer
+
+    seen = []
+
+    def forward(self, model, ids, mask, T, batch_size=None, **kw):
+        seen.append((ids.shape, T, batch_size, model.off, kw.get("num_images"), int(kw["mm_token_type_ids"].sum())))
+        return torch.full((batch_size, T), -1.0), None
+
+    monkeypatch.setattr(GRPOTrainer, "_get_per_token_logps_and_entropies", forward)
+
+    class Model:
+        off = False
+        config = SimpleNamespace(image_token_id=IMG)
+
+        @contextlib.contextmanager
+        def disable_adapter(self):
+            Model.off = True
+            yield
+            Model.off = False
+
+    t = SimpleNamespace(model=Model(), _tokenizer=SimpleNamespace(pad_token_id=0),
+                        accelerator=SimpleNamespace(device="cpu"),
+                        processing_class=SimpleNamespace(image_processor=lambda images, return_tensors: {
+                            "pixel_values": torch.zeros(len(images), 4), "image_grid_thw": torch.ones(len(images), 3)}))
+    img = object()
+    p1 = {"prompt_token_ids": [START, IMG, IMG, END], "multi_modal_data": {"image": img}}
+    p2 = {"prompt_token_ids": [START, END]}
+    lp = lambda *v: SimpleNamespace(token_ids=list(range(1, len(v) + 1)),  # noqa: E731
+                                    logprobs=[{i + 1: SimpleNamespace(logprob=x)} for i, x in enumerate(v)])
+    outs = [SimpleNamespace(outputs=[o]) for o in (lp(-1.0, -1.5), lp(-0.5), lp(-1.0), lp(-2.0, -1.0, -1.0))]
+    gap = fast.FastGRPO.way_b_gap(t, [p1, p1, p2, p2], outs, False)
+    assert gap == pytest.approx((0 + 0.5 + 0.5 + 0 + 1.0 + 0 + 0) / 7)  # padded positions never count
+    assert seen == [((2, 6), 2, 2, True, [1, 1], 4), ((2, 5), 3, 2, True, None, 0)]
+    fast.FastGRPO.way_b_gap(t, [p1], outs[:1], True)
+    assert seen[-1][3] is False

@@ -111,7 +111,11 @@ def parse(argv=None) -> argparse.Namespace:
                     help="configs.NUMERICS preset (default: the B1 control)")
     ap.add_argument("--f-check", action=argparse.BooleanOptionalAction, default=None,
                     help="B2.2 F step 5: NaN/inf, engine dtype and the other checks over steps 1-15, written to "
-                         "<out>/f_check.json (default on under --numerics fp16-seqmask; an error under another preset)")
+                         "<out>/f_check.json (default on under --numerics fp16-seqmask and lora-seqmask; an error "
+                         "under another preset)")
+    ap.add_argument("--b1-adapter", type=Path,
+                    help="B2.2 F step 4b.2: the B1 final adapter the F comparator loads beside the run's own "
+                         "({rd}/b1/final_adapter); needed by --f-check under --numerics lora-seqmask")
     ap.add_argument("--opsm-start-delta", type=float,
                     help="off_policy_mask_threshold of steps 1-20; only with --numerics bf16-tis-opsm (B2.4 rule 4)")
     ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
@@ -150,6 +154,8 @@ def parse(argv=None) -> argparse.Namespace:
     if a.f_check and a.numerics not in f_check.PRESETS:
         ap.error(f"--f-check: only under --numerics {' or '.join(f_check.PRESETS)}, not {a.numerics}")
     a.f_check = a.numerics in f_check.PRESETS if a.f_check is None else a.f_check
+    if a.f_check and a.numerics == "lora-seqmask" and not a.merge_last and a.b1_adapter is None:
+        ap.error("--f-check under --numerics lora-seqmask needs --b1-adapter (the comparator's B1 adapter)")
     if a.opsm_start_delta is not None and (a.numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
         ap.error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
     grpo = json.loads(a.grpo)
@@ -346,6 +352,37 @@ def with_caps(train, a):
     return train.add_column("cap", caps)
 
 
+def f_check_callback(a, trainer, train):
+    """f_check.FCheck of the run's preset. fp16-seqmask: NaN/inf and the engine dtype. lora-seqmask: the comparator,
+    restore base hash and timing measured now, before step 1 (f_check.run_comparator on the first generation
+    batch's prompts, rows 0-31 in file order, scored by way (b)); then the LoRA loads counted on add_lora and the
+    packed-layout equality after sync 1 and after the first sleep/wake cycle. An expansion error writes the record
+    and raises here."""
+    import tempfile
+
+    import torch
+
+    from objdel.train import f_check
+
+    vg = trainer.vllm_generation
+    if a.numerics == "fp16-seqmask":
+        engine = vg.llm.llm_engine
+        return f_check.FCheck(a.out, a.numerics, {"engine_dtype_ok": lambda: engine.model_config.dtype == torch.float16})
+    model, G = vg.model, trainer.num_generations
+    prompts = trainer.comparator_prompts([train[i] for i in range(trainer.args.generation_batch_size // G)], G)
+    tmp = Path(tempfile.mkdtemp(prefix="objdel-lora-b1-", dir=Path(trainer.lora_dir).parent))
+    fixed = f_check.run_comparator(vg, model, prompts, model.config.image_token_id, a.b1_adapter, tmp,
+                                   lambda outs, adapter: trainer.way_b_gap(prompts, outs, adapter))
+    cb = f_check.FCheck(a.out, a.numerics, {}, fixed=fixed)
+    if not fixed.get("prompt_expansion", True):
+        cb.finish()  # writes f_check.json and raises
+    engine = vg.llm.llm_engine
+    cb.loads = engine.add_lora = f_check.count_calls(engine.add_lora)  # wrapped after the comparator's own load
+    probe = f_check.AfterSyncs(vg, lambda: f_check.lora_equal(vg, model), 2 if vg.enable_sleep_mode else 3)
+    cb.probes = {"lora_equal": probe.ok}
+    return cb
+
+
 def main(argv=None) -> int:
     a = parse(argv)
     if a.merge_last:
@@ -353,7 +390,7 @@ def main(argv=None) -> int:
     from transformers.trainer_utils import get_last_checkpoint
 
     from experiments.phase2.g_probe import make_trainer, save_json
-    from objdel.train import configs, dataset, f_check, serve
+    from objdel.train import configs, dataset, serve
 
     check_flags(a)
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
@@ -387,12 +424,8 @@ def main(argv=None) -> int:
     guard = LocGuard() if a.reward == "v5" else None
     trainer, proc, lr = make_trainer(a, a.ckpt, train, a.steps, eval_dataset=heldout, check=check,
                                      calls=[c for c in (stop, guard) if c], reward=spec, **over)
-    if a.f_check:  # fp16-seqmask: NaN/inf over steps 1-15 and the engine dtype (lora-seqmask is refused above)
-        import torch
-
-        engine = trainer.vllm_generation.llm.llm_engine
-        trainer.add_callback(f_check.FCheck(a.out, a.numerics,
-                                            {"engine_dtype_ok": lambda: engine.model_config.dtype == torch.float16}))
+    if a.f_check:
+        trainer.add_callback(f_check_callback(a, trainer, train))
     t0 = time.time()
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()

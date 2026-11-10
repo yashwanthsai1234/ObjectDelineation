@@ -1339,6 +1339,63 @@ class FastGRPO(FastForward, GRPOTrainer):
             llm.generate = capped
         llm.generate.one_pad = True
 
+    def comparator_prompts(self, rows: list[dict], G: int) -> list[dict]:
+        """B2.2 F step 4, the 32 x 8 batch: each dataset row G times, through TRL's own prompt path (the image into
+        the conversational prompt, then `_tokenize_prompts`, ImageMemo on), in TRL's vLLM form: the trainer's
+        processor-expanded ids and multi_modal_data (send them only through vllm_generate_checked)."""
+        rows = [r for r in rows for _ in range(G)]
+        prompts = [trl_grpo.prepare_multimodal_messages(r["prompt"], images=[r["image"]]) for r in rows]
+        ids, images, _ = self._tokenize_prompts(prompts)
+        return [{"prompt_token_ids": list(i)} | ({"multi_modal_data": {"image": im[0] if len(im) == 1 else im}}
+                if im else {}) for i, im in zip(ids, images or [None] * len(ids), strict=True)]  # fmt: skip
+
+    @torch.no_grad()
+    def way_b_gap(self, prompts: list[dict], outputs, adapter: bool) -> float:
+        """B2.3b way (b): mean |vLLM logp - trainer logp| over every answer token of `outputs` (vLLM RequestOutputs of
+        `prompts`), the trainer scoring with TRL's plain forward (no FastGRPO patch), the active adapter on
+        (adapter True) or disabled. One forward per run of rows sharing a prompt."""
+        def same_prompt(a, b):  # same ids and the same image object (comparator_prompts repeats each row G times)
+            img = ("multi_modal_data" in a and a["multi_modal_data"]["image"]) is (
+                "multi_modal_data" in b and b["multi_modal_data"]["image"])
+            return img and a["prompt_token_ids"] == b["prompt_token_ids"]
+
+        pad = self.model.config.image_token_id
+        total = n = 0.0
+        i = 0
+        while i < len(prompts):
+            j = i
+            while j < len(prompts) and same_prompt(prompts[j], prompts[i]):
+                j += 1
+            ids_p = torch.tensor(prompts[i]["prompt_token_ids"])
+            outs = [o.outputs[0] for o in outputs[i:j]]
+            T = max(len(o.token_ids) for o in outs)
+            comp = torch.full((j - i, T), self._tokenizer.pad_token_id)
+            cmask = torch.zeros(j - i, T, dtype=torch.long)
+            vlp = torch.zeros(j - i, T, dtype=torch.float64)
+            for r, o in enumerate(outs):
+                k = len(o.token_ids)
+                comp[r, :k], cmask[r, :k] = torch.tensor(list(o.token_ids)), 1
+                vlp[r, :k] = torch.tensor([lp[t].logprob for t, lp in zip(o.token_ids, o.logprobs, strict=True)])
+            ids = torch.cat([ids_p.expand(j - i, -1), comp], 1)
+            mask = torch.cat([torch.ones(j - i, len(ids_p), dtype=torch.long), cmask], 1)
+            kw = {"mm_token_type_ids": (ids == pad).long()}
+            image = prompts[i].get("multi_modal_data", {}).get("image")
+            if image is not None:
+                px = self.processing_class.image_processor(images=[image] * (j - i), return_tensors="pt")
+                kw |= {"pixel_values": px["pixel_values"], "image_grid_thw": px["image_grid_thw"],
+                       "num_images": [1] * (j - i)}  # fmt: skip
+            dev = self.accelerator.device
+            kw = {k: v.to(dev) if torch.is_tensor(v) else v for k, v in kw.items()}
+            off = self.model.disable_adapter() if not adapter else contextlib.nullcontext()
+            with off:
+                lp = GRPOTrainer._get_per_token_logps_and_entropies(self, self.model, ids.to(dev), mask.to(dev), T,
+                                                                    batch_size=j - i, **kw)[0]
+            m = cmask.bool()
+            total += (lp.double().cpu() - vlp).abs()[m].sum().item()
+            n += int(m.sum())
+            i = j
+        return total / max(n, 1)
+
     def floating_point_ops(self, inputs):
         """FLOP count: always 0, which skips the Trainer's per-micro-batch module walk."""
         return 0  # perf F3: the Trainer default walks ~2.5k PEFT modules per micro-batch
