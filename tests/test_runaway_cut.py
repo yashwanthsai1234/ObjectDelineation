@@ -62,6 +62,14 @@ def test_outline_limit_is_never_raised_above_the_model_budget():
     train_rl.check_flags(args(grpo='{"max_completion_length": 1200}'))
 
 
+def test_soft_overlong_formula_values():
+    """U-CO4: TRL's DAPO penalty at L = 1200, c = 200 is 0 up to 1,000 tokens, then falls linearly to -1 at 1,200."""
+    from trl.rewards import get_soft_overlong_punishment
+
+    penalty = get_soft_overlong_punishment(max_completion_len=1200, soft_punish_cache=200)
+    assert penalty([[1] * n for n in (999, 1000, 1100, 1200, 1201)]) == [0.0, 0.0, -0.5, -1.0, -1.0]
+
+
 def test_soft_overlong_rule():
     """U-CO4: L - c >= longest doctor outline + 32 (1,214 today)."""
     configs.check_soft_overlong(1536, 322)
@@ -69,6 +77,7 @@ def test_soft_overlong_rule():
         configs.check_soft_overlong(1536, 323)
     with pytest.raises(ValueError):
         configs.check_soft_overlong(1200, 200)  # the penalty would start at 1,000 tokens
+    assert configs.LONGEST_OUTLINE == 1182
 
 
 def test_beta_zero_builds_and_b1_keeps_1e3(tmp_path):

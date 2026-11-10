@@ -1364,6 +1364,27 @@ def test_beta_zero_runs_only_the_update_forward(monkeypatch, tmp_path):
     assert t.args.beta == 0.0 and len(calls) == 2
 
 
+def test_dr_grpo_loss_scales_by_the_completion_limit_on_a_one_row_example():
+    """U-CO2: dr_grpo divides the summed token loss by rows x max_completion_length (TRL 1.17, grpo_trainer.py 3285),
+    so lowering the limit from 1,536 to 1,200 scales the loss by 1,536 / 1,200 = 1.28. One row, 3 answer tokens,
+    ratio 1 (the old logprobs are the new ones), advantage 2: the token loss is -2 each, the sum -6."""
+    loss = {}
+    for limit in (1536, 1200):
+        t = trainer(Plain, top_entropy_quantile=1.0, aux_loss_enabled=False, off_policy_mask_threshold=None,
+                    importance_sampling_level="token", beta=0.0, loss_type="dr_grpo", epsilon_low=0.2,
+                    epsilon_high=0.28, args=type("A", (), {"delta": None})(), use_vllm=False,
+                    max_completion_length=limit, current_gradient_accumulation_steps=1,
+                    _entropy_bonus_enabled=False)  # fmt: skip
+        t._get_per_token_logps_and_entropies = lambda *a, **k: (torch.zeros(1, 3), torch.zeros(1, 3), None)
+        t.accelerator.gather, t.accelerator.reduce = (lambda x: x), (lambda x, reduction: x)
+        loss[limit] = t._compute_loss(None, {"prompt_ids": torch.ones(1, 2, dtype=torch.long),
+                                             "prompt_mask": torch.ones(1, 2, dtype=torch.long),
+                                             "completion_ids": torch.ones(1, 3, dtype=torch.long),
+                                             "completion_mask": torch.ones(1, 3, dtype=torch.long),
+                                             "advantages": torch.tensor([2.0])}).item()  # fmt: skip
+    assert loss[1536] == -0.00390625 and loss[1200] == pytest.approx(-0.005)  # -6 / 1536 = -1 / 256; -6 / 1200
+
+
 def test_tokenize_prompts_with_prompt_memo_gives_trls_prompt_ids_tokenizing_each_layout_once():
     """C2 step 1 (--prompt-memo): rows are grouped by (rendered text, image sizes); TRL tokenizes one row per group.
     Prompt ids and images equal TRL's own; the vLLM path drops the multimodal fields."""
