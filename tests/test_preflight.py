@@ -221,6 +221,73 @@ def test_a_planted_shared_patient_fails_disjointness(cfg, tmp_path):
     assert PF.patients(PF.inputs(cfg)) == [f"{PF.EXAMS[0]}: 1 patients also in training, e.g. ['P1']"]
 
 
+# ------------------------------------------------------------------------------- the upload bundle (gpu-c, 2026-11-10)
+def plant_bundle(path: Path, files: dict[str, bytes]) -> Path:
+    import io
+    import tarfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(path, "w") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return path
+
+
+def cache(fp: str) -> bytes:
+    import io
+
+    import numpy as np
+
+    buf = io.BytesIO()
+    np.savez(buf, fingerprint=fp)
+    return buf.getvalue()
+
+
+def test_the_bundle_check_refuses_stale_caches_and_a_missing_eval_view(rows_cfg, tmp_path):
+    """Box C: the bundle held caches of reward fingerprint b1eb9f51 and no lidc-val-edge, which b1_rows' eval reads;
+    final_eval died with StaleCacheError after training. The rows root comes from HF, not the bundle."""
+    from objdel.verify.reward.spec import fingerprint
+
+    good = {"prepared/manifest.json": b"{}", "prepared/caches/lidc/s1/n000/z001/nodule.npz": cache(fingerprint()),
+            "eval_views/lidc-val-shifted/manifest.json": b"{}",
+            "eval_views/lidc-val-shifted/caches/lidc/s2/n000/z001/nodule.npz": cache(fingerprint())}
+    tar = plant_bundle(tmp_path / "b" / "bundle-lidc.tar", good)
+    s = PF.inputs(rows_cfg.cfg, tar.parent)
+    assert s.bundle == tar
+    assert PF.bundle(s) == [f"{tar}: no eval_views/lidc-val-edge/ (a {{data}} input of the spec)"]
+    plant_bundle(tar, good | {"eval_views/lidc-val-edge/manifest.json": b"{}",
+                              "prepared/caches/lidc/s1/n000/z002/nodule.npz": cache("b1eb9f51" * 8)})
+    assert PF.bundle(s) == [f"{tar}: prepared/caches/lidc/s1/n000/z002/nodule.npz built under reward fingerprint "
+                            f"b1eb9f51b1eb, not {fingerprint()[:12]}: rebuild the bundle (vast/bundle.py)"]
+    plant_bundle(tar, good | {"eval_views/lidc-val-edge/manifest.json": b"{}"})
+    assert PF.bundle(s) == []
+
+
+def test_the_bundle_check_samples_the_caches_and_needs_the_bundle(cfg, tmp_path):
+    """A fixed handful of the 12.7k caches, spread over the name order (eval views first, then prepared): the tar
+    headers and CACHE_SAMPLE small members are read, never the 3 GB."""
+    names = [f"prepared/caches/lidc/s/n000/z{i:03d}/nodule.npz" for i in range(5 * PF.CACHE_SAMPLE + 3)]
+    got = PF.sampled(names[::-1])
+    assert got[0] == names[0] and got == names[::5] and len(got) == PF.CACHE_SAMPLE + 1
+    assert PF.sampled(names[:3]) == names[:3]
+    assert PF.bundle(PF.inputs(cfg, tmp_path / "none")) == [
+        f"no bundle {tmp_path / 'none' / 'bundle-lidc.tar'}: build it (vast/bundle.py) or pass --bundle-dir"]
+
+
+def test_preflight_reads_the_bundle_sync_up_uploads(cfg, monkeypatch, tmp_path):
+    from experiments.phase2.vast import policy
+
+    assert PF.BUNDLE_DIR == policy.CLI["sync_up"]["--bundle-dir"]["default"]
+    assert PF.inputs(cfg).bundle == PF.BUNDLE_DIR / "bundle-lidc.tar"
+    assert [n for n, _ in PF.CHECKS][:2] == ["DATA spec inputs", "DATA upload bundle"]
+    seen = []
+    monkeypatch.setattr(PF, "CHECKS", [("DATA a", lambda s: seen.append(s.bundle) or [])])
+    assert PF.main(["--config", str(cfg), "--bundle-dir", str(tmp_path / "b")]) == 0
+    assert seen == [tmp_path / "b" / "bundle-lidc.tar"]
+
+
 # ------------------------------------------------------------------------------- ROWS root and revision (B1.3, I19)
 def gates_report(monkeypatch, report):
     from experiments.phase2 import audit_data

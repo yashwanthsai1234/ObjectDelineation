@@ -125,3 +125,5 @@ e_moves_manual's targets objdel.data.targets and objdel.data.targets.build (they
 dropped targets re-exports name the defining module (objdel.data.targets.build.build_target). old_names re-recorded
 for the split module that stays: train/dataset.py loses _PINS, _BATCH, _prepare, window_record, _jobs and prepare
 (all in objdel.data.prepare). Goldens 1-6, host_syncs and tests_import_experiments unchanged.
+GPU retest fix (impl2-gpufix2, 2026-11-10): old_names re-recorded: preflight gains BUNDLE_DIR, CACHE_SAMPLE, bundle
+and sampled (the DATA upload bundle check). The other goldens are unchanged.

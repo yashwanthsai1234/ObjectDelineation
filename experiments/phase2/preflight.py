@@ -1,12 +1,15 @@
 """Preflight: everything that can be proven on the Mac, before any GPU is rented (the launch gate reads its stamp).
 
-    python -I -m experiments.phase2.preflight --config specs/b1_rows.yaml     (make preflight CONFIG=specs/...)
+    python -I -m experiments.phase2.preflight --config specs/b1_rows.yaml [--bundle-dir DIR]
+    (make preflight CONFIG=specs/... [BUNDLE_DIR=DIR]; DIR as sync_up's --bundle-dir, default build/bundles)
 
 The config is a run spec (objdel.core.spec.load_spec). On the Mac, {data} is the data root ($OBJDEL_DATA_ROOT, else
 data; `local`). The training view T of each check is each sft stage's view, else the spec's bundle_view; a spec with
 neither (no training) has no T. Checks, in order; the stage (DATA / CHECKER / CODE) with a failure is finished, the
 later stages are not run:
-  DATA     every {data}/... input of the rl, eval, select and probe stages exists; bundle integrity (each T's rows.jsonl
+  DATA     every {data}/... input of the rl, eval, select and probe stages exists; the upload bundle (DIR/bundle-lidc.tar)
+           holds each of them but rows/<name> and a sample of its expert caches has the current reward fingerprint;
+           bundle integrity (each T's rows.jsonl
            and context hashes, the eval-view file hashes), patients shared between T and any exam (or probe) view,
            coverage of every exam view by T (objdel.data.coverage), prompt text identical, T's CT window consistent,
            every T target parses and is legal for the reference checker; per rl stage trained on {data}/rows/<name>
@@ -49,16 +52,20 @@ QUICK_TESTS = ["tests/test_data_coverage.py", "tests/test_preflight.py", "tests/
                "tests/test_train_configs.py", "tests/test_vast.py", "tests/test_p2_v1_select.py"]  # fmt: skip
 DRY_RUN = "tests/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select on a tiny model, CPU
 VASTAI_VERSION = "1.11.0"  # the CLI pin (CLEAN13): an isolated `uv tool`, never in pyproject.toml
+BUNDLE_DIR = ROOT / "build" / "bundles"  # sync_up's --bundle-dir default (policy.CLI); --bundle-dir here too
+CACHE_SAMPLE = 16  # expert caches whose fingerprint the bundle check reads (of ~12.7k in the LIDC bundle)
 
 
 @dataclass(frozen=True)
 class Inputs:
-    """What the checks read: the spec, the Mac data root, the training views T and the rl stages on a rows root."""
+    """What the checks read: the spec, the Mac data root, the training views T, the rl stages on a rows root and the
+    LIDC bundle sync_up uploads."""
 
     spec: object
     root: Path
     views: tuple[Path, ...]
     rows: tuple
+    bundle: Path
 
 
 def data_root() -> Path:
@@ -79,7 +86,7 @@ def local(template: str) -> Path | None:
     return data_root() / rest
 
 
-def inputs(cfg: Path) -> Inputs:
+def inputs(cfg: Path, bundle_dir: Path = BUNDLE_DIR) -> Inputs:
     """The spec's inputs on the Mac: the sft views, the rl rows stages and the data root."""
     from objdel.core.spec import load_spec
 
@@ -87,7 +94,7 @@ def inputs(cfg: Path) -> Inputs:
     views = [Path(s.data_root) / s.view if s.data_root else root / s.view for s in spec.stages if s.kind == "sft"]
     views = views or ([root / spec.bundle_view] if spec.bundle_view else [])
     rows = [s for s in rl_stages(spec) if s.train and re.fullmatch(r"\{data\}/rows/[^/]+", s.train)]
-    return Inputs(spec, root, tuple(views), tuple(rows))
+    return Inputs(spec, root, tuple(views), tuple(rows), Path(bundle_dir) / "bundle-lidc.tar")
 
 
 def spec_inputs(spec) -> list[str]:
@@ -162,6 +169,38 @@ def given_inputs(s: Inputs) -> list[str]:
                 bad.append(f"{t}: no folder {p}")
         except ValueError as e:
             bad.append(str(e))
+    return bad
+
+
+def sampled(names: list[str]) -> list[str]:
+    """About CACHE_SAMPLE of the names, evenly spread over their sorted order (the first always)."""
+    return sorted(names)[::max(1, len(names) // CACHE_SAMPLE)]
+
+
+def bundle(s: Inputs) -> list[str]:
+    """The LIDC bundle sync_up uploads holds every {data} input of the spec (but rows/<name>, which fetch_hf.sh
+    brings), and a sample of its expert caches (caches/**.npz) has the current reward fingerprint. Reads the tar
+    headers and the sampled members only. Box C, 2026-11-10: a Nov 5 bundle held b1eb9f51 caches and no
+    lidc-val-edge, and final_eval died with StaleCacheError after training."""
+    import tarfile
+
+    import numpy as np
+
+    from objdel.verify.reward.spec import fingerprint
+
+    if not s.bundle.is_file():
+        return [f"no bundle {s.bundle}: build it (vast/bundle.py) or pass --bundle-dir"]
+    with tarfile.open(s.bundle, "r:") as tar:
+        members = {m.name: m for m in tar.getmembers()}
+        bad = [f"{s.bundle}: no {rest}/ (a {{data}} input of the spec)" for t in dict.fromkeys(spec_inputs(s.spec))
+               if not re.fullmatch(r"\{data\}/rows/[^/]+", t) and not any(n.startswith(
+                   (rest := t.removeprefix("{data}/")) + "/") for n in members)]  # fmt: skip
+        want = fingerprint()
+        for name in sampled([n for n in members if "caches/" in n and n.endswith(".npz")]):
+            with np.load(tar.extractfile(members[name]), allow_pickle=False) as z:
+                if (fp := str(z["fingerprint"])) != want:
+                    bad.append(f"{s.bundle}: {name} built under reward fingerprint {fp[:12]}, not {want[:12]}: "
+                               "rebuild the bundle (vast/bundle.py)")
     return bad
 
 
@@ -413,7 +452,7 @@ def runbooks(s: Inputs, root: Path = ROOT) -> list[str]:
 
 
 CHECKS = [
-    ("DATA spec inputs", given_inputs),
+    ("DATA spec inputs", given_inputs), ("DATA upload bundle", bundle),
     ("DATA bundle integrity", view_integrity), ("DATA patient disjointness", patients),
     ("DATA prompt identity", prompts), ("DATA CT window", ct_window), ("DATA training targets legal", targets),
     ("DATA coverage of the exam views", coverage), ("DATA ROWS root", rows_root), ("DATA ROWS revision", rows_revision),
@@ -429,9 +468,12 @@ def main(argv=None) -> int:
     """The preflight CLI: run every check on --config and write the stamp only when all pass."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--config", type=Path, required=True, help="a run spec (specs/<name>.yaml)")
-    cfg = ap.parse_args(argv).config.resolve()
+    ap.add_argument("--bundle-dir", type=Path, default=BUNDLE_DIR,
+                    help="the folder of bundle-lidc.tar, as sync_up's --bundle-dir (default build/bundles)")
+    a = ap.parse_args(argv)
+    cfg, bundle_dir = a.config.resolve(), a.bundle_dir.resolve()
     os.chdir(ROOT)
-    s = inputs(cfg)
+    s = inputs(cfg, bundle_dir)
     failed = ""
     stamp = {"config": str(cfg.resolve()), "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "hashes": hashes(cfg),
              "checks": {}, "pass": True}  # fmt: skip

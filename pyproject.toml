@@ -77,7 +77,7 @@ markers = [
     "gpu: needs the CUDA build on a GPU box (skipped on the CPU build)",
     "sanitizer: runs under compute-sanitizer in make gpu-check (small fixed corpus)",
     "docs_build: needs the docs extra and builds the site (make docs)",
-    "post_commit: reads the git index; owner and CI only",
+    "post_commit: reads the git index (and archive/); owner and CI only, never the box (make gpu-check deselects it)",
 ]
 
 [tool.coverage.run]

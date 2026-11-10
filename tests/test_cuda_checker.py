@@ -520,6 +520,7 @@ def test_every_device_copy_is_ordered_on_its_lane_stream():
     assert len(calls) == 11 and all(c.endswith(", st") for c in calls), calls
 
 
+@pytest.mark.post_commit
 def test_slot_polygonizer_is_archived():
     """S04 (D2 part): the dense slot polygonizer lives in archive/ only. Owner's layout (a255988, as CT-87): archive/
     is git-ignored and kept on the owner's disk, so the archived files are read only where the folder exists."""
@@ -552,6 +553,7 @@ def test_archived_skips_on_a_synced_source_without_archive(tmp_path):
         archived(tmp_path, "cuda_validity")
 
 
+@pytest.mark.post_commit
 def test_shape_totals_is_archived():
     """S04 (D6 part): the one-thread-per-shape validity totals live in archive/ only; the engine runs the warp form."""
     root = Path(__file__).resolve().parents[1]

@@ -45,6 +45,10 @@ def test_every_listed_entry_collects_a_test_and_the_sanitizer_corpus_is_selected
     for node in ("tests/test_cuda_checker.py::test_validity_adversarial_families",
                  "tests/test_scorer_sums.py::test_g01_golden", "tests/test_engine_counters.py::"):
         assert any(g.startswith(node) for g in got), node
+    archive = ("tests/test_cuda_checker.py::test_slot_polygonizer_is_archived",
+               "tests/test_cuda_checker.py::test_shape_totals_is_archived")
+    assert not set(archive) & set(got)  # git-index tests: the box's source has no .git or archive/ (they would skip)
+    assert set(archive) <= set(_collect(["tests/test_cuda_checker.py"], "not slow"))  # make test still runs them
     san = _collect(ids, "gpu and sanitizer")
     assert {g.split("[")[0] for g in san} == {"tests/test_gpu_sanitize.py::test_san", "tests/test_gpu_sanitize.py::"
                                              "test_san_no_leak", "tests/test_gpu_sanitize.py::test_san_pool",
