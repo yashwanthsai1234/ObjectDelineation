@@ -22,10 +22,13 @@ def check_model_files(path):
     """U-RC6: the folder's config, tokenizer and processor load, and the chat template renders one text prompt."""
     from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 
-    assert AutoConfig.from_pretrained(path).architectures == ["Qwen3VLForConditionalGeneration"]
-    assert AutoTokenizer.from_pretrained(path) is not None
+    cfg = AutoConfig.from_pretrained(path)
+    assert cfg.architectures == ["Qwen3VLForConditionalGeneration"]
+    assert cfg.text_config.max_position_embeddings >= 256  # the engine's max_model_len
+    tokenizer = AutoTokenizer.from_pretrained(path)
+    assert tokenizer("Outline of object A:")["input_ids"] and tokenizer.pad_token_id is not None
     processor = AutoProcessor.from_pretrained(path)
-    assert getattr(processor, "image_processor", None) is not None
+    assert getattr(processor, "image_processor", None) is not None and processor.image_processor.patch_size == 16
     chat = [{"role": "user", "content": [{"type": "text", "text": PROMPT}]}]
     assert PROMPT in processor.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
 
@@ -47,7 +50,7 @@ def engine():
     from vllm import LLM
 
     ckpt = Path(os.environ["OBJDEL_RUN_DIR"]) / "ckpt"
-    assert ckpt.is_dir(), f"{ckpt} is missing: fetch_hf.sh <run> {REVISION} puts the start checkpoint there"
+    assert (ckpt / "config.json").is_file(), f"{ckpt}: no start checkpoint (fetch_hf.sh <run> {REVISION} puts it there)"
     return LLM(model=str(ckpt), max_model_len=256, gpu_memory_utilization=0.3, enforce_eager=True)
 
 

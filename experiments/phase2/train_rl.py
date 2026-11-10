@@ -126,6 +126,16 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--check-rope-every", type=int, default=50, metavar="N",
                     help="C2, with --host-meta: compare the template rope positions with HF on steps 1, N+1, ... "
                          "(0: never)")
+    ap.add_argument("--checks-from-step", type=int, default=1, metavar="S",
+                    help="C0: --check-*-every and --record-batches act from step S on (the fast arm's check steps)")
+    ap.add_argument("--record-batches", type=Path, metavar="DIR",
+                    help="C0: from step --checks-from-step on, save each generation batch (ids, masks, grids, "
+                         "RowMeta, rope positions) to DIR/step<N>.pt; DIR must be empty or absent")
+    ap.add_argument("--expect-step1", type=Path, metavar="FILE",
+                    help="C0: after step 1 compare its log with step 1 of FILE (another arm's rl.json, E-EQ6); on a "
+                         "mismatch write <out>/step1_mismatch.json and exit 3 before step 2; needs --encode-check")
+    ap.add_argument("--encode-check", type=Path, metavar="FILE",
+                    help="C0: c_speed_check --encoder's encoder.json; its bits_equal picks E-EQ6's grad_norm rule")
     ap.add_argument("--prompt-memo", action="store_true",
                     help="C2: tokenize one prompt per (rendered text, image sizes) before vLLM, not every row")
     ap.add_argument("--encoder-once", action="store_true",
@@ -136,14 +146,11 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--allow-cpu-pixels", action="store_true",
                     help="with --gpu-pixels auto: keep the CPU processor when no GPU backend passes, instead of failing")
     a = ap.parse_args(argv)
-    for flag in ("steps", "save_steps", "heldout_every", "heldout_items"):
-        if getattr(a, flag) is not None and getattr(a, flag) < 1:
-            ap.error(f"--{flag.replace('_', '-')} must be >= 1")
+    for k in ("steps", "save_steps", "heldout_every", "heldout_items", "checks_from_step"):  # TRL: max_steps <= 0
+        if getattr(a, k) is not None and getattr(a, k) < 1:  # means "train num_train_epochs"
+            ap.error(f"--{k.replace('_', '-')} {getattr(a, k)}: needs >= 1")
     if not a.merge_last and (a.train is None or a.steps is None):
         ap.error("--train and --steps are required (except with --merge-last)")
-    for k in ("steps", "save_steps", "heldout_every"):  # TRL reads max_steps <= 0 as "train num_train_epochs"
-        if getattr(a, k) is not None and getattr(a, k) < 1:
-            ap.error(f"--{k.replace('_', '-')} {getattr(a, k)}: needs >= 1")
     if not 0 <= a.no_ckpt_layers <= 28:  # Qwen3-VL-2B's text decoder; no clamp
         ap.error(f"--no-ckpt-layers {a.no_ckpt_layers}: needs 0..28")
     if a.budget_usd is not None and a.session_start is None:
@@ -160,6 +167,8 @@ def parse(argv=None) -> argparse.Namespace:
         ap.error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     if grpo.get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
         ap.error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
+    if a.expect_step1 and not a.encode_check:
+        ap.error("--expect-step1 needs --encode-check (its bits_equal picks the grad_norm rule)")
     if a.profile_window and not 2 <= a.profile_window[0] <= a.profile_window[1]:
         ap.error(f"--profile-window {a.profile_window}: needs 2 <= S <= E")
     return a
@@ -356,9 +365,13 @@ def main(argv=None) -> int:
     from transformers.trainer_utils import get_last_checkpoint
 
     from experiments.phase2.g_probe import make_trainer, save_json
-    from objdel.train import configs, dataset, f_check, serve
+    from objdel.train import configs, dataset, f_check, record, serve
+    from objdel.train.callbacks import ExpectStep1
 
     check_flags(a)
+    step1 = ExpectStep1.from_files(a.expect_step1, a.encode_check, a.out) if a.expect_step1 else None
+    if a.record_batches:
+        record.open_dir(a.record_batches)
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
     stop = budget_stop(a)
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule is not None else dataset.DISAGREEMENT_OVERSAMPLE)
@@ -389,7 +402,7 @@ def main(argv=None) -> int:
     spec = REWARDS[a.reward]
     guard = LocGuard() if a.reward == "v5" else None
     trainer, proc, lr = make_trainer(a, a.ckpt, train, a.steps, eval_dataset=heldout, check=check,
-                                     calls=[c for c in (stop, guard) if c], reward=spec, **over)
+                                     calls=[c for c in (stop, guard, step1) if c], reward=spec, **over)
     if a.f_check:  # fp16-seqmask: NaN/inf over steps 1-15 and the engine dtype (lora-seqmask is refused above)
         import torch
 
@@ -399,6 +412,9 @@ def main(argv=None) -> int:
     t0 = time.time()
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
+    if step1 and step1.mismatch:
+        print(f"step 1 differs from {a.expect_step1}: {step1.mismatch}", file=sys.stderr)
+        return 3
     save_final(trainer.accelerator.unwrap_model(trainer.model), proc, a.out)
     done = trainer.state.global_step
     log, cfg = trainer.state.log_history, trainer.args

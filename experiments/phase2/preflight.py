@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -220,13 +221,23 @@ def local_rows_root(train_arg: str, data_root="data") -> Path:
     return Path(data_root) / "views" / m[1]
 
 
+def train_rl_argv(step: list) -> list[str] | None:
+    """The words after `-m experiments.phase2.train_rl` of a plan step: a step of its own, or one inside a `bash -c`
+    string (the nsys-wrapped arms of c_speed.yaml); None for any other step."""
+    body = step[1:] if step[0] == "~" else step
+    words = shlex.split(body[2]) if body[:2] == ["bash", "-c"] and "experiments.phase2.train_rl" in body[2] else body
+    i = next((i for i in range(len(words) - 1) if words[i:i + 2] == ["-m", "experiments.phase2.train_rl"]), None)
+    return None if i is None else [str(w) for w in words[i + 2:]]
+
+
 def rows_plan(a) -> tuple[Path, str, str]:
-    """(local rows root, --rows-manifest-sha256, --rows-revision) of the train_rl stage of a.rows_plan."""
+    """(local rows root, --rows-manifest-sha256, --rows-revision) of the first train_rl stage of a.rows_plan."""
     import yaml
 
-    step = next(s for s in yaml.safe_load(Path(a.rows_plan).read_text())["steps"] if "experiments.phase2.train_rl" in s)
-    train, manifest, revision = (str(step[step.index(f) + 1]) for f in ("--train", "--rows-manifest-sha256",
-                                                                         "--rows-revision"))
+    steps = yaml.safe_load(Path(a.rows_plan).read_text())["steps"]
+    argv = next(w for s in steps if (w := train_rl_argv(s)) is not None)
+    train, manifest, revision = (argv[argv.index(f) + 1] for f in ("--train", "--rows-manifest-sha256",
+                                                                   "--rows-revision"))
     return local_rows_root(train, a.data_root), manifest, revision
 
 

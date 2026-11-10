@@ -123,6 +123,71 @@ def test_disabled_range_push_pop_call_no_nvtx(fresh, no_nvtx_calls, env, cuda):
         n.pop()
 
 
+class Engine:
+    """An engine whose step() finishes one request; `left` requests are unfinished before the first step."""
+
+    def __init__(self, left):
+        self.left = left
+
+    def step(self):
+        self.left -= 1
+        return "out"
+
+    def get_num_unfinished_requests(self):
+        return self.left
+
+
+def test_tail_opens_one_range_when_fewer_than_below_requests_are_unfinished_and_closes_it(rec):
+    eng, step = Engine(11), Engine.step
+    with nvtx.range("generate"), nvtx.tail(eng, 8):
+        outs = [eng.step() for _ in range(11)]
+    assert outs == ["out"] * 11 and eng.left == 0
+    assert rec.ev == [("push", "generate"), ("push", "generate/tail"), ("pop",), ("pop",)]  # tail nests in generate
+    assert eng.step.__func__ is step  # the engine's own step is back (the patch lived on the instance)
+    assert "step" not in vars(eng)
+
+
+def test_tail_closes_its_range_when_generate_raises_and_is_silent_when_the_batch_never_thins(rec):
+    eng = Engine(100)
+    with nvtx.tail(eng, 8):
+        eng.step()
+    assert rec.ev == []
+    eng = Engine(8)
+    with pytest.raises(ValueError), nvtx.tail(eng, 8):
+        eng.step()
+        raise ValueError
+    assert rec.ev == [("push", "generate/tail"), ("pop",)]
+
+
+def test_tail_is_a_no_op_when_off(fresh, no_nvtx_calls):
+    n, _ = fresh(None)
+    eng = Engine(1)
+    with n.tail(eng, 8):
+        assert "step" not in vars(eng)  # not even patched
+        eng.step()
+
+
+def test_fast_grpo_decode_tail_wraps_the_engine_only_with_nvtx_vllm_and_single_answer_requests(rec):
+    from types import SimpleNamespace
+
+    eng = Engine(9)
+    t = fake_trainer(use_vllm=True, group_requests=False, num_generations=8, num_generations_eval=4,
+                     vllm_generation=SimpleNamespace(llm=SimpleNamespace(llm_engine=eng)))  # fmt: skip
+    with t.decode_tail():
+        eng.step()
+        eng.step()
+    assert rec.ev == [("push", "generate/tail"), ("pop",)]  # 9 -> 8 is not below 8; 7 is
+    t.model.training = False  # eval: 4 answers per prompt
+    with t.decode_tail():
+        eng.step()
+        eng.step()
+    assert rec.ev == [("push", "generate/tail"), ("pop",)]  # 7 -> 5 is not below 4
+    for off in ({"use_vllm": False}, {"group_requests": True}):
+        t = fake_trainer(**{**vars(t), **off})
+        with t.decode_tail():
+            assert "step" not in vars(eng)
+
+
 # Q03 (cost when off) ---------------------------------------------------------------------------------------------
 
 

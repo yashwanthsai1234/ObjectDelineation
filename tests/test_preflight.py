@@ -10,6 +10,9 @@ import yaml
 
 from experiments.phase2 import preflight as PF
 
+ROOT = Path(__file__).resolve().parents[1]
+CONFIGS = ROOT / "experiments/phase2/configs"
+
 
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
@@ -214,3 +217,154 @@ def test_vastai_version_check_fails_without_the_binary(tmp_path, monkeypatch):
     bad = PF.vastai_problems()
     assert len(bad) == 1 and "1.11.0" in bad[0] and "uv tool install vastai==1.11.0" in bad[0]
     assert any(n == "CODE vastai version" for n, _ in PF.CHECKS)
+
+
+# --- C0: the V2 launch config and the three V2 plans (U-CF4) ------------------------------------------------------
+
+C_PLANS = ("c_speed.yaml", "c_speed_b.yaml", "c_speed_c6.yaml")
+BOX_ROWS = "/workspace/data/lidc/rows/lidc-train-b1"
+G_GR1, G_RC0 = "tests/test_c_gpu.py::test_g_gr1_requests_independent", "tests/test_c_gpu.py::test_g_rc0_per_row_caps"
+
+
+def plan_steps(name):
+    from test_b1_plans import steps
+
+    return steps(name)
+
+
+def train_rl_steps(name):
+    return [(s, PF.train_rl_argv(s)) for s in plan_steps(name) if PF.train_rl_argv(s) is not None]
+
+
+def check_train_rl(argv, ref):
+    """U-CF4 on one `train_rl` command: it parses with train_rl's own parser, trains the B1 rows root with the same
+    rows pins as c_speed.yaml, in whole 20-step blocks, and never names --train-views."""
+    from experiments.phase2 import train_rl
+
+    a = train_rl.parse(argv)  # SystemExit(2) on an unknown or missing flag
+    assert "--train-views" not in argv
+    assert str(a.train) == BOX_ROWS, a.train
+    assert (a.rows_revision, a.rows_manifest_sha256) == ref and a.steps % 20 == 0, (a.rows_revision, a.steps)
+    return a
+
+
+def test_train_rl_argv_finds_a_direct_step_and_one_inside_a_bash_string():
+    direct = ["~", "-m", "experiments.phase2.train_rl", "--model", "m"]
+    wrapped = ["bash", "-c", "NSYS_TIMEOUT=1800 bash nsys_capture.sh /rd c 16 17 -- /opt/venv/bin/python -I -m "
+                             "experiments.phase2.train_rl --model m --grpo '{\"a\": false}'"]
+    assert PF.train_rl_argv(direct) == ["--model", "m"]
+    assert PF.train_rl_argv(wrapped) == ["--model", "m", "--grpo", '{"a": false}']
+    assert PF.train_rl_argv(["-m", "experiments.phase2.final_eval", "--ckpt", "c"]) is None
+    assert PF.train_rl_argv(["bash", "-c", "echo experiments.phase2.train_rl"]) is None  # named, not run with -m
+    assert PF.train_rl_argv(["bash", "env_check.sh", "/rd/ckpt"]) is None
+
+
+def test_c_launch_is_the_run_args_file_of_v2():
+    raw = yaml.safe_load((CONFIGS / "c_launch.yaml").read_text())
+    b1 = yaml.safe_load((CONFIGS / "b1_launch.yaml").read_text())
+    assert {k: raw[k] for k in ("model", "view", "seed")} == {k: b1[k] for k in ("model", "view", "seed")}
+    assert raw["output_dir"] == "c-speed" and raw["rows_plan"] == "experiments/phase2/configs/c_speed.yaml"
+    assert "branches" not in raw and "steps" not in raw
+    PF.load(CONFIGS / "c_launch.yaml")
+    with pytest.raises(TypeError, match="steps"):
+        PF.load(CONFIGS / "c_speed.yaml")
+
+
+def test_the_rows_check_reads_the_pins_of_the_nsys_wrapped_arms():
+    """c_speed.yaml has no bare train_rl step: preflight finds the pins inside the baseline arm's bash string."""
+    a, _ = PF.load(CONFIGS / "c_launch.yaml")
+    root, sha, rev = PF.rows_plan(a)
+    b1 = PF.rows_plan(PF.load(CONFIGS / "b1_launch.yaml")[0])
+    assert (root, sha, rev) == b1 and root.name == "lidc-train-b1"
+
+
+@pytest.mark.parametrize("plan", C_PLANS)
+def test_u_cf4_every_module_step_parses_with_its_module(plan):
+    pytest.importorskip("trl")
+    from test_b1_plans import module_steps, parse_step
+
+    found = module_steps(plan)
+    assert found or plan == "c_speed_b.yaml"  # the mode B plan is one nsys-wrapped train_rl step: the next test
+    for s in found:
+        parse_step(s)
+
+
+@pytest.mark.parametrize("plan", C_PLANS)
+def test_u_cf4_every_train_rl_step_trains_the_b1_rows_in_whole_blocks(plan):
+    pytest.importorskip("trl")
+    ref = tuple(PF.rows_plan(PF.load(CONFIGS / "c_launch.yaml")[0])[i] for i in (2, 1))  # (revision, manifest sha)
+    found = train_rl_steps(plan)
+    assert found
+    for _, argv in found:
+        check_train_rl(argv, ref)
+
+
+def test_u_cf4_a_planted_train_rl_step_fails_each_rule():
+    pytest.importorskip("trl")
+    ref = tuple(PF.rows_plan(PF.load(CONFIGS / "c_launch.yaml")[0])[i] for i in (2, 1))
+    good = train_rl_steps("c_speed.yaml")[0][1]
+    check_train_rl(good, ref)
+    with pytest.raises(SystemExit) as e:
+        check_train_rl([*good, "--train-views", "x"], ref)
+    assert e.value.code == 2
+    bad_root = [BOX_ROWS.replace("rows/lidc-train-b1", "prepared") if w == BOX_ROWS else w for w in good]
+    with pytest.raises(AssertionError):
+        check_train_rl(bad_root, ref)
+    with pytest.raises(AssertionError):
+        check_train_rl([("17" if good[i - 1] == "--steps" else w) for i, w in enumerate(good)], ref)
+    with pytest.raises(AssertionError):
+        check_train_rl(good, ("0" * 40, ref[1]))
+
+
+def flag(argv, name):
+    return argv[argv.index(name) + 1]
+
+
+def test_u_cf4_the_arms_carry_the_check_flags_of_c0_step_3():
+    pytest.importorskip("trl")
+    rd = "/workspace/runs/r"
+    (base_step, base), (fast_step, fast) = train_rl_steps("c_speed.yaml")
+    (b_step, mode_b), = train_rl_steps("c_speed_b.yaml")
+    assert flag(base, "--out") == f"{rd}/c0_base" and flag(base, "--steps") == "20" and "--expect-step1" not in base
+    assert "bash experiments/phase2/docker/nsys_capture.sh " + f"{rd} c0_base 16 17 -- " in base_step[2]
+    assert "NSYS_TIMEOUT=1800" in fast_step[2] and f"{rd} c_fast 16 17 -- " in fast_step[2]
+    for arm, folder in ((fast, "arm_batches"), (mode_b, "arm_batches_b")):
+        assert flag(arm, "--expect-step1") == f"{rd}/c0_base/rl.json"
+        assert flag(arm, "--encode-check") == f"{rd}/c_check/encoder.json"
+        assert flag(arm, "--record-batches") == f"{rd}/c_check/{folder}"
+        assert (flag(arm, "--steps"), flag(arm, "--checks-from-step")) == ("40", "18")
+        assert flag(arm, "--check-rope-every") == flag(arm, "--check-meta-every") == "1"
+        assert {"--fast-sync", "--host-meta", "--prompt-memo", "--shared-prefix"} <= set(arm)
+        assert flag(arm, "--gpu-pixels") == "auto"
+    assert json.loads(flag(fast, "--grpo")) == {"vllm_enable_sleep_mode": False}  # mode A: vLLM awake
+    assert json.loads(flag(mode_b, "--grpo")) == {"vllm_enable_sleep_mode": True}  # mode B: sleep
+    assert f"{rd} c_fast_b 16 17 -- " in b_step[2] and flag(mode_b, "--out") == f"{rd}/c_fast_b"
+
+
+def test_u_cf4_the_c6_plan_runs_g_gr1_first_then_the_group_requests_arm():
+    pytest.importorskip("trl")
+    first, arm = plan_steps("c_speed_c6.yaml")[:2]
+    assert first[-1] == G_GR1 and first[:5] == ["-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    assert "--group-requests" in PF.train_rl_argv(arm) and flag(PF.train_rl_argv(arm), "--steps") == "20"
+    assert not [a for p in C_PLANS for _, a in train_rl_steps(p) if "--no-ckpt-layers" in a]  # no C9 arm
+
+
+def test_u_cf4_c_speed_starts_with_the_cuda_build_and_checks_the_box_first():
+    steps = plan_steps("c_speed.yaml")
+    assert steps[0] == plan_steps("b1_rows.yaml")[0]  # step 0 is b1_rows.yaml's CUDA build (front 6.1 step 4d)
+    check = next(s for s in steps if "experiments.phase2.c_speed_check" in s)
+    assert {"--pixels", "--sync"} <= set(check) and flag(check, "--out") == "/workspace/runs/r"
+    assert steps.index(check) < min(steps.index(s) for s, _ in train_rl_steps("c_speed.yaml"))  # item 2 before 3
+    assert not [s for s in plan_steps("c_speed_b.yaml") + plan_steps("c_speed_c6.yaml")[1:]
+                if "run_box.sh" in " ".join(s)]  # no build step: they run after c_speed.yaml
+
+
+@pytest.mark.parametrize("node", [G_GR1, G_RC0])
+def test_u_cf4_the_two_vllm_box_tests_collect_exactly_one_item(node):
+    import subprocess
+    import sys
+
+    r = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", node],
+                       cwd=ROOT, capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stdout[-1500:]
+    assert [ln for ln in r.stdout.splitlines() if "::" in ln] == [node]

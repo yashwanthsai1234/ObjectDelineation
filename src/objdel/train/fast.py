@@ -32,7 +32,7 @@ import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
 from objdel import _gpucheck
-from objdel.train import nvtx, runaway, trl_adapter, vllm_requests
+from objdel.train import nvtx, record, runaway, trl_adapter, vllm_requests
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -1027,6 +1027,8 @@ class FastGRPO(FastForward, GRPOTrainer):
     host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
     check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
     check_rope_every = 50  # C2, train_rl --check-rope-every N: compare template rope positions with HF (0: never)
+    checks_from_step = 1  # C0, train_rl --checks-from-step S: --check-*-every count from step S; recording starts there
+    record_dir = None  # C0, train_rl --record-batches DIR (record.open_dir): each generation batch from step S on
     rope_check = False  # this generation batch's forwards run the rope check (FastForward reads it)
     meta = None  # the generation batch's RowMeta, from _generate to the batch
     prompt_memo = False  # C2, train_rl --prompt-memo: _tokenize_prompts tokenizes one row per prompt layout
@@ -1121,24 +1123,32 @@ class FastGRPO(FastForward, GRPOTrainer):
         skip = self.skip_old_logps()
         if skip:  # TRL then skips the old-logprob pass and its IS ratio; the update's forward sets it (C10)
             self.vllm_importance_sampling_correction = False
-        if self.host_meta:  # C2: steps 1, N + 1, ... check every pass of this generation batch
-            n = self.check_rope_every
-            self.rope_check = bool(n) and self.state.global_step % n == 0
+        if self.host_meta:  # C2: check steps (check_due) check every pass of this generation batch
+            self.rope_check = self.check_due(self.check_rope_every)
         try:
             with self.timed("batch"):
                 batch = super()._generate_and_score_completions(inputs)
             if self.encoder is not None:  # C3: the update takes the encoder's features; TRL would cut these by grid
                 batch.pop("pixel_values", None)
             if self.meta is not None:
-                batch["host_meta"] = host_rows(self.meta)
-                n = self.check_meta_every
-                if n and self.state.global_step % n == 0:  # steps 1, N + 1, 2N + 1, ...
-                    check_meta(batch)
+                if self.host_meta:
+                    batch["host_meta"] = host_rows(self.meta)
+                    if self.check_due(self.check_meta_every):
+                        check_meta(batch)
+                if self.record_dir and self.model.training and self.state.global_step + 1 >= self.checks_from_step:
+                    torch.save(record.batch_record(batch, self.meta, self.rope and self.rope.base),
+                               self.record_dir / record.file_name(self.state.global_step + 1))
             return batch
         finally:
             self.rows, self.meta = None, None
             if skip:
                 self.vllm_importance_sampling_correction = True
+
+    def check_due(self, every: int) -> bool:
+        """Whether this generation batch is a check step of a --check-*-every flag: steps S, S + every, S + 2 every,
+        ... where S is --checks-from-step (default 1; every 0 never)."""
+        late = self.state.global_step + 1 - self.checks_from_step  # steps since S; negative before it
+        return bool(every) and late >= 0 and late % every == 0
 
     def skip_old_logps(self) -> bool:
         """C10: with one generation per optimizer step and one iteration (TRL's own aligned case), the weights do not
@@ -1294,6 +1304,14 @@ class FastGRPO(FastForward, GRPOTrainer):
             ids.append(memo[key])
         return ids, ([i or None for i in images] if any(images) else None), {}
 
+    def decode_tail(self):
+        """C11: the NVTX `generate/tail` range of the vLLM decode loop, opened once fewer than num_generations answers
+        run. Nothing without NVTX, without vLLM, or under --group-requests (one request then holds G answers)."""
+        if not (nvtx.enabled() and self.use_vllm) or self.group_requests:
+            return contextlib.nullcontext()
+        G = self.num_generations if self.model.training else self.num_generations_eval
+        return nvtx.tail(self.vllm_generation.llm.llm_engine, G)
+
     def _generate(self, prompts):
         if self.images is not None:  # the previous batch's images
             self.images.per_image = self.encoder is not None  # C3: one pixel block per distinct image
@@ -1304,9 +1322,9 @@ class FastGRPO(FastForward, GRPOTrainer):
         if self.use_vllm:
             self.patch_vllm_prompts()
             self.time_vllm_phases()
-        with self.timed("generate"):
+        with self.timed("generate"), self.decode_tail():
             out = super()._generate(prompts)
-        if self.host_meta and self.rows is not None and len(self.rows) == len(out[1]):
+        if (self.host_meta or self.record_dir) and self.rows is not None and len(self.rows) == len(out[1]):
             eos_and_pad = [*self.eos_token_ids, self._tokenizer.pad_token_id]  # TRL's truncation list
             cfg = getattr(self.model, "config", None)
             vision = [getattr(cfg, k, None) for k in ("image_token_id", "video_token_id", "vision_start_token_id",
@@ -1445,26 +1463,27 @@ class FastGRPO(FastForward, GRPOTrainer):
                                        "vLLM would sample from other image features than the trainer scores")
             return outputs
 
-        llm.generate = one_pad
+        one_pad.one_pad = True
+        send = one_pad
         if self.group_requests:  # C6: outside one_pad, so its check compares the 32 sent prompts
+            plain = send
 
-            def by_group(prompts, *args, **kwargs):
+            def send(prompts, *args, **kwargs):
                 G = self.num_generations if self.model.training else self.num_generations_eval
-                return vllm_requests.grouped(one_pad, G)(prompts, *args, **kwargs)
+                return vllm_requests.grouped(plain, G)(prompts, *args, **kwargs)
 
-            llm.generate = by_group
-        inner = llm.generate
-        if self.runaway_cap:  # C11: outermost; the batch's rows hold the caps; outside one (g_probe) the limit stays
+        if self.runaway_cap:  # C11: the generation batch's rows hold the caps; outside one (g_probe) the limit stays
+            sent = send
 
-            def capped(prompts, *args, sampling_params=None, **kwargs):
+            def send(prompts, *args, sampling_params=None, **kwargs):
                 if self.rows is not None:
                     if len(self.rows) != len(prompts):
                         raise ValueError(f"{len(self.rows)} caps for {len(prompts)} prompts")
                     sampling_params = runaway.per_row_params(sampling_params, [r["cap"] for r in self.rows])
-                return inner(prompts, *args, sampling_params=sampling_params, **kwargs)
+                return sent(prompts, *args, sampling_params=sampling_params, **kwargs)
 
-            llm.generate = capped
-        llm.generate.one_pad = True
+        send.one_pad = True
+        llm.generate = send
 
     def floating_point_ops(self, inputs):
         """FLOP count: always 0, which skips the Trainer's per-micro-batch module walk."""

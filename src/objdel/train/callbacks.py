@@ -1,6 +1,7 @@
 """TrainerCallbacks of the live runs: TraceStep (one torch.profiler step), NvtxSteps (NVTX step ranges and the
 nsys capture window), BudgetStop (stop and save at a session spend), OpsmDelta (the live OPSM delta),
-NoCkptLayers (C9: no checkpointing on K layers) and LocGuard (stop and save when reward v5's location term
+NoCkptLayers (C9: no checkpointing on K layers), ExpectStep1 (C0: stop when step 1 differs from another arm's)
+and LocGuard (stop and save when reward v5's location term
 rises while IoU_tc falls on the off-centre rows; Implementation.md B3.5b).
 
 The Phase 2 hack-audit callback (audit of held-out evaluation, best-checkpoint rollback, live guard switches) is
@@ -153,6 +154,72 @@ class BudgetStop(TrainerCallback):
         self.tripped = self.tripped or not self.spend() < self.cap
         if self.tripped:
             control.should_training_stop = control.should_save = True
+
+
+STEP1_EXACT = ("rewards/iou_tc/mean", "rewards/legal/mean", "completions/mean_length")  # equal at step 1 (E-EQ6)
+STEP1_CLOSE = ("grad_norm", "sampling/sampling_logp_difference/mean")  # equal to 4 significant digits (E-EQ6)
+
+
+def step1_values(log: list[dict], source) -> dict[str, float]:
+    """The STEP1 keys of the entry with step 1 in a TRL log; ValueError naming `source` when one is missing."""
+    entry = next((h for h in log if h.get("step") == 1 and "rewards/iou_tc/mean" in h), None)
+    miss = [k for k in STEP1_EXACT + STEP1_CLOSE if entry is None or k not in entry]
+    if miss:
+        raise ValueError(f"{source}: no step 1 log entry with {', '.join(miss)}")
+    return {k: entry[k] for k in STEP1_EXACT + STEP1_CLOSE}
+
+
+def step1_mismatches(base: dict, got: dict, bits_equal: bool) -> dict[str, list[float]]:
+    """E-EQ6 (the one function of the gate and of --expect-step1): {key: [base, got]} of the keys that differ. The
+    STEP1_EXACT keys must be equal. The STEP1_CLOSE keys follow the encode bits (G-EN0): with equal bits both are
+    rounded to 4 significant digits and must be within relative 5e-4 (1e-3 when the two round into different
+    decades, as 0.1000 and 0.09993); with different bits the raw values must be within relative 1e-3."""
+    out = {k: [base[k], got[k]] for k in STEP1_EXACT if base[k] != got[k]}
+    for k in STEP1_CLOSE:
+        a, b = base[k], got[k]
+        if bits_equal:
+            a, b = float(f"{a:.4g}"), float(f"{b:.4g}")
+            rel = 1e-3 if a and b and math.floor(math.log10(abs(a))) != math.floor(math.log10(abs(b))) else 5e-4
+        else:
+            rel = 1e-3
+        if not math.isclose(a, b, rel_tol=rel):
+            out[k] = [base[k], got[k]]
+    return out
+
+
+class ExpectStep1(TrainerCallback):
+    """C0, train_rl --expect-step1 FILE --encode-check FILE: after step 1's log, compare its STEP1 values with the
+    other arm's (`base`; `bits_equal` from c_speed_check --encoder picks the grad_norm rule). On a mismatch write
+    <out>/step1_mismatch.json and stop before step 2 (train_rl then exits 3, so the plan's `&&` chain ends)."""
+
+    def __init__(self, base: dict, bits_equal: bool, out):
+        self.base, self.bits_equal, self.out = base, bits_equal, Path(out)
+        self.mismatch = None  # None until step 1 is compared; then {} (equal) or the differing keys
+
+    @classmethod
+    def from_files(cls, expect_step1, encode_check, out):
+        """The callback from the other arm's rl.json and the encoder.json; an unreadable file, a missing step 1 key or
+        a missing or non-boolean bits_equal raises (at start-up, before any model loads)."""
+        base = step1_values(json.loads(Path(expect_step1).read_text()).get("log", []), expect_step1)
+        try:
+            bits = json.loads(Path(encode_check).read_text())["bits_equal"]
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            raise ValueError(f"{encode_check}: unreadable, or no bits_equal ({e!r})") from e
+        if not isinstance(bits, bool):
+            raise ValueError(f"{encode_check}: bits_equal is {bits!r}, not a boolean")
+        return cls(base, bits, out)
+
+    def on_log(self, args, state, control, logs=None, **kw):
+        """Compare the first train log (step 1) once; an eval log or a later step is left alone."""
+        if self.mismatch is not None or state.global_step != 1 or "rewards/iou_tc/mean" not in state.log_history[-1]:
+            return
+        got = step1_values(state.log_history, "this run")
+        self.mismatch = step1_mismatches(self.base, got, self.bits_equal)
+        if self.mismatch:
+            self.out.mkdir(parents=True, exist_ok=True)
+            (self.out / "step1_mismatch.json").write_text(json.dumps(
+                {"mismatch": self.mismatch, "bits_equal": self.bits_equal, "base": self.base, "got": got}) + "\n")
+            control.should_training_stop = True
 
 
 class OpsmDelta(TrainerCallback):
