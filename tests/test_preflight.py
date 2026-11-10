@@ -222,7 +222,7 @@ def test_vastai_version_check_fails_without_the_binary(tmp_path, monkeypatch):
 # --- C0: the V2 launch config and the three V2 plans (U-CF4) ------------------------------------------------------
 
 C_PLANS = ("c_speed.yaml", "c_speed_b.yaml", "c_speed_c6.yaml")
-BOX_CKPT, BOX_ROWS = "/workspace/runs/r/ckpt", "/workspace/data/lidc/rows/lidc-train-b1"
+BOX_ROWS = "/workspace/data/lidc/rows/lidc-train-b1"
 G_GR1, G_RC0 = "tests/test_c_gpu.py::test_g_gr1_requests_independent", "tests/test_c_gpu.py::test_g_rc0_per_row_caps"
 
 
