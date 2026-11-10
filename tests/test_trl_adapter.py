@@ -64,13 +64,14 @@ def test_the_coupling_page_has_one_row_per_item_with_the_case_that_breaks_it():
     """trl-coupling.md: each row's item, kind and place are the code's; its failing test is a real BREAKS case."""
     rows = [[c.strip().strip("`") for c in ln.strip("|\n").split("|")] for ln in
             (ROOT / "docs/reference/trl-coupling.md").read_text().splitlines() if ln.startswith("| `")]  # fmt: skip
-    code = {(name, kind): spec[-1] for kinds in (T._SIGNED, T._TEXT) for kind, items in kinds.items()
+    code = {(name, kind): spec[-1] for kinds in (T._SIGNED, T._TEXT, T._LIVE) for kind, items in kinds.items()
             for name, spec in items.items()}  # fmt: skip
     assert {(r[0], r[1]) for r in rows} == set(code) and len(rows) == len(code)
     cases = {b[0] for b in BREAKS}
+    live = {"test_check_lora_names_the_missing_option_f_vllm_name"}  # one parametrized case per option-F name
     for name, kind, _, place, tests in rows:
         assert place == code[name, kind].replace(", ", "`, `"), name
-        assert all(t.strip("`") in cases for t in tests.split(", ")), name
+        assert all(t.strip("`") in (live if kind in T._LIVE else cases) for t in tests.split(", ")), name
 
 
 def test_no_live_python_file_says_trl_1_16():
