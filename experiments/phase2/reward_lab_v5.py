@@ -23,6 +23,8 @@ missed answer has gated IoU_tc < miss_iou. Report keys (rule numbers of B3.7):
  10 allmiss_grad_share: S = sum over all-miss groups of sum |A| / sum over all groups, v4 and v5, and S_v5 / S_v4
 Rule 8's margin compares an undrawn-signature answer (IoU_tc = IoU vs the vote) with the best valid answer of its
 own group, the terms the scorer already returns, so no scorer change is needed.
+
+Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """
 import argparse
 import json

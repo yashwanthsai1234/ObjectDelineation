@@ -86,14 +86,15 @@ def test_unimported_distinguishes_unused_test_only_and_used(tmp_path):
     ctx = make(tmp_path, {
         "src/objdel/__init__.py": "", "src/objdel/used.py": "x = 1\n", "src/objdel/orphan.py": "x = 1\n",
         "src/objdel/surface.py": "x = 1\n", "src/objdel/main.py": "from objdel import used\nfrom . import named\n",
-        "src/objdel/named.py": "x = 1\n", "tests/test_s.py": "from objdel.surface import x\n",
+        "src/objdel/named.py": "x = 1\n", "src/objdel/kept.py": '"""Test surface: kept."""\n',
+        "tests/test_s.py": "from objdel.surface import x\nfrom objdel import kept\n",
         "Makefile": "run:\n\tpython -m experiments.phase2.job\n", "experiments/phase2/job.py": "x = 1\n"})
     found = fs.unimported(ctx)
     text = "\n".join(found)
     assert "src/objdel/orphan.py: nothing imports or names it" in text
     assert "src/objdel/surface.py: only tests use it" in text
     assert "src/objdel/main.py: nothing imports" in text  # nothing imports the importer itself
-    for ok in ("used.py", "named.py", "job.py"):
+    for ok in ("used.py", "named.py", "job.py", "kept.py"):
         assert ok not in text, text
 
 

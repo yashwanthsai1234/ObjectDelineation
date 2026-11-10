@@ -258,14 +258,16 @@ def importers(ctx: Ctx) -> tuple[dict[str, set[str]], dict[str, str]]:
 
 
 def unimported(ctx: Ctx) -> list[Finding]:
-    """Modules of src/objdel and experiments that no file imports or names, and those only tests use (CLEAN16 step 2)."""
+    """Modules of src/objdel and experiments that no file imports or names, and those only tests use (CLEAN16 step 2).
+
+    A test-only module that says `Test surface:` in its docstring has its decision recorded and is not reported."""
     refs, mods = importers(ctx)
     out = []
     for m, f in sorted(mods.items()):
         r = refs.get(m, set())
         if not r:
             out.append(f"{f}: nothing imports or names it")
-        elif all(x.startswith("tests/") for x in r):
+        elif all(x.startswith("tests/") for x in r) and "Test surface:" not in ctx.text(f)[:3000]:
             out.append(f"{f}: only tests use it ({len(r)} file(s)): keep as test surface with a docstring, or archive")
     return out
 

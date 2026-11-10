@@ -383,7 +383,7 @@ def run_rl(a) -> dict:
     roots = ([Path(a.heldout)] if a.heldout else []) + [Path(a.train)]
     for root in roots[::-1]:
         serve.preload(root, ["lidc"])
-    gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
+    gc.freeze()  # preloaded store: leave it out of the GC scans (it ran inside the retired worker pool)
     over = {"save_strategy": "steps", "save_steps": a.save_steps} | numerics_overrides(a)
     over |= {"shuffle_dataset": False} if schedule is not None else {}
     over |= {"eval_strategy": "steps", "eval_steps": a.heldout_every, "num_generations_eval": 8} if a.heldout else {}
