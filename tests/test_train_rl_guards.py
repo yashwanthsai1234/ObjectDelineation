@@ -271,15 +271,15 @@ def test_u61_thirty_steps_with_blocks_of_twenty(tmp_path):
 # --- train_rl main on a real rows root: refusals come first (R04), kind / cell columns (U43) ----------------------
 
 @pytest.fixture(scope="module")
-def prepared(tmp_path_factory):
+def prepared(tmp_path_factory, synthetic_items):
+    """The synthetic_items fixture, not `from conftest import`: tests/verify has its own conftest, and the module
+    name `conftest` is whichever one pytest loaded last."""
     pytest.importorskip("datasets")
-    from conftest import _synthetic_items
-
     from objdel.data import store
     from objdel.train import dataset
 
     root = tmp_path_factory.mktemp("rows")
-    store.write(_synthetic_items(("train", "val"), unanimous=True), root / "store")
+    store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
     dataset.prepare(root / "store", root / "prepared", procs=1)
     return root / "prepared"
 

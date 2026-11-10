@@ -130,7 +130,8 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     assert "timeout 1200 $S --tool $t" in mem  # memcheck instruments torch's kernels too: each pass is bounded
     # R2 (2026-11-07): the step sanitized only test_cuda_checker_gpu.py (6 tests); K1's 40 are run_box.sh's group,
     # and the device scorer's kernels run only in test_gpu_scoring.py
-    group = box.split("pytest -q -p no:cacheprovider", 1)[1].split("|| tests=1", 1)[0]
+    # the default (non --gpu-check) group: the last pytest call before "|| tests=1" (D8's --gpu-check calls come first)
+    group = box.split("|| tests=1", 1)[0].rsplit("pytest -q -p no:cacheprovider", 1)[1]
     files = [*group.replace("\\", " ").split(), "tests/test_gpu_scoring.py"]
     assert len(files) == 5 and all(f in mem.split() for f in files), (files, mem)
 

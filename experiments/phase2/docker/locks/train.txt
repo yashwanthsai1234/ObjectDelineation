@@ -20,6 +20,10 @@ annotated-doc==0.0.5
     # via
     #   -c build/images/ctx/mac.txt
     #   typer
+annotated-types==0.8.0
+    # via
+    #   -c build/images/ctx/mac.txt
+    #   pydantic
 anyio==4.15.1
     # via
     #   -c build/images/ctx/mac.txt
@@ -246,6 +250,19 @@ pyarrow==26.0.0
     #   objdel (pyproject.toml)
     #   datasets
     #   trl
+pydantic==2.14.3
+    # via
+    #   -c build/images/ctx/mac.txt
+    #   objdel (pyproject.toml)
+    #   pydantic-settings
+pydantic-core==2.50.4
+    # via
+    #   -c build/images/ctx/mac.txt
+    #   pydantic
+pydantic-settings==2.16.2
+    # via
+    #   -c build/images/ctx/mac.txt
+    #   objdel (pyproject.toml)
 pygments==2.21.0
     # via
     #   -c build/images/ctx/mac.txt
@@ -254,9 +271,14 @@ python-dateutil==2.9.0.post0
     # via
     #   -c build/images/ctx/mac.txt
     #   pandas
+python-dotenv==1.2.4
+    # via
+    #   -c build/images/ctx/mac.txt
+    #   pydantic-settings
 pyyaml==6.0.3
     # via
     #   -c build/images/ctx/mac.txt
+    #   objdel (pyproject.toml)
     #   accelerate
     #   datasets
     #   huggingface-hub
@@ -353,7 +375,16 @@ typing-extensions==4.16.0
     #   anyio
     #   httpx2
     #   huggingface-hub
+    #   pydantic
+    #   pydantic-core
+    #   pydantic-settings
     #   torch
+    #   typing-inspection
+typing-inspection==0.4.5
+    # via
+    #   -c build/images/ctx/mac.txt
+    #   pydantic
+    #   pydantic-settings
 xxhash==4.0.2
     # via
     #   -c build/images/ctx/mac.txt

@@ -113,7 +113,8 @@ def scanned() -> list[str]:
                             "experiments/phase2"], capture_output=True, text=True, check=True).stdout.split("\0")
     keep = [f for f in files if f.endswith(TEXT) and (root / f).is_file()
             and (f.startswith(("src/", "tests/")) or re.fullmatch(r"experiments/phase2/[^/]+\.py", f))]
-    return [f for f in keep if SMOL.search((root / f).read_text(errors="replace"))]
+    checker = "tests/test_final_sweep.py"  # tests the final sweep's own retired-model rule
+    return [f for f in keep if f != checker and SMOL.search((root / f).read_text(errors="replace"))]
 
 
 def test_no_retired_model_text_in_code():

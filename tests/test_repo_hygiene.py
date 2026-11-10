@@ -200,10 +200,16 @@ def test_archive_readmes_follow_the_contract():
 
 @NEEDS_ARCHIVE
 def test_phase0_scripts_and_records_moved():
-    """CT-87: 8 python files in the archive, records beside the research notes, the oracle parser stays in tests."""
+    """CT-87: 8 python files in the archive, records beside the research notes, the oracle parser stays in tests.
+    Owner's layout (a255988): README.md, RESULTS.md and RESULTS_0b.md are tracked; the two plans (PLAN.md,
+    PLAN_0b.md) stay on the owner's machine, git-ignored, so a worktree may not hold them."""
     assert len(list((ROOT / "archive/phase0").glob("*.py"))) == 8
     rec = ROOT / "docs/research/records/phase0"
-    assert (rec / "results").is_dir() and len(list(rec.glob("*.md"))) >= 5
+    md = {f.rsplit("/", 1)[1] for f in tracked(":(glob)docs/research/records/phase0/*.md")}
+    assert (rec / "results").is_dir() and md == {"README.md", "RESULTS.md", "RESULTS_0b.md"}
+    plans = [f"docs/research/records/phase0/{n}" for n in ("PLAN.md", "PLAN_0b.md")]
+    ignored = subprocess.run(["git", "check-ignore", *plans], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    assert ignored == plans
     assert "class _Lab" in (ROOT / "tests/test_geometry_oracle.py").read_text()
     for f in tracked("src"):
         for m in re.findall(r"archive/[\w./-]+\.py", (ROOT / f).read_text()):
@@ -248,9 +254,11 @@ def test_import_scanner_reports_each_kind(tmp_path):
 
 
 def test_no_live_file_names_a_retired_tree(tmp_path):
-    """CT-15."""
+    """CT-15. The files that implement this rule name the trees on purpose: this test and the final sweep with its
+    test (the sweep's own SELF set; importing it would make this test import experiments)."""
+    checkers = {"tests/test_repo_hygiene.py", "experiments/phase2/tools/final_sweep.py", "tests/test_final_sweep.py"}
     live = [f for f in tracked() if f.endswith((".py", ".md", ".yaml", ".yml", ".toml", ".txt", "Makefile", ".sh"))
-            and not f.startswith("archive/") and f != "tests/test_repo_hygiene.py"]  # fmt: skip
+            and not f.startswith("archive/") and f not in checkers]  # fmt: skip
     assert stale_paths(live, ROOT) == []
     (tmp_path / "docs/research").mkdir(parents=True)
     (tmp_path / "a.md").write_text("see experiments/phase0/x")
