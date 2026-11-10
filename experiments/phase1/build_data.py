@@ -26,7 +26,7 @@ import json
 import shutil
 import time
 from collections import Counter
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import numpy as np
@@ -104,7 +104,7 @@ def main(argv=None):
     scans = lidc.scans()
     files = lidc.series_files(raw / "lidc_xml")
     assert len(photos) == 750 and set(files) == set(scans) and len(scans) == 1018
-    with Pool(a.workers) as pool:
+    with get_context("spawn").Pool(a.workers) as pool:
         # Pass 1: what the splits need. RIGA near-duplicate groups; LIDC slices and their disagreement.
         feats = pool.map(riga_features, photos, chunksize=4)
         ncc = splits.near_duplicates(np.stack([d for d, _ in feats]), threshold=-np.inf)

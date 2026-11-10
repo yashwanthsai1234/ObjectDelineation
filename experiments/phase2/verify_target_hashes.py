@@ -20,7 +20,7 @@ import argparse
 import hashlib
 import json
 from itertools import batched
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 from experiments.phase2.build_eval_views import _rotated
@@ -98,7 +98,7 @@ def main(argv=None) -> int:
     ap.add_argument("--procs", type=int, default=6)
     a = ap.parse_args(argv)
     bad = 0
-    with Pool(a.procs) as pool:
+    with get_context("spawn").Pool(a.procs) as pool:
         for p in a.manifests:
             for name, recorded, rebuilt in check(p, a.store, pool):
                 bad += recorded != rebuilt

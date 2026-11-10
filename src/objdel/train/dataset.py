@@ -57,7 +57,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from importlib.metadata import version
 from itertools import batched
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import cv2
@@ -145,7 +145,7 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
                 "reward_fingerprint": fingerprint(), "prompts": PROMPTS,
                 "versions": {"python": platform.python_version(), **{p: version(p) for p in _PINS}},
                 "files": {}, "sets": {}}
-    with Pool(procs) as pool:
+    with get_context("spawn").Pool(procs) as pool:  # a fork of a parent that used CUDA fails in the engine
         for dataset in SCHEMAS:
             for split in splits:
                 skipped, recs = [], []

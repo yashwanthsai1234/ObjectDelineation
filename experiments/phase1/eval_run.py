@@ -28,7 +28,7 @@ References:
 import argparse
 import json
 from dataclasses import replace
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.data import store
@@ -102,7 +102,7 @@ def evaluate(rows, frames: dict, procs: int = 1, caches=None) -> list[dict]:
     jobs = [(r, frames[r["item_id"]], caches) for r in rows if _k(frames[r["item_id"]]) >= 2]
     if procs <= 1:
         return [_job(j) for j in jobs]
-    with Pool(procs) as pool:
+    with get_context("spawn").Pool(procs) as pool:
         return pool.map(_job, jobs, chunksize=4)
 
 

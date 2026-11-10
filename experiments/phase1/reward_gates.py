@@ -26,7 +26,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import cv2
@@ -338,7 +338,7 @@ def main():
     if args.quick:
         items = items[::3]
     emit(f"Fixture items with ≥ 2 raters: {len(items)}; full-LIDC train disagreement items: {len(lidc)}.\n")
-    with Pool(args.workers) as pool:
+    with get_context("spawn").Pool(args.workers) as pool:
         band_gates(pool, items, rng)
 
         emit("### K9 (topology ranking; v4 gated ≥ 95 %)\n")

@@ -33,7 +33,7 @@ import time
 from collections import Counter
 from dataclasses import replace
 from itertools import islice
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import numpy as np
@@ -98,7 +98,7 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
     rows, stats, contexts, skipped = [], Counter(), {}, 0
     its = islice(store.load(dataset, split, store_root), limit)
     jobs = ((it, str(out), epochs, seed, nonsimple_repeat) for it in its)
-    with Pool(procs) as pool:
+    with get_context("spawn").Pool(procs) as pool:
         for got in pool.imap(_item, jobs, chunksize=8):
             if got is None:
                 skipped += 1
