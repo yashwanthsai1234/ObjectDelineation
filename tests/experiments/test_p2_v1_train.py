@@ -9,12 +9,14 @@ import pytest
 from test_p2_scripts import stage
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIGS = ROOT / "experiments/phase2/configs"
-C2 = sorted(CONFIGS.glob("c2_*.yaml")) + [CONFIGS / "rx8.yaml"]
+SPECS = sorted((ROOT / "specs").glob("*.yaml"))  # the old train_sft configs (C2, rx8) left git in E6.6
 
 
-def _yaml(path):
-    return pytest.importorskip("yaml").safe_load(path.read_text())
+def sft_stages():
+    from objdel.core.spec import load_spec
+
+    return [(p.stem, st) for p in SPECS for st in load_spec(p).stages if st.kind == "sft"]
+
 
 
 @pytest.fixture
@@ -35,8 +37,8 @@ def _view(tmp_path, epochs):
 
 
 def test_no_config_uses_full_determinism():
-    for p in CONFIGS.glob("*.yaml"):
-        assert "full_determinism" not in _yaml(p).get("sft", {}), p.name  # it sets CUDA_LAUNCH_BLOCKING=1
+    for name, st in sft_stages():
+        assert "full_determinism" not in st.sft, name  # it sets CUDA_LAUNCH_BLOCKING=1
 
 
 def test_deterministic_is_applied_before_anything_loads(TS, tmp_path, monkeypatch):
@@ -197,24 +199,17 @@ def test_a_vision_abort_in_a_decay_saves_no_branch(TS, tmp_path, synthetic_items
     assert not (out / "branches").exists() and (out / "stable/e0.5").is_dir()
 
 
-@pytest.mark.parametrize("name", ["r1_qwen3vl2b", "r0_qwen3vl_arm", "c2_a0p_seed2"])
-def test_qwen3_vl_configs_train_as_one_recipe(name):
+def test_qwen3_vl_configs_train_as_one_recipe():
     """The 30-step arm and the C2 runs train exactly as R1 does: LM-only LoRA r16 (a 24 GB card cannot hold full
     fine-tuning of 2B parameters), micro-batch 4 x 8 (152k-token vocabulary logits), checkpointing on (the model's
     default, so no `gradient_checkpointing` key may switch it off)."""
-    c = _yaml(CONFIGS / f"{name}.yaml")
-    assert c["model"] == "qwen3-vl-2b" and "lora" not in c and "gradient_checkpointing" not in c["sft"]
-    assert (c["sft"]["per_device_train_batch_size"], c["sft"]["gradient_accumulation_steps"]) == (4, 8)
+    for name, st in sft_stages():
+        c = st.model_dump(exclude_defaults=True)
+        assert c["model"] == "qwen3-vl-2b" and "lora" not in c and "gradient_checkpointing" not in c["sft"], name
+        assert (c["sft"]["per_device_train_batch_size"], c["sft"]["gradient_accumulation_steps"]) == (4, 8), name
 
 
 # ---------------------------------------------------------------- 4. C2 depth from R2 (branches_from)
-
-
-def test_c2_configs_take_their_depth_from_g_probe():
-    for p in C2:
-        c = _yaml(p)
-        assert c["branches_from"] == "r1-qwen3vl2b/g_probe/g_probe.json" and "branches" not in c, p.name
-        assert c["stages"] == ["train", "topology"], p.name
 
 
 def _probe(tmp_path, **doc):
@@ -243,12 +238,12 @@ def test_branches_from_refuses_without_a_verdict(TS, tmp_path, doc):
     assert not (tmp_path / "c2").exists()
 
 
-@pytest.mark.parametrize("path", C2 + [CONFIGS / "r1_qwen3vl2b.yaml"], ids=lambda p: p.stem)
-def test_runner_only_keys_are_not_stage_fields(TS, path):
-    """U22: an SftStage takes the launch config minus the runner-only keys, and refuses those keys."""
+def test_runner_only_keys_are_not_stage_fields(TS):
+    """U22: an SftStage takes an old launch config (C2's, inline) minus the runner-only keys, and refuses them."""
     from pydantic import ValidationError
 
-    raw = {k: v for k, v in _yaml(path).items() if k not in ("sampler", "stages", "rows_plan")}
+    raw = {"model": "qwen3-vl-2b", "view": "views/lidc-bundle-v2", "output_dir": "c2-a0p-seed2", "seed": 2,
+           "branches_from": "r1-qwen3vl2b/g_probe/g_probe.json", "vision": False}
     assert stage(**raw).model == raw["model"]
     with pytest.raises(ValidationError):
         stage(**raw, sampler="hf", stages=["train"])

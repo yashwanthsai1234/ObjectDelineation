@@ -261,10 +261,8 @@ def test_exam_metrics_equal_the_host_scorer(jobs):
 
 
 def test_every_scoring_chain_builds_and_checks_the_cuda_checker_first():
-    gpu, train, select, probe = P.chain(ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "r1")
+    gpu, train, select, probe = P.chain(ROOT / "specs/r1_qwen3vl2b.yaml", "r1")
     assert gpu[:2] == ["bash", "-c"] and "run_box.sh --build-only && " in gpu[2]
     assert gpu[2].endswith("tests/verify/test_gpu_scoring.py")  # this file, on the GPU build, before training
     assert [train[1], select[1], probe[1]] == ["experiments.phase2.train_sft", "experiments.phase2.select_ckpt",
                                                "experiments.phase2.g_probe"]
-    (timing,) = P.chain(ROOT / "experiments/phase2/configs/r0_qwen3vl_arm.yaml", "r1")  # train only: nothing to score
-    assert timing[1] == "experiments.phase2.train_sft"

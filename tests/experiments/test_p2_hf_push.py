@@ -143,7 +143,7 @@ def _mac(monkeypatch, who):
 
 def test_push_hf_streams_the_token_over_stdin_only(monkeypatch):
     sent = _mac(monkeypatch, token())
-    P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/r1_qwen3vl2b.yaml"))
+    P.cmd_push_hf(SimpleNamespace(run_id="v1", config="specs/r1_qwen3vl2b.yaml"))
     ((cmd, stdin, what),) = sent
     assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.infra.secrets" in what
     assert "-m experiments.phase2.hf_push --run /workspace/runs/v1/r1-qwen3vl2b" in cmd
@@ -153,7 +153,7 @@ def test_push_hf_streams_the_token_over_stdin_only(monkeypatch):
 def test_push_hf_refuses_an_over_broad_token_before_touching_the_box(monkeypatch):
     sent = _mac(monkeypatch, token(role="write"))
     with pytest.raises(SystemExit, match="objdel-hf-write.*role write"):
-        P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/r1_qwen3vl2b.yaml"))
+        P.cmd_push_hf(SimpleNamespace(run_id="v1", config="specs/r1_qwen3vl2b.yaml"))
     assert sent == []
 
 

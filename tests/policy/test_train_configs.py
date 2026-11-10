@@ -144,7 +144,7 @@ def test_retired_450m_model_and_full_fine_tuning_gone():
         assert not {"param_groups", "dtype"} & _defs(ROOT / "src/objdel" / f)
     sft = ROOT / "src/objdel/sft/train.py"
     assert "_load_from_checkpoint" not in _defs(sft) and "param_groups" not in sft.read_text()
-    assert not (ROOT / "experiments/phase2/configs" / "r1_l" "fm.yaml").exists()
+    assert not (ROOT / "experiments/phase2/configs" / "r1_l" "fm.yaml").exists()  # the folder left git in E6.6
 
 
 ARCHIVED = ("r0_parity.py", "hf_rate.py", "c2_analyze.py")  # CLEAN8 step 4 (project_r1.py went in E6.6)

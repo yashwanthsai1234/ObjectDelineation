@@ -22,13 +22,11 @@ from objdel.sft import select as sft_select
 from objdel.sft import train as sft_train
 
 ROOT = Path(__file__).resolve().parents[2]
-# train_sft configs: not a step list for run.sh (r0.yaml) nor an RL launch config (b1_launch.yaml, test_b1_plans.py)
-CONFIGS = sorted(c for c in (ROOT / "experiments/phase2/configs").glob("*.yaml")
-                 if not any(k in c.read_text() for k in ("\nsteps:", "\nrows_plan:")))
+# the sft stages of the run specs (the old train_sft configs left git in E6.6)
+SPECS = sorted((ROOT / "specs").glob("*.yaml"))
 CPU_SFT = {"per_device_train_batch_size": 1, "gradient_accumulation_steps": 1, "use_cpu": True, "bf16": False,
            "logging_steps": 1, "dataloader_num_workers": 0, "dataloader_persistent_workers": False,
            "dataloader_prefetch_factor": None}  # tiny CPU runs of train_sft
-RUNNER = ("stages", "sampler", "rows_plan")  # launch-config keys of the Vast runner, not SftStage fields
 
 
 def stage(model, view, output_dir, **kw):
@@ -38,13 +36,11 @@ def stage(model, view, output_dir, **kw):
     return SftStage(model=model, view=view, output_dir=output_dir, **kw)
 
 
-def stage_of(path: Path):
-    """The SftStage of a launch config (its runner-only keys dropped)."""
-    import yaml
+def sft_stages():
+    """(spec name, SftStage) for each sft stage of the run specs."""
+    from objdel.core.spec import load_spec
 
-    from objdel.core.spec import SftStage
-
-    return SftStage(**{k: v for k, v in yaml.safe_load(path.read_text()).items() if k not in RUNNER})
+    return [(p.stem, st) for p in SPECS for st in load_spec(p).stages if st.kind == "sft"]
 
 
 def _module(*args, env=None, timeout=900):
@@ -60,20 +56,14 @@ def test_help(script):
     assert r.returncode == 0 and "usage" in r.stdout, r.stderr[-2000:]
 
 
-@pytest.mark.parametrize("path", CONFIGS, ids=[p.stem for p in CONFIGS])
-def test_configs_parse_as_sft_stages(path):
-    pytest.importorskip("yaml")  # PyYAML comes with the train extra (transformers)
-    args = stage_of(path)
-    assert args.model in ("qwen3-vl-2b",) and args.view.startswith("views/")
-    assert sft_train.resolve(args).data_root == "data" and all(b > 0 for b in args.branches)
-    assert args.sft.get("gradient_accumulation_steps", 4) * args.sft.get("per_device_train_batch_size", 8) == 32  # D5
-
-
-def test_config_set_complete():
-    yaml = pytest.importorskip("yaml")
-    names = {p.stem for p in CONFIGS}
-    assert names == {"r1_qwen3vl2b", "r0_qwen3vl_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1"}
-    assert yaml.safe_load((ROOT / "experiments/phase2/configs/c2_a0_seed1.yaml").read_text())["a0"] is True
+def test_spec_sft_stages_follow_the_recipe():
+    stages = sft_stages()
+    assert [n for n, _ in stages] == ["r1_qwen3vl2b"]
+    for _, args in stages:
+        assert args.model in ("qwen3-vl-2b",) and args.view.startswith("views/")
+        assert sft_train.resolve(args).data_root == "data" and all(b > 0 for b in args.branches)
+        sft = args.sft
+        assert sft.get("gradient_accumulation_steps", 4) * sft.get("per_device_train_batch_size", 8) == 32  # D5
 
 
 def test_plan_branches_decay_warmup():

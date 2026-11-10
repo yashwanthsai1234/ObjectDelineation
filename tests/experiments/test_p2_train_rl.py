@@ -320,8 +320,8 @@ def test_train_rl_source_names_no_pool():
 
 
 def test_no_stale_procs_for_train_rl():
-    """CT-84: no RL plan passes --procs to train_rl."""
-    for f in sorted((ROOT / "experiments/phase2/configs").glob("*.yaml")):
+    """CT-84: no RL plan (run spec) passes --procs to train_rl."""
+    for f in sorted((ROOT / "specs").glob("*.yaml")):
         for line in f.read_text().splitlines():
             assert not ("train_rl" in line and "--procs" in line), (f.name, line)
 

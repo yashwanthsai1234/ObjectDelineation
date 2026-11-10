@@ -104,18 +104,6 @@ def test_train_sft_refuses_profile_with_branches(tmp_path):
                           profile=str(tmp_path / "p")))
 
 
-def test_p1_chain_checks_the_card_and_the_checker_before_rl():
-    from objdel.core.provenance import repo_root
-    from objdel.infra.vast import chain as C
-
-    steps = C.chain(repo_root() / "experiments/phase2/configs/p1_rl.yaml", "p1")
-    names = [" ".join(s) for s in steps]
-    assert "env_check.sh /workspace/runs/p1/ckpt" in names[1] and "run_box.sh" in names[2]
-    assert names[4].startswith("-m experiments.phase2.profile --ckpt /workspace/runs/p1/ckpt")
-    assert [s[0] for s in steps[1:]] == ["bash", "bash", "~", "-m"]  # env and checker failures stop the chain
-    assert not any("hf_sample" in n or "hf_rate" in n for n in names)  # vLLM only (owner 2026-11-06)
-
-
 def test_memcheck_has_its_sanitizer_and_fails_loudly():
     """P1's memcheck step found no compute-sanitizer and passed silently. K1 (RTX 3090, 2026-11-06): the toolkit
     extra's 13.0.85 wheel lacks the TreeLauncher executables ("Target application terminated before first
@@ -126,7 +114,7 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     box = (repo_root() / "experiments/cuda_checker/run_box.sh").read_text()
     assert '"cuda-toolkit[nvcc,cccl,nvtx]==13.0.3" "nvidia-cuda-sanitizer-api==13.4.92"' in box
     assert "sanitizer]" not in box
-    mem = " ".join(C.chain(repo_root() / "experiments/phase2/configs/p1_rl.yaml", "p1")[3])
+    mem = " ".join(C.chain(repo_root() / "specs/rl_full.yaml", "rl")[3])  # P1's step, verbatim (archived P1 plan)
     assert "--error-exitcode 1" in mem and "no compute-sanitizer" in mem
     # torch's caching allocator hides out-of-bounds accesses from memcheck; arena reuse is initcheck's case
     assert "PYTORCH_NO_CUDA_MEMORY_CACHING=1" in mem and "for t in memcheck initcheck" in mem
@@ -139,33 +127,14 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     assert len(files) == 5 and all(f in mem.split() for f in files), (files, mem)
 
 
-def test_r2_chain_checks_the_card_and_checker_then_tunes_e2_with_the_preregistered_g_probe():
-    """R2 (PLAN §5.1 G-probe, 20 GRPO steps at the pre-registered LR on R1's e2): P1's card and checker steps
-    verbatim (so the two chains cannot drift), then g_probe on the fast trainer; vLLM only."""
-    from objdel.core.provenance import repo_root
-    from objdel.infra.vast import chain as C
-
-    cfg = repo_root() / "experiments/phase2/configs"
-    p1, r2 = (C.chain(cfg / f, "r2") for f in ("p1_rl.yaml", "r2_qwen3vl2b.yaml"))
-    assert r2[:4] == p1[:4]
-    gp = r2[4]
-    assert gp[:2] == ["-m", "experiments.phase2.g_probe"] and len(r2) == 5
-    args = dict(zip(gp[2::2], gp[3::2], strict=True))
-    data = "/workspace/data/lidc"
-    assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/r2/ckpt", "--train": f"{data}/prepared",
-                    "--probe": f"{data}/eval_views/lidc-val-shifted", "--out": "/workspace/runs/r2/g_probe"}
-    assert not any(f in gp for f in ("--plain", "--grpo", "--items", "--select"))  # the pre-registered G-probe as is
-
-
 def test_full_rl_chain_checks_the_card_and_checker_then_tunes_e2_resumably():
-    """The full RL run: P1's card, checker and sanitizer steps verbatim, then train_rl on R1's e2, saving every 50
-    steps and always with --resume, so rerunning the chain on a new box continues from the last checkpoint."""
+    """The full RL run: the card, checker and sanitizer steps (P1's, verbatim), then train_rl on R1's e2, saving
+    every 50 steps and always with --resume, so rerunning the chain on a new box continues from the last checkpoint."""
     from objdel.core.provenance import repo_root
     from objdel.infra.vast import chain as C
 
-    cfg = repo_root() / "experiments/phase2/configs"
-    p1, rl = (C.chain(cfg / f, "rl") for f in ("p1_rl.yaml", "rl_full.yaml"))
-    assert rl[:4] == p1[:4] and len(rl) == 5
+    rl = C.chain(repo_root() / "specs/rl_full.yaml", "rl")
+    assert [s[0] for s in rl] == ["~", "bash", "bash", "~", "-m"] and len(rl) == 5
     tr = rl[4]
     assert tr[:2] == ["-m", "experiments.phase2.train_rl"] and tr[-1] == "--resume"
     args = dict(zip(tr[2:-1:2], tr[3:-1:2], strict=True))
@@ -174,58 +143,20 @@ def test_full_rl_chain_checks_the_card_and_checker_then_tunes_e2_resumably():
                     "--out": "/workspace/runs/rl/train_rl", "--steps": "770", "--save-steps": "50"}
 
 
-def test_checker_gpu_chain_builds_then_sanitizes_before_the_long_checks():
-    """A checker-only rental (no model, no vLLM, no data bundle): build for the card, memcheck + initcheck first (the
-    step P1 never ran), then P1's equivalence and timing step if the cap leaves time."""
-    from objdel.core.provenance import repo_root
-    from objdel.infra.vast import chain as C
-
-    cfg = repo_root() / "experiments/phase2/configs"
-    p1, k = (C.chain(cfg / f, "k1") for f in ("p1_rl.yaml", "checker_gpu.yaml"))
-    assert k[0] == p1[0]  # box facts
-    assert k[1] == ["bash", "-c", "mkdir -p /workspace/runs/k1/cuda_checker && "
-                    "bash experiments/cuda_checker/run_box.sh --build-only"]  # fmt: skip
-    assert k[2] == p1[3] and k[3] == ["~", *p1[2]] and len(k) == 4
-
-
-def test_speed_chain_compares_vllm_asleep_and_awake_on_e2():
-    """R4: the full run's card facts and env check, then two short train_rl arms on e2 with today's code: vLLM asleep
-    between steps (the full run's setting), then kept awake. The awake arm may run out of memory: it must not stop the
-    chain, and neither arm saves checkpoints."""
-    import json
-
-    from objdel.core.provenance import repo_root
-    from objdel.infra.vast import chain as C
-
-    cfg = repo_root() / "experiments/phase2/configs"
-    full, r4 = (C.chain(cfg / f, "r4") for f in ("rl_full.yaml", "r4_speed.yaml"))
-    assert r4[:2] == full[:2] and len(r4) == 4
-    asleep, awake = r4[2], r4[3]
-    assert asleep[:2] == ["-m", "experiments.phase2.train_rl"]
-    assert awake[:3] == ["~", "-m", "experiments.phase2.train_rl"]
-    a, b = (dict(zip(s[i::2], s[i + 1 :: 2], strict=True)) for s, i in ((asleep, 2), (awake, 3)))
-    assert a["--ckpt"] == b["--ckpt"] == "/workspace/runs/r4/ckpt" and a["--steps"] == b["--steps"] == "15"
-    assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
-    assert "--grpo" not in a and json.loads(b["--grpo"]) == {"vllm_enable_sleep_mode": False}
-
-
 def test_shared_prefix_chain_compares_the_packed_forward_on_e2():
-    """R5: R4's box facts and env check, then two short train_rl arms on e2: today's forward, then --shared-prefix.
-    The packed arm must not stop the chain, and neither arm saves checkpoints."""
+    """R5: the full run's box facts and env check (R4's), then two short train_rl arms on e2: today's forward, then
+    --shared-prefix. The packed arm must not stop the chain, and each arm saves once, at its last step (E2.7)."""
     from objdel.core.provenance import repo_root
     from objdel.infra.vast import chain as C
 
-    cfg = repo_root() / "experiments/phase2/configs"
-    r4, r5 = (C.chain(cfg / f, "r5") for f in ("r4_speed.yaml", "r5_shared.yaml"))
-    assert r5[:2] == r4[:2] and len(r5) == 4
-    out = r5[2].index("--out") + 1
-    assert r5[2][:out] + r5[2][out + 1:] == r4[2][:out] + r4[2][out + 1:]  # R4's base arm, own folder
+    full, r5 = (C.chain(repo_root() / f, "r5") for f in ("specs/rl_full.yaml", "specs/r5_shared.yaml"))
+    assert r5[:2] == full[:2] and len(r5) == 4
     base, packed = r5[2], r5[3]
     assert packed[:3] == ["~", "-m", "experiments.phase2.train_rl"] and packed[-1] == "--shared-prefix"
     assert "--shared-prefix" not in base
     a, b = (dict(zip(s[i::2], s[i + 1 :: 2], strict=False)) for s, i in ((base, 2), (packed[:-1], 3)))
     assert a["--ckpt"] == b["--ckpt"] == "/workspace/runs/r5/ckpt" and a["--steps"] == b["--steps"] == "15"
-    assert int(a["--save-steps"]) > 15 and int(b["--save-steps"]) > 15 and a["--out"] != b["--out"]
+    assert a["--save-steps"] == b["--save-steps"] == "15" and a["--out"] != b["--out"]  # E2.7: one save, at the end
 
 
 def test_covered_hand_cases():

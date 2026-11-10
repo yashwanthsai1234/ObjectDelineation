@@ -358,7 +358,7 @@ def test_end_to_end_dry_run(E):
     assert len(E.vast("show instance")) == 2  # polled loading -> running
     assert all(x["api_key"] == API_KEY for x in E.calls("vastai"))  # scoped key via env, never argv
     o3 = E.sh("sync_up.sh", "r1", "--bundle-dir", E.bundles)
-    o4 = E.sh("run.sh", "r1", "experiments.phase2.train_sft", "--config", "experiments/phase2/configs/r1.yaml")
+    o4 = E.sh("run.sh", "r1", "experiments.phase2.train_sft", "--spec", "specs/r1_qwen3vl2b.yaml", "--stage", "train")
     assert "timeout" in o4.stdout and "tmux new-session" in o4.stdout and "HEARTBEAT" in o4.stdout
     o5 = E.sh("pull.sh", "r1")
     assert "PULLED_OK" in o5.stdout
@@ -1014,10 +1014,10 @@ def test_bundle_help():
 
 
 def test_run_chain_for_an_r1_config(E):
-    cfg, box = ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "/workspace/data/lidc"
+    cfg, box = ROOT / "specs/r1_qwen3vl2b.yaml", "/workspace/data/lidc"
     gpu, train, select, probe = CH.chain(cfg, "r1")
     assert gpu[:2] == ["bash", "-c"] and "run_box.sh --build-only" in gpu[2]  # scoring runs on the CUDA checker
-    assert train[:2] == ["-m", "experiments.phase2.train_sft"] and "--config" in train
+    assert train[:2] == ["-m", "experiments.phase2.train_sft"] and after(train, "--output-dir") == "r1-qwen3vl2b"
     assert select[:2] == ["-m", "experiments.phase2.select_ckpt"] and "--no-vision" not in select
     vision = json.loads(after(select, "--vision"))
     assert vision == {"prepared": f"{box}/prepared", "reference": "/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"}
@@ -1030,16 +1030,14 @@ def test_run_chain_for_an_r1_config(E):
     words = ("experiments.phase2.train_sft", "experiments.phase2.select_ckpt", "--vision", "experiments.phase2.g_probe",
              "/workspace/runs/r1/r1-qwen3vl2b/select", "OBJDEL_RUN_DIR=/workspace/runs/r1")  # fmt: skip
     assert [w for w in words if w not in line] == []
-    (timing,) = CH.chain(ROOT / "experiments/phase2/configs/r0_qwen3vl_arm.yaml", "r1")  # branches []: train only
-    assert timing[:2] == ["-m", "experiments.phase2.train_sft"]
 
 
 def test_r1_refuses_on_the_box_without_its_g_vision_reference(E):
     E.launched()
-    line, ref = E.tmux("experiments/phase2/configs/r1_qwen3vl2b.yaml"), "/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"
+    line, ref = E.tmux("specs/r1_qwen3vl2b.yaml"), "/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"
     assert f"test -f {ref}" in line and "--vision-reference-only first" in line  # refused on the box, with the remedy
     assert line.index(f"test -f {ref}") < line.index("experiments.phase2.train_sft")
-    assert CH.vision_refs(ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "r1") == [ref]
+    assert CH.vision_refs(ROOT / "specs/r1_qwen3vl2b.yaml", "r1") == [ref]
 
 
 def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
@@ -1048,17 +1046,10 @@ def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
     E.launched()
     out = E.sh("run.sh", "r1", "experiments.phase2.final_eval", "--out", "/workspace/runs/r1/k3_load.json").stdout
     assert "tmux new-session -d -s r1-final_eval" in out and "/workspace/runs/r1/final_eval.log" in out
-    out = E.sh("run.sh", "r1", "experiments/phase2/configs/r1_qwen3vl2b.yaml").stdout
+    out = E.sh("run.sh", "r1", "specs/r1_qwen3vl2b.yaml").stdout
     assert "-s r1-r1_qwen3vl2b" in out and "/workspace/runs/r1/r1_qwen3vl2b.log" in out
     E.sh("run.sh", "r1", "experiments.phase1.bench.xarch_hashes", "--out", "x.json")
     E.sh("run.sh", "r1", "experiments.phase1.build_data", ok=False)  # only the one Phase 1 module R0 needs
-
-
-def _cfg(name: str, text: str) -> Path:
-    """A config under the repo (chain() names it relative to ROOT), in the ignored build/ dir."""
-    (d := ROOT / "build" / "test_cfgs").mkdir(parents=True, exist_ok=True)
-    (d / name).write_text(text)
-    return d / name
 
 
 def _exe(path: Path, text: str) -> None:
@@ -1094,41 +1085,36 @@ def test_run_sh_job_runs_in_the_code_dir_with_the_run_dir_exported(E, tmp_path):
 
 
 def test_soft_steps_continue_and_hard_steps_stop_the_chain(E, tmp_path):
-    _cfg("soft.yaml", json.dumps({"steps": [
-        ["~", "bash", "-c", "exit 3  # it's"], ["~", "-m", "experiments.phase2.a", "it's"],
-        ["-m", "experiments.phase2.b"], ["bash", "-c", "exit 4"], ["-m", "experiments.phase2.c"]]}))  # fmt: skip
-    E.launched()
-    calls, code, rd = _on_box(E, tmp_path, "build/test_cfgs/soft.yaml")
-    assert [c[2] for c in calls] == ["-I -m experiments.phase2.a it's", "-I -m experiments.phase2.b"]
+    """A soft stage's failure is logged and the chain goes on; a hard stage's failure stops it. chain() reads only a
+    run spec in specs/ (E6.3), so the spec sits in a throwaway repo that OBJDEL_REPO names."""
+    repo = tmp_path / "repo"
+    (repo / "specs").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text("")
+    argvs = [(True, ["bash", "-c", "exit 3  # it's"]), (True, ["-m", "experiments.phase2.a", "it's"]),
+             (False, ["-m", "experiments.phase2.b"]), (False, ["bash", "-c", "exit 4"]),
+             (False, ["-m", "experiments.phase2.c"])]
+    (repo / "specs" / "soft.yaml").write_text(json.dumps({
+        "schema_version": 1, "name": "soft", "compute": {"gpu": "RTX_5090", "cap_hours": 1.0},
+        "stages": [{"kind": "cmd", "name": f"s{i}", "soft": soft, "argv": argv}
+                   for i, (soft, argv) in enumerate(argvs)]}))  # fmt: skip
+    E.launched()  # against the real repo (its preflight stamp); only the run reads the throwaway one
+    E.env["OBJDEL_REPO"] = str(repo)
+    calls, code, rd = _on_box(E, tmp_path, "specs/soft.yaml")
+    guard, *stages = [c[2] for c in calls]  # E6.5: the spec record runs before any stage
+    assert guard == f"-I -m objdel.infra.vast run_spec specs/soft.yaml {rd}/run_spec.json"
+    assert stages == ["-I -m experiments.phase2.a it's", "-I -m experiments.phase2.b"]
     log = (rd / "soft.log").read_text()
     assert code == "4" and log.count("step failed, continuing: bash -c 'exit 3") == 1
 
 
-def test_c2_chain_trains_then_scores_only_the_topology_probe():
-    """Audit: each C2 run repeated R1's whole select_ckpt and g_probe (~1-2 GPU-h over three runs). `stages` picks the
-    stages; `branches_from` (resolved by train_sft on the box from R2's verdict) is not a timing run; `sampler` and the
-    rotated view reach select_ckpt."""
-    c2 = _cfg("c2.yaml", "model: qwen3-vl-2b\noutput_dir: c2-x\nbranches_from: r1-qwen3vl2b/g_probe/g_probe.json\n"
-                         "stages: [train, topology]\nsampler: hf\nvision: off\n")  # fmt: skip
-    _, train, topo = CH.chain(c2, "v1")
-    assert train[:2] == ["-m", "experiments.phase2.train_sft"] and train[-1] == "build/test_cfgs/c2.yaml"
-    assert topo[:2] == ["-m", "experiments.phase2.select_ckpt"] and after(topo, "--only") == "topology"
-    assert after(topo, "--run") == "/workspace/runs/v1/c2-x" and after(topo, "--sampler") == "hf"
-    assert "--shifted" not in topo and "--items" not in topo  # --only topology scores the whole probe
-    assert after(CH.chain(ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "v1")[2], "--rotated") == \
-        "/workspace/data/lidc/eval_views/lidc-val-rotated"
-    hf = _cfg("hf.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nsampler: hf\nvision: off\n")
-    select = CH.chain(hf, "v1")[2]
-    assert after(select, "--sampler") == "hf"  # D13 HF fallback
-    assert after(select, "--items") == "256"  # D13: the HF path selects on a fixed 256-item shifted-val subset
-    vllm = _cfg("vllm.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nsampler: vllm\nvision: off\n")
-    assert "--items" not in CH.chain(vllm, "v1")[2]
-
-
 def test_chain_passes_a_numeric_g_vision_reference_as_is():
-    """RunArgs accepts R0's base distance as a number; select_ckpt reads a str reference as a file path."""
-    num = _cfg("num.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nvision: {prepared: prepared, reference: 0.25}\n")
-    _, _, select, _ = CH.chain(num, "v1")
+    """R0's base distance may be a number; select_ckpt reads a str reference as a file path."""
+    from objdel.core import spec as S
+
+    stage = S.SelectStage(name="select", run="{rd}/o", prepared="{data}/prepared", probes="{data}/eval_views",
+                          shifted="{data}/eval_views/lidc-val-shifted",
+                          vision=S.VisionRef(prepared="{data}/prepared", reference=0.25))
+    select = S.to_argv(stage, "/workspace/runs/v1", CH.DATA)
     assert json.loads(after(select, "--vision")) == {"prepared": "/workspace/data/lidc/prepared", "reference": 0.25}
 
 
@@ -1340,7 +1326,7 @@ def test_run_refuses_extra_arguments_after_a_config(E):
     """V1 (2026-11-02): `run.sh v1 configs/r0.yaml --cap-hours 1.5` put the flag into the module's arguments, which a
     config run ignores, so R0 ran under the instance cap instead of 1.5 h. Flags go before the config."""
     E.launched()
-    cfg = "experiments/phase2/configs/r1_qwen3vl2b.yaml"
+    cfg = "specs/r1_qwen3vl2b.yaml"
     r = E.sh("run.sh", "r1", cfg, "--cap-hours", "1.5", ok=False)
     assert "before the config" in r.stderr and "--cap-hours" in r.stderr
     assert "cap_s=5400" in E.sh("run.sh", "r1", "--cap-hours", "1.5", cfg).stdout + \
