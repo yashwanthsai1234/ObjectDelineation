@@ -45,7 +45,7 @@ import time
 from pathlib import Path
 
 from objdel.core.spec import RunSpec, fill, load_spec, to_argv
-from objdel.io import git_sha, read_json
+from objdel.io import code_sha, git_sha, read_json
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -548,16 +548,16 @@ def cmd_run(a) -> None:
 
 
 def cmd_run_spec(a) -> None:
-    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (CODE_SHA, written by sync_up;
-    else "unknown"), the trl, torch and transformers versions and the reward fingerprint, as strict JSON. A different
-    spec already in OUT stops the chain: a second run with the same id never overwrites it silently."""
+    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (objdel.io.code_sha: CODE_SHA,
+    written by sync_up, else git; else "unknown"), the trl, torch and transformers versions and the reward fingerprint,
+    as strict JSON. A different spec already in OUT stops the chain: a second run with the same id never overwrites it
+    silently."""
     from importlib.metadata import version
 
     from objdel.reward.spec import fingerprint
 
-    sha = ROOT / "CODE_SHA"
     rec = {"spec": load_spec(ROOT / a.spec).model_dump(mode="json"),
-           "git_sha": sha.read_text().strip() if sha.is_file() else "unknown",
+           "git_sha": code_sha(ROOT, required=False) or "unknown",
            **{p: version(p) for p in ("trl", "torch", "transformers")}, "reward_fingerprint": fingerprint()}
     out = Path(a.out)
     if out.is_file() and read_json(out)["spec"] != rec["spec"]:
