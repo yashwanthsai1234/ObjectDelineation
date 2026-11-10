@@ -200,11 +200,11 @@ def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
 
     got = []
     monkeypatch.setattr(SC, "run_sampler", lambda kind, p, m, c, timeout, extra=(): got.append(timeout))
-    monkeypatch.setattr(SC, "stop_ids", lambda path, proc: {7})
     import transformers
 
     from objdel.train import sample
 
+    monkeypatch.setattr(sample, "stop_ids", lambda path, proc: {7})
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda path: None)
     monkeypatch.setattr(sample, "export_prompts", lambda *a, **k: None)
     monkeypatch.setattr(sample, "import_completions", lambda *a, **k: [])

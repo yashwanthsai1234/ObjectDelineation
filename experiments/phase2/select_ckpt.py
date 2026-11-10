@@ -188,22 +188,6 @@ def view_rows(view: Path, items: int | None = None, rl_only: bool = True) -> lis
     return D.prompts(view, "lidc", "val", rl_only, subset=items and (items, SUBSET_SEED))
 
 
-def stop_ids(path: Path, proc) -> set[int]:
-    """rewards.stop_ids of a checkpoint directory. Base weights may have no generation_config.json (eos only in
-    text_config): then the model config's, as from_pretrained falls back for a loaded model."""
-    from types import SimpleNamespace
-
-    from transformers import AutoConfig, GenerationConfig
-
-    from objdel.train import rewards
-
-    try:
-        gen = GenerationConfig.from_pretrained(path)
-    except OSError:
-        gen = GenerationConfig.from_model_config(AutoConfig.from_pretrained(path))  # reads text_config's eos too
-    return rewards.stop_ids(SimpleNamespace(generation_config=gen), proc)
-
-
 def sampler_timeout(a, samples: int) -> float:
     """600 s (engine start) + the per-sample time (--timeout-s, else TIMEOUT_S of the sampler) for `samples`."""
     return 600 + (a.timeout_s or TIMEOUT_S[a.sampler]) * samples
@@ -217,7 +201,7 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
 
     out.mkdir(parents=True, exist_ok=True)
     proc = AutoProcessor.from_pretrained(branch)  # saved by train_sft with the run's processor kwargs
-    stop = stop_ids(branch, proc)
+    stop = sample.stop_ids(branch, proc)
     prompts, comps = out / "prompts.jsonl", out / "completions.jsonl"
     sample.export_prompts(rows, prompts, a.model, "lidc", k, processor=proc, stop_ids=stop, seed=a.seed)
     run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), extra)

@@ -64,3 +64,7 @@ E3a (impl2-emoves2): module_strings_stale re-recorded: the e_moves_manual target
 new; geom/engine.py re-exports count as its names (test_layers.top_level_names), so objdel.geom.engine.<name> resolves.
 old_names: unchanged (record_old_names keeps the recorded names of modules the moves removed; test_move_complete checks
 that each has a home).
+E4 step 1 (impl2-E4f, on 2db0bcb, before E3b/E3c/E5): host_syncs gains train/sample.py 1 (HfSampler's generate
+.tolist(), moved from experiments/phase2/hf_sample.py); old_names re-recorded: train/sample.py gains the sampler
+interface (params_for, Sample, Sampler, VllmSampler, HfSampler, build_prompt, main and sample_vllm / hf_sample's
+helpers) and the checkpoint stop_ids, which select_ckpt loses (e_moves.json sends them all to objdel.policy.sampler).

@@ -61,10 +61,13 @@ References:
 - Lab: archive/phase1_lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
 """
 import re
+from typing import TYPE_CHECKING
 
 from peft import LoraConfig
 from transformers.utils import is_torch_bf16_gpu_available
-from trl import GRPOConfig, SFTConfig
+
+if TYPE_CHECKING:
+    from trl import GRPOConfig, SFTConfig
 
 from objdel.reward import REWARD_V4
 
@@ -157,7 +160,7 @@ NO_SYNC = {"logging_nan_inf_filter": False, "accelerator_config": {"non_blocking
 
 
 def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at: int | None = None,
-               **overrides) -> SFTConfig:
+               **overrides) -> "SFTConfig":
     """The bundle's SFT settings (§6.0). Schedule (D5, WSD): linear warmup over 3 % of the stable run's `steps`,
     then constant; `branch_at=s` is a decay branch from the stable run's step-s checkpoint, decaying linearly to 0
     over 15 % of s (max_steps = s + that), identical to the stable run up to s. steps=None (smoke tests): 3 %
@@ -171,6 +174,8 @@ def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at:
     stable_end = branch_at if branch_at is not None else steps
     decay = 0 if branch_at is None else round(DECAY * branch_at)
     sched = {"num_decay_steps": decay, "decay_type": "linear", "min_lr_ratio": 0.0}  # stable = the rest
+    from trl import SFTConfig  # here: the sampler and evaluation import this module without trl.trainer (E4)
+
     workers = overrides.get("dataloader_num_workers", 6)
     return SFTConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "assistant_only_loss": True, "max_length": None,
@@ -207,7 +212,7 @@ DEFAULT_NUMERICS = "bf16-seqmask"
 
 
 def grpo_config(model: str, output_dir: str, reward=REWARD_V4, numerics: str = DEFAULT_NUMERICS,
-                **overrides) -> GRPOConfig:
+                **overrides) -> "GRPOConfig":
     """reward: the reward spec (its group sets num_generations). numerics: a key of NUMERICS; explicit overrides win
     over the preset. vllm_lora is not a TRL field: it is set as an attribute of the returned config, for FastGRPO to
     read (False elsewhere)."""
@@ -220,6 +225,8 @@ def grpo_config(model: str, output_dir: str, reward=REWARD_V4, numerics: str = D
     for k in ("num_generations", "num_generations_eval"):
         if overrides.get(k) not in (None, g):
             raise ValueError(f"{k}={overrides[k]}: {reward.name} scores groups of exactly {g} (its group)")
+    from trl import GRPOConfig  # here, as in sft_config
+
     cfg = GRPOConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
         # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM

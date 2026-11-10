@@ -208,17 +208,6 @@ def test_sampler_reuse_is_keyed_on_flags_sampler_and_checkpoint(tmp_path, monkey
     assert [c[-1] == "--logprobs" for c in calls] == [False, True, False, False]
 
 
-def test_stop_ids_of_base_weights_without_generation_config(tmp_path):
-    """Qwen/Qwen3.5-0.8B ships no generation_config.json; its eos is only in text_config (248044)."""
-    (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3_5", "eos_token_id": None,
-                                                      "text_config": {"model_type": "qwen3_5_text",
-                                                                      "eos_token_id": 248044}}))
-    proc = SimpleNamespace(tokenizer=SimpleNamespace(eos_token_id=248046, pad_token_id=248044))
-    assert SC.stop_ids(tmp_path, proc) == {248044, 248046}
-    (tmp_path / "generation_config.json").write_text(json.dumps({"eos_token_id": [7, 248044]}))
-    assert SC.stop_ids(tmp_path, proc) == {7, 248044, 248046}
-
-
 def test_sample_vllm_turns_off_the_flashinfer_sampler_before_importing_vllm():
     """R1 2026-11-05: FlashInfer's sampler JIT-compiles with nvcc (absent from /opt/vllm); vLLM reads env at import."""
     import inspect
