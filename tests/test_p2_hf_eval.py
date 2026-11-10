@@ -15,6 +15,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from objdel.policy import evaluate, sampler
+from objdel.sft import select as sft_select
+
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "experiments/phase2/configs"
 
@@ -143,8 +146,8 @@ def test_sigterm_to_select_kills_the_sampler_group(tmp_path):
     pytest.importorskip("trl")
     pid = tmp_path / "child.pid"
     child = f"import os, time; open({str(pid)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
-    code = (f"import sys; from experiments.phase2 import select_ckpt as SC; "
-            f"SC.run_group([sys.executable, '-c', {child!r}], 60)")
+    code = (f"import sys; from objdel.sft import select; "
+            f"select.run_group([sys.executable, '-c', {child!r}], 60)")
     p = subprocess.Popen([sys.executable, "-I", "-c", code], cwd=ROOT)
     for _ in range(600):
         if pid.exists() and pid.read_text():
@@ -167,7 +170,6 @@ def test_sampler_retry_keeps_finished_items(tmp_path, monkeypatch):
     """The completions file is kept across attempts (the child resumes); an attempt that finished items does not
     count against TRIES; other prompts or another child command start from an empty file."""
     pytest.importorskip("trl")
-    from experiments.phase2 import select_ckpt as SC
 
     prompts, comps, seen = tmp_path / "p.jsonl", tmp_path / "c.jsonl", []
     prompts.write_text("".join(json.dumps({"id": i, "n": 1}) + "\n" for i in "abc"))
@@ -178,15 +180,15 @@ def test_sampler_retry_keeps_finished_items(tmp_path, monkeypatch):
         comps.write_text("".join(x + "\n" for x in have) + json.dumps({"id": "abc"[len(have)], "k": 0}) + "\n")
         raise subprocess.TimeoutExpired(cmd, timeout)
 
-    monkeypatch.setattr(SC, "run_group", run)
-    SC.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # 3 timed-out attempts, each finishing an item: done
+    monkeypatch.setattr(sft_select, "run_group", run)
+    sft_select.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # 3 timed-out attempts, each finishing an item: done
     assert seen == [0, 1, 2]
-    SC.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # reused, no attempt
+    sft_select.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # reused, no attempt
     assert seen == [0, 1, 2]
-    monkeypatch.setattr(SC, "run_group", lambda cmd, timeout: seen.append(-1) or _raise(cmd, timeout))
+    monkeypatch.setattr(sft_select, "run_group", lambda cmd, timeout: seen.append(-1) or _raise(cmd, timeout))
     prompts.write_text(prompts.read_text() + json.dumps({"id": "d", "n": 1}) + "\n")  # other prompts
     with pytest.raises(RuntimeError, match="failed 2 times"):
-        SC.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # two stalled attempts
+        sft_select.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # two stalled attempts
     assert seen[3:] == [-1, -1] and not comps.exists()  # the old prompts' completions were not resumed
 
 
@@ -196,11 +198,10 @@ def _raise(cmd, timeout):
 
 def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
     pytest.importorskip("trl")
-    from experiments.phase2 import select_ckpt as SC
 
     got = []
-    monkeypatch.setattr(SC, "run_sampler", lambda kind, p, m, c, timeout, extra=(): got.append(timeout))
-    monkeypatch.setattr(SC, "stop_ids", lambda path, proc: {7})
+    monkeypatch.setattr(sft_select, "run_sampler", lambda kind, p, m, c, timeout, extra=(): got.append(timeout))
+    monkeypatch.setattr(sampler, "stop_ids", lambda path, proc: {7})
     import transformers
 
     from objdel.train import sample
@@ -209,8 +210,8 @@ def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
     monkeypatch.setattr(sample, "export_prompts", lambda *a, **k: None)
     monkeypatch.setattr(sample, "import_completions", lambda *a, **k: [])
     a = SimpleNamespace(model="lfm2.5-vl-450m", seed=0, sampler="hf", timeout_s=None)
-    SC.sample_view(a, tmp_path, [{"key": str(i)} for i in range(100)], tmp_path / "o", 8)
-    assert got == [600 + 3.0 * 800] and SC.TIMEOUT_S["hf"] == 3.0  # EV-5: 3x HF's ~1 s per answer
+    sft_select.sample_view(a, tmp_path, [{"key": str(i)} for i in range(100)], tmp_path / "o", 8)
+    assert got == [600 + 3.0 * 800] and sft_select.TIMEOUT_S["hf"] == 3.0  # EV-5: 3x HF's ~1 s per answer
 
 
 # ---------------------------------------------------------------- R0 HF rate step
@@ -220,7 +221,6 @@ def test_hf_rate_step_samples_base_weights_and_writes_the_rate(tmp_path, monkeyp
     pytest.importorskip("trl")
     from experiments.phase2 import hf_rate as HR
     from experiments.phase2 import r0_parity
-    from experiments.phase2 import select_ckpt as SC
 
     seen = []
 
@@ -232,8 +232,9 @@ def test_hf_rate_step_samples_base_weights_and_writes_the_rate(tmp_path, monkeyp
         return {}
 
     monkeypatch.setattr(r0_parity, "weights", lambda model: tmp_path / "base")
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None, rl_only=True: [{"key": str(i)} for i in range(items)])
-    monkeypatch.setattr(SC, "sample_view", sample_view)
+    monkeypatch.setattr(evaluate, "view_rows",
+                        lambda view, items=None, rl_only=True: [{"key": str(i)} for i in range(items)])
+    monkeypatch.setattr(sft_select, "sample_view", sample_view)
     out = tmp_path / "hf-rate-lfm"
     assert HR.main(["--model", "lfm2.5-vl-450m", "--view", str(tmp_path / "v"), "--out", str(out)]) == 0
     (s,) = seen

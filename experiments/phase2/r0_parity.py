@@ -3,8 +3,8 @@
     python -I -m experiments.phase2.r0_parity --model lfm2.5-vl-450m --view <eval_views>/lidc-val-shifted \
         --out <run_dir>/parity-lfm [--items 32] [--logprob-items 8] [--k 8]
 
-Base weights: snapshot_download(configs.MODELS[model]), one local directory that vLLM and transformers both load. The seeded --items subset (select_ckpt.view_rows) is
-sampled at n = --k by `sample_vllm.py --logprobs` through select_ckpt.sample_view (CUDA untouched, timeout, retries,
+Base weights: snapshot_download(configs.MODELS[model]), one local directory that vLLM and transformers both load. The seeded --items subset (policy.evaluate.view_rows) is
+sampled at n = --k by `sample_vllm.py --logprobs` through sft.select.sample_view (CUDA untouched, timeout, retries,
 completeness; files in <out>/samples/). Then parity.compare in bfloat16: (a) H-A5-1 prompt ids equal on every item;
 (b) H-A5-2 HF teacher forcing of the first --logprob-items x n (PLAN: 8 x 8) within parity.MEDIAN["bfloat16"]
 (0.02); parity.SEQ_P99 (0.5) is reported only (D13, 2026-11-05). Writes <out>/parity.json (compare's report plus model, weights, view, items,
@@ -17,7 +17,8 @@ import sys
 from pathlib import Path
 
 from experiments.phase2 import parity
-from experiments.phase2 import select_ckpt as SC
+from objdel.policy import evaluate
+from objdel.sft import select as SC
 
 
 def weights(model: str) -> Path:
@@ -40,7 +41,7 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout_s", type=float, default=2.0, help="sampler child timeout per sample, plus 600 s")
     ap.set_defaults(sampler="vllm")  # what SC.sample_view reads
     a = ap.parse_args(argv)
-    w, rows, samples = weights(a.model), SC.view_rows(a.view, a.items), a.out / "samples"
+    w, rows, samples = weights(a.model), evaluate.view_rows(a.view, a.items), a.out / "samples"
     SC.sample_view(a, w, rows, samples, a.k, extra=("--logprobs",))  # before anything touches CUDA (D13)
     teach = {r["key"] for r in rows[: a.logprob_items]}
     doc = parity.compare(w, samples / "prompts.jsonl", samples / "completions.jsonl", "bfloat16", teach) | {

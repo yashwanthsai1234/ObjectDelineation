@@ -20,7 +20,9 @@ from experiments.phase2 import select_ckpt as SC
 from objdel.eval import gates, metrics, probes, summarize
 from objdel.eval import signal as S
 from objdel.eval.metrics import _ged, min_mode_retention, tv_js
+from objdel.policy import evaluate
 from objdel.reward import ExpertCache
+from objdel.sft import select as sft_select
 from objdel.targets import build_target
 from objdel.train import serve
 
@@ -200,7 +202,7 @@ def test_select_ckpt_eligibility_needs_groups_of_8():
 
 def test_select_ckpt_eligibility_needs_a_vision_result():
     summary = {"format": 1.0, "legal": 1.0, "dup_rate": 0.0, "signal_share": 1.0, "group": 8}
-    for vision in ({}, SC.vision_check(Path("b"), None)):  # unmeasured; --no-vision
+    for vision in ({}, sft_select.vision_check(Path("b"), None)):  # unmeasured; --no-vision
         assert gates.eligible({"datasets": {"lidc": summary}}, vision) is False
 
 
@@ -262,8 +264,8 @@ def test_topology_probe_on_select_ckpt_items_subset_can_pass(monkeypatch, tmp_pa
         seen[out.name] = len(rows)
         return {r["key"]: exact.get(r["key"], {"item_id": r["key"], "samples": []}) for r in rows}
 
-    monkeypatch.setattr(SC, "sample_view", sample_view)
-    monkeypatch.setattr(SC, "score_view", lambda *a: {"summary": {}, "panel": {}, "iou": {}})
+    monkeypatch.setattr(sft_select, "sample_view", sample_view)
+    monkeypatch.setattr(sft_select, "score_view", lambda *a: {"summary": {}, "panel": {}, "iou": {}})
     monkeypatch.setattr(probes, "score_precision", lambda rows, root: {"rows": len(rows)})
     topo = probes.score_topology
     monkeypatch.setattr(probes, "score_topology", lambda rows, root: topo(rows, root, B=200))
@@ -279,7 +281,7 @@ def test_select_ckpt_probe_rows_are_the_probe_items():
     root = VIEWS / "probe-topology"
     if not (root / "lidc" / "val.jsonl").is_file():
         pytest.skip("no probe-topology view")
-    rows = SC.view_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
+    rows = evaluate.view_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
     assert len(rows) == len(probes.records(root)) == 680
 
 

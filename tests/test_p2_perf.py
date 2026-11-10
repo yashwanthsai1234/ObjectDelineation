@@ -48,13 +48,12 @@ def test_configs_turn_off_the_per_micro_batch_syncs(model, tmp_path):
 
 
 def test_trainers_skip_flop_counting():
-    """SFT: train_sft's Trainer subclass; GRPO: g_probe.make_trainer builds fast.FastGRPO (tests/test_train_fast.py),
-    for the G-probe and for the full run (train_rl)."""
-    src = (ROOT / "experiments/phase2/train_sft.py").read_text()
+    """SFT: sft.train's Trainer subclass; GRPO: rl.build.build_trainer builds fast.FastGRPO (tests/test_train_fast.py),
+    for the G-probe and for the full run (rl.run)."""
+    src = (ROOT / "src/objdel/sft/train.py").read_text()
     assert "def floating_point_ops(self, inputs):" in src and "            return 0" in src
-    gp = (ROOT / "experiments/phase2/g_probe.py").read_text()
-    assert 'cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO' in gp
-    assert "make_trainer(a, Path(a.ckpt), train" in (ROOT / "experiments/phase2/train_rl.py").read_text()
+    assert "cls = GRPOTrainer if flags.plain else fast.FastGRPO" in (ROOT / "src/objdel/rl/build.py").read_text()
+    assert "build.build_trainer(a.model, Path(a.ckpt), train" in (ROOT / "src/objdel/rl/run.py").read_text()
 
 
 def test_vllm_context_is_bounded():

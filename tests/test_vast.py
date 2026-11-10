@@ -24,6 +24,7 @@ import pytest
 from experiments.phase2 import preflight as PF
 from experiments.phase2.vast import bundle as B
 from experiments.phase2.vast import policy as P
+from objdel.sft import select as sft_select
 
 ROOT = Path(__file__).resolve().parents[1]
 VAST = ROOT / "experiments" / "phase2" / "vast"
@@ -1388,21 +1389,19 @@ def test_allowlist_image_is_the_vllm_native_pin():
 
 
 def test_sampler_python_uses_the_vllm_venv_when_present(tmp_path, monkeypatch):
-    from experiments.phase2 import select_ckpt as SC
 
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "python").write_text("")
-    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path)
-    assert SC.vllm_python() == str(tmp_path / "bin" / "python")
-    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("o"))[0] == str(tmp_path / "bin" / "python")
+    monkeypatch.setattr(sft_select, "VLLM_VENV", tmp_path)
+    assert sft_select.vllm_python() == str(tmp_path / "bin" / "python")
+    assert sft_select.sampler_cmd("vllm", Path("p"), Path("m"), Path("o"))[0] == str(tmp_path / "bin" / "python")
 
 
 def test_sampler_python_else_the_running_python(tmp_path, monkeypatch):
-    from experiments.phase2 import select_ckpt as SC
 
-    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path / "absent")
-    assert SC.vllm_python() == sys.executable
-    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("o"))[0] == sys.executable
+    monkeypatch.setattr(sft_select, "VLLM_VENV", tmp_path / "absent")
+    assert sft_select.vllm_python() == sys.executable
+    assert sft_select.sampler_cmd("vllm", Path("p"), Path("m"), Path("o"))[0] == sys.executable
 
 
 def test_image_check_handles_one_and_two_venvs():

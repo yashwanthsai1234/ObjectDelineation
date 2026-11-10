@@ -14,6 +14,7 @@ from experiments.phase2 import preflight as PF
 from experiments.phase2 import train_rl as TR
 from experiments.phase2.vast import policy as P
 from objdel.data import quality as Q
+from objdel.rl import run as rl_run
 from tests.test_final_eval import ev, ev_root, jsonl, run_fe  # noqa: F401  (fixtures and helpers)
 
 SCHEDULE = {"steps": 100, "per_step": 32, "block_steps": 20, "ids_sha256": "0" * 64}
@@ -30,7 +31,7 @@ def cfg(**kw):
 @pytest.mark.parametrize("steps", [0, -20])
 def test_check_sampler_refuses_non_positive_steps(steps):
     with pytest.raises(ValueError):
-        TR.check_sampler(cfg(), SCHEDULE, steps)
+        rl_run.check_sampler(cfg(), SCHEDULE, steps)
 
 
 @pytest.mark.parametrize("flag,val", [("--budget-usd", "nan"), ("--rate-usd-per-h", "nan")])

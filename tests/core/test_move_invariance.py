@@ -119,9 +119,9 @@ class _Captured(Exception):
 
 
 def grpo_config_dict(argv: list[str], **over) -> dict:
-    """The GRPOConfig that make_trainer resolves for `train_rl.parse(argv)`, as to_dict() without VOLATILE keys."""
+    """The GRPOConfig that build_trainer resolves for `train_rl.parse(argv)`, as to_dict() without VOLATILE keys."""
     from experiments.phase2 import train_rl
-    from experiments.phase2.g_probe import make_trainer
+    from objdel.rl.build import build_trainer
 
     budget = ["--session-start", "0", "--rate-usd-per-h", "0.5"] if "--budget-usd" in argv else []  # as run.sh
     a, seen = train_rl.parse([*argv, *budget]), []
@@ -131,7 +131,7 @@ def grpo_config_dict(argv: list[str], **over) -> dict:
         raise _Captured
 
     with pytest.raises(_Captured):
-        make_trainer(a, a.ckpt, None, a.steps or 20, check=stop, **over)
+        build_trainer(a.model, Path(a.ckpt), None, Path(a.out), [], a.steps or 20, a, check=stop, **over)
     return {k: v for k, v in seen[0].to_dict().items() if k not in VOLATILE}
 
 

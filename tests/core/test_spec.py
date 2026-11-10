@@ -231,3 +231,9 @@ def test_a_bool_field_named_no_x_parses_its_bare_flag_as_true():
     assert sel.no_vision is True and S.same_stage(S.cli_parse(S.SelectStage, S.to_argv(sel, "R", "D")[2:]), sel)
     assert all(i.default is False for c in S.STAGE_CLASSES.values() for i in c.model_fields.values()
                if i.annotation is bool)
+
+
+def test_an_rl_stage_without_save_steps_saves_every_50():
+    """E2.7: train_rl's CLI default (save_steps 50) is the stage default."""
+    st = S.RlStage(model="m", ckpt="c", train="t", out="o", steps=260)
+    assert st.save_steps == 50 and "save_steps" not in st.model_fields_set

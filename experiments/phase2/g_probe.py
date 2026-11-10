@@ -5,7 +5,8 @@
     python -I -m experiments.phase2.g_probe --spec specs/r1_qwen3vl2b.yaml --stage probe [--rd RD] [--data DATA]
 
 The flags are an objdel.core.spec.ProbeStage (cli_stage), with the trainer flags train_rl has (TrainerFlags: --lr,
---grpo JSON, --shared-prefix, --compile, --plain, --trace, the C flags).
+--grpo JSON, --shared-prefix, --compile, --plain, --trace, the C flags); objdel.rl.build.build_trainer builds the
+trainer from them.
 
 configs.grpo_config with prereg.G_PROBE: LR 5e-6 (full FT) or 5e-5 (LoRA), constant, 20 steps, G = 8, 32 LIDC train
 prompts per step (disagreement items x4), vLLM colocate generation (owner 2026-11-06, perf F1: HF generate of 256
@@ -13,7 +14,7 @@ sequences needs 20-51 GiB of KV cache; needs the Phase 3 single-venv image, D15)
 configs.sampling(model, "grpo") (D13);
 fast.FastGRPO (per-chunk trimmed forwards, a per-step vision cache: perf C1, C6), TRLReward on the
 preloaded caches; the probe metrics run in this process (D7). Probe set: a seeded subset of `items`
-(128) shifted-val records (select_ckpt.view_rows), K = 8 through the trainer's own generation (sample.sample), twice
+(128) shifted-val records (policy.evaluate.view_rows), K = 8 through the trainer's own generation (sample.sample), twice
 at step 0 (the null, h0) and once at step 20; per item the raw composite R. Verdict: prereg.g_probe, step-0 legal =
 the mean of both draws. Also: Spearman of step-0 sd_geom / r_std / mixed with the gain (D12 veto, §6.2), the
 training-log form (mean logged R, steps 1-5 vs 11-20) and the step timing.
@@ -27,17 +28,17 @@ g_probe) ends cleanly with the reason on disk.
 """
 import gc
 import json
-import math
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 import numpy as np
 
 from experiments.phase2.prereg import G_PROBE, g_probe
-from experiments.phase2.select_ckpt import score_items, view_rows
 from objdel.eval import signal
+from objdel.policy.evaluate import score_items, view_rows
+from objdel.rl.build import build_trainer
+from objdel.rl.run import save_json
 
 SEEDS = (11, 12, 13)  # step-0 draw a, step-0 draw b, step 20
 
@@ -75,77 +76,9 @@ def candidates(sel: dict) -> list[str]:
     return [sel["selected"]] + [n for _, n in earlier[-1:]]
 
 
-def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None, calls=(), reward=None, **over):
-    """(trainer, processor, lr): FastGRPO (or, with a.plain, TRL's GRPOTrainer) on ckpt with configs.grpo_config,
-    the model's GRPO sampling, the probe LR (LoRA or full FT; a.lr overrides when set), logging every step, then
-    `over` and a.grpo's overrides. `a` is a stage with the objdel.core.spec.TrainerFlags fields (RlStage, ProbeStage). check(config) runs before the model loads (train_rl's sampler guards); calls:
-    more callbacks; reward: the reward spec (objdel.reward.REWARDS; None: reward v4); eval_dataset: rows of the view
-    a.heldout (its caches resolve first). Shared by the G-probe and the full run (train_rl)."""
-    import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor
-    from trl import GRPOTrainer
-
-    from objdel.reward import REWARD_V4
-    from objdel.train import callbacks, configs, fast, rewards, serve, vllm_sync
-
-    peft = configs.lora(a.model)
-    lr = getattr(a, "lr", None) or configs.rl_lr(a.model)
-    over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
-    over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | dict(a.grpo)
-    reward = reward or REWARD_V4
-    cfg = configs.grpo_config(a.model, str(Path(a.out) / "trainer"), reward=reward, **over)
-    if check:
-        check(cfg)
-    model = AutoModelForImageTextToText.from_pretrained(ckpt, **({"dtype": torch.float16} if cfg.fp16 else {}))
-    proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
-    roots = [a.train] if eval_dataset is None else [a.heldout, a.train]
-    funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc), spec=reward).funcs()
-    cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
-    win = getattr(a, "profile_window", None)  # --profile-window S,E: NVTX steps and the nsys capture window
-    calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])
-    if getattr(a, "trace", None):  # torch.profiler on step S (the nsys fallback; raises on S < 2), else on step 3
-        calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
-    if getattr(a, "no_ckpt_layers", None):  # C9 arm (a)
-        calls.append(callbacks.NoCkptLayers(a.no_ckpt_layers))
-    trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, eval_dataset=eval_dataset,
-                  processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
-    # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
-    trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
-    trainer.log_by_prompt = bool(getattr(a, "log_by_prompt", False))
-    if cfg.off_policy_mask_threshold is not None and cls is fast.FastGRPO:  # bf16-tis-opsm: B2.4 rule 4's live delta
-        trainer.opsm_watch = callbacks.OpsmDelta(trainer, cfg.output_dir)
-        trainer.add_callback(trainer.opsm_watch)
-    trainer.group_requests = bool(getattr(a, "group_requests", False))  # C6: one n = G vLLM request per prompt
-    trainer.runaway_cap = bool(getattr(a, "runaway_cap", 0))  # C11: each prompt's max_tokens from the rows' `cap`
-    if cfg.vllm_lora and cls is fast.FastGRPO:  # option F: vLLM serves the unmerged adapter from a tmpfs folder
-        shm = "/dev/shm" if Path("/dev/shm").is_dir() else None
-        trainer.lora_dir = Path(tempfile.mkdtemp(prefix="objdel-lora-", dir=shm))
-        if not vllm_sync.install(trainer, "lora-seqmask", trainer.lora_dir):  # C5's sync_lora each sync
-            raise ValueError("--numerics lora-seqmask needs a colocate vLLM on one process with a LoRA model")
-    elif getattr(a, "fast_sync", False) and not vllm_sync.install(trainer):  # C5: one load_weights call per sync
-        raise ValueError("--fast-sync needs a colocate vLLM on one process with a LoRA model")
-    trainer.count_syncs = bool(getattr(a, "count_syncs", False))  # C0
-    trainer.host_meta = bool(getattr(a, "host_meta", False))  # C4
-    trainer.check_meta_every = getattr(a, "check_meta_every", 50)
-    trainer.check_rope_every = getattr(a, "check_rope_every", 50)  # C2
-    trainer.checks_from_step = getattr(a, "checks_from_step", 1)  # C0: the check flags and recording act from step S
-    rec = getattr(a, "record_batches", None)  # C0, opened (and checked empty) by train_rl before the load
-    trainer.record_dir = Path(rec) if rec else None
-    trainer.prompt_memo = bool(getattr(a, "prompt_memo", False))  # C2
-    if getattr(a, "encoder_once", False) and not trainer.use_encoder_once():  # C3, after host_meta
-        raise ValueError("--encoder-once needs a Qwen-VL vision tower, base and image processor")
-    if getattr(a, "gpu_pixels", "off") == "auto":  # C1: 8 training images for the start-up self-check
-        imgs = [train[i]["image"] for i in range(min(8, len(train)))]
-        print(f"gpu_pixels/backend={trainer.use_gpu_pixels(imgs, getattr(a, 'allow_cpu_pixels', False))}")
-    if getattr(a, "compile", None):
-        fast.compile_text_layers(trainer.model, a.compile)
-        trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers
-    return trainer, proc, lr
-
-
 def probe(a, ckpt: Path, train, rows) -> dict:
     """One G-probe run on one checkpoint."""
-    trainer, _, lr = make_trainer(a, ckpt, train, G_PROBE["steps"])
+    trainer, _, lr = build_trainer(a.model, ckpt, train, Path(a.out), [Path(a.train)], G_PROBE["steps"], a)
     cfg = trainer.args
     t0 = time.time()
     s0a, s0b = (score(trainer, rows, Path(a.probe).resolve(), s) for s in SEEDS[:2])
@@ -167,6 +100,7 @@ def probe(a, ckpt: Path, train, rows) -> dict:
 
 
 def main(argv=None) -> int:
+    """CLI: the ProbeStage -> one probe per candidate checkpoint (at most two) -> <out>/g_probe.json."""
     from objdel.core.spec import ProbeStage, cli_stage
     from objdel.train import serve
 
@@ -198,25 +132,8 @@ def main(argv=None) -> int:
     return save(out, docs[-1] | {"probed": [c.name for c in ckpts[: len(docs)]], "earlier": docs[:-1]})
 
 
-def finite(x):
-    """NaN / inf -> None, recursively (Spearman of constant gains is NaN; strict JSON has no NaN)."""
-    if isinstance(x, dict):
-        return {k: finite(v) for k, v in x.items()}
-    if isinstance(x, list):
-        return [finite(v) for v in x]
-    return None if isinstance(x, float) and not math.isfinite(x) else x
-
-
-def save_json(path: Path, doc: dict, keys: tuple[str, ...]) -> int:
-    """Strict JSON (numpy scalars as floats, NaN / inf as null) to path; prints doc's `keys` on one line."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    doc = finite(json.loads(json.dumps(doc, default=float)))  # numpy scalars -> floats first
-    path.write_text(json.dumps(doc, indent=1, allow_nan=False) + "\n")
-    print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False))
-    return 0
-
-
 def save(out: Path, doc: dict) -> int:
+    """<out>/g_probe.json and its one-line summary."""
     return save_json(out / "g_probe.json", doc, ("verdict", "skipped", "h0", "gain", "probed"))
 
 

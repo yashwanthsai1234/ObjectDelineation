@@ -73,7 +73,7 @@ def tiny(tmp_path_factory):
     return path, tok
 
 
-def make_trainer(tiny, out, monkeypatch, prompts=(0, 1, 2, 3, 4), steps=1, eval_prompts=None, **kw):
+def tiny_trainer(tiny, out, monkeypatch, prompts=(0, 1, 2, 3, 4), steps=1, eval_prompts=None, **kw):
     monkeypatch.setattr(R, "score_batch", fake_score_batch)
     path, tok = tiny
     rw = R.TRLReward(lambda key: {"key": key}, stop_ids={tok.eos_token_id, tok.pad_token_id})
@@ -108,7 +108,7 @@ def terms_in_order(keys):
 
 
 def test_r2_trl_advantages_equal_advantages_v4(tiny, tmp_path, monkeypatch):
-    trainer, captured = make_trainer(tiny, tmp_path, monkeypatch)
+    trainer, captured = tiny_trainer(tiny, tmp_path, monkeypatch)
     trainer.train()
     ((keys, adv),) = captured
     blocks = [keys[i:i + G] for i in range(0, len(keys), G)]

@@ -8,18 +8,20 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from objdel.rl import run as rl_run
+
 
 @pytest.fixture
 def stub(tmp_path, monkeypatch):
-    """train_rl.main with no model, engine or preload: make_trainer returns a fake trainer whose train() runs
+    """train_rl.main with no model, engine or preload: build_trainer returns a fake trainer whose train() runs
     `body(start)` (start = the resumed checkpoint's step, 0 on a fresh run)."""
-    import experiments.phase2.g_probe as g_probe
     from experiments.phase2 import train_rl
+    from objdel.rl import build
     from objdel.train import dataset, serve
 
     monkeypatch.setattr(serve, "preload", lambda root, ds: None)
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: ["k1", "k2"])
-    monkeypatch.setattr(train_rl, "save_final", lambda model, proc, out: None)
+    monkeypatch.setattr(rl_run, "save_final", lambda model, proc, out: None)
     import gc
 
     monkeypatch.setattr(gc, "freeze", lambda: None)
@@ -36,11 +38,11 @@ def stub(tmp_path, monkeypatch):
                                                                   off_policy_mask_threshold=None,
                                                                   max_completion_length=1536))
 
-    def make(a, ckpt, train_rows, steps, **k):
+    def make(model, ckpt, rows, out, roots, steps, flags, **k):
         state.max_steps = steps
         return trainer, None, 5e-5
 
-    monkeypatch.setattr(g_probe, "make_trainer", make)
+    monkeypatch.setattr(build, "build_trainer", make)
     (tmp_path / "root").mkdir()
     (tmp_path / "root/manifest.json").write_text("{}")
     out = tmp_path / "out"
@@ -58,12 +60,11 @@ def test_steps_must_be_positive(steps):
 
 
 def test_check_sampler_refuses_zero_steps():
-    from experiments.phase2 import train_rl
 
     cfg = SimpleNamespace(generation_batch_size=256, num_generations=8, steps_per_generation=16,
                           gradient_accumulation_steps=16, num_iterations=1)
     with pytest.raises(ValueError):
-        train_rl.check_sampler(cfg, {"per_step": 32, "steps": 260, "block_steps": 20}, 0)
+        rl_run.check_sampler(cfg, {"per_step": 32, "steps": 260, "block_steps": 20}, 0)
 
 
 def test_resume_mid_run_keeps_one_seq_gaps_row_block_per_step(stub):
@@ -96,7 +97,7 @@ def test_merge_last_does_not_accept_a_half_written_final(tmp_path, capsys):
     (out / "final").mkdir()  # save_pretrained created the folder, then the box died
     a = train_rl.parse(["--merge-last", "--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "c"), "--out", str(out)])
     try:
-        rc = train_rl.merge_last(a)
+        rc = rl_run.merge_last(a)
     except Exception:  # a fixed version may try the merge on the fake checkpoint: any loud outcome is fine
         return
     assert rc != 0 or (out / "rl.json").exists()

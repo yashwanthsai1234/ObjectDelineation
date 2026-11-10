@@ -51,7 +51,7 @@ class StageBase(Base):
 
 
 class TrainerFlags(BaseModel, frozen=True, extra="forbid"):
-    """Flags of the trainer that train_rl and g_probe build alike (g_probe.make_trainer reads each one)."""
+    """Flags of the trainer that train_rl and g_probe build alike (rl.build.build_trainer reads each one)."""
 
     lr: float | None = None  # None: configs.rl_lr(model)
     shared_prefix: bool = False

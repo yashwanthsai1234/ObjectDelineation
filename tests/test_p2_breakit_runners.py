@@ -15,6 +15,8 @@ import numpy as np
 import pytest
 from test_p2_scripts import CONFIGS, CPU_SFT, ROOT, stage, stage_of
 
+from objdel.sft import select as sft_select
+
 
 def _yaml(path):
     yaml = pytest.importorskip("yaml")
@@ -23,7 +25,7 @@ def _yaml(path):
 
 def _train_sft():
     pytest.importorskip("trl")
-    from experiments.phase2 import train_sft as TS
+    from objdel.sft import train as TS
 
     return TS
 
@@ -77,7 +79,7 @@ def test_vision_config_is_validated_up_front(vision):
 
 
 def test_lora_runs_are_merged():
-    src = (ROOT / "experiments/phase2/train_sft.py").read_text()
+    src = (ROOT / "src/objdel/sft/train.py").read_text()
     assert "merge_and_unload" in src  # D6: "merged after SFT"; the vLLM sampler loads a full model dir
 
 
@@ -266,15 +268,15 @@ def _sc():
 
 
 def test_exited_treats_permission_error_as_alive(tmp_path, monkeypatch):
-    SC = _sc()
+    _sc()
     (tmp_path / "manifest.json").write_text(json.dumps({"status": "done", "pid": 12345}))
 
     def kill(pid, sig):
         raise PermissionError
 
-    monkeypatch.setattr(SC.os, "kill", kill)
+    monkeypatch.setattr(sft_select.os, "kill", kill)
     with pytest.raises(RuntimeError, match="must exit first"):
-        SC.exited(tmp_path)
+        sft_select.exited(tmp_path)
 
 
 def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, hf_check=True):
@@ -295,11 +297,11 @@ def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, 
         lidc = {"format": 1.0, "legal": 1.0 if eligible else 0.5, "dup_rate": 0.0, "signal_share": 0.9, "group": 8}
         return {"summary": {"datasets": {"lidc": lidc}}, "panel": {"summary": {}}, "iou": {}}
 
-    monkeypatch.setattr(SC, "exited", lambda run: {"config": {"model": "lfm2.5-vl-450m"}})
+    monkeypatch.setattr(sft_select, "exited", lambda run: {"config": {"model": "lfm2.5-vl-450m"}})
     monkeypatch.setattr(serve, "preload", lambda *a, **k: 0)
-    monkeypatch.setattr(SC, "score_view", score_view)
-    monkeypatch.setattr(SC, "vision_check", lambda b, cfg: {"pass": True} if cfg else {})
-    monkeypatch.setattr(SC, "hf_check", lambda a, name, out: {"branch": name, "vllm_minus_hf": {},
+    monkeypatch.setattr(sft_select, "score_view", score_view)
+    monkeypatch.setattr(sft_select, "vision_check", lambda b, cfg: {"pass": True} if cfg else {})
+    monkeypatch.setattr(sft_select, "hf_check", lambda a, name, out: {"branch": name, "vllm_minus_hf": {},
                                                                     "pass": hf_check})
     monkeypatch.setattr(
         prereg, "select_rb", lambda bs: (next((b["name"] for b in bs[::-1] if b["eligible"]), None), {"eligible": []})
@@ -351,8 +353,8 @@ def test_import_completions_refuses_a_partial_group(tmp_path):
 
 def test_sampler_child_failure_stops_select(tmp_path, monkeypatch):
     """A crashing sampler child is not swallowed (subprocess.run(check=True))."""
-    SC = _sc()
-    cmd = SC.sampler_cmd("hf", tmp_path / "p", tmp_path / "m", tmp_path / "c")
+    _sc()
+    cmd = sft_select.sampler_cmd("hf", tmp_path / "p", tmp_path / "m", tmp_path / "c")
     with pytest.raises(subprocess.CalledProcessError):
         subprocess.run(cmd[:2] + ["-c", "raise SystemExit(1)"], check=True)
     assert cmd[2:4] == ["-m", "experiments.phase2.hf_sample"]

@@ -3,7 +3,7 @@
     python -I -m experiments.phase2.hf_rate --model lfm2.5-vl-450m --view <eval_views>/lidc-val-shifted \
         --out <run_dir>/hf-rate-lfm [--items 32] [--k 8]
 
-The seeded --items subset (select_ckpt.view_rows) at n = --k through select_ckpt.sample_view with the HF sampler, as
+The seeded --items subset (policy.evaluate.view_rows) at n = --k through sft.select.sample_view with the HF sampler, as
 R1's select_ckpt runs it (hf_sample at its default --batch_items; CUDA untouched here). hf_sample --timing ->
 <out>/hf_rate.json: s_per_sample (generate seconds per item-sample), load_s (one child's model load), tokens_mean
 and length_share (base weights answer unlike a trained branch, and a batch runs as long as its longest sample, so
@@ -16,7 +16,8 @@ import sys
 from pathlib import Path
 
 from experiments.phase2 import r0_parity
-from experiments.phase2 import select_ckpt as SC
+from objdel.policy import evaluate
+from objdel.sft import select as SC
 
 
 def main(argv=None) -> int:
@@ -32,7 +33,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     w, timing = r0_parity.weights(a.model), a.out / "timing.json"
     a.out.mkdir(parents=True, exist_ok=True)
-    SC.sample_view(a, w, SC.view_rows(a.view, a.items), a.out / "samples", a.k, extra=("--timing", str(timing)))
+    SC.sample_view(a, w, evaluate.view_rows(a.view, a.items), a.out / "samples", a.k, extra=("--timing", str(timing)))
     doc = json.loads(timing.read_text()) | {"model": a.model, "weights": str(w), "view": str(a.view)}
     (a.out / "hf_rate.json").write_text(json.dumps(doc, indent=1) + "\n")
     print(json.dumps(doc))

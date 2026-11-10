@@ -41,7 +41,7 @@ the processor's chat template, qwen3_vl_training for Qwen3-VL and lfm2_training 
 layers lr 5e-4 (lab T4). LoRA only for Qwen3-VL-2B (full fine-tuning with AdamW needs ~34 GB for weights, gradients
 and optimizer state, more than a 24 GB card has; LoRA with a frozen bf16 base peaks far below); LFM2.5-VL-450M
 is trained in full. GRPO learning rate: `rl_lr` (5e-5 LoRA, 5e-6 full), the default of `grpo_config` and the value
-`g_probe.make_trainer` uses; `tests/experiments/test_prereg_lr.py` pins it to the pre-registered `prereg.G_PROBE`.
+`rl.build.build_trainer` uses; `tests/experiments/test_prereg_lr.py` pins it to the pre-registered `prereg.G_PROBE`.
 Precision: bf16 exactly where transformers accepts it (transformers.utils.is_torch_bf16_gpu_available: CUDA with
 bf16 support, i.e. Ampere or newer such as the Vast cards, MPS on macOS >= 14, XPU / NPU / TPU), else fp32. TRL's
 own default (bf16=True unless fp16) makes TrainingArguments raise "Your setup doesn't support bf16/gpu" on a

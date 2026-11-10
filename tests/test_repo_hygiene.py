@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from objdel.sft import train as sft_train
+
 ROOT = Path(__file__).resolve().parents[1]
 NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
 GOLDENS = ROOT / "tests" / "goldens"
@@ -281,7 +283,7 @@ def test_make_preflight_default_config_loads_as_a_run_spec():
 def test_train_sft_names_its_loader_load_items():
     from experiments.phase2 import train_sft
 
-    assert callable(train_sft.load_items) and not hasattr(train_sft, "preload")
+    assert callable(sft_train.load_items) and not hasattr(train_sft, "preload")
 
 
 def test_topology_any_docstring_does_not_claim_the_reward_uses_it():

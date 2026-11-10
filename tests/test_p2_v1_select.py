@@ -17,6 +17,8 @@ from experiments.phase2 import g_probe as GP  # noqa: E402
 from experiments.phase2 import parity  # noqa: E402
 from experiments.phase2 import sample_vllm as V  # noqa: E402
 from experiments.phase2 import select_ckpt as SC  # noqa: E402
+from objdel.policy import evaluate, sampler
+from objdel.sft import select as sft_select
 from objdel.train import serve  # noqa: E402
 
 
@@ -101,26 +103,28 @@ def test_vllm_select_gates_on_the_hf_check(tmp_path, monkeypatch, ok):
 def test_hf_check_compares_vllm_and_hf_metrics_per_item(tmp_path, monkeypatch, shift, ok):
     """hf_check: HF samples HF_CHECK_ITEMS seeded items of the branch; each metric's per-item vLLM - HF difference
     needs 0 inside its nodule-cluster bootstrap CI."""
-    keys = [f"lidc/s{i}/n000/z{i}" for i in range(SC.HF_CHECK_ITEMS)]
+    keys = [f"lidc/s{i}/n000/z{i}" for i in range(sft_select.HF_CHECK_ITEMS)]
     rng = np.random.default_rng(1)
     vals = {i: rng.uniform(0.2, 0.8, 8) for i in keys}
 
     def samples(i, d):
-        return {k: list(vals[i] + d) for k in SC.HF_CHECK_KEYS}
+        return {k: list(vals[i] + d) for k in sft_select.HF_CHECK_KEYS}
 
     seen = {}
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None: seen.setdefault("items", items) and
+    monkeypatch.setattr(evaluate, "view_rows", lambda view, items=None: seen.setdefault("items", items) and
                         [{"key": i} for i in keys])  # fmt: skip
-    monkeypatch.setattr(SC, "sample_view", lambda a, b, rows, out, k: seen.update(sampler=a.sampler, out=out) or {})
-    monkeypatch.setattr(SC, "score_items", lambda rows, done, root: (
+    monkeypatch.setattr(sft_select, "sample_view",
+                        lambda a, b, rows, out, k: seen.update(sampler=a.sampler, out=out) or {})
+    monkeypatch.setattr(evaluate, "score_items", lambda rows, done, root: (
         [{"item_id": r["key"], "samples": samples(r["key"], 0.0)} for r in rows], []))
     (tmp_path / "e1/shifted").mkdir(parents=True)
     (tmp_path / "e1/shifted/items.jsonl").write_text(
         "".join(json.dumps({"item_id": i, "samples": samples(i, shift)}) + "\n" for i in keys))
     a = SimpleNamespace(shifted=tmp_path / "view", run=tmp_path / "run", k=8, sampler="vllm")
-    r = SC.hf_check(a, "e1", tmp_path)
-    assert seen == {"items": SC.HF_CHECK_ITEMS, "sampler": "hf", "out": tmp_path / "e1/hf-check"}
-    assert r["items"] == SC.HF_CHECK_ITEMS and r["pass"] is ok and set(r["vllm_minus_hf"]) == set(SC.HF_CHECK_KEYS)
+    r = sft_select.hf_check(a, "e1", tmp_path)
+    assert seen == {"items": sft_select.HF_CHECK_ITEMS, "sampler": "hf", "out": tmp_path / "e1/hf-check"}
+    assert r["items"] == sft_select.HF_CHECK_ITEMS and r["pass"] is ok
+    assert set(r["vllm_minus_hf"]) == set(sft_select.HF_CHECK_KEYS)
     assert r["vllm_minus_hf"]["iou_tc"][0] == pytest.approx(shift)
 
 
@@ -139,12 +143,12 @@ def _c2_run(tmp_path, monkeypatch, names=("e1",)):
         calls.append({"branch": branch.name, "out": out, "k": k, "rows": len(rows), "sampler": a.sampler})
         return {r["key"]: {"item_id": r["key"], "samples": ["{}"] * k} for r in rows}
 
-    monkeypatch.setattr(SC, "exited", lambda run: {"config": {"model": "lfm2.5-vl-450m"}})
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None, rl_only=True: [{"key": f"{view.name}/{i}"}
+    monkeypatch.setattr(sft_select, "exited", lambda run: {"config": {"model": "lfm2.5-vl-450m"}})
+    monkeypatch.setattr(evaluate, "view_rows", lambda view, items=None, rl_only=True: [{"key": f"{view.name}/{i}"}
                                                                                  for i in range(3)])
-    monkeypatch.setattr(SC, "sample_view", sample_view)
-    monkeypatch.setattr(SC, "score_view", _boom)
-    monkeypatch.setattr(SC, "vision_check", _boom)
+    monkeypatch.setattr(sft_select, "sample_view", sample_view)
+    monkeypatch.setattr(sft_select, "score_view", _boom)
+    monkeypatch.setattr(sft_select, "vision_check", _boom)
     monkeypatch.setattr(serve, "preload", _boom)
     monkeypatch.setattr(probes, "score_precision", _boom)
     topo = {"bins": [[1.0], [0.5], [0.0]], "false_nonsimple": 0.0, "legal": 1.0, "pass": True}
@@ -195,16 +199,16 @@ def test_full_select_still_needs_shifted(tmp_path, monkeypatch):
 
 
 def test_sampler_reuse_is_keyed_on_flags_sampler_and_checkpoint(tmp_path, monkeypatch):
-    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"), ["--logprobs"])[-1] == "--logprobs"
+    assert sft_select.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"), ["--logprobs"])[-1] == "--logprobs"
     prompts, comps, calls = tmp_path / "p.jsonl", tmp_path / "c.jsonl", []
     prompts.write_text(json.dumps({"id": "a", "n": 1}) + "\n")
-    monkeypatch.setattr(SC, "run_group", lambda cmd, timeout: calls.append(cmd) or comps.write_text(
+    monkeypatch.setattr(sft_select, "run_group", lambda cmd, timeout: calls.append(cmd) or comps.write_text(
         json.dumps({"id": "a", "k": 0}) + "\n"))
     for kind, model, extra in (("vllm", tmp_path, ()), ("vllm", tmp_path, ["--logprobs"]),  # sampled anew
                                ("vllm", tmp_path, ["--logprobs"]),  # reused
                                ("hf", tmp_path, ()),  # the D13 HF fallback must not reuse vLLM's samples
                                ("hf", tmp_path / "other", ())):  # nor another checkpoint's
-        SC.run_sampler(kind, prompts, model, comps, 1.0, extra)
+        sft_select.run_sampler(kind, prompts, model, comps, 1.0, extra)
     assert [c[-1] == "--logprobs" for c in calls] == [False, True, False, False]
 
 
@@ -214,9 +218,9 @@ def test_stop_ids_of_base_weights_without_generation_config(tmp_path):
                                                       "text_config": {"model_type": "qwen3_5_text",
                                                                       "eos_token_id": 248044}}))
     proc = SimpleNamespace(tokenizer=SimpleNamespace(eos_token_id=248046, pad_token_id=248044))
-    assert SC.stop_ids(tmp_path, proc) == {248044, 248046}
+    assert sampler.stop_ids(tmp_path, proc) == {248044, 248046}
     (tmp_path / "generation_config.json").write_text(json.dumps({"eos_token_id": [7, 248044]}))
-    assert SC.stop_ids(tmp_path, proc) == {7, 248044, 248046}
+    assert sampler.stop_ids(tmp_path, proc) == {7, 248044, 248046}
 
 
 def test_sample_vllm_turns_off_the_flashinfer_sampler_before_importing_vllm():
@@ -276,9 +280,9 @@ def _r0(tmp_path, monkeypatch, *, bad_ids=(), shift=0.0):
         return np.full(len(ids), -1.0)
 
     monkeypatch.setattr(R, "weights", lambda model: tmp_path / "base")
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None, rl_only=True: [{"key": f"lidc/n{i:02d}/z0"}
+    monkeypatch.setattr(evaluate, "view_rows", lambda view, items=None, rl_only=True: [{"key": f"lidc/n{i:02d}/z0"}
                                                                                  for i in range(items)])
-    monkeypatch.setattr(SC, "sample_view", sample_view)
+    monkeypatch.setattr(sft_select, "sample_view", sample_view)
     monkeypatch.setattr(parity, "load", lambda model_dir, prompts, dtype: ("model", _Proc()))
     monkeypatch.setattr(parity, "teacher", teacher)
     out = tmp_path / "parity-lfm"
@@ -334,7 +338,7 @@ def test_sampler_timeout_kills_the_whole_process_group(tmp_path):
     code = (f"import subprocess, sys, time; p = subprocess.Popen([sys.executable, '-c', {child!r}]);"
             f" open({str(pid)!r}, 'w').write(str(p.pid)); time.sleep(60)")
     with pytest.raises(subprocess.TimeoutExpired):
-        SC.run_group([sys.executable, "-c", code], 2.0)
+        sft_select.run_group([sys.executable, "-c", code], 2.0)
     gc = int(pid.read_text())
     for _ in range(50):
         try:
@@ -346,4 +350,4 @@ def test_sampler_timeout_kills_the_whole_process_group(tmp_path):
         os.kill(gc, 9)
         pytest.fail("the sampler's own child survived the timeout")
     with pytest.raises(subprocess.CalledProcessError):
-        SC.run_group([sys.executable, "-c", "raise SystemExit(3)"], 10)
+        sft_select.run_group([sys.executable, "-c", "raise SystemExit(3)"], 10)

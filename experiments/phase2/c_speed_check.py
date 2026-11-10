@@ -288,7 +288,7 @@ def _timed(fn, *args) -> float:
 
 
 def run_sync(trainer, lora: bool) -> dict:
-    """The vLLM-side checks around `vg.sync_weights`, which make_trainer installed (push_weights, or sync_lora under
+    """The vLLM-side checks around `vg.sync_weights`, which build_trainer installed (push_weights, or sync_lora under
     --numerics lora-seqmask). lora: option F, so TRL's per-parameter loop is no reference (it would write W + d into the base the
     adapter rides on) and the checks are the packed slices and the adapter load count."""
     vg, model = trainer.vllm_generation, trainer.vllm_generation.model
@@ -384,18 +384,19 @@ def main(argv=None) -> int:
         return 2
     if flag.pixels:
         refuse_val(a.train)
-    from experiments.phase2.g_probe import make_trainer, save_json
+    from objdel.rl.build import build_trainer
+    from objdel.rl.run import save_json
     from objdel.train import dataset
 
     a = a.model_copy(update={"fast_sync": flag.sync or a.fast_sync, "gpu_pixels": "auto" if flag.pixels else a.gpu_pixels})
     out = Path(a.out)
     train = dataset.grpo_rows(a.train, "lidc", "train")
-    trainer, _, _ = make_trainer(a, Path(a.ckpt), train, 1)
+    trainer = build_trainer(a.model, Path(a.ckpt), train, out, [Path(a.train)], 1, a).trainer
     outs = {}
     if flag.pixels:
         outs["pixels"] = run_pixels(trainer, dataset.OpenOnce(train), len(train), out)
     if flag.sync:
-        outs["sync"] = run_sync(trainer, trainer.lora_dir is not None)  # option F: make_trainer set the adapter dir
+        outs["sync"] = run_sync(trainer, trainer.lora_dir is not None)  # option F: build_trainer set the adapter dir
     for name, res in outs.items():
         save_json(out / "c_check" / f"{name}.json", res)
         print(json.dumps({name: res}))

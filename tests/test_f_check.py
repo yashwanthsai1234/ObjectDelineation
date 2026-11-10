@@ -105,6 +105,7 @@ def test_f_check_flag_is_on_by_default_under_fp16_and_an_argparse_error_under_bf
 # equality and the after-sync probe.
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")  # before the vllm stubs: trl's import probes vllm's spec
+from objdel.rl import run as rl_run  # noqa: E402
 from objdel.train import fast, vllm_sync  # noqa: E402
 
 IMG, START, END = 100, 102, 103  # tiny_model's image pad and vision start / end ids
@@ -323,7 +324,7 @@ def test_train_rl_runs_the_full_lora_check(tmp_path, monkeypatch, sleep_mode):
                                                                                                for _ in range(G)],
                               way_b_gap=lambda prompts, outs, adapter: 0.5)  # fmt: skip
     a = train_rl.parse([*BASE, "--numerics", "lora-seqmask", "--b1-adapter", "b1", "--out", str(tmp_path)])
-    cb = train_rl.f_check_callback(a, trainer, [{"k": 0}, {"k": 1}, {"k": 2}])
+    cb = rl_run.f_check_callback(a, trainer, [{"k": 0}, {"k": 1}, {"k": 2}])
     assert calls["prompts"] == [{"k": 0}] * 8 + [{"k": 1}] * 8 and calls["pad"] == IMG and calls["gap"] == 0.5
     assert calls["skip"] == "c/hf_revision.json missing: --ckpt is not a fetch_hf pull of rl-full-3ep"
     for step in range(1, 16):
@@ -344,7 +345,7 @@ def test_train_rl_expansion_error_writes_the_record_and_raises(tmp_path, monkeyp
                               lora_dir=tmp_path / "lora", comparator_prompts=lambda rows, G: rows, way_b_gap=None)
     a = train_rl.parse([*BASE, "--numerics", "lora-seqmask", "--b1-adapter", "b1", "--out", str(tmp_path)])
     with pytest.raises(RuntimeError, match="F check failed"):
-        train_rl.f_check_callback(a, trainer, [{"k": 0}])
+        rl_run.f_check_callback(a, trainer, [{"k": 0}])
     rec = json.loads((tmp_path / "f_check.json").read_text())
     assert rec["prompt_expansion"] is False and rec["passed"] is False
 

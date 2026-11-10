@@ -1,5 +1,5 @@
 """C5, C6, C9 flags: train_rl --fast-sync / --group-requests / --no-ckpt-layers (all off by default: the B1 control),
-their make_trainer wiring, and callbacks.NoCkptLayers."""
+their build_trainer wiring, and callbacks.NoCkptLayers."""
 
 from types import SimpleNamespace
 
@@ -33,7 +33,7 @@ def test_no_ckpt_layers_is_a_range_checked_count_with_no_clamp(capsys):
         assert "--no-ckpt-layers" in capsys.readouterr().err
 
 
-def test_make_trainer_adds_no_ckpt_layers_only_when_asked(built):  # noqa: F811
+def test_build_trainer_adds_no_ckpt_layers_only_when_asked(built):  # noqa: F811
     from objdel.train.callbacks import NoCkptLayers
 
     assert built() == []
@@ -41,13 +41,13 @@ def test_make_trainer_adds_no_ckpt_layers_only_when_asked(built):  # noqa: F811
     assert isinstance(cb, NoCkptLayers) and cb.k == 8
 
 
-def test_make_trainer_fast_sync_refuses_a_trainer_without_colocate_vllm(built):  # noqa: F811
+def test_build_trainer_fast_sync_refuses_a_trainer_without_colocate_vllm(built):  # noqa: F811
     built(fast_sync=False)
     with pytest.raises(ValueError, match="--fast-sync"):
         built(fast_sync=True)  # the stub trainer has no vllm_generation
 
 
-def test_make_trainer_option_f_refuses_a_trainer_without_colocate_vllm(built, monkeypatch, tmp_path):  # noqa: F811
+def test_build_trainer_option_f_refuses_a_trainer_without_colocate_vllm(built, monkeypatch, tmp_path):  # noqa: F811
     from objdel.train import configs
 
     monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace(

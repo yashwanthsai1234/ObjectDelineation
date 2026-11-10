@@ -16,7 +16,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from experiments.phase2 import train_sft as TS
+from objdel.policy import evaluate
+from objdel.sft import select as sft_select
+from objdel.sft import train as sft_train
 
 ROOT = Path(__file__).resolve().parents[1]
 # train_sft configs: not a step list for run.sh (r0.yaml) nor an RL launch config (b1_launch.yaml, test_b1_plans.py)
@@ -62,7 +64,7 @@ def test_configs_parse_as_sft_stages(path):
     pytest.importorskip("yaml")  # PyYAML comes with the train extra (transformers)
     args = stage_of(path)
     assert args.model in ("lfm2.5-vl-450m", "qwen3-vl-2b") and args.view.startswith("views/")
-    assert TS.resolve(args).data_root == "data" and all(b > 0 for b in args.branches)
+    assert sft_train.resolve(args).data_root == "data" and all(b > 0 for b in args.branches)
     assert args.sft.get("gradient_accumulation_steps", 4) * args.sft.get("per_device_train_batch_size", 8) == 32  # D5
 
 
@@ -77,7 +79,7 @@ def test_plan_branches_decay_warmup():
     pytest.importorskip("trl")
     from objdel.train import configs
 
-    p = TS.plan(stage("lfm2.5-vl-450m", "v", "o"), 1000)
+    p = sft_train.plan(stage("lfm2.5-vl-450m", "v", "o"), 1000)
     assert p["branches"] == {"e0.5": {"at": 500, "decay": 75}, "e1": {"at": 1000, "decay": 150},
                              "e2": {"at": 2000, "decay": 300}}
     assert p["stable"] == 2000 and p["warmup"] == 60  # 3 % of the stable steps
@@ -96,7 +98,7 @@ def test_vision_abort_only_when_both_fail(ratio, tv, action, stop):
 
     res = {"ratio": ratio, "tv": tv, "tv_black": tv, "tv_other": 0.5} | vision.decide(ratio, tv, 0.5)
     man = {"vision": []}
-    assert res["action"] == action and TS.record_vision(man, 7, res) is stop
+    assert res["action"] == action and sft_train.record_vision(man, 7, res) is stop
     assert man["vision"] == [
         {"step": 7, "action": action, "ratio": ratio, "tv": tv, "tv_black": tv, "tv_other": 0.5, "set_sha256": None}
         | {"device": None, "dtype": None}
@@ -105,40 +107,37 @@ def test_vision_abort_only_when_both_fail(ratio, tv, action, stop):
 
 
 def test_select_refuses_until_train_sft_exited(tmp_path):
-    from experiments.phase2 import select_ckpt as SC
 
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
         for status, pid in (("running", 999999), ("done", child.pid), ("aborted", 999999)):
             (tmp_path / "manifest.json").write_text(json.dumps({"status": status, "pid": pid}))
             with pytest.raises(RuntimeError, match="must exit first"):
-                SC.exited(tmp_path)
+                sft_select.exited(tmp_path)
     finally:
         child.kill()
         child.wait()
     (tmp_path / "manifest.json").write_text(json.dumps({"status": "done", "pid": child.pid}))
-    assert SC.exited(tmp_path)["status"] == "done"
+    assert sft_select.exited(tmp_path)["status"] == "done"
 
 
 def test_select_refuses_sampler_after_cuda_init(monkeypatch):
     torch = pytest.importorskip("torch")
-    from experiments.phase2 import select_ckpt as SC
 
-    SC.cuda_untouched()
+    sft_select.cuda_untouched()
     monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
     with pytest.raises(RuntimeError, match="CUDA is initialized"):
-        SC.cuda_untouched()
-    cmd = SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))
+        sft_select.cuda_untouched()
+    cmd = sft_select.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))
     assert cmd[:2] == [sys.executable, "-I"] and cmd[2].endswith("sample_vllm.py")  # vllm_native: one venv
 
 
 def test_sampler_uses_the_second_venv_when_the_image_has_one(monkeypatch, tmp_path):
-    from experiments.phase2 import select_ckpt as SC
 
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "python").touch()
-    monkeypatch.setattr(SC, "VLLM_VENV", tmp_path)
-    assert SC.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))[0] == str(tmp_path / "bin" / "python")
+    monkeypatch.setattr(sft_select, "VLLM_VENV", tmp_path)
+    assert sft_select.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))[0] == str(tmp_path / "bin" / "python")
 
 
 def _summary(fmt=1.0, legal=0.95, dup=0.0, sigma=0.9):
@@ -221,7 +220,6 @@ def test_wsd_resumed_decay_equals_uninterrupted_run(char_model, tmp_path):
 def test_sampler_child_is_bounded_checked_and_reused(tmp_path, monkeypatch):
     """BK3-15: a partial output is a failed attempt (retried), a hung child times out (bounded), and completions
     matching the prompts' SHA-256 are reused on a rerun."""
-    from experiments.phase2 import select_ckpt as SC
 
     prompts, comps, calls = tmp_path / "p.jsonl", tmp_path / "c.jsonl", []
     prompts.write_text("".join(json.dumps({"id": i, "n": 2}) + "\n" for i in "ab"))
@@ -231,24 +229,23 @@ def test_sampler_child_is_bounded_checked_and_reused(tmp_path, monkeypatch):
         rows = [{"id": i, "k": k} for i in "ab" for k in range(2)][: 3 if len(calls) == 1 else 4]
         comps.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
-    monkeypatch.setattr(SC, "run_group", run)
-    SC.run_sampler("hf", prompts, tmp_path, comps, 7.0)
+    monkeypatch.setattr(sft_select, "run_group", run)
+    sft_select.run_sampler("hf", prompts, tmp_path, comps, 7.0)
     assert calls == [7.0, 7.0]  # the partial first attempt was retried
-    SC.run_sampler("hf", prompts, tmp_path, comps, 7.0)
+    sft_select.run_sampler("hf", prompts, tmp_path, comps, 7.0)
     assert len(calls) == 2  # reused
     prompts.write_text(prompts.read_text().replace('"n": 2', '"n": 1'))
     with pytest.raises(RuntimeError, match="failed 2 times"):
-        SC.run_sampler("hf", prompts, tmp_path, comps, 7.0)  # other prompts: resampled, 4 lines != n = 1
+        sft_select.run_sampler("hf", prompts, tmp_path, comps, 7.0)  # other prompts: resampled, 4 lines != n = 1
     monkeypatch.undo()
-    monkeypatch.setattr(SC, "sampler_cmd", lambda *a: [sys.executable, "-c", "import time; time.sleep(30)"])
+    monkeypatch.setattr(sft_select, "sampler_cmd", lambda *a: [sys.executable, "-c", "import time; time.sleep(30)"])
     with pytest.raises(RuntimeError, match="timed out"):
-        SC.run_sampler("hf", prompts, tmp_path, tmp_path / "c2.jsonl", 0.5)
+        sft_select.run_sampler("hf", prompts, tmp_path, tmp_path / "c2.jsonl", 0.5)
 
 
 def test_items_subset_is_seeded_not_the_first_n(monkeypatch):
     """S1-12 / BK2-2: --items draws a fixed seeded subset of the scored (rl) items; rl_only=False keeps every record."""
     pytest.importorskip("datasets")
-    from experiments.phase2 import select_ckpt as SC
     from objdel.train import dataset as D
 
     recs = [{"item_id": f"lidc/n{i:03d}/z0", "rl": i % 5 != 0, "disagreement": False, "W": 50, "H": 50}
@@ -256,10 +253,10 @@ def test_items_subset_is_seeded_not_the_first_n(monkeypatch):
     monkeypatch.setattr(D, "records", lambda root, ds, split: recs)
     monkeypatch.setattr(D, "_verified", lambda root, rs: rs)
     rl = [r["item_id"] for r in recs if r["rl"]]
-    sub = [r["key"] for r in SC.view_rows(Path("v"), 20)]
+    sub = [r["key"] for r in evaluate.view_rows(Path("v"), 20)]
     assert len(set(sub)) == 20 and set(sub) <= set(rl) and sub != rl[:20] and sub == sorted(sub)
-    assert sub == [r["key"] for r in SC.view_rows(Path("v"), 20)]
-    assert len(SC.view_rows(Path("v"))) == 80 and len(SC.view_rows(Path("v"), rl_only=False)) == 100
+    assert sub == [r["key"] for r in evaluate.view_rows(Path("v"), 20)]
+    assert len(evaluate.view_rows(Path("v"))) == 80 and len(evaluate.view_rows(Path("v"), rl_only=False)) == 100
 
 
 def test_g_probe_report_form():

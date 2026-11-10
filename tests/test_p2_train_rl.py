@@ -13,6 +13,8 @@ import numpy as np
 import pytest
 from test_p2_scripts import GRPO_SMOKE, ROOT, _module, _tiny_vlm
 
+from objdel.rl import run as rl_run
+
 
 @pytest.mark.slow
 def test_full_rl_saves_resumes_and_leaves_a_merged_tuned_model(tmp_path, synthetic_items):
@@ -220,8 +222,8 @@ def stub(tmp_path, monkeypatch):
     import multiprocessing
     import multiprocessing.pool
 
-    import experiments.phase2.g_probe as g_probe
     from experiments.phase2 import train_rl
+    from objdel.rl import build
     from objdel.train import dataset, serve
 
     calls = []
@@ -235,14 +237,14 @@ def stub(tmp_path, monkeypatch):
     monkeypatch.setattr(serve, "preload", lambda root, ds: calls.append("preload"))
     monkeypatch.setattr(gc, "freeze", lambda: calls.append("freeze"))
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: ["k1", "k2"])
-    monkeypatch.setattr(train_rl, "heldout_rows", lambda view, n: ["h1"])  # val_half lands with L2 (B1.3)
+    monkeypatch.setattr(rl_run, "heldout_rows", lambda view, n: ["h1"])  # val_half lands with L2 (B1.3)
     saver = SimpleNamespace(save_pretrained=lambda p: None)
     trainer = SimpleNamespace(train=lambda resume_from_checkpoint=None: calls.append("train"), model=saver,
                               accelerator=SimpleNamespace(unwrap_model=lambda m: m),
                               state=SimpleNamespace(global_step=2, log_history=[{"step": 1, "reward": 0.5}]),
                               args=SimpleNamespace(beta=0.0, mask_truncated_completions=True,
                                                 off_policy_mask_threshold=None, max_completion_length=1536))
-    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: (trainer, saver, 5e-5))
+    monkeypatch.setattr(build, "build_trainer", lambda *a, **k: (trainer, saver, 5e-5))
     (tmp_path / "root").mkdir()
     (tmp_path / "root/manifest.json").write_text("{}")
     base = ["--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "c"), "--out", str(tmp_path / "out")]
@@ -306,7 +308,7 @@ def test_train_rl_source_names_no_pool():
     """CT-34 static part and the CLEAN-G17 source gate."""
     import ast
 
-    src = (ROOT / "experiments/phase2/train_rl.py").read_text()
+    src = (ROOT / "experiments/phase2/train_rl.py").read_text() + (ROOT / "src/objdel/rl/run.py").read_text()
     names = {n.id for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Name)}
     names |= {n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute)}
     assert not names & {"Pool", "pool"}
@@ -336,7 +338,7 @@ def test_resume_truncates_seq_gaps_to_the_checkpoint_step(stub):
 def test_run_report_is_the_clipped_ratio_slope_and_the_truncated_grad_share_median_and_max(stub):
     """B3.5 / U73: the least-squares slope of completions/clipped_ratio over the steps, the median and the max of
     completions/truncated_grad_share; the line prints with rl.json's other keys."""
-    from experiments.phase2.train_rl import run_report
+    from objdel.rl.run import run_report
 
     log = [{"step": s, "completions/clipped_ratio": 0.1 + 0.01 * s, "completions/truncated_grad_share": g}
            for s, g in zip(range(1, 6), (0.0, 0.626, 0.1, 0.3, 0.2), strict=True)] + [{"step": 5, "eval_loss": 1.0}]
@@ -350,7 +352,7 @@ def test_run_report_is_the_clipped_ratio_slope_and_the_truncated_grad_share_medi
 
 
 def test_expect_step1_needs_encode_check_and_files_are_read_before_the_model_loads(stub, tmp_path):
-    """U-CF5: --expect-step1 without --encode-check is a parse error; a missing file fails before make_trainer."""
+    """U-CF5: --expect-step1 without --encode-check is a parse error; a missing file fails before build_trainer."""
     with pytest.raises(SystemExit) as e:
         stub.run(*stub.train, "--expect-step1", str(tmp_path / "rl.json"))
     assert e.value.code == 2
@@ -361,7 +363,7 @@ def test_expect_step1_needs_encode_check_and_files_are_read_before_the_model_loa
 
 def test_a_step_1_mismatch_exits_3_after_step_1_with_the_file(stub, tmp_path, monkeypatch):
     """U-CF5: the callback train_rl hands the trainer stops it; main returns 3, writes the file, saves no model."""
-    import experiments.phase2.g_probe as g_probe
+    from objdel.rl import build
 
     base = {"rewards/iou_tc/mean": 0.5, "rewards/legal/mean": 0.9, "completions/mean_length": 100.0,
             "grad_norm": 0.003264, "sampling/sampling_logp_difference/mean": 0.009515}
@@ -380,7 +382,7 @@ def test_a_step_1_mismatch_exits_3_after_step_1_with_the_file(stub, tmp_path, mo
 
         return SimpleNamespace(train=train, model=None), None, 5e-5
 
-    monkeypatch.setattr(g_probe, "make_trainer", make)
+    monkeypatch.setattr(build, "build_trainer", make)
     rc = stub.run(*stub.train, "--expect-step1", str(tmp_path / "rl.json"), "--encode-check", str(tmp_path / "e.json"))
     assert rc == 3 and seen["stop"] is True
     assert json.loads((stub.out / "step1_mismatch.json").read_text())["mismatch"] == {"rewards/legal/mean": [0.9, 0.5]}

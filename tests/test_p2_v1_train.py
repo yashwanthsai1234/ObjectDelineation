@@ -22,9 +22,9 @@ def _yaml(path):
 @pytest.fixture
 def TS():
     pytest.importorskip("trl")
-    from experiments.phase2 import train_sft
+    from objdel.sft import train
 
-    return train_sft
+    return train
 
 
 def _view(tmp_path, epochs):

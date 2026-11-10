@@ -15,6 +15,7 @@ import pytest
 from experiments.phase1.reward_gates import make_jobs
 from objdel.geom.text import SCHEMAS
 from objdel.reward import ExpertCache, advantages_v4, rl_eligible, score_batch
+from objdel.sft import select as sft_select
 from objdel.train import serve
 from objdel.train.rewards import TRLReward
 
@@ -173,8 +174,7 @@ def test_sampler_timeout_is_three_times_the_measured_time():
     vLLM retry starts over."""
     from argparse import Namespace
 
-    from experiments.phase2 import select_ckpt as SC
 
-    assert SC.sampler_timeout(Namespace(sampler="vllm", timeout_s=None), 1000) == pytest.approx(600 + 750)
-    assert SC.sampler_timeout(Namespace(sampler="hf", timeout_s=None), 512) == pytest.approx(600 + 1536)
-    assert SC.sampler_timeout(Namespace(sampler="vllm", timeout_s=2.0), 10) == pytest.approx(620)
+    assert sft_select.sampler_timeout(Namespace(sampler="vllm", timeout_s=None), 1000) == pytest.approx(600 + 750)
+    assert sft_select.sampler_timeout(Namespace(sampler="hf", timeout_s=None), 512) == pytest.approx(600 + 1536)
+    assert sft_select.sampler_timeout(Namespace(sampler="vllm", timeout_s=2.0), 10) == pytest.approx(620)

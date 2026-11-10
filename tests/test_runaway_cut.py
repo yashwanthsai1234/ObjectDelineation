@@ -6,6 +6,7 @@ import json
 import pytest
 
 from experiments.phase2 import runaway_cut, train_rl
+from objdel.rl import run as rl_run
 from objdel.train import configs, runaway
 
 
@@ -45,22 +46,22 @@ def args(**kw):
 
 def test_runaway_cap_is_off_by_default():
     assert args().runaway_cap == 0
-    train_rl.check_flags(args())  # no raise
+    rl_run.check_flags(args())  # no raise
 
 
 def test_runaway_cap_needs_unmasked_truncated_rows():
     """U-RC5: a capped answer is cut mid-text; masking it would bias the update toward more capping."""
     with pytest.raises(ValueError, match="mask_truncated_completions"):
-        train_rl.check_flags(args(runaway_cap="1.5"))
+        rl_run.check_flags(args(runaway_cap="1.5"))
     with pytest.raises(ValueError, match="mask_truncated_completions"):
-        train_rl.check_flags(args(runaway_cap="1.5", grpo='{"mask_truncated_completions": true}'))
+        rl_run.check_flags(args(runaway_cap="1.5", grpo='{"mask_truncated_completions": true}'))
 
 
 def test_outline_limit_is_never_raised_above_the_model_budget():
     """C7 step 1: L is set from the count, never raised."""
     with pytest.raises(ValueError, match="1536"):
-        train_rl.check_flags(args(grpo='{"max_completion_length": 1800}'))
-    train_rl.check_flags(args(grpo='{"max_completion_length": 1200}'))
+        rl_run.check_flags(args(grpo='{"max_completion_length": 1800}'))
+    rl_run.check_flags(args(grpo='{"max_completion_length": 1200}'))
 
 
 def test_soft_overlong_formula_values():
@@ -138,4 +139,4 @@ def test_row_caps_follow_each_rows_own_outline():
 
 def test_runaway_cap_and_group_requests_go_together():
     """U-RC3: one n = G request per block carries the block's one cap (vllm_requests.group_params)."""
-    train_rl.check_flags(args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}', group_requests=None))
+    rl_run.check_flags(args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}', group_requests=None))

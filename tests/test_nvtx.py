@@ -1,5 +1,5 @@
 """A6: objdel.train.nvtx (inert import, cached CUDA query, balanced ranges), the FastGRPO ranges and counters,
-callbacks.NvtxSteps (step ranges and the capture window), the make_trainer / train_rl wiring, the `checker` range on
+callbacks.NvtxSteps (step ranges and the capture window), the build_trainer / train_rl wiring, the `checker` range on
 the reward path, and S12 (`reward` never imports `train`). CUDA and NVTX are fakes (monkeypatch); no GPU."""
 
 import importlib
@@ -731,16 +731,17 @@ def test_checker_range_opens_on_the_thread_that_scores(monkeypatch):
     assert ahead == direct
 
 
-# U29: make_trainer and train_rl ----------------------------------------------------------------------------------
+# U29: build_trainer and train_rl ---------------------------------------------------------------------------------
 
 
 @pytest.fixture
 def built(monkeypatch, tmp_path):
-    """make(**a) -> the callbacks g_probe.make_trainer hands the trainer class (model, processor, config, rewards
+    """make(**flags) -> the callbacks rl.build.build_trainer hands the trainer class (model, processor, config, rewards
     and the trainer itself are stubs)."""
     from types import SimpleNamespace
 
-    from experiments.phase2 import g_probe
+    from objdel.core.spec import TrainerFlags
+    from objdel.rl.build import build_trainer
     from objdel.train import configs, fast, rewards, serve
 
     got = []
@@ -763,17 +764,14 @@ def built(monkeypatch, tmp_path):
     monkeypatch.setattr(serve, "loader", lambda *roots: None)
     monkeypatch.setattr(fast, "FastGRPO", Trainer)
 
-    def make(**over):
-        a = SimpleNamespace(model="qwen3-vl-2b", out=tmp_path, train=tmp_path, grpo={})
-        for k, v in over.items():
-            setattr(a, k, v)
-        g_probe.make_trainer(a, tmp_path, None, 3)
+    def make(**flags):
+        build_trainer("qwen3-vl-2b", tmp_path, None, tmp_path, [tmp_path], 3, TrainerFlags(**flags))
         return got.pop()
 
     return make
 
 
-def test_make_trainer_adds_nvtx_steps_only_with_a_window(built):
+def test_build_trainer_adds_nvtx_steps_only_with_a_window(built):
     from objdel.train.callbacks import NvtxSteps, TraceStep
 
     assert built() == [] and built(profile_window=None, trace=None) == []
@@ -790,7 +788,7 @@ def test_make_trainer_adds_nvtx_steps_only_with_a_window(built):
         built(profile_window=[1, 3], trace="T")
 
 
-def test_make_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold(built):
+def test_build_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold(built):
     from objdel.train.callbacks import OpsmDelta
 
     assert built() == []
@@ -798,7 +796,7 @@ def test_make_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold(
     assert isinstance(cb, OpsmDelta)
 
 
-def test_make_trainer_installs_the_lora_sync_only_under_option_f(built, monkeypatch, tmp_path):
+def test_build_trainer_installs_the_lora_sync_only_under_option_f(built, monkeypatch, tmp_path):
     from types import SimpleNamespace
 
     from objdel.train import configs, vllm_sync

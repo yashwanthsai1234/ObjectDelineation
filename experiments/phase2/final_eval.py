@@ -18,8 +18,8 @@ The model forms read their flags as an objdel.core.spec.EvalStage (cli_stage: ke
 
 Every RL-eligible item of the view's <split> records (the G-probe uses a 128-item subset of the val view; this uses
 all of them, and runs on the test split's view built by build_eval_views --split test). Samples with vLLM through
-g_probe.make_trainer and objdel.train.sample (T = 1, as the G-probe; torch seeded before each view; vLLM's engine seed
-is set once, at build), scores with select_ckpt.score_items in this process (D7: one CUDA context, after
+objdel.rl.build.build_trainer and objdel.train.sample (T = 1, as the G-probe; torch seeded before each view; the engine seed
+is set once, at build), scores with policy.evaluate.score_items in this process (D7: one CUDA context, after
 sampling). Write order per view, so a crash in scoring keeps the paid sampling:
 1. <out>/answers.jsonl (item_id, group_id, W, H, samples, truncated, tokens per item) and a partial
    <out>/final_eval.json ("partial": true, the run keys, seconds.load_and_sample);
@@ -68,13 +68,13 @@ from pathlib import Path
 import numpy as np
 
 from experiments.phase2.freeze_views import render_files
-from experiments.phase2.select_ckpt import score_items
 from objdel.data import quality as Q
 from objdel.eval import device, select, signal
 from objdel.geom import engine as _gpucheck
 from objdel.hashing import file_sha256
 from objdel.io import git, read_jsonl
 from objdel.io import write_atomic as _write
+from objdel.policy.evaluate import score_items
 
 ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VIEWS = ROOT / "docs/reference/frozen_views.json"  # /workspace/src on the box
@@ -340,19 +340,20 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
 
 
 def load_trainer(a):
-    """The vLLM trainer of the stage's ckpt (g_probe.make_trainer on the training rows), built once per process."""
-    from experiments.phase2 import g_probe
-    from objdel.core.spec import ProbeStage
+    """The vLLM trainer of the stage's ckpt (rl.build.build_trainer on the training rows, default trainer flags), built
+    once per process."""
+    from objdel.core.spec import TrainerFlags
+    from objdel.rl.build import build_trainer
     from objdel.train import dataset
 
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=dataset.DISAGREEMENT_OVERSAMPLE)
-    probe = ProbeStage(model=a.model, ckpt=a.ckpt, train=a.train, probe=a.view[0], out=a.out[0])
+    args = (a.model, Path(a.ckpt), train, Path(a.out[0]), [Path(a.train)], 1, TrainerFlags())
     if not a.adapter:
-        return g_probe.make_trainer(probe, Path(a.ckpt), train, 1)[0]
+        return build_trainer(*args).trainer
     from peft import set_peft_model_state_dict  # option F: vLLM serves the adapter unmerged, as in training
     from safetensors.torch import load_file
 
-    trainer = g_probe.make_trainer(probe, Path(a.ckpt), train, 1, numerics="lora-seqmask")[0]
+    trainer = build_trainer(*args, numerics="lora-seqmask").trainer
     set_peft_model_state_dict(trainer.model, load_file(Path(a.adapter) / "adapter_model.safetensors"))
     return trainer
 
