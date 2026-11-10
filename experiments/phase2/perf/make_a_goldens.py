@@ -1,5 +1,5 @@
 """Mac golden of A.9.6 G02b: the fair ceiling's `doctor` and `model` (objdel.verify.ceiling.item) on 50 LIDC val items,
-on the CPU build of the checker. The box test (tests/test_a_gpu.py::test_g02b_builds) scores the same items and texts
+on the CPU build of the checker. The box test (tests/experiments/test_a_gpu.py::test_g02b_builds) scores the same items and texts
 on the CUDA build and compares with ==, since one venv holds one build.
 
     .venv/bin/python -I -m experiments.phase2.perf.make_a_goldens [--prepared data/prepared] \

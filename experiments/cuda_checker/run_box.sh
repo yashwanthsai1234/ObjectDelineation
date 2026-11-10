@@ -16,16 +16,16 @@
 #   $OUT = $OBJDEL_RUN_DIR/d (run.sh sets it; pull.sh brings it back): gpu.xml, sanitize.json.
 #   Needs OBJDEL_DATA_ROOT (the LIDC bundle: checker_eval/masks.npz).
 # --gpu-check --dry (Mac, make gpu-check DRY=1): prints every box step in order, then collects $D_GPU_TESTS; reads no
-#   data/ and installs nothing (tests/test_gpu_chain.py runs it).
+#   data/ and installs nothing (tests/experiments/test_gpu_chain.py runs it).
 # Env: PY (default /opt/venv/bin/python, the image's training venv), CUDA_ARCHS (e.g. "80;86;89;90;120"),
 #      DATA (the eval set, default data/checker_eval; R0 passes the bundle's copy).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 PY=${PY:-/opt/venv/bin/python}
-# D's box test list: every box pytest call names it (tests/test_gpu_chain.py: each entry collects a test under $SEL).
-D_GPU_TESTS="tests/test_cuda_checker_gpu.py tests/test_cuda_checker.py tests/test_gpu_scoring.py \
-tests/test_gpu_determinism.py tests/test_gpu_sanitize.py tests/test_rings.py tests/test_certify_polygons.py \
-tests/test_topology_device.py tests/test_tables_device.py tests/test_engine_counters.py tests/test_scorer_sums.py"
+# D's box test list: every box pytest call names it (tests/experiments/test_gpu_chain.py: each entry collects a test under $SEL).
+D_GPU_TESTS="tests/geom/test_cuda_checker_gpu.py tests/geom/test_cuda_checker.py tests/verify/test_gpu_scoring.py \
+tests/geom/test_gpu_determinism.py tests/geom/test_gpu_sanitize.py tests/experiments/test_rings.py tests/geom/test_certify_polygons.py \
+tests/geom/test_topology_device.py tests/geom/test_tables_device.py tests/geom/test_engine_counters.py tests/experiments/test_scorer_sums.py"
 SEL="gpu or not (slow or data)"  # the GPU tests and every fast test of the list; data/ tests are the Mac's (-I)
 SAN_TOOLS="memcheck initcheck synccheck racecheck"  # memcheck without --leak-check full: the engine is never freed
 DRY=; [ "${1:-}" = "--gpu-check" ] && [ "${2:-}" = "--dry" ] && DRY=1
@@ -68,7 +68,7 @@ if [ "${1:-}" = "--gpu-check" ]; then
 fi
 nvidia-smi -L
 tests=0
-"$PY" -m pytest -q -p no:cacheprovider tests/test_cuda_checker_gpu.py tests/test_cuda_checker.py \
-    tests/test_checker_host.py tests/test_reward_one_checker_call.py || tests=1
+"$PY" -m pytest -q -p no:cacheprovider tests/geom/test_cuda_checker_gpu.py tests/geom/test_cuda_checker.py \
+    tests/geom/test_checker_host.py tests/rl/test_reward_one_checker_call.py || tests=1
 "$PY" -I -m experiments.cuda_checker.eval ${DATA:+--data "$DATA"}
 exit $tests

@@ -26,7 +26,7 @@ from objdel.core.io import read_json
 
 ROOT = Path(__file__).resolve().parents[3]
 TEXT = (".py", ".md", ".yaml", ".yml", ".toml", ".txt", ".sh", ".cfg", ".json")
-SELF = {"experiments/phase2/tools/final_sweep.py", "tests/test_final_sweep.py", "tests/test_repo_hygiene.py"}
+SELF = {"experiments/phase2/tools/final_sweep.py", "tests/experiments/test_final_sweep.py", "tests/experiments/test_repo_hygiene.py"}
 # Frozen records and history keep old names by design (DOC4 FROZEN_GLOBS, in short).
 FROZEN = re.compile(r"^(docs/research/|docs/changelog\.md|experiments/phase[0]/|experiments/[^/]+/(RESULTS|PLAN|EXECUTION|"
                     r"RESEARCH|JUDGE_|V0_V1)[^/]*\.md|experiments/.*/(lab|impl)/|experiments/phase2/perf/|archive/)")

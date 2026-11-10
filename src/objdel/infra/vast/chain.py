@@ -18,7 +18,7 @@ def chain(cfg: Path, run_id: str) -> list[list[str]]:
     the saved branches select_ckpt (G-vision block, rotated view, `sampler:`) or its topology-only form, and g_probe;
     a config without branches (timing arms) only trains. A chain that scores (select, topology or probe) first builds
     the CUDA checker (run_box.sh --build-only) and checks the scorers on it against the host scorer
-    (tests/test_gpu_scoring.py),
+    (tests/verify/test_gpu_scoring.py),
     so a failed build or a difference stops the chain before training: scoring runs on the GPU only. Box
     paths: data /workspace/data/lidc, runs /workspace/runs/<id>."""
     import yaml
@@ -45,7 +45,7 @@ def chain(cfg: Path, run_id: str) -> list[list[str]]:
     }  # fmt: skip
     stages = c.get("stages", ["train", "select", "probe"]) if c.get("branches") or c.get("branches_from") else ["train"]
     gpu = [["bash", "-c", "bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -m pytest -q "
-                          "-p no:cacheprovider tests/test_gpu_scoring.py"]] if set(stages) - {"train"} else []
+                          "-p no:cacheprovider tests/verify/test_gpu_scoring.py"]] if set(stages) - {"train"} else []
     return gpu + [table[s] for s in stages]
 
 

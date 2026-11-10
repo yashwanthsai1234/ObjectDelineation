@@ -35,7 +35,7 @@ reward's rule).
 --rescore DIR: score DIR/answers.jsonl again with no model and write the same four files to --out (exit 2, no output,
 when the view's manifest.json is not the one DIR/final_eval.json was sampled on). --hash-view VIEW: the view's
 identity record (content and target-set hashes, the last commit of each file that renders it) and exit.
-`tost` and `view_identity` are A-G3's paired checks against an older run (tests/test_a_gpu.py G01).
+`tost` and `view_identity` are A-G3's paired checks against an older run (tests/experiments/test_a_gpu.py G01).
 --resummarize DIR: the schema-2 summary of a finished run's items.jsonl (no model, no scoring), with group_id joined
 from the LIDC store of the run's split; written to --out, never into DIR; exit 2 when an item has no group_id.
 A frozen view (objdel.data.quality.FROZEN) runs only when its content hash and target-set hash equal its entry in

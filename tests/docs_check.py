@@ -1,4 +1,5 @@
-"""Pure helpers of tests/test_docs.py (DOC4): what each docs check reads. No I/O outside the repo root it is given."""
+"""Pure helpers of tests/infra/test_docs.py (DOC4): what each docs check reads. No I/O outside the repo root it is
+given."""
 
 from __future__ import annotations
 

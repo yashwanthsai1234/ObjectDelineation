@@ -10,7 +10,7 @@ from hypothesis import strategies as st
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 from objdel.policy import caches as policy_caches  # noqa: E402
-from tests.rl.test_trl_adapter_equivalence import (  # noqa: E402
+from tests.experiments.test_trl_adapter_equivalence import (  # noqa: E402
     END,
     IMG,
     PATCH,

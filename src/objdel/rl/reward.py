@@ -6,8 +6,8 @@ completion_ids, every dataset column, trainer_state, log_metric, log_extra) and 
 rewards_per_func. With multi_objective_aggregation="sum_then_normalize" and scale_rewards="none" its advantage is
     A = sum_k w_k r_k - group_mean(sum_k w_k r_k).
 The aggregator (weight 1) returns objdel.verify.reward.advantages.advantages_v4, whose group means are already 0, and
-the loggers (weight 0) return one term each, so A = advantages_v4 to float32 precision (R2, tests/test_train_trl.py) and
-every term is logged as rewards/<term>/mean. The geometric loggers (GATED: iou_tc, f5, g_area) return the term times
+the loggers (weight 0) return one term each, so A = advantages_v4 to float32 precision (R2, tests/rl/test_train_trl.py)
+and every term is logged as rewards/<term>/mean. The geometric loggers (GATED: iou_tc, f5, g_area) return the term times
 objdel.verify.reward.advantages.legal_gate, as advantages_v4 sees it: an illegal rollout logs 0, so neither the curves
 nor the held-out eval_rewards/iou_tc/mean credit illegal output (R2 follow-up). A weight-0 logger adds 0 * value = 0 to
 TRL's sum, so the advantages do not depend on what the loggers return. A logger given weight w (GRPOConfig

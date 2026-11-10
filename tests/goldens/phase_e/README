@@ -1,8 +1,8 @@
-Move-invariance goldens of phase E (tests/core/test_move_invariance.py).
+Move-invariance goldens of phase E (tests/experiments/test_move_invariance.py).
 
 Record them on the E0 commit, never on an older tree (phases A-D change rewards, targets and the trainer on purpose):
 
-    .venv/bin/python -I -c "import tests.core.test_move_invariance as t; t.record()"
+    .venv/bin/python -I -c "import tests.experiments.test_move_invariance as t; t.record()"
 
 invariance.json            platform independent: goldens 1 (reward value), 2 (target set hash), 5 (chain argv and
                            vision refs of the live plans) and 6 (resolved GRPOConfig). "fingerprint" (optional, with
@@ -144,3 +144,11 @@ hash_view takes the render-file commits as an argument), the script keeps main a
 final_eval.py keeps main and no_model (ROOT is gone: repo_root()). host_syncs gains policy/final_eval.py 1 (gate_a's
 bootstrap .tolist(), moved from the script, which the scan did not cover). Goldens 1-6 and tests_import_experiments
 unchanged.
+E8.3 (impl2-e8tests, tests mirror the layers): the top-level tests/test_*.py files move by git mv into tests/{geom,
+verify,data,policy,rl,sft,infra,core}/; every test file that imports `experiments` (and test_experiment_scripts.py)
+moves to tests/experiments/, with core/test_move_invariance.py and rl/test_trl_adapter_equivalence.py (record command
+above now names tests.experiments.test_move_invariance). tests_import_experiments re-recorded: [] (0 at E8).
+invariance.json "renamed_paths" gains every moved file {old: new} (test_train_fast.py now maps straight to
+tests/experiments/test_trl_adapter_equivalence.py), so golden 5 and plan_argv.json map the chain's pytest paths
+instead of re-recording. module_strings_stale re-recorded on its own tree: the same 23 tokens, their test files under
+their new paths. Goldens 1-6 values, host_syncs and old_names unchanged by the move.

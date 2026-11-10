@@ -9,7 +9,7 @@ import yaml
 from objdel.core import spec as S
 from objdel.infra.vast import __main__ as policy
 from objdel.infra.vast import chain as C
-from tests.core.test_move_invariance import later_edits
+from tests.experiments.test_move_invariance import later_edits
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIGS, SPECS = ROOT / "experiments/phase2/configs", ROOT / "specs"

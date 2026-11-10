@@ -10,4 +10,4 @@ stages:
 - kind: cmd
   name: a_gpu
   argv: [bash, -c, '/opt/venv/bin/python -I -c ''import objdel._gpucheck as g; assert g.build() == "cuda"'' && OBJDEL_DATA_ROOT={data}
-      /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_a_gpu.py::test_g02b_builds tests/test_a_gpu.py::test_g03_device_bytes']
+      /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/experiments/test_a_gpu.py::test_g02b_builds tests/experiments/test_a_gpu.py::test_g03_device_bytes']

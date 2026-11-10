@@ -15,7 +15,7 @@ stages:
   name: checker
   argv: [bash, -c, 'set -o pipefail; DATA={data}/checker_eval bash experiments/cuda_checker/run_box.sh; s=$?; mkdir
       -p {rd}/cuda_checker; cp -r experiments/cuda_checker/results experiments/cuda_checker/RESULTS.md {rd}/cuda_checker/
-      2>/dev/null; [ $s = 0 ] || exit $s; /opt/venv/bin/python -m pytest -q -p no:cacheprovider tests/test_gpu_scoring.py
+      2>/dev/null; [ $s = 0 ] || exit $s; /opt/venv/bin/python -m pytest -q -p no:cacheprovider tests/verify/test_gpu_scoring.py
       2>&1 | tee {rd}/cuda_checker/pytest.txt']
 - kind: cmd
   name: sanitizer
@@ -23,7 +23,7 @@ stages:
   argv: [bash, -c, 'S=$(ls /opt/venv/lib/python3.12/site-packages/nvidia/cu13/bin/compute-sanitizer 2>/dev/null);
       O={rd}/cuda_checker/memcheck.txt; [ -n "$S" ] || {{ echo no compute-sanitizer > $O; exit 1; }}; export PYTORCH_NO_CUDA_MEMORY_CACHING=1;
       for t in memcheck initcheck; do echo == $t >> $O; timeout 1200 $S --tool $t --error-exitcode 1 /opt/venv/bin/python
-      -m pytest -q -p no:cacheprovider tests/test_cuda_checker_gpu.py tests/test_cuda_checker.py tests/test_checker_host.py
-      tests/test_reward_one_checker_call.py tests/test_gpu_scoring.py >> $O 2>&1 || exit 1; done']
+      -m pytest -q -p no:cacheprovider tests/geom/test_cuda_checker_gpu.py tests/geom/test_cuda_checker.py tests/geom/test_checker_host.py
+      tests/rl/test_reward_one_checker_call.py tests/verify/test_gpu_scoring.py >> $O 2>&1 || exit 1; done']
 - {kind: rl, name: train, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/prepared', out: '{rd}/train_rl',
   steps: 770, save_steps: 50, resume: true}

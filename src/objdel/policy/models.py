@@ -70,7 +70,7 @@ _LORA = frozenset(MODELS)  # every model is LoRA (ADR-0008)
 
 _GRAD_CKPT = {"qwen3-vl-2b"}
 
-# vision tower + projector of every model (recorded module names in tests/test_p2_train.py;
+# vision tower + projector of every model (recorded module names in tests/sft/test_p2_train.py;
 # archive/phase2_lab/B1/common.VISION)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
 
