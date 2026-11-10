@@ -169,3 +169,10 @@ their new paths. Goldens 1-6 values, host_syncs and old_names unchanged by the m
 Merge impl2-e8tests into impl2-final (2026-11-10): the moved tests carry impl2's edits (test_preflight's upload bundle
 tests, test_vast's watchdog test, test_gpu_chain's post_commit archive ids now at tests/geom/test_cuda_checker.py;
 run_box.sh keeps SEL's post_commit). No golden re-recorded: old_names re-read unchanged, the rest pass as merged.
+I12 audit (impl2-gEb, 2026-11-10): golden 3 is no longer vacuous. HARD in test_move_invariance.py names 28 hard cases
+(empty outline, single-pixel box, all four borders, collinear, bow-tie, duplicate vertices, pinch, spike, overlap,
+holes, two and nested outers, coordinates 1001/-1/float/string, truncated and non-JSON text, 1.5 MB text, 10,000
+vertices, cup outside the disc); they replace the random-box texts of slots 0-5, 8-13, 16-21, 24-29 and 32-35 (the
+random draws still happen, so the other 36 slots keep their recorded bits, checked before the re-record). Only
+invariance.darwin-arm64.json "score_batch" was re-recorded; update_norms is unchanged. The defect union covers 12 of
+the 13 classes: out_of_range cannot come from text (the parser refuses a coordinate outside 0-1000 as "range").

@@ -57,10 +57,63 @@ def _box_text(rng, names) -> str:
     return json.dumps({n: [ring()] for n in names}, separators=(",", ":"))
 
 
-def score_corpus() -> dict[str, list[str]]:
-    """Golden 3: score_batch on 64 polygon texts (box rings, some broken) against fixture caches, each float as hex."""
+def _ring(outer, holes=()) -> dict:
+    return {"outer": outer, "holes": list(holes)}
+
+
+def _sq(x0, y0, x1, y1) -> list:
+    """A clockwise (on screen) axis-aligned square ring; [::-1] gives a hole's winding."""
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+
+def _nod(*rings) -> str:
+    return json.dumps({"nodule": list(rings)}, separators=(",", ":"))
+
+
+_CIRCLE = [[round(500 + 300 * np.cos(-2 * np.pi * k / 10_000)), round(500 + 300 * np.sin(-2 * np.pi * k / 10_000))]
+           for k in range(10_000)]
+# I12 (golden 3 must not be vacuous): the hard cases of the plan, each a named category. They take the first slots
+# of the corpus whose text is a random box (i % 8 not 6 or 7), in this order; the other slots keep their bits.
+HARD = {
+    "empty_outline": ("a", _nod()),
+    "single_pixel_box": ("a", _nod(_ring(_sq(400, 400, 420, 420)))),  # 20 grid units = 1 pixel of 50
+    "touches_all_borders": ("a", _nod(_ring(_sq(0, 0, 1000, 1000)))),
+    "collinear_zero_area": ("a", _nod(_ring([[100, 100], [500, 100], [900, 100]]))),
+    "bow_tie": ("a", _nod(_ring([[200, 200], [600, 600], [600, 200], [200, 600]]))),
+    "duplicate_vertices": ("a", _nod(_ring([[200, 200], [200, 200], [600, 200], [600, 600], [200, 600]]))),
+    "two_distinct_points": ("a", _nod(_ring([[200, 200], [200, 200], [600, 600]]))),
+    "vertex_pinch": ("a", _nod(_ring([[200, 200], [400, 400], [600, 200], [600, 600], [400, 400], [200, 600]]))),
+    "spike": ("a", _nod(_ring([[200, 200], [600, 200], [600, 400], [800, 400], [600, 400], [600, 600],
+                               [200, 600]]))),
+    "collinear_overlap": ("a", _nod(_ring([[200, 200], [600, 200], [600, 600], [500, 600], [500, 200], [300, 200],
+                                           [300, 600], [200, 600]]))),
+    "hole": ("a", _nod(_ring(_sq(200, 200, 600, 600), [_sq(300, 300, 400, 400)[::-1]]))),
+    "hole_touching_outer": ("a", _nod(_ring(_sq(200, 200, 600, 600), [_sq(200, 300, 400, 400)[::-1]]))),
+    "hole_outside_outer": ("a", _nod(_ring(_sq(200, 200, 600, 600), [_sq(700, 700, 800, 800)[::-1]]))),
+    "nested_holes": ("a", _nod(_ring(_sq(100, 100, 900, 900), [_sq(200, 200, 800, 800)[::-1],
+                                                                _sq(300, 300, 700, 700)[::-1]]))),
+    "two_nodules": ("a", _nod(_ring(_sq(100, 100, 300, 300)), _ring(_sq(500, 500, 700, 700)))),
+    "nested_outers": ("a", _nod(_ring(_sq(100, 100, 900, 900)), _ring(_sq(300, 300, 700, 700)))),
+    "rings_crossing": ("a", _nod(_ring(_sq(100, 100, 500, 500)), _ring(_sq(300, 300, 700, 700)))),
+    "rings_touching": ("a", _nod(_ring(_sq(100, 100, 500, 500)), _ring(_sq(500, 100, 900, 500)))),
+    "wrong_winding": ("a", _nod(_ring(_sq(200, 200, 600, 600)[::-1]))),
+    "coordinate_1001": ("a", _nod(_ring(_sq(200, 200, 1001, 600)))),
+    "coordinate_minus_1": ("a", _nod(_ring(_sq(-1, 200, 600, 600)))),
+    "coordinate_float": ("a", _nod(_ring([[200.5, 200], [600, 200], [600, 600], [200, 600]]))),
+    "coordinate_string": ("a", _nod(_ring([["200", 200], [600, 200], [600, 600], [200, 600]]))),
+    "truncated_json": ("a", _nod(_ring(_sq(200, 200, 600, 600)))[:-7]),
+    "non_json": ("a", "the nodule is in the centre"),
+    "text_1_5_mb": ("a", _nod(_ring(_sq(200, 200, 600, 600))) + " " * 1_500_000),
+    "vertices_10000": ("a", _nod(_ring(_CIRCLE))),
+    "cup_outside_disc": ("r", json.dumps({"disc": [_ring(_sq(100, 100, 500, 500))],
+                                          "cup": [_ring(_sq(600, 600, 800, 800))]}, separators=(",", ":"))),
+}
+
+
+def corpus_jobs() -> tuple[list[str], list[tuple]]:
+    """Golden 3's 64 score_batch jobs against fixture caches and the category of each: "box" (random box rings),
+    "garbage", "keys" (a nodule text on the disc/cup schema) or a HARD name."""
     from objdel.verify.reward.cache import ExpertCache
-    from objdel.verify.reward.score import NUMERIC, score_batch
 
     def stack(boxes, W=50):
         m = np.zeros((len(boxes), W, W), bool)
@@ -74,12 +127,23 @@ def score_corpus() -> dict[str, list[str]]:
               "cup": ExpertCache.build(stack([(18, 18, 32, 32), (19, 18, 31, 32), (18, 19, 32, 31)]))},
     }
     names = {"a": ("nodule",), "r": ("disc", "cup")}
-    rng, jobs = np.random.default_rng(20261109), []
+    rng, jobs, cats, hard = np.random.default_rng(20261109), [], [], iter(HARD.items())
     for i in range(64):
         k = "a" if i % 2 == 0 else "r"
-        text = {6: "garbage", 7: '{"nodule":[]}'}.get(i % 8) or _box_text(rng, names[k])
+        cat = {6: "garbage", 7: "keys"}.get(i % 8, "box")
+        text = {6: "garbage", 7: '{"nodule":[]}'}.get(i % 8) or _box_text(rng, names[k])  # rng drawn as recorded
+        if cat == "box" and (h := next(hard, None)):
+            cat, (k, text) = h
         jobs.append((text, bool(i % 16 == 15), names[k], caches[k], 50, 50))
-    out = score_batch(jobs)
+        cats.append(cat)
+    return cats, jobs
+
+
+def score_corpus() -> dict[str, list[str]]:
+    """Golden 3: score_batch on the 64 texts of corpus_jobs, each float as hex."""
+    from objdel.verify.reward.score import NUMERIC, score_batch
+
+    out = score_batch(corpus_jobs()[1])
     return {k: [float(v).hex() for v in out[k]] for k in NUMERIC} | {"error": out["error"]}
 
 
@@ -226,10 +290,31 @@ def test_golden_2_target_set_hash():
 
 
 def test_golden_3_score_batch_bits():
+    """Every float equal by hex, the key set equal. A platform without a file skips, except darwin-arm64 (the
+    binding gate), where a missing file fails."""
     f = GOLDENS / f"invariance.{PLATFORM}.json"
-    if not f.exists():
+    if not f.exists() and PLATFORM != "darwin-arm64":
         pytest.skip(f"no golden recorded for {PLATFORM}")
-    assert score_corpus() == golden(f.name)["score_batch"]
+    want, got = golden(f.name)["score_batch"], score_corpus()
+    assert set(got) == set(want)
+    assert got == want
+
+
+def test_golden_3_corpus_is_not_vacuous():
+    """I12: every hard category is in the corpus, and the union of the checker defects covers every class the text
+    can reach. out_of_range cannot be reached: the parser refuses a coordinate outside 0-1000 first (error "range")."""
+    from objdel.geom import engine
+    from objdel.verify.reward.score import score_batch
+
+    cats, jobs = corpus_jobs()
+    assert len(jobs) == 64 and set(HARD) <= set(cats) and {"box", "garbage", "keys"} <= set(cats)
+    out = score_batch(jobs)
+    seen = {d for defects in out["defects"] for d, n in defects.items() if n}
+    assert seen == set(engine.DEFECTS) - {"out_of_range"}
+    errors = dict(zip(cats, out["error"], strict=True))
+    assert (errors["coordinate_1001"], errors["coordinate_minus_1"]) == ("range", "range")
+    assert errors["text_1_5_mb"] == errors["vertices_10000"] == "too_long"
+    assert errors["truncated_json"] == "syntax" and errors["coordinate_float"] == "not_int"
 
 
 def test_golden_4_one_update(monkeypatch, tmp_path):
