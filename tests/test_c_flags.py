@@ -109,3 +109,16 @@ def test_no_ckpt_layers_changes_exactly_k_layers_and_neither_logprobs_nor_grads(
         out[k] = (lp.detach(), {n: p.grad.clone() for n, p in m.named_parameters() if p.grad is not None})
     assert torch.equal(out[0][0], out[2][0]) and out[0][1].keys() == out[2][1].keys() and out[0][1]
     assert all(torch.equal(g, out[2][1][n]) for n, g in out[0][1].items())
+
+
+def test_gpu_pixels_flag_choices_and_default(capsys):
+    """U-CF1 / C1: --gpu-pixels is off or auto (default off until the gate passes, so B1's control path stays),
+    --allow-cpu-pixels is off; another value exits 2."""
+    from experiments.phase2 import train_rl
+
+    a = train_rl.parse(BASE)
+    assert (a.gpu_pixels, a.allow_cpu_pixels) == ("off", False)
+    assert train_rl.parse([*BASE, "--gpu-pixels", "auto", "--allow-cpu-pixels"]).gpu_pixels == "auto"
+    with pytest.raises(SystemExit) as e:
+        train_rl.parse([*BASE, "--gpu-pixels", "bogus"])
+    assert e.value.code == 2 and "--gpu-pixels" in capsys.readouterr().err
