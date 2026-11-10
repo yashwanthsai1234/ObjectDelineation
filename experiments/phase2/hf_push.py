@@ -53,12 +53,14 @@ def token_problems(who: dict, repo: str) -> list[str]:
 
 
 def whoami(token: str) -> dict:
+    """huggingface_hub whoami() of a token."""
     from huggingface_hub import HfApi
 
     return HfApi(token=token).whoami()
 
 
 def api(token: str):
+    """An HfApi client for a token."""
     from huggingface_hub import HfApi
 
     return HfApi(token=token)
@@ -83,6 +85,7 @@ def base_card(base: str) -> tuple[bytes, dict]:
 
 
 def card(base: str, meta: dict, man: dict, sel: dict, run: Path) -> str:
+    """The model card of a train_sft run's selected branch."""
     import yaml
 
     c = man["config"]
@@ -101,6 +104,7 @@ def card(base: str, meta: dict, man: dict, sel: dict, run: Path) -> str:
 
 
 def rl_card(base: str, meta: dict, doc: dict, out: Path) -> str:
+    """The model card of a train_rl output."""
     import yaml
 
     head = {k: meta[k] for k in ("license", "license_name", "license_link") if meta.get(k)}
@@ -184,6 +188,7 @@ def card_only(a, token: str) -> int:
 
 
 def main(argv=None) -> int:
+    """The hf_push CLI (--run or --rl, --repo, --revision, --view; the token on stdin)."""
     from objdel.train import configs
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])

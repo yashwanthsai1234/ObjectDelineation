@@ -29,6 +29,7 @@ SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view woul
 
 
 def walk(data: Path, top: Path, prefix: str) -> list[tuple[str, Path]]:
+    """(archive name, path) of every file under `top`; refuses a symlink anywhere between data/ and the files."""
     if top.resolve() != data.resolve() / top.relative_to(data):  # a symlink between data/ and top (BK4-14)
         die(f"refusing symlinked path {top}")
     paths = list(top.rglob("*"))  # lists symlinks without following them
@@ -47,6 +48,7 @@ def manifest(ds: str, prep: Path) -> bytes:
 
 
 def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[str, Path | bytes]]:
+    """The bundle's (archive name, path or bytes) entries for dataset `ds`; refuses anything under data/raw."""
     if is_raw(data):
         die("refusing to bundle anything under data/raw")
     prep = data / "prepared"
@@ -77,6 +79,7 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
 
 
 def sha(p: Path | bytes) -> str:
+    """SHA-256 hex of a file or of bytes."""
     return hashlib.sha256(p).hexdigest() if isinstance(p, bytes) else file_sha256(p)
 
 
@@ -93,6 +96,7 @@ def write_tar(fileobj, files: list[tuple[str, Path | bytes]]) -> None:
 
 
 def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Path:
+    """Write the bundle tar (RIGA: age-encrypted) and its .sha256 under `out`; returns the tar path."""
     files = members(ds, data, views)
     out.mkdir(parents=True, exist_ok=True)
     target = out / ("bundle-riga.tar.age" if ds == "riga" else f"bundle-{ds}.tar")
@@ -116,6 +120,7 @@ def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Pat
 
 
 def main(argv: list[str] | None = None) -> None:
+    """The bundle CLI (dataset, --view, --data, --out)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dataset", choices=["lidc", "riga"])
     ap.add_argument("--view", action="append", help="training view to ship (repeatable; default every <ds>-*)")

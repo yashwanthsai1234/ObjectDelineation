@@ -19,6 +19,7 @@ from huggingface_hub import snapshot_download
 
 
 def main(argv=None) -> int:
+    """The hf_pull CLI (--repo, --revision, --out, --allow; the token on stdin)."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True)
     ap.add_argument("--revision", required=True)

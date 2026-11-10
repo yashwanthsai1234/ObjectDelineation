@@ -89,14 +89,17 @@ ONSTART_MAX = 4048  # Vast API spec
 
 
 def home() -> Path:
+    """The Vast state folder: VAST_HOME, else this folder (ledger, active runs, allowlist, offers, known_hosts)."""
     return Path(os.environ.get("VAST_HOME", HERE))
 
 
 def die(msg: str):
+    """Stop the CLI with a `vast: ` message (exit status 1)."""
     sys.exit(f"vast: {msg}")
 
 
 def is_raw(p: Path) -> bool:
+    """True when `p` resolves under a data/raw/ folder (never bundled or synced)."""
     return "/data/raw/" in f"{Path(p).resolve().as_posix()}/"
 
 
@@ -136,6 +139,7 @@ def terms(gpu: str, dataset: str, disk: int = 80) -> list[tuple]:
 
 
 def query(gpu: str, dataset: str, disk: int = 80) -> str:
+    """The `vastai search offers` query string of the §4.2 filter."""
     return " ".join(t[1] for t in terms(gpu, dataset, disk))
 
 
@@ -169,6 +173,7 @@ def governance(dataset: str, o: dict, allow: dict) -> list[str]:
 
 
 def ledger(**row) -> None:
+    """Append one row to ledger.csv (G9): known FIELDS only, never a secret-looking value."""
     if bad := set(row) - set(FIELDS):
         raise KeyError(f"not a ledger field: {sorted(bad)}")
     if any(SECRET_RE.search(str(v)) for v in row.values()):
@@ -189,6 +194,7 @@ def load(name: str) -> dict:
 
 
 def active(update: dict | None = None) -> dict:
+    """The live runs (active_runs.json); with `update`, write that dict first."""
     if update is not None:
         (home() / "active_runs.json").write_text(json.dumps(update, indent=1))
     return load("active_runs.json")
@@ -222,6 +228,7 @@ def secret(service: str) -> str:
 
 
 def vast(*args: str, tries: int = 1):
+    """Run `vastai ARGS` with the scoped API key, `tries` times; JSON for --raw, else the text; dies on failure."""
     env = dict(os.environ, VAST_API_KEY=os.environ.get("VAST_API_KEY") or secret("objdel-vast-scoped"))
     for i in range(tries):
         p = subprocess.run(["vastai", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
@@ -241,11 +248,13 @@ def sh(cmd: list[str], stdin: str | None = None, what: str = "") -> None:
 
 
 def ssh(run: dict) -> list[str]:
+    """The ssh argv prefix for a run's box (its port, our known_hosts under home())."""
     known = f"UserKnownHostsFile={home() / 'known_hosts'}"
     return ["ssh", "-p", str(run["port"]), "-o", "StrictHostKeyChecking=accept-new", "-o", known]
 
 
 def remote(run: dict, command: str, stdin: str | None = None, what: str = "") -> None:
+    """Run `command` on a run's box over ssh (DRY_RUN=1 prints it)."""
     sh([*ssh(run), f"root@{run['ip']}", command], stdin, what)
 
 
@@ -290,10 +299,12 @@ def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: i
 
 
 def offer_cols(o: dict) -> dict:
+    """The offer fields the ledger records with a launch."""
     return {k: o.get(k) for k in ("dph_total", "inet_up_cost", "inet_down_cost", "hosting_type", "host_id", "machine_id")}
 
 
 def cmd_offers(a) -> None:
+    """offers.sh: list the five cheapest admissible offers; --pick ID saves one for launch."""
     ds = "riga" if a.riga else "lidc"
     got = vast("search", "offers", query(a.gpu, ds, a.disk), "-o", "dph_total", "--storage", str(a.disk), "--raw")
     ok = [o for o in got if not reasons(o, a.gpu, ds, a.disk)]  # --pick ID: any of them, not only the 5 shown
@@ -327,6 +338,7 @@ def launch_refusal(offer: dict, cap_hours: float) -> str:
 
 
 def cmd_launch(a) -> None:
+    """launch.sh: every refusal first (run id, preflight stamp, offer, spec caps, money, one instance), then create the instance, wait for ssh and record it; any failure destroys it."""
     if not RUN_ID_RE.fullmatch(a.run_id):
         die(f"run_id must match {RUN_ID_RE.pattern}")
     if a.run_id in active():
@@ -394,6 +406,7 @@ def cmd_launch(a) -> None:
 
 
 def get_run(run_id: str) -> dict:
+    """The active run `run_id`; dies when there is none."""
     return active().get(run_id) or die(f"no active run {run_id}")
 
 
@@ -431,6 +444,7 @@ def code_sha_text(root: Path = ROOT) -> str:
 
 
 def cmd_sync_up(a) -> None:
+    """sync_up.sh: send and install the code snapshot (H-GOV first), check the GPU, then send and unpack the bundle."""
     run = get_run(a.run_id)
     o, allow = json.loads((home() / "offers" / f"{run['offer']}.json").read_text()), load(".vast-allowlist")
     if why := governance(a.bundle, o, allow):
@@ -676,6 +690,7 @@ def billed(charges: dict, iid: int) -> float | None:
 
 
 def cmd_teardown(a) -> None:
+    """teardown.sh: pull the run (three tries), then destroy the instance and record the session's cost."""
     run, lost = get_run(a.run_id), None
     try:
         for _ in range(3 if "port" in run else 0):  # no port: the box never got ssh, so nothing is on it to pull
@@ -699,12 +714,15 @@ def cmd_teardown(a) -> None:
 
 
 def alert(msg: str) -> None:
+    """Print an alert to stderr (and a macOS notification unless DRY_RUN=1)."""
     print(f"vast ALERT: {msg}", file=sys.stderr)
     if sys.platform == "darwin" and os.environ.get("DRY_RUN") != "1":
         subprocess.run(["osascript", "-e", f'display notification {json.dumps(msg)} with title "objdel vast"'])
 
 
 def cmd_sweep_orphans(a) -> None:
+    """sweep_orphans.sh: close runs whose instance is gone, destroy orphan or overdue instances, and destroy every
+    instance at the hard stop (G10)."""
     listed, now = vast("show", "instances", "--raw", tries=3), time.time()
     for k, r in active().items():  # BK4-7: gone without our destroy (watchdog G5, host loss): close at its last state
         if r["instance"] not in {i["id"] for i in listed} and now - r["started"] > GRACE_S:
@@ -749,6 +767,7 @@ CLI = {  # subcommand -> its arguments, in order
 
 
 def main(argv: list[str] | None = None) -> None:
+    """The vast CLI: one subcommand per shell shim (CLI table)."""
     ap = argparse.ArgumentParser(prog="vast", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for cmd, args in CLI.items():
