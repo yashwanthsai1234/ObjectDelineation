@@ -132,6 +132,7 @@ class Env:
                         VAST_HOME=str(self.home), VAST_RUNS=str(self.runs), DRY_RUN="1", VAST_POLL_S="0.01",
                         VAST_LAUNCH_TIMEOUT_S="3", OBJDEL_RUN_DIR=str(tmp / "pf"),
                         OBJDEL_DATA_ROOT=str(tmp / "data"))
+        (self.home / "ledger.csv").write_text(",".join(P.FIELDS) + "\n")  # launch refuses without a ledger
         self.config = PF_config(tmp)
         self.stamp()
 
@@ -386,7 +387,7 @@ def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     assert "hard stop" in p.stderr and not E.vast("create instance")
     E.state(offers=[offer()])
     E.pick()
-    (E.home / "ledger.csv").unlink()
+    (E.home / "ledger.csv").write_text(",".join(P.FIELDS) + "\n")
     E.sh("launch.sh", "111", "r1")
     row = E.ledger()[-1]
     assert row["event"] == "launch" and float(row["inet_up_cost"]) == 0.001 and float(row["inet_down_cost"]) == 0.001
@@ -1446,6 +1447,14 @@ def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp
     offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
     assert P.launch_refusal(offer, 2.4) == ""
     assert "hard stop" in P.launch_refusal(dict(offer, dph_total=1.5), 2.4)
+
+
+def test_launch_refuses_without_a_ledger(E):
+    """E8.1: a missing ledger.csv is not $0 spend (a moved VAST home would read none): launch refuses before create."""
+    E.pick()
+    (E.home / "ledger.csv").unlink()
+    p = E.sh("launch.sh", "111", "r1", ok=False)
+    assert "no ledger.csv" in p.stderr and not E.vast("create instance")
 
 
 def test_code_files_ship_the_kernel_drafts_but_no_other_docs(tmp_path, monkeypatch):

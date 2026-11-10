@@ -324,10 +324,13 @@ def cmd_offers(a) -> None:
 
 
 def launch_refusal(offer: dict, cap_hours: float) -> str:
-    """Why this offer may not launch (empty when it may): committed spend + the worst case to the deadline > HARD_STOP."""
+    """Why this offer may not launch (empty when it may): no ledger.csv, or committed spend + the worst case to the
+    deadline > HARD_STOP."""
     money = [offer["dph_total"], offer["inet_up_cost"], offer["inet_down_cost"]]
     if not all(math.isfinite(x) and x >= 0 for x in money) or not (math.isfinite(cap_hours) and cap_hours > 0):
         return f"refused: price {money} and --cap-hours {cap_hours} must be finite, non-negative and the cap positive"
+    if not (home() / "ledger.csv").is_file():  # a missing ledger is unknown spend, not $0 (E8.1)
+        return f"no ledger.csv under {home()}: the spend guard cannot count what was spent (G10)"
     now = time.time()
     bw = {k: offer[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"dph": offer["dph_total"], **bw, "started": now, "deadline": now + int(cap_hours * 3600) + PULL_S}

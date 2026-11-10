@@ -50,7 +50,8 @@ OFFER = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
 
 def test_launch_refusal_refuses_a_nan_price(tmp_path, monkeypatch):
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
-    assert P.launch_refusal(dict(OFFER, dph_total=math.nan), 2.4)
+    (tmp_path / "ledger.csv").write_text(",".join(P.FIELDS) + "\n")
+    assert P.launch_refusal(dict(OFFER, dph_total=math.nan), 2.4).startswith("refused")
 
 
 def _repo(tmp_path, monkeypatch, files):

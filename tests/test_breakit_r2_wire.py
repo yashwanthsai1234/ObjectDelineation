@@ -119,7 +119,8 @@ def test_parse_refuses_a_non_positive_save_steps(extra):
 )
 def test_launch_refusal_refuses_negative_money_inputs(tmp_path, monkeypatch, offer, cap):
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
-    assert P.launch_refusal(offer, cap)
+    (tmp_path / "ledger.csv").write_text(",".join(P.FIELDS) + "\n")
+    assert P.launch_refusal(offer, cap).startswith("refused")
 
 
 def _repo(tmp_path, monkeypatch, files):
