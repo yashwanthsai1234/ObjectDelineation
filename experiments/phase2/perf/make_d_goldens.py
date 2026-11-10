@@ -1,6 +1,6 @@
 """Goldens of Phase D's CPU-vs-GPU checks, written on the Mac CPU build (one venv holds one build), LIDC only:
 
-- tests/goldens/d_gpu02.json (GPU02, D-G3/D-G10 box half; tests/experiments/test_gpu02.py compares on the box): per
+- tests/goldens/d_gpu02.json (GPU02, D-G3/D-G10 box half; tests/experiments/test_d_goldens.py compares on the box): per
   entry the SHA-256 of its inputs, then {key: dtype, shape, SHA-256 of tobytes()} of every output array. Entries:
   check_masks and topology on the 6,024 fuzz masks (fuzz_masks(2000) of seeds 0-2) and the 37,093 crops of
   checker_eval/masks.npz; check_polygons and certify_polygons on the fuzz polygons (fuzz_polygons(150, seed 0), 2,853
@@ -10,10 +10,10 @@
   (bench_checker.dump_replay: prepared/lidc/val.jsonl and its caches); add_tables_from_raters and edt on the first
   1,000 caches of prepared/caches/lidc by sorted path. Section "gpu03": the sanitizer corpus of
   tests/geom/test_gpu_sanitize.py (GPU03 compares its GPU outputs with these).
-- tests/goldens/d_r01_lidc.json (D-R01, always-run copy; tests/data/test_targets_lidc_golden.py): the first 50 items
+- tests/goldens/d_r01_lidc.json (D-R01, always-run copy; tests/experiments/test_d_goldens.py): the first 50 items
   of the LIDC val store, framed as experiments.phase1.build_targets frames them: per rater the mask of each object as
   run lengths and the target text stored in data/targets/lidc/val.jsonl (built before D).
-- tests/goldens/d_r04_scorer.json (D-R04; tests/verify/test_scorer_golden.py): score_polygons and score_masks of 200
+- tests/goldens/d_r04_scorer.json (D-R04; tests/experiments/test_d_goldens.py): score_polygons and score_masks of 200
   synthetic items (d_r04_items) as the hex of tobytes() of every output.
 
 Inputs resolve under OBJDEL_DATA_ROOT, else `data` (bench_checker.data_root). Reads untrusted data: run with -I.

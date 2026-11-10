@@ -19,7 +19,6 @@ from experiments.phase2.perf import make_d_goldens as M
 from objdel.data.targets.build import build_target
 from objdel.geom.shape import to_mask
 from objdel.geom.topology import filtered
-from tests.geom.test_cuda_checker_gpu import _gpus
 
 GOLDENS = Path(__file__).resolve().parents[1] / "goldens"
 BOX_INPUTS = ("checker_eval/masks.npz", "checker_eval/polygons.npz", "prepared/lidc/val.jsonl", "prepared/caches/lidc",
@@ -39,7 +38,6 @@ def test_gpu02_golden_lists_every_entry_and_no_riga():
 
 @pytest.mark.parametrize("name", list(M.entries()))
 @pytest.mark.gpu
-@pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")
 def test_gpu02_entry_equals_the_cpu_build(name):
     want = _gpu02()["entries"][name]
     inputs, r = M.entries()[name](B.data_root())
@@ -53,7 +51,6 @@ def test_gpu02_entry_equals_the_cpu_build(name):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")
 def test_gpu02_edt_equals_scipy():
     """D-G10 box half: the device EDT of the 1,000 caches' maps equals scipy bit for bit."""
     _, cs = M.caches(B.data_root())

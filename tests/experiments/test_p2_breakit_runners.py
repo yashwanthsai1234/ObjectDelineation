@@ -12,14 +12,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from test_p2_scripts import CONFIGS, CPU_SFT, ROOT, stage, stage_of
+from test_p2_scripts import CPU_SFT, ROOT, sft_stages, stage
 
 from objdel.sft import select as sft_select
-
-
-def _yaml(path):
-    yaml = pytest.importorskip("yaml")
-    return yaml.safe_load(path.read_text())
 
 
 def _train_sft():
@@ -32,21 +27,23 @@ def _train_sft():
 # ---------------------------------------------------------------- configs
 
 
-@pytest.mark.parametrize("path", CONFIGS, ids=[p.stem for p in CONFIGS])
-def test_every_config_builds_its_sft_config(path):
+SFT = sft_stages()  # (spec name, SftStage); the old train_sft configs left git in E6.6
+
+
+@pytest.mark.parametrize(("name", "a"), SFT, ids=[n for n, _ in SFT])
+def test_every_config_builds_its_sft_config(name, a):
     """train_sft builds SFTConfig as trainer() does (its fixed overrides | the YAML's sft block) before the model."""
     _train_sft()
     from objdel.sft import config as sft_config
 
-    a = stage_of(path)
     o = {"seed": a.seed, "data_seed": a.seed, "save_strategy": "no", "save_total_limit": 3, "logging_steps": 10}
     for b in (None, 100):
         cfg = sft_config.sft_config(a.model, "o", 200, b, **(o | a.sft))
         assert cfg.per_device_train_batch_size * cfg.gradient_accumulation_steps == 32
 
 
-@pytest.mark.parametrize("path", CONFIGS, ids=[p.stem for p in CONFIGS])
-def test_configs_carry_the_plan_values(path):
+@pytest.mark.parametrize(("name", "a"), SFT, ids=[n for n, _ in SFT])
+def test_configs_carry_the_plan_values(name, a):
     """PLAN D5 / D6 / D13 / §5.1: LR 5e-4 LoRA, the model's completion budget, the pre-registered probe LRs (5e-6
     for full fine-tuning stays a frozen record), WSD."""
     _train_sft()
@@ -54,7 +51,6 @@ def test_configs_carry_the_plan_values(path):
     from objdel.policy import models as policy_models
     from objdel.sft import config as sft_config
 
-    a = stage_of(path)
     cfg = sft_config.sft_config(a.model, "o", 100, **({"dataloader_prefetch_factor": None} | a.sft))
     assert cfg.learning_rate == 5e-4
     assert policy_models.MAX_COMPLETION[a.model] == policy_models.sampling(a.model)["max_tokens"] == 1536
@@ -123,10 +119,9 @@ def test_timing_runs_are_stable_only():
     TS = _train_sft()
     want = {"steps_per_epoch": 30, "stable": 30, "warmup": 1, "branches": {}}
     assert TS.plan(stage("qwen3-vl-2b", "v", "o", branches=[]), 30) == want
-    for p in CONFIGS:
-        a = stage_of(p)
-        timing = p.stem.startswith("r0_")
-        assert (a.branches == () and a.vision is False) if timing else (a.branches and a.vision), p.stem
+    for name, a in SFT:
+        timing = name.startswith("r0_")
+        assert (a.branches == () and a.vision is False) if timing else (a.branches and a.vision), name
 
 
 def test_train_sft_refuses_without_g_vision_and_reads_the_r0_reference(tmp_path):
@@ -137,9 +132,8 @@ def test_train_sft_refuses_without_g_vision_and_reads_the_r0_reference(tmp_path)
     (tmp_path / "v/manifest.json").write_text(json.dumps({"config": {"epochs": 3}}))
     with pytest.raises(ValueError, match="G-vision"):
         TS.train(stage("qwen3-vl-2b", str(tmp_path / "v"), str(tmp_path / "o")))
-    for p in CONFIGS:
-        v = _yaml(p).get("vision")
-        assert v is False or v["reference"] == f"vision_ref/{_yaml(p)['model']}.json", p.stem
+    for name, a in SFT:
+        assert a.vision is False or a.vision["reference"] == f"vision_ref/{a.model}.json", name
     ref = tmp_path / "ref.json"
     ref.write_text(json.dumps({"model": "qwen3-vl-2b", "set_sha256": "abc", "reference": 0.47}))
     assert TS.reference(str(ref), "qwen3-vl-2b", "abc") == 0.47 and TS.reference(0.3, "x", "y") == 0.3

@@ -53,6 +53,9 @@ def test_pf2_grpo_batch_under_the_recorded_bound(view_root, answers):
     assert statistics.median(seconds(lambda: v.score(items), 5)) < bound * 1.25
 
 
+# slow, like PF1: a ratio of wall times is not stable beside 8 xdist workers (2026-11-10, 1024 items: 1.058 alone,
+# 1.11-1.16 inside make test); make test-all runs it
+@pytest.mark.slow
 @pytest.mark.parametrize(("n", "rel", "abs_s"), [(GRPO_BATCH, 1.05, 0.002), (1024, 1.10, 0.0)])
 def test_pf2_api_overhead_over_score_batch(view_root, answers, n, rel, abs_s):
     v, items = Verifier("reward_v4", view_root), batch(answers, n)

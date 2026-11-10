@@ -27,6 +27,11 @@ def read_json(path):
     return json.loads(Path(path).read_text())
 
 
+def plain(x):
+    """A numpy scalar or array as a plain JSON value (json.dumps default=plain)."""
+    return x.tolist() if hasattr(x, "tolist") else x.item()
+
+
 def write_json(path, doc, atomic: bool = True) -> None:
     """doc as JSON with indent 1, sorted keys and a trailing newline (the manifests' bytes); atomic: write_atomic."""
     text = json.dumps(doc, indent=1, sort_keys=True) + "\n"

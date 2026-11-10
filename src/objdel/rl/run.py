@@ -47,7 +47,7 @@ import sys
 import time
 from pathlib import Path
 
-from objdel.core.io import read_json, write_atomic
+from objdel.core.io import plain, read_json, write_atomic
 from objdel.rl import build
 
 
@@ -333,17 +333,12 @@ def finite(x):
     return None if isinstance(x, numbers.Real) and not math.isfinite(x) else x
 
 
-def _plain(x):
-    """numpy scalars and arrays as plain JSON values (json.dumps default)."""
-    return x.tolist() if hasattr(x, "tolist") else x.item()
-
-
 def save_json(path: Path, doc: dict, keys: tuple[str, ...]) -> int:
     """Strict JSON (numpy values as plain numbers and lists) to path, through write_atomic; prints doc's `keys` on
     one line. A NaN or inf anywhere raises ValueError before anything is written (U25)."""
-    text = json.dumps(doc, indent=1, allow_nan=False, default=_plain) + "\n"
+    text = json.dumps(doc, indent=1, allow_nan=False, default=plain) + "\n"
     write_atomic(path, text)
-    print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False, default=_plain))
+    print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False, default=plain))
     return 0
 
 
