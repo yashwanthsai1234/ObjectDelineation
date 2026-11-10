@@ -509,27 +509,40 @@ def test_no_test_hooks_in_this_build():
 
 
 def test_slot_polygonizer_is_archived():
-    """S04 (D2 part): the dense slot polygonizer lives in archive/ only."""
+    """S04 (D2 part): the dense slot polygonizer lives in archive/ only. Owner's layout (a255988, as CT-87): archive/
+    is git-ignored and kept on the owner's disk, so the archived files are read only where the folder exists."""
     root = Path(__file__).resolve().parents[1]
-    arch = root / "archive" / "cuda_slot_polygonizer"
-    assert (arch / "gpucheck_slots.cpp").is_file() and "InitSlots" in (arch / "gpucheck_slots.cpp").read_text()
-    readme = (arch / "README.md").read_text()
-    assert re.search(r"\b[0-9a-f]{7,40}\b", readme) and "K1" in readme
     src = (root / "cuda" / "gpucheck.cpp").read_text()
     assert not [s for s in ("InitSlots", "LabelRound", "RankRound", "check_mask_chunk", "jump_rounds", "kChunkSlots")
                 if s in src]
+    arch = archived(root, "cuda_slot_polygonizer")
+    assert (arch / "gpucheck_slots.cpp").is_file() and "InitSlots" in (arch / "gpucheck_slots.cpp").read_text()
+    readme = (arch / "README.md").read_text()
+    assert re.search(r"\b[0-9a-f]{7,40}\b", readme) and "K1" in readme
+
+
+def archived(root: Path, name: str) -> Path:
+    """archive/<name>, which git ignores (never tracked); skip where this checkout has no archive/ (a worktree)."""
+    import subprocess
+
+    rel = f"archive/{name}"
+    assert subprocess.run(["git", "check-ignore", "-q", rel], cwd=root).returncode == 0, f"{rel} is not git-ignored"
+    assert not subprocess.run(["git", "ls-files", rel], cwd=root, capture_output=True, text=True).stdout
+    if not (root / "archive").is_dir():
+        pytest.skip("archive/ is local-only (git-ignored, a255988): the owner's checkout reads it")
+    return root / rel
 
 
 def test_shape_totals_is_archived():
     """S04 (D6 part): the one-thread-per-shape validity totals live in archive/ only; the engine runs the warp form."""
     root = Path(__file__).resolve().parents[1]
-    arch = root / "archive" / "cuda_validity"
-    assert "struct ShapeTotals {" in (arch / "shape_totals.cpp").read_text()
-    readme = (arch / "README.md").read_text()
-    assert re.search(r"\b[0-9a-f]{7,40}\b", readme) and "ShapeTotalsWarp" in readme
     src = (root / "cuda" / "gpucheck.cpp").read_text()
     assert "struct ShapeTotals {" not in src and "ShapeTotals{" not in src
     assert "for_each_warp(st, c.n, ShapeTotalsWarp{" in src
+    arch = archived(root, "cuda_validity")
+    assert "struct ShapeTotals {" in (arch / "shape_totals.cpp").read_text()
+    readme = (arch / "README.md").read_text()
+    assert re.search(r"\b[0-9a-f]{7,40}\b", readme) and "ShapeTotalsWarp" in readme
 
 
 @pytest.mark.data

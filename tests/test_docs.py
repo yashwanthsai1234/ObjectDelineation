@@ -77,10 +77,25 @@ def test_broken_link_is_reported(tmp_path):
 
 
 # ---------------------------------------------------------------- 2 backtick paths
+def local_only(path: str) -> bool:
+    """A path in a git-ignored top folder that this checkout lacks (the owner keeps archive/ on his disk only,
+    a255988): a worktree cannot check it, the owner's checkout does (the folder is there, so the path must be)."""
+    top = path.split("/", 1)[0]
+    if (REPO / top).exists():
+        return False
+    return subprocess.run(["git", "check-ignore", "-q", path], cwd=REPO).returncode == 0
+
+
 def test_backtick_paths_exist():
-    missing = {f"{p.relative_to(REPO)}: {s}" for p in doc_files(REPO) for s in backtick_paths(p.read_text())
-               if not (REPO / s.rstrip("/").split(":")[0]).exists()}  # fmt: skip
+    paths = {(p, s.split(":")[0]) for p in doc_files(REPO) for s in backtick_paths(p.read_text())}
+    missing = {f"{p.relative_to(REPO)}: {s}" for p, s in paths
+               if not (REPO / s.rstrip("/")).exists() and not local_only(s)}  # "archive/": a folder, for git
     assert not missing
+
+
+def test_only_an_ignored_absent_folder_is_local_only():
+    assert not local_only("src/objdel/no_such.py")  # tracked folder: a missing file is a fault
+    assert not local_only("no_such_folder/x.md")  # not ignored
 
 
 def test_backtick_paths_rule():
