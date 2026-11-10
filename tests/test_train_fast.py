@@ -1362,3 +1362,161 @@ def test_beta_zero_runs_only_the_update_forward(monkeypatch, tmp_path):
                         lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
     t = tiny_loop_vllm_fake(monkeypatch, tmp_path, steps=2)
     assert t.args.beta == 0.0 and len(calls) == 2
+
+
+def test_tokenize_prompts_with_prompt_memo_gives_trls_prompt_ids_tokenizing_each_layout_once():
+    """C2 step 1 (--prompt-memo): rows are grouped by (rendered text, image sizes); TRL tokenizes one row per group.
+    Prompt ids and images equal TRL's own; the vLLM path drops the multimodal fields."""
+    import PIL.Image
+    from transformers import AutoProcessor
+
+    try:
+        proc = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct", local_files_only=True)
+    except OSError:
+        pytest.skip("the Qwen3-VL processor is not in the local HF cache")
+    imgs = [PIL.Image.new("RGB", s, (i, 0, 0)) for i, s in enumerate([(64, 64)] * 3 + [(96, 64)])]
+    ask = lambda img, q: [{"role": "user", "content": [{"type": "image", "image": img},  # noqa: E731
+                                                       {"type": "text", "text": q}]}]  # fmt: skip
+    prompts = [ask(imgs[i % 4], "outline the disc" if i % 3 else "outline the cup") for i in range(24)]
+    attrs = dict(processing_class=proc, chat_template=None, chat_template_kwargs={}, _is_vlm=True, tools=None,
+                 environment_factories=None, use_vllm=True)  # fmt: skip
+    want_ids, want_images, _ = trainer(Plain, **attrs)._tokenize_prompts(prompts)
+    calls, real = [], GRPOTrainer._tokenize_prompts
+    t = trainer(fast.FastGRPO, prompt_memo=True, **attrs)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(GRPOTrainer, "_tokenize_prompts", lambda self, p: calls.append(len(p)) or real(self, p))
+        ids, images, fields = t._tokenize_prompts(prompts)
+    assert [list(x) for x in ids] == [list(x) for x in want_ids] and fields == {}
+    assert all(a[0] is b[0] for a, b in zip(images, want_images, strict=True))
+    assert calls == [1] * 4  # 2 texts x 2 image sizes
+
+
+def meta_for(mask, T, G, bad=()):
+    """The RowMeta host lists of a test batch: real prompt and answer tokens; image, group and prompt layout per G
+    rows; rows `bad` marked for the HF rope path."""
+    n, P = mask.size(0), mask.size(1) - T
+    grp = np.arange(n, dtype=np.int32) // G
+    return fast.RowMeta(mask[:, :P].sum(1).numpy().astype(np.int32), mask[:, P:].sum(1).numpy().astype(np.int32),
+                        grp, grp, grp, np.isin(np.arange(n), bad).astype(np.int32))  # fmt: skip
+
+
+def no_device_reads(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("device read under host_meta")
+
+    monkeypatch.setattr(fast, "window", boom)
+    monkeypatch.setattr(fast, "prompt_groups", boom)
+
+
+@pytest.mark.parametrize("batch_size", [8, 4, 3])
+def test_host_meta_forward_takes_windows_runs_and_lengths_from_the_host(monkeypatch, batch_size):
+    """C4 step 3: with host_meta the chunk windows, packed runs and lengths come from RowMeta, same logprobs."""
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=batch_size, **kw)
+    no_device_reads(monkeypatch)
+    for t in (trainer(Fast, buckets=(4, 8, 12, 16)), shared(m)):
+        lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=batch_size,
+                                                        host_meta=meta_for(mask, T, 4), **kw)  # fmt: skip
+        real = mask[:, -T:].bool()
+        torch.testing.assert_close(lp[real], ref[real], atol=1e-5, rtol=1e-5)
+        assert (lp[~real] == 0).all()
+
+
+def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch):
+    """C4: _compute_loss reads the micro-batch's host_meta rows (moved by TRL's split and shuffle) for its forward;
+    without them under --host-meta it raises; the old and reference passes get none."""
+    seen = []
+    monkeypatch.setattr(fast.FastForward, "_get_per_token_logps_and_entropies",
+                        lambda self, *a, **k: seen.append(k.get("host_meta")) or (None, None, None))
+    monkeypatch.setattr(GRPOTrainer, "_compute_loss",
+                        lambda self, model, inputs: self._get_per_token_logps_and_entropies(model, None, None, 1))
+    t = trainer(fast.FastGRPO, host_meta=True, use_vllm=False)
+    rows = [fast.MetaRow(5, 3, 0, 0, 0, 0), fast.MetaRow(4, 0, 1, 1, 1, 0)]
+    t._compute_loss(None, {"host_meta": rows})
+    t._get_per_token_logps_and_entropies(None, None, None, 1)
+    assert fast.host_rows(seen[0]) == rows and seen[1] is None
+    with pytest.raises(KeyError, match="host_meta"):
+        t._compute_loss(None, {})
+    t.host_meta = False
+    t._compute_loss(None, {"host_meta": rows})
+    assert seen[-1] is None
+
+
+def test_packed_chunks_stage_their_indices_in_one_fresh_buffer_each(monkeypatch):
+    """U-RM6 (C4 step 4): each packed chunk fills its own torch.empty staging buffer (pinned on CUDA) from numpy and
+    copies it once; two chunks never share one, and the trainer keeps none."""
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
+    bufs, real_empty = [], torch.empty
+
+    def spy(*a, pin_memory=False, **k):
+        out = real_empty(*a, **k)
+        if a and isinstance(a[0], int) and k.get("dtype") is torch.int64:
+            bufs.append((out, pin_memory))
+        return out
+
+    monkeypatch.setattr(fast.torch, "empty", spy)
+    t = shared(m)
+    lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
+    torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
+    assert len(bufs) == 2 and bufs[0][0].data_ptr() != bufs[1][0].data_ptr()
+    assert [p for _, p in bufs] == [False, False]  # CPU here; pin_memory=True when the rows are on CUDA
+    assert not any(isinstance(v, torch.Tensor) for v in vars(t).values())
+
+
+def counted_rope(m):
+    calls, orig = [], m.model.get_rope_index
+
+    def get_rope_index(input_ids, **k):
+        calls.append(input_ids.size(0))
+        return orig(input_ids, **k)
+
+    m.model.get_rope_index = get_rope_index
+    return calls
+
+
+def test_host_meta_rope_positions_come_from_one_template_per_layout_bad_rows_from_hf():
+    """C2 step 2: under host_meta each layout's template is built by one HF call, good rows take rope_positions, the
+    host's bad rows take get_rope_index in the same chunk (rope/fallback_rows); positions equal HF's on every row."""
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    rope = fast.RopeCache.install(m)
+    ref = rope.positions(ids, mask, kw["mm_token_type_ids"], kw["image_grid_thw"], kw["num_images"])
+    rope.clear()
+    calls = counted_rope(m)
+    pos, nbad = rope.template_positions(ids, mask, kw["mm_token_type_ids"], kw["image_grid_thw"], kw["num_images"],
+                                        ids.size(1) - T, meta_for(mask, T, 4, bad=[5]), check=False)  # fmt: skip
+    real = mask.bool()
+    assert torch.equal(pos[:, real], ref[:, real]) and nbad == 1
+    assert calls == [1, 1, 1]  # two layout templates, one bad row
+    plain = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)[0]
+    t = trainer(Fast, shared_prefix=True, rope=rope)
+    rope.clear()
+    lp = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, host_meta=meta_for(mask, T, 4, bad=[5]),
+                                              **kw)[0]  # fmt: skip
+    torch.testing.assert_close(lp, plain, atol=1e-5, rtol=1e-5)
+    assert t._metrics["train"]["rope/fallback_rows"] == [1]
+
+
+def test_check_rope_compares_every_row_with_hf_on_check_steps(monkeypatch):
+    """C2 step 3 (--check-rope-every): on a check step a template position that differs from HF raises; a row bad on
+    the device but good on the host raises; other steps never compare."""
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    args = (ids, mask, kw["mm_token_type_ids"], kw["image_grid_thw"], kw["num_images"], ids.size(1) - T,
+            meta_for(mask, T, 4))  # fmt: skip
+    rope = fast.RopeCache.install(m)
+    rope.template_positions(*args, check=True)
+    real = fast.rope_positions
+    monkeypatch.setattr(fast, "rope_positions", lambda *a: (real(*a)[0] + 1, real(*a)[1]))
+    rope.clear()
+    with pytest.raises(AssertionError, match="rope positions differ from HF"):
+        rope.template_positions(*args, check=True)
+    rope.clear()
+    rope.template_positions(*args, check=False)
+    monkeypatch.setattr(fast, "rope_positions", lambda *a: (real(*a)[0], torch.ones_like(real(*a)[1])))
+    rope.clear()
+    with pytest.raises(AssertionError, match="bad on the device"):
+        rope.template_positions(*args, check=True)
