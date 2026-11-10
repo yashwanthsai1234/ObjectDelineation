@@ -782,6 +782,19 @@ def one_pad_per_image(prompts: list[dict], pad: int) -> list[dict]:
     return out
 
 
+def vllm_generate_checked(generate, prompts: list[dict], pad: int, *args, **kw):
+    """generate(one_pad_per_image(prompts, pad), ...) with vLLM's own `generate`, then each multimodal row's
+    expanded ids checked against the trainer's processor-expanded ids (B2.2 F step 4b.3: the patch_vllm_prompts
+    wrapper and the F comparator both send prompts through here, never raw)."""
+    outputs = generate(one_pad_per_image(prompts, pad), *args, **kw)
+    for row, o in zip(prompts, outputs, strict=True):
+        if "multi_modal_data" in row and list(o.prompt_token_ids) != list(row["prompt_token_ids"]):
+            n, m = list(o.prompt_token_ids).count(pad), list(row["prompt_token_ids"]).count(pad)
+            raise RuntimeError(f"vLLM expanded the image to {n} pads, the trainer's processor to {m}: "
+                               "vLLM would sample from other image features than the trainer scores")
+    return outputs
+
+
 def prompt_images(prompts) -> list[list]:
     """Each conversational prompt's image objects, in order, as TRL extracts them (grpo_trainer.py 1760-1771)."""
     return [[c["image"] for m in p if isinstance(m["content"], list)
@@ -1303,13 +1316,7 @@ class FastGRPO(FastForward, GRPOTrainer):
                 from objdel.train.vllm_sync import LORA_NAME
 
                 kwargs["lora_request"] = LoRARequest(LORA_NAME, 1, str(self.lora_dir))
-            outputs = generate(one_pad_per_image(prompts, pad), *args, **kwargs)
-            for row, o in zip(prompts, outputs, strict=True):
-                if "multi_modal_data" in row and list(o.prompt_token_ids) != list(row["prompt_token_ids"]):
-                    n, m = list(o.prompt_token_ids).count(pad), list(row["prompt_token_ids"]).count(pad)
-                    raise RuntimeError(f"vLLM expanded the image to {n} pads, the trainer's processor to {m}: "
-                                       "vLLM would sample from other image features than the trainer scores")
-            return outputs
+            return vllm_generate_checked(generate, prompts, pad, *args, **kwargs)
 
         llm.generate = one_pad
         if self.group_requests:  # C6: outside one_pad, so its check compares the 32 sent prompts

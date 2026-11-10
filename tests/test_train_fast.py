@@ -294,6 +294,23 @@ def test_fast_grpo_fails_loudly_when_vllm_expands_the_image_differently():
         t.vllm_generation.llm.generate(rows, sampling_params=None)
 
 
+def test_vllm_generate_checked_is_the_one_prompt_path():
+    """B2.2 F step 4b.3: one pad per image sent, the keywords passed through, a different expansion raises."""
+    sent = []
+
+    def generate(rows, expand=2, **kw):
+        sent.append((rows, kw))
+        ids = [[x for t in r["prompt_token_ids"] for x in ([t] * expand if t == IMG else [t])] for r in rows]
+        return [type("O", (), {"prompt_token_ids": i})() for i in ids]
+
+    rows = [{"prompt_token_ids": [START, IMG, IMG, END], "multi_modal_data": {"image": "a"}}]
+    fast.vllm_generate_checked(generate, rows, IMG, lora_request=None)
+    assert sent == [([{"prompt_token_ids": [START, IMG, END], "multi_modal_data": {"image": "a"}}],
+                     {"lora_request": None})]
+    with pytest.raises(RuntimeError, match="vLLM expanded the image to 3 pads"):
+        fast.vllm_generate_checked(generate, rows, IMG, expand=3)
+
+
 def test_fast_grpo_prefetch_waits_for_a_generation_batch(monkeypatch):
     """g_probe's step-0 sampling calls _generate outside a generation batch: no rows, nothing to prefetch."""
     f = type("F", (), {"__call__": lambda self, **kw: None})()
