@@ -2,7 +2,8 @@
 and compared on the box (tests/test_scorer_sums.py), since one venv holds one build.
 
 Sets (`b_sets`): `random` = 200 random masks plus all-zero, all-one and one-pixel 64 x 64 masks; `polygons_<G>` = the
-first 10,000 fuzz polygons of experiments/cuda_checker/compare.py, one score_polygons call per grid G; `windows_1000` =
+first 10,000 fuzz polygons of experiments/cuda_checker/compare.py but the K1 "holes" family (`polygon_cases`), one
+score_polygons call per grid G; `windows_1000` =
 the first 1,000 crops of checker_eval/masks.npz. Tables rule: every object m is scored against
 `b_tables(m)` = ExpertCache.build of three rolls of m, three raters in m's own frame (m itself is not a rater).
 The golden holds per set the SHA-256 of the packed call inputs and {field: [dtype, shape, sha256]} of every result field
@@ -62,13 +63,19 @@ def score_masks_of(masks, packed=None) -> tuple[str, dict]:
     return _sha(*packed), G.score_masks(*packed, np.array([c.device() for c in caches], np.int64))
 
 
+def polygon_cases() -> list:
+    """The fuzz cases of the `polygons_<G>` sets: the first 10,000 without the K1 "holes" family, whose generator rounds
+    math.cos/sin (last bit platform-dependent: 7 of its 530 cases differ on the box's glibc, compare.polygon_reference)."""
+    return [c for c in C.fuzz_polygons(530, seed=0)[:10000] if c[0] != "holes"]
+
+
 def b_sets(masks_npz, n_masks=203, n_polys=None, n_crops=1000) -> dict:
     """{name: (input SHA-256, objects m, result)}; the defaults are G01's sets, G07 passes 32, 64, 32."""
     out = {}
     ms = list(itertools.islice(random_masks(np.random.default_rng(1)), n_masks))
     sha, r = score_masks_of(ms)
     out["random"] = (sha, ms, r)
-    cases = C.fuzz_polygons(530, seed=0)[:10000]
+    cases = polygon_cases()
     for g in sorted({c[5] for c in cases}):  # G = 7, 1000, 2^30: score_polygons takes one G
         sub = [c for c in cases if c[5] == g][:n_polys]
         p = C.pack_polygons([(r, rl, W, H) for _, r, rl, W, H, _ in sub])
