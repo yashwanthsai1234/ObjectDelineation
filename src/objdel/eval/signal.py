@@ -126,9 +126,14 @@ def point_or_draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: 
 
 
 def _ci(f, n: int, D: list[np.ndarray]) -> list[float]:
+    """[point, lo, hi]; [point, nan, nan, NaN-draw count] when the point or some draws are NaN (math-stats §1: dropping
+    NaN draws biases the interval, so it is refused and the count is shown)."""
     reps, point = np.array([f(d) for d in D]), float(f(np.arange(n)))
     if np.isnan(point):  # a NaN item: no finite interval from the draws that missed it
         return [point, np.nan, np.nan]
+    bad = int(np.isnan(reps).sum())
+    if bad:
+        return [point, np.nan, np.nan, bad]
     q = (1 - LEVEL) / 2
     return [point, float(np.quantile(reps, q)), float(np.quantile(reps, 1 - q))]
 
@@ -234,7 +239,8 @@ def select_rb(branches: Sequence[dict]) -> tuple[str | None, dict]:
 
 
 def spearman_ci(x, y, ids: Sequence[str] | None = None, boot: int = BOOT, seed: int = SEED) -> list[float]:
-    """[rho, lo, hi]: Spearman's rank correlation (scipy) with a nodule-cluster (ids given) or item bootstrap CI."""
+    """[rho, lo, hi]: Spearman's rank correlation (scipy) with a nodule-cluster (ids given) or item bootstrap CI;
+    [rho, nan, nan, count] when count draws give no rho (a constant draw, `_ci`)."""
     x, y = np.asarray(x, float), np.asarray(y, float)
     D = point_or_draws([str(i) for i in range(len(x))] if ids is None else ids, boot, seed)
     return _ci(lambda d: stats.spearmanr(x[d], y[d]).statistic, len(x), D)

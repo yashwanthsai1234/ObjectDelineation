@@ -133,7 +133,11 @@ _GEOMETRIC = [(t, f) for t, f in zip(TERMS, REWARD_V4.floors, strict=True) if t 
 
 
 def pass_at_k(n: int, c: int, k: int) -> float:
-    """Unbiased pass@k from n samples with c passes (Chen et al. 2021)."""
+    """Unbiased pass@k from n samples with c passes (Chen et al. 2021): 0 with no pass; ValueError for k > n."""
+    if c == 0:
+        return 0.0
+    if k > n:
+        raise ValueError(f"pass_at_k: k={k} > n={n}")
     if n - c < k:
         return 1.0
     return 1.0 - float(np.prod(1.0 - k / np.arange(n - c + 1, n + 1)))

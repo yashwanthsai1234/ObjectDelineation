@@ -477,6 +477,7 @@ def test_coverage_and_width_order_of_the_three_cis():
 
 
 def test_draws_speed_on_the_golden_ids():
+    import os
     import time
 
     ids = [r["item_id"] for r in gold_rows()]
@@ -486,7 +487,8 @@ def test_draws_speed_on_the_golden_ids():
     t = time.perf_counter()
     S.draws(ids, 2000, 0)
     new = time.perf_counter() - t
-    assert new < 2.0 and new <= 1.5 * old + 0.05
+    slack = max(1.0, os.getloadavg()[0] / (os.cpu_count() or 1))  # load-tolerant: 3.6 s seen at load 30 on 8 cores
+    assert new < 2.0 * slack and new <= 1.5 * old + 0.05
 
 
 def test_gate_a_g1_exact_numbers_on_r5_test_items():
