@@ -141,7 +141,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", type=Path, default=Path("runs/r1/r1-qwen3vl2b/branches/e2"),
                     help="the run's start checkpoint (the full run started from the selected R1 branch e2)")
-    ap.add_argument("--adapters", type=Path, nargs="+", default=[RUN / "checkpoint-100", RUN / "checkpoint-750"])
+    ap.add_argument("--adapters", type=Path, nargs="+", default=[RUN / "checkpoint-100", RUN / "checkpoint-770"])
     ap.add_argument("--answers", type=Path, default=ANSWERS, help="prompts.jsonl + completions.jsonl with token_ids")
     ap.add_argument("--views", type=Path, default=Path("data/eval_views"), help="eval views root (images)")
     ap.add_argument("--prompts", type=int, default=32)

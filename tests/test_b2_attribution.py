@@ -111,3 +111,10 @@ def test_g04_mac_part_on_the_full_run(tmp_path):
     assert set(pairs) == {f"{a}-{b}" for a, b in B.PAIRS}
     assert all(math.isfinite(p["signed"]) and math.isfinite(p["abs"]) and p["bins"] for p in pairs.values())
     assert sha(adapter / "adapter_model.safetensors") == h
+
+
+def test_default_adapters_are_the_plan_checkpoints_100_and_770():
+    import inspect
+
+    src = inspect.getsource(B.main)
+    assert 'RUN / "checkpoint-100", RUN / "checkpoint-770"' in src and "checkpoint-750" not in src
