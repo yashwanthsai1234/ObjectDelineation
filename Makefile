@@ -3,7 +3,7 @@ PY := .venv/bin/python
 EXT_SRC := CMakeLists.txt cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
 EXT_STAMP := build/.gpucheck-stamp
 
-.PHONY: setup build test test-all cov lint dead sweep fmt wheels cuda gpu-check preflight docs docs-serve headline
+.PHONY: setup build test test-all test-data test-order cov lint dead sweep fmt wheels cuda gpu-check preflight docs docs-serve headline
 
 setup:            ## create .venv and install the package (editable, all extras); builds the C++ extension
 	uv venv --python 3.12
@@ -21,6 +21,12 @@ test: $(EXT_STAMP) ## run the test suite without the slow exhaustive runs
 
 test-all: $(EXT_STAMP) ## run every test, including the slow K1/K2 10k-case gates
 	$(PY) -m pytest -q -n auto
+
+test-data: $(EXT_STAMP) ## run the data tests (read data/ and runs/, so under -I), slow ones included
+	$(PY) -I -m pytest -q -m data
+
+test-order: $(EXT_STAMP) ## build the CPU test variants and run them (K1 order, poison scan, mutfg4); the planted alias must fail
+	$(PY) -I -m tests.variants
 
 cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objdel; fails below 90 % (K13, as CI)
 	$(PY) -m pytest -q -m "not slow" --cov=objdel --cov-report=term-missing:skip-covered --cov-fail-under=90

@@ -409,3 +409,41 @@ def test_retired_models_absent():
     """CLEAN12 and CLEAN8: no retired model name in src/ (case-insensitive)."""
     retired = re.compile("smol" + "vlm|(?<![a-z])l" + "fm|liquid" + "ai", re.I)  # split: the CT-07 scan reads this file
     assert [str(f.relative_to(ROOT)) for f in (ROOT / "src").rglob("*.py") if retired.search(f.read_text())] == []
+
+
+# --- A.9 S01 and S03, D8: dependencies, markers, test targets ---------------------------------------------------------
+
+PRE_A_DEPENDENCIES = {"numpy", "scipy", "pillow", "opencv-python-headless", "pyarrow", "numba"}
+E6_DEPENDENCIES = {"pydantic", "pydantic-settings", "pyyaml"}  # the typed run spec: the only runtime change since A
+
+
+def test_runtime_dependencies_are_the_pre_a_list_plus_the_run_spec():
+    """S01: Phase A adds no dependency; the later additions are the run spec's (E6, plan section 2)."""
+    deps = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["dependencies"]
+    names = {re.split(r"[<>=!~ ]", d)[0] for d in deps}
+    assert names == PRE_A_DEPENDENCIES | E6_DEPENDENCIES
+
+
+def test_every_marker_is_registered_strictly_and_cuda_is_not_one():
+    """S03: --strict-markers is on, every marker a test uses is registered, and no test uses `cuda`."""
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
+    assert "--strict-markers" in cfg["addopts"]
+    registered = {m.split(":")[0] for m in cfg["markers"]}
+    builtin = {"parametrize", "skip", "skipif", "xfail", "usefixtures", "filterwarnings"}
+    used = {m for f in (ROOT / "tests").rglob("*.py") for m in re.findall(r"pytest\.mark\.(\w+)", f.read_text())}
+    assert used - builtin <= registered and "cuda" not in used
+
+
+def test_makefile_has_the_data_and_order_targets_and_ci_runs_the_order_variants():
+    """S03 and D8: `test-data` runs the data tests under -I, `test-order` runs the variants under -I, both are
+    phony, and CI runs the variants after pytest. `make test` keeps the data tests (owner, 2026-11-10)."""
+    make = (ROOT / "Makefile").read_text()
+    assert re.search(r"^test-data:.*\n\t\$\(PY\) -I -m pytest -q -m data$", make, re.M)
+    assert re.search(r"^test-order: \$\(EXT_STAMP\).*\n\t\$\(PY\) -I -m tests\.variants$", make, re.M)
+    assert all(re.search(rf"^\.PHONY:.* {t}\b", make, re.M) for t in ("test-data", "test-order"))
+    assert all("-I" in line for line in make.splitlines() if "pytest" in line and "-m data" in line)
+    assert re.search(r"^test:.*\n\t\$\(PY\) -m pytest -q -m \"not slow\" -n auto$", make, re.M)
+    steps = [s.strip() for s in (ROOT / ".github/workflows/tests.yml").read_text().split("- run: ")]
+    python = [s.split("\n")[0].split("  #")[0] for s in steps]
+    assert python.index(".venv/bin/python -I -m tests.variants") > python.index(
+        '.venv/bin/python -m pytest -q -m "not slow"')

@@ -31,6 +31,7 @@ jobs:
       - run: .venv/bin/python -m ruff check src tests experiments
       - run: .venv/bin/lint-imports --no-logo
       - run: .venv/bin/python -m pytest -q -m "not slow"
+      - run: .venv/bin/python -I -m tests.variants  # the body of `make test-order`
 
   train:
     name: pytest with the training stack + coverage (K13)

@@ -71,6 +71,7 @@ archs = ["arm64"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
 markers = [
     "slow: long-running exhaustive runs (deselect with -m \"not slow\")",
     "data: needs data/fixtures or data/store (skipped when absent)",
