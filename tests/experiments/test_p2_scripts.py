@@ -266,7 +266,9 @@ def test_g_probe_report_form():
     assert GP.train_log(log) == {"steps_1_5": pytest.approx(1.0), "steps_11_20": pytest.approx(0.7)}
     draw = lambda legal: {"per_item": {"r_mean": np.zeros(40)}, "ids": [f"lidc/{i}/z" for i in range(40)],  # noqa: E731
                           "legal": legal, "sigma_share": 0.9}
-    res = GP.verdict(draw(0.96), draw(0.90), draw(0.89))
+    from experiments.phase2 import prereg
+
+    res = GP.verdict(draw(0.96), draw(0.90), draw(0.89), prereg.g_probe)
     assert res["verdict"] == "INCONCLUSIVE"  # legal drop 0.93 - 0.89 = 4 pts; draw a alone would say 7 (FAIL)
 
 
