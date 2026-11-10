@@ -10,9 +10,9 @@ import pytest
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
-from test_train_fast import _lora_bf16  # noqa: E402
-
-from objdel.train import fast, vllm_sync  # noqa: E402
+from objdel.rl import trl_adapter as fast  # noqa: E402
+from objdel.rl import vllm_sync  # noqa: E402
+from tests.rl.test_trl_adapter_equivalence import _lora_bf16  # noqa: E402
 
 
 class FakeEngine:

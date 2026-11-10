@@ -6,7 +6,7 @@ the CLI (it keeps judge, which reads the experiment baselines, and the pre-regis
 
 Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches;
 per branch, export the prompts and run the sampler child
-(`python -I -m objdel.train.sample --kind vllm|hf`; one JSONL bridge) with CUDA asserted untouched here, a timeout
+(`python -I -m objdel.policy.sampler --kind vllm|hf`; one JSONL bridge) with CUDA asserted untouched here, a timeout
 of 600 s + --timeout-s per item-sample, and a completeness check (every prompt id has its n samples). The
 completions' `.meta.json` stamp (prompts SHA-256, child command) is written before the child starts: a matching
 stamp means the file is reused when complete and resumed otherwise (the HF sampler keeps whole finished batches), on a
@@ -90,8 +90,8 @@ def cuda_untouched() -> None:
 
 
 def sampler_cmd(kind: str, prompts: Path, model: Path, out: Path, extra=()) -> list[str]:
-    """The sampler child's argv: objdel.train.sample in this venv (vllm_native: vLLM and objdel share it, ADR 0023)."""
-    return [sys.executable, "-I", "-m", "objdel.train.sample", "--kind", kind, "--prompts", str(prompts), "--model",
+    """The sampler child's argv: objdel.policy.sampler in this venv (vllm_native: one venv for vLLM and objdel)."""
+    return [sys.executable, "-I", "-m", "objdel.policy.sampler", "--kind", kind, "--prompts", str(prompts), "--model",
             str(model), "--out", str(out), *extra]
 
 
@@ -177,7 +177,7 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     """The sampler child on `rows` (`out`/prompts.jsonl -> `out`/completions.jsonl) -> {key: completions row}."""
     from transformers import AutoProcessor
 
-    from objdel.train import sample
+    from objdel.policy import sampler as sample
 
     out.mkdir(parents=True, exist_ok=True)
     proc = AutoProcessor.from_pretrained(branch)  # saved by train_sft with the run's processor kwargs

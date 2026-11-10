@@ -3,7 +3,7 @@ Completions go to the evaluation harness as JSONL rows {"item_id", "samples": [t
 (plan §3.1 arrows "GRPO completions -> eval" and "checkpoint -> K samples per validation item -> eval", break-it B4-3).
 
 One sampler interface (Implementation.md E4): `Sampler.sample(rows, params) -> [Sample]`. params_for(model, n, seed,
-stop_token_ids) is the one source of the sampling fields (configs.sampling: min_p and the penalties are set on purpose,
+stop_token_ids) is the one source of the sampling fields (models.sampling: min_p and the penalties are set on purpose,
 overriding the model card, D13), a plain dict; each row's request seed is request_seed(seed, key).
 - VllmSampler: vllm.LLM offline in this process (vllm_native image only: vLLM and objdel share one venv, ADR 0023).
   D13: the caller has not initialised CUDA, and it refuses to start unless torch.cuda.mem_get_info() reports >= FREE
@@ -14,7 +14,7 @@ overriding the model card, D13), a plain dict; each row's request seed is reques
   "prompt_token_ids" (vLLM's prompt ids, H-A5-1); parity.py reads both. With `adapter` (a LoRA folder over the ckpt
   base, option F) the engine serves the adapter unmerged, as in training (fast.vllm_engine_kwargs).
 - HfSampler: transformers generate, the Mac reference and the CPU test path (PLAN D13 fallback). Every sampling field
-  is passed explicitly (configs.as_names(..., "hf"), eos_token_id = the stop ids) over a fresh GenerationConfig, so
+  is passed explicitly (models.as_names(..., "hf"), eos_token_id = the stop ids) over a fresh GenerationConfig, so
   nothing comes from the checkpoint's (Qwen3-VL's card: T 0.7, top_p 0.8, top_k 20); HF has no presence / frequency
   penalty (as_names refuses one). batch_items prompts per generate call (each expanded to its n samples), padded on
   the left, so a small model is not overhead-bound at one item per call. 8 items x 8 samples = 64 sequences: the KV
@@ -24,9 +24,9 @@ overriding the model card, D13), a plain dict; each row's request seed is reques
 - build_prompt: TRL GRPO's generation prompt as text (prepare_multimodal_messages, then the processor's
   apply_chat_template with add_generation_prompt=True, tokenize=False; B5: vLLM's prompt ids equal the training env's
   in 64 / 64 items of a retired 450M model and through the renderer for Qwen3.5) and the row's image path.
-- Truncation is the reward's rule: rewards.truncated on the stop ids (TRL's EOS + pad rule); stop_ids(path, proc) is
+- Truncation is the reward's rule: models.truncated on the stop ids (TRL's EOS + pad rule); stop_ids(path, proc) is
   that set for a checkpoint directory.
-- main: the child-process entry, `python -I -m objdel.train.sample --kind vllm|hf --prompts P --model DIR --out C`
+- main: the child-process entry, `python -I -m objdel.policy.sampler --kind vllm|hf --prompts P --model DIR --out C`
   (select_ckpt's sampler child; D13: CUDA untouched in the parent, a timeout, kill of the process group, resume).
 
 The trainer path and the bridge:
@@ -44,7 +44,7 @@ The trainer path and the bridge:
 - export_prompts / import_completions: the JSONL bridge to the sampler child (plan D13, C-BRIDGE; promoted from
   archive/phase2_lab/B5 export_prompts.py and vllm_parity.py): per prompt the build_prompt text, the image path, the
   processor kwargs minus padding_side (vLLM's mm_processor_kwargs), every sampling field and n. Completions come back
-  as token ids; truncation is rewards.truncated.
+  as token ids; truncation is models.truncated.
 
 References:
 - TRL (version pinned in pyproject.toml) GRPOTrainer: _generate, _generate_and_score_completions
@@ -58,6 +58,7 @@ References:
   https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html
 - HF generate: https://huggingface.co/docs/transformers/main_classes/text_generation
 """
+
 import argparse
 import hashlib
 import json
@@ -73,37 +74,10 @@ from typing import Any, Protocol
 import pandas as pd
 from trl.data_utils import prepare_multimodal_messages
 
-from objdel.train import configs, rewards
+from objdel.policy import models
 from objdel.verify.reward.spec import REWARD_V4
 
 G = REWARD_V4.group
-
-
-def sample(trainer, rows: Iterable[dict], k: int, items: int = 16) -> list[dict]:
-    """k completions (a multiple of G) per row of objdel.train.dataset.grpo_rows (prompt, image, key), `items` rows
-    per generation call (a 450M model on a 4090 is overhead-bound at one row per call). Each row: item_id, samples,
-    truncated and tokens (each answer's completion id count, as TRL's completion length)."""
-    if k <= 0 or k % G:
-        raise ValueError(f"k = {k}: sample whole groups of {G}")
-    stop = rewards.stop_ids(trainer.model, trainer.processing_class)  # the reward's rule
-    rows = list(rows)
-    was_training = trainer.model.training
-    trainer.model.eval()  # TRL then generates as in held-out evaluation (num_generations_eval)
-    out = []
-    try:
-        for start in range(0, len(rows), items):
-            chunk = rows[start:start + items]
-            prompts = [r["prompt"] if r.get("image") is None else
-                       prepare_multimodal_messages(r["prompt"], images=[r["image"]]) for r in chunk]
-            _, ids, _, completions, *_ = trainer._generate([p for p in prompts for _ in range(k)])
-            for j, r in enumerate(chunk):
-                part = slice(j * k, (j + 1) * k)
-                out.append({"item_id": r["key"], "samples": [rewards._text(c) for c in completions[part]],
-                            "truncated": [rewards.truncated(x, stop) for x in ids[part]],
-                            "tokens": [len(x) for x in ids[part]]})
-    finally:
-        trainer.model.train(was_training)
-    return out
 
 
 def export(paths: Iterable, keys: Iterable[str] | None = None) -> list[dict]:
@@ -121,7 +95,7 @@ def export(paths: Iterable, keys: Iterable[str] | None = None) -> list[dict]:
             if keys is not None and key not in keys:
                 last = None
                 continue
-            texts = [rewards._text(c if isinstance(c, str) else list(c)) for c in b["completion"]]
+            texts = [models._text(c if isinstance(c, str) else list(c)) for c in b["completion"]]
             if last is None or last["item_id"] != key:
                 last = {"item_id": key, "step": int(b["step"].iloc[0]), "samples": [], "truncated": []}
                 rows.append(last)
@@ -147,14 +121,14 @@ def export_prompts(rows, path, model: str, dataset: str, n: int, processor=None,
     """rows: prompt, image (a path; grpo_rows' decoded Image column is read as paths), key (unique) -> the prompts
     JSONL. processor: AutoProcessor of the sampled checkpoint (default: MODELS[model] with processor_kwargs).
     max_tokens: a completion cap below the model's budget (the CPU smoke), else MAX_COMPLETION."""
-    kw = configs.processor_kwargs(model, dataset)
+    kw = models.processor_kwargs(model, dataset)
     if processor is None:
         from transformers import AutoProcessor
-        processor = AutoProcessor.from_pretrained(configs.MODELS[model], **kw)
+        processor = AutoProcessor.from_pretrained(models.MODELS[model], **kw)
     if hasattr(rows, "cast_column"):  # a datasets.Dataset: paths, not decoded images
         from datasets import Image
         rows = rows.cast_column("image", Image(decode=False))
-    sampling = configs.sampling(model) | {"seed": seed} | ({"max_tokens": max_tokens} if max_tokens else {})
+    sampling = models.sampling(model) | {"seed": seed} | ({"max_tokens": max_tokens} if max_tokens else {})
     if stop_ids is not None:
         sampling["stop_token_ids"] = sorted(stop_ids)
     write(prompt_lines(rows, processor, kw, sampling, n), path)
@@ -201,13 +175,13 @@ def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = N
             raise ValueError(f"{key}: {len(cs)} samples k = {sorted(cs)[:3]}.., want {n} samples k = 0 .. {n - 1}")
         cs = [cs[k] for k in range(n)]
         rows.append({"item_id": key, "samples": [c["text"] for c in cs],
-                     "truncated": [rewards.truncated(c["token_ids"], stop_ids) for c in cs],
+                     "truncated": [models.truncated(c["token_ids"], stop_ids) for c in cs],
                      "tokens": [len(c["token_ids"]) for c in cs]})
     return rows
 
 
 def stop_ids(path: Path, proc) -> set[int]:
-    """rewards.stop_ids of a checkpoint directory. Base weights may have no generation_config.json (eos only in
+    """models.stop_ids of a checkpoint directory. Base weights may have no generation_config.json (eos only in
     text_config): then the model config's, as from_pretrained falls back for a loaded model."""
     from types import SimpleNamespace
 
@@ -217,21 +191,18 @@ def stop_ids(path: Path, proc) -> set[int]:
         gen = GenerationConfig.from_pretrained(path)
     except OSError:
         gen = GenerationConfig.from_model_config(AutoConfig.from_pretrained(path))  # reads text_config's eos too
-    return rewards.stop_ids(SimpleNamespace(generation_config=gen), proc)
-
-
-# ---------------------------------------------------------------- one sampler interface (E4)
+    return models.stop_ids(SimpleNamespace(generation_config=gen), proc)
 
 
 def params_for(model: str, *, n: int, seed: int, stop_token_ids: Sequence[int]) -> dict:
     """Every vLLM SamplingParams field of one sampling (module docstring). No vLLM import; HfSampler maps it with
-    configs.as_names(..., "hf")."""
-    return configs.sampling(model, "vllm") | {"n": n, "seed": seed, "stop_token_ids": list(stop_token_ids)}
+    models.as_names(..., "hf")."""
+    return models.sampling(model, "vllm") | {"n": n, "seed": seed, "stop_token_ids": list(stop_token_ids)}
 
 
 @dataclass(frozen=True)
 class Sample:
-    """One prompt row's samples in k order; `truncated` is rewards.truncated on the stop ids (the reward's rule)."""
+    """One prompt row's samples in k order; `truncated` is models.truncated on the stop ids (the reward's rule)."""
 
     item_id: str
     texts: tuple[str, ...]
@@ -248,7 +219,7 @@ class Sampler(Protocol):
 
 def _rows_lines(rows: Sequence[Mapping], processor, model: str, params: Mapping[str, Any]) -> list[dict]:
     """Prompt rows of one dataset (the first key's first part) and params_for's dict -> prompts JSONL lines."""
-    kw = configs.processor_kwargs(model, rows[0]["key"].split("/")[0]) if rows else {}
+    kw = models.processor_kwargs(model, rows[0]["key"].split("/")[0]) if rows else {}
     return prompt_lines(rows, processor, kw, {k: v for k, v in params.items() if k != "n"}, params["n"])
 
 
@@ -261,11 +232,12 @@ def samples(lines: list[dict], recs: Iterable[dict], stop) -> list[Sample]:
     for x in lines:
         cs = [by[x["id"]][k] for k in range(x["n"])]
         out.append(Sample(x["id"], tuple(c["text"] for c in cs), tuple(tuple(c["token_ids"]) for c in cs),
-                          tuple(rewards.truncated(c["token_ids"], stop) for c in cs)))
+                          tuple(models.truncated(c["token_ids"], stop) for c in cs)))
     return out
 
 
 FREE = 0.90  # of total device memory, before the vLLM engine starts (D13)
+
 ENV = {"VLLM_USE_FLASHINFER_SAMPLER": "0"}  # the PyTorch sampler: no JIT build (module docstring)
 
 
@@ -312,7 +284,7 @@ def _rgb(path):
 
 
 class VllmSampler(Sampler):
-    """vllm.LLM offline, in this process (module docstring). `model` (a configs.MODELS key) is needed by sample()
+    """vllm.LLM offline, in this process (module docstring). `model` (a models.MODELS key) is needed by sample()
     only; records() samples prompt lines as they are. `sampling_params` collects repr of every SamplingParams built."""
 
     def __init__(self, ckpt: Path, model: str | None = None, gpu_memory_utilization: float = 0.85,
@@ -383,7 +355,7 @@ def generate(model, proc, dev, batch: list[tuple[int, dict]]) -> list[dict]:
 
     ps = [p for _, p in batch]
     s, kw = ps[0]["sampling"], {k: v for k, v in ps[0]["processor_kwargs"].items() if k != "padding_side"}
-    gen = configs.as_names(s, "hf")
+    gen = models.as_names(s, "hf")
     x = proc(text=[p["prompt"] for p in ps], images=[[_rgb(p["image"])] for p in ps], padding=True,
              return_tensors="pt", **kw)
     torch.manual_seed(s["seed"] + batch[0][0])
@@ -473,7 +445,7 @@ def main(argv=None) -> None:
     writes generate seconds (model load apart) per item-sample."""
     ap = argparse.ArgumentParser(description="Sample K completions per prompt line with vLLM or HF generate.")
     ap.add_argument("--kind", choices=("vllm", "hf"), required=True)
-    ap.add_argument("--prompts", type=Path, required=True, help="JSONL from objdel.train.sample.export_prompts")
+    ap.add_argument("--prompts", type=Path, required=True, help="JSONL from objdel.policy.sampler.export_prompts")
     ap.add_argument("--model", type=Path, required=True, help="checkpoint directory (with its processor)")
     ap.add_argument("--out", type=Path, required=True, help="completions JSONL")
     ap.add_argument("--dtype", default="bfloat16", help="vllm")

@@ -17,7 +17,7 @@ import json
 import time
 from pathlib import Path
 
-from objdel.train import dataset
+from objdel.policy import rows as dataset
 from objdel.verify import ceiling
 from objdel.verify import store as serve
 

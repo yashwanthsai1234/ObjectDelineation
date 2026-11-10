@@ -19,7 +19,10 @@ from objdel.data import prepare as data_prepare  # noqa: E402
 from objdel.data import store  # noqa: E402
 from objdel.data.store import Item  # noqa: E402
 from objdel.data.targets.frame import frame  # noqa: E402
-from objdel.train import dataset as D  # noqa: E402
+from objdel.policy import prompt as policy_prompt  # noqa: E402
+from objdel.policy import rows as policy_rows  # noqa: E402
+from objdel.rl import rows as rl_rows  # noqa: E402
+from objdel.sft import rows as sft_rows  # noqa: E402
 from objdel.verify import store as verify_store  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +52,8 @@ def prepared(tmp_path) -> Path:
                 ["1", "2"], {})  # prepare needs every dataset's split file
     store.write([riga, *(Item(f"lidc/1.2.3/n00{c}/z001", "lidc", "P1", "train", hu(), {"nodule": two(c)}, ["1", "2"],
                               {}) for c in (0, 1))], tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1,
+        prompts=policy_prompt.PROMPTS)
     return tmp_path / "out"
 
 
@@ -70,7 +74,7 @@ def test_b3_1_binrushed1_inputs_carry_no_rater_ink():
     need(PREPARED / "riga" / "train.jsonl")
     import cv2
     inked, caches = [], verify_store.cache_loader(PREPARED, maxsize=1)
-    for r in D.records(PREPARED, "riga", "train"):
+    for r in policy_rows.records(PREPARED, "riga", "train"):
         if "BinRushed1/" not in r["item_id"]:
             continue
         img = cv2.imread(str(PREPARED / "images" / (r["item_id"] + ".png")))[..., ::-1].astype(int)
@@ -92,11 +96,11 @@ def test_b3_5_tampered_prepared_image_is_detected(tmp_path):
     swap(a, b)  # the two model inputs
     from PIL import Image as PILImage  # the swapped file really holds other pixels than its record pins
     pixels = np.asarray(PILImage.open(a).convert("RGB"))
-    assert D.pixels_sha256(pixels) != D.records(out, "lidc", "train")[0]["image_sha256"]
+    assert policy_rows.pixels_sha256(pixels) != policy_rows.records(out, "lidc", "train")[0]["image_sha256"]
     with pytest.raises(ValueError, match="image_sha256"):  # building rows checks the pinned image hash
-        D.grpo_rows(out, "lidc", "train")
+        rl_rows.grpo_rows(out, "lidc", "train")
     with pytest.raises(ValueError, match="image_sha256"):
-        D.sft_rows(out, "lidc", "train")
+        sft_rows.sft_rows(out, "lidc", "train")
 
 
 # ---------------------------------------------------------------- robustness checks that held
@@ -168,17 +172,17 @@ def test_prepared_rows_match_records_and_oversampling(store_dir):
     m = json.loads((PREPARED / "manifest.json").read_text())
     for ds in ("riga", "lidc"):
         for split in ("train", "val"):
-            recs = D.records(PREPARED, ds, split)
+            recs = policy_rows.records(PREPARED, ds, split)
             ids = [r["item_id"] for r in recs]
             assert len(ids) == len(set(ids)) == m["sets"][f"{ds}/{split}"]["items"]
             col = pq.read_table(store_dir / ds / f"{split}.parquet", columns=["item_id"]).column(0).to_pylist()
             assert set(ids) <= set(col)
             assert all((PREPARED / "images" / (i + ".png")).is_file() for i in ids)
             dis = sum(r["disagreement"] for r in recs)
-            g = D.grpo_rows(PREPARED, ds, split, oversample=D.DISAGREEMENT_OVERSAMPLE)
-            assert len(g) == sum(r["rl"] for r in recs) + (D.DISAGREEMENT_OVERSAMPLE - 1) * dis
+            g = rl_rows.grpo_rows(PREPARED, ds, split, oversample=policy_rows.DISAGREEMENT_OVERSAMPLE)
+            assert len(g) == sum(r["rl"] for r in recs) + (policy_rows.DISAGREEMENT_OVERSAMPLE - 1) * dis
             assert dis == m["sets"][f"{ds}/{split}"]["disagreement_items"]
-    s = D.sft_rows(PREPARED, "lidc", "val")
+    s = sft_rows.sft_rows(PREPARED, "lidc", "val")
     row = s[0]
     assert sum(c["type"] == "image" for c in row["messages"][0]["content"]) == 1 and row["image"] is not None
 

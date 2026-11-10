@@ -19,4 +19,4 @@ stages:
 - kind: cmd
   name: gpu_smoke
   soft: true
-  argv: [-m, pytest, -m, gpu, 'tests/test_train_fast.py::test_g02_is_summary_no_sync', 'tests/test_train_fast.py::test_g08a_smoke']
+  argv: [-m, pytest, -m, gpu, 'tests/rl/test_trl_adapter_equivalence.py::test_g02_is_summary_no_sync', 'tests/rl/test_trl_adapter_equivalence.py::test_g08a_smoke']

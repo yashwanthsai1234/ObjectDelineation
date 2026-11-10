@@ -53,7 +53,7 @@ def stub(tmp_path, monkeypatch):
     import gc
 
     from objdel.rl import build
-    from objdel.train import dataset
+    from objdel.rl import rows as dataset
     from objdel.verify import store as serve
 
     seen = SimpleNamespace(rows_calls=[], trainers=[], trained=[])

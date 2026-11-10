@@ -17,7 +17,7 @@ later stages are not run:
   CHECKER  tests/test_cuda_checker*.py when they exist, the scorers on the CUDA checker (tests/test_gpu_scoring.py:
            equal to the host scorer it replaced), then the checker's exactness tests (the slow exact oracles, the
            archived CPU checker's recorded results, topology, geometry)
-  CODE     the private TRL names fast.py relies on (objdel.train.trl_adapter), a quick test subset, the CPU dry run
+  CODE     the private TRL names the adapter relies on (objdel.rl.trl_adapter), a quick test subset, the CPU dry run
            of train -> select on a tiny model
 Writes runs/preflight/<spec>.json: pass per check and the code, data and config (spec bytes) hashes. vast launch
 (policy.py) refuses unless that stamp passes and all three hashes still match: refusal(). Exit 0 = every check passed.
@@ -168,7 +168,7 @@ def given_inputs(s: Inputs) -> list[str]:
 def view_integrity(s: Inputs) -> list[str]:
     """Each training view's rows.jsonl matches its view_hash and its contexts load; each exam view's files match its
     manifest."""
-    from objdel.train import dataset as D
+    from objdel.sft import rows as sft_rows
 
     bad = []
     for vdir in s.views:
@@ -176,7 +176,7 @@ def view_integrity(s: Inputs) -> list[str]:
         if file_sha256(vdir / "rows.jsonl") != man["view_hash"]:
             bad.append(f"{vdir}/rows.jsonl does not match the manifest's view_hash")
         try:
-            D._contexts(vdir, man, {r["item_id"] for r in rows})
+            sft_rows._contexts(vdir, man, {r["item_id"] for r in rows})
         except ValueError as e:
             bad.append(str(e))
     for v in EXAMS:
@@ -190,12 +190,13 @@ def view_integrity(s: Inputs) -> list[str]:
 def patients(s: Inputs) -> list[str]:
     """No patient (group_id) and no CT series in both the training rows and an exam view; train and val prepared splits
     disjoint too."""
-    from objdel.train import dataset as D
+    from objdel.policy import rows as policy_rows
 
     if not s.views:
         return []
-    group = {r["item_id"]: r["group_id"] for x in ("train", "val") for r in D.records(s.root / "prepared", "lidc", x)}
-    val, bad = {r["group_id"] for r in D.records(s.root / "prepared", "lidc", "val")}, []
+    group = {r["item_id"]: r["group_id"] for x in ("train", "val") for r in policy_rows.records(s.root / "prepared",
+        "lidc", x)}
+    val, bad = {r["group_id"] for r in policy_rows.records(s.root / "prepared", "lidc", "val")}, []
     for t in s.views:
         train_items = {r["item_id"] for r in lines(t / "rows.jsonl")}
         train_groups, series = {group.get(i) for i in train_items}, {i.split("/")[1] for i in train_items}
@@ -239,9 +240,9 @@ def coverage(s: Inputs) -> list[str]:
 
 def prompts(s: Inputs) -> list[str]:
     """Each exam view's prompt text equals the training prompt."""
-    from objdel.train import dataset as D
+    from objdel.policy import prompt as policy_prompt
 
-    want = next(c["text"] for c in D._user("lidc")["content"] if c.get("type") == "text")
+    want = next(c["text"] for c in policy_prompt._user("lidc")["content"] if c.get("type") == "text")
     return [f"{v}: exam prompt differs from the training prompt"
             for v in EXAMS if read_json(s.root / "eval_views" / v / "manifest.json")
             .get("prompts", {"lidc": want})["lidc"] != want]  # fmt: skip  (probe manifests carry no prompt)
@@ -371,8 +372,8 @@ def pytest(*args: str) -> list[str]:
 
 
 def trl_problems() -> list[str]:
-    """The private TRL names fast.py relies on (objdel.train.trl_adapter): [] or the contract error's message."""
-    from objdel.train import trl_adapter
+    """The private TRL names fast.py relies on (objdel.rl.trl_adapter): [] or the contract error's message."""
+    from objdel.rl import trl_adapter
 
     try:
         trl_adapter.check()

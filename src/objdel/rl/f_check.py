@@ -122,7 +122,7 @@ def lora_equal(vg, model, lora_id: int = 1, adapter_name: str = "default") -> bo
     import torch
     from peft.tuners.lora import LoraLayer
 
-    from objdel.train.vllm_sync import engine_model
+    from objdel.rl.vllm_sync import engine_model
 
     def tail(name):
         return name[name.rindex("layers."):] if "layers." in name else None
@@ -196,8 +196,8 @@ def run_comparator(vg, model, prompts: list[dict], pad: int, b1_dir, tmp_dir, ga
     then only the timing and the restore run, and `comparator` records the reason."""
     from vllm.lora.request import LoRARequest
 
-    from objdel.train.fast import vllm_generate_checked
-    from objdel.train.vllm_sync import engine_model, push_weights, sync_lora
+    from objdel.rl.trl_adapter import vllm_generate_checked
+    from objdel.rl.vllm_sync import engine_model, push_weights, sync_lora
 
     sampling = sampling or (lambda seed, fixed=False: sampling_params(vg, seed, fixed))
     llm, slot = vg.llm, LoRARequest("b1", B1_SLOT, str(tmp_dir))

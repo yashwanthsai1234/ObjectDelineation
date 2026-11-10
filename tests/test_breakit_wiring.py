@@ -46,24 +46,28 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 
     from objdel.data import prepare as data_prepare
     from objdel.data import store
-    from objdel.train import configs
-    from objdel.train import dataset as D
-    from objdel.train import rewards as R
+    from objdel.policy import models as policy_models
+    from objdel.policy import prompt as policy_prompt
+    from objdel.policy import rows as policy_rows
+    from objdel.rl import config as configs
+    from objdel.rl import reward as rl_reward
+    from objdel.rl import rows as rl_rows
     from objdel.verify import store as verify_store
 
     work = tmp_path_factory.mktemp("b4")
     store.write(synthetic_items(("train", "val"), unanimous=True), work / "store")
-    data_prepare.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1, prompts=D.PROMPTS)
-    recs = {r["item_id"]: r for d in ("riga", "lidc") for s in ("train", "val") for r in D.records(work / "prep", d, s)}
+    data_prepare.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1, prompts=policy_prompt.PROMPTS)
+    recs = {r["item_id"]: r for d in ("riga", "lidc") for s in ("train",
+        "val") for r in policy_rows.records(work / "prep", d, s)}
     path, tok = char_model
     model = LlamaForCausalLM.from_pretrained(path)
 
     def rows(split):  # the text-only tiny model takes no image: drop the column, keep every reward column
-        ds = concatenate_datasets([D.grpo_rows(work / "prep", d, split) for d in ("riga", "lidc")])
+        ds = concatenate_datasets([rl_rows.grpo_rows(work / "prep", d, split) for d in ("riga", "lidc")])
         return ds.remove_columns("image").map(lambda r: {"prompt": "x"})
 
     train, val = rows("train"), rows("val")
-    funcs, _ = R.TRLReward(verify_store.cache_loader(work / "prep"), R.stop_ids(model, tok)).funcs()
+    funcs, _ = rl_reward.TRLReward(verify_store.cache_loader(work / "prep"), policy_models.stop_ids(model, tok)).funcs()
     args = configs.grpo_config("qwen3-vl-2b", str(work / "run"), use_vllm=False, learning_rate=1e-6, max_steps=2,
                                per_device_train_batch_size=G * len(train), gradient_accumulation_steps=1,
                                per_device_eval_batch_size=G * len(val), use_cpu=True, bf16=False,
@@ -254,7 +258,7 @@ def _ci_requirements() -> tuple[set[str], set[str]]:
 def test_objdel_data_imports_pyarrow_at_module_level():
     tree = ast.parse((ROOT / "src" / "objdel" / "data" / "store.py").read_text())
     top = {a.name.split(".")[0] for n in tree.body if isinstance(n, ast.Import) for a in n.names}
-    assert "pyarrow" in top  # and objdel.data.targets.frame, objdel.eval (via eval_run) import objdel.data
+    assert "pyarrow" in top  # and objdel.data.targets.frame and objdel.data.audit (via eval_run) import objdel.data
 
 
 def test_b4_2_ci_installs_what_objdel_data_imports():
@@ -282,11 +286,11 @@ def test_real_lidc_sample_prepared_equals_store_and_eval_frames(store_dir):
     from objdel.data.targets.frame import frame
     from objdel.geom.text import SCHEMAS
     from objdel.geom.topology import min_area
-    from objdel.train import dataset as D
+    from objdel.policy import rows as policy_rows
     from objdel.verify import store as verify_store
     from objdel.verify.reward.cache import ExpertCache
     from objdel.verify.reward.score import score_completion
-    recs = {r["item_id"]: r for r in D.records(PREPARED, "lidc", "val")}
+    recs = {r["item_id"]: r for r in policy_rows.records(PREPARED, "lidc", "val")}
     load, names, seen = verify_store.cache_loader(PREPARED, maxsize=4), SCHEMAS["lidc"], []
     for it in store.load("lidc", "val", store_dir):  # the first 4 items and the first disagreement item
         rec = recs[it.item_id]

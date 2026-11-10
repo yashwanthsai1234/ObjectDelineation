@@ -102,8 +102,8 @@ def test_b2_10_cache_normalises_bool_bytes(tmp_path):
 
 def test_b2_5_group_size_other_than_eight_is_refused(tmp_path, nod):
     pytest.importorskip("trl")
-    from objdel.train import configs
-    from objdel.train import rewards as R
+    from objdel.rl import config as configs
+    from objdel.rl import reward as R
     _, caches = nod
     texts = [doc(nodule=[(ring_pts(200 + 5 * i, 200 + 5 * i, 600 + 7 * i, 600 + 7 * i), [])]) for i in range(16)]
     funcs, _ = R.TRLReward({"a": caches}.__getitem__, {7}).funcs()

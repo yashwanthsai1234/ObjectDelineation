@@ -6,7 +6,7 @@ GRPO (D8): loss_type="dr_grpo" (constant length normaliser, no std scaling), cli
 G = num_generations = 8 (REWARD_V4.group); any other num_generations or num_generations_eval raises ValueError,
 because TRLReward would score a TRL group of 16 as two v4 groups of 8 without noticing (break-it B2-5). Reward:
 TRLReward's weight-0 loggers plus the aggregator with multi_objective_aggregation="sum_then_normalize" and
-scale_rewards="none" (objdel.train.rewards).
+scale_rewards="none" (objdel.rl.reward).
 One step = 32 prompts x 8 completions (generation_batch_size 256, plan §3.2): per_device_train_batch_size 16 (two
 groups) with 16 accumulation steps on one GPU (perf F2, 2026-11-06: half the CPU launch work per answer of 8 x 32;
 the profiling run measures 8 / 16 / 32); per_device sizes are multiples of G so every process's reward call holds
@@ -19,12 +19,12 @@ Owner decisions (C7, C8): beta stays 1e-3 in the control (B1) and is 0.0 for a B
 reference is the adapter-off model, so beta can be raised again later). A completion limit L below the model's
 budget goes in through `--grpo '{"max_completion_length": L}'`: train_rl refuses L above the budget, records the
 dr_grpo loss scale budget / L in rl.json, and the soft overlong penalty (DAPO) needs `check_soft_overlong`. Truncated
-rows stay masked by default; the runaway cap (objdel.train.runaway) needs them unmasked.
+rows stay masked by default; the runaway cap (objdel.rl.runaway) needs them unmasked.
 
 max_completion_length: 1,536 tokens for Qwen3-VL (5.2 tokens per vertex, D10). Issue I5: on the final prepared
 set 1 of 3,282 RIGA train targets is over budget and 0 of 23,469 LIDC train targets (prepare_rl's token_budget;
 10 / 3,546 before BinRushed1 lost its model image, B3-1). The budget stays; such answers are dropped from SFT
-(objdel.train.dataset.sft_rows with the model's tokenizer and MAX_COMPLETION), see experiments/phase1/impl/M7_train.md.
+(objdel.sft.rows.sft_rows with the model's tokenizer and MAX_COMPLETION), see experiments/phase1/impl/M7_train.md.
 
 Generation: vLLM colocate for every model (each image placeholder expands to one contiguous run, lab t_stack T5);
 a CPU caller passes use_vllm=False for HF generate.
@@ -56,36 +56,23 @@ References:
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/training_args.py
 - Lab: archive/phase1_lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
 """
-from typing import TYPE_CHECKING
 
 from peft import LoraConfig
 from transformers.utils import is_torch_bf16_gpu_available
 
-if TYPE_CHECKING:
-    from trl import GRPOConfig, SFTConfig
-
-from objdel.verify.reward.advantages import LOGGED
-from objdel.verify.reward.spec import REWARD_V4
-
 MODELS = {
     "qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct",
 }
+
 MAX_COMPLETION = {"qwen3-vl-2b": 1536}
-LONGEST_OUTLINE = 1182  # LIDC train doctor outline, end token counted (A1 F9)
+
 _LORA = frozenset(MODELS)  # every model is LoRA (ADR-0008)
+
 _GRAD_CKPT = {"qwen3-vl-2b"}
+
 # vision tower + projector of every model (recorded module names in tests/test_p2_train.py;
 # archive/phase2_lab/B1/common.VISION)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
-WARMUP, DECAY = 0.03, 0.15  # D5: of the stable run's steps; of the branch point's steps
-
-
-def check_soft_overlong(limit: int, cache: int) -> None:
-    """DAPO's soft overlong penalty starts at limit - cache tokens: it must start above the longest doctor outline
-    + 32, or a correct doctor-length answer is punished (C7 option O)."""
-    if limit - cache < LONGEST_OUTLINE + 32:
-        raise ValueError(f"soft overlong penalty starts at {limit - cache} tokens; "
-                         f"it needs limit - cache >= {LONGEST_OUTLINE + 32}")
 
 
 def lora(model: str) -> LoraConfig | None:
@@ -135,93 +122,36 @@ def _bf16(overrides: dict) -> bool:
 NO_SYNC = {"logging_nan_inf_filter": False, "accelerator_config": {"non_blocking": True}}  # perf F3
 
 
-def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at: int | None = None,
-               **overrides) -> "SFTConfig":
-    """The bundle's SFT settings (§6.0). Schedule (D5, WSD): linear warmup over 3 % of the stable run's `steps`,
-    then constant; `branch_at=s` is a decay branch from the stable run's step-s checkpoint, decaying linearly to 0
-    over 15 % of s (max_steps = s + that), identical to the stable run up to s. steps=None (smoke tests): 3 %
-    warmup of max_steps, no decay. Loader (D4): group_by_length on the `length` column, 6 persistent workers,
-    prefetch 2 (with dataloader_num_workers=0 neither, as TrainingArguments requires; BK3-1); gradient checkpointing
-    only for Qwen3-VL-2B. lr: 5e-4 with LoRA (the models in _LORA), else 5e-5; an explicit learning_rate wins."""
-    if branch_at is not None and steps is None:
-        raise ValueError("a decay branch needs the stable run's steps")
-    warmup = WARMUP if steps is None else round(WARMUP * steps)
-    stable_end = branch_at if branch_at is not None else steps
-    decay = 0 if branch_at is None else round(DECAY * branch_at)
-    sched = {"num_decay_steps": decay, "decay_type": "linear", "min_lr_ratio": 0.0}  # stable = the rest
-    from trl import SFTConfig  # here: the sampler and evaluation import this module without trl.trainer (E4)
+def compile_text_layers(model, mode: str) -> int:
+    """Stage F arm: torch.compile each text decoder layer in place (regional compilation: one code object, BUCKETS
+    shapes; parameter names unchanged). mode: "default" or "reduce-overhead" (CUDA Graphs). Returns the layer count."""
+    import torch._dynamo.config as dc
 
-    workers = overrides.get("dataloader_num_workers", 6)
-    return SFTConfig(**{
-        "output_dir": output_dir, "bf16": _bf16(overrides), "assistant_only_loss": True, "max_length": None,
-        "packing": False, "learning_rate": 5e-4 if model in _LORA else 5e-5,
-        "lr_scheduler_type": "warmup_stable_decay", "warmup_steps": warmup, "lr_scheduler_kwargs": sched,
-        **({"max_steps": stable_end + decay} if steps is not None else {}),
-        "train_sampling_strategy": "group_by_length", "length_column_name": "length",
-        "dataloader_num_workers": workers, "dataloader_persistent_workers": workers > 0,
-        "dataloader_prefetch_factor": 2 if workers else None,
-        **NO_SYNC,
-        "gradient_checkpointing": model in _GRAD_CKPT,
-        "remove_unused_columns": False, "report_to": "none", "seed": 0, "data_seed": 0} | overrides)
+    # one code object serves every layer; its variants are BUCKETS widths x grad on/off (update vs old/ref) x adapter
+    # on/off (the ref pass): past recompile_limit (default 8) Dynamo runs eager with only a warning
+    dc.recompile_limit = max(dc.recompile_limit, 64)
+    dc.accumulated_recompile_limit = max(dc.accumulated_recompile_limit, 1024)
+    layers = next(m for n, m in model.named_modules() if n.endswith("language_model.layers"))
+    for layer in layers:
+        layer.compile(mode=mode, dynamic=False)
+    return len(layers)
 
 
-def rl_lr(model: str) -> float:
-    """The GRPO learning rate of every real run: 5e-5 for LoRA models, 5e-6 for full fine-tuning."""
-    return 5e-5 if model in _LORA else 5e-6
+def stop_ids(model, processing_class) -> set[int]:
+    """The ids that end a completion for TRL: generation_config.eos_token_id, the tokenizer's EOS and pad."""
+    tok = getattr(processing_class, "tokenizer", processing_class)
+    eos = model.generation_config.eos_token_id
+    return {*(eos if isinstance(eos, list) else [eos]), tok.eos_token_id, tok.pad_token_id} - {None}
 
 
-# Numerics presets (B2.2, ADR-0013): the importance-sampling mode and dtype of a run. The shared parts are named first
-# (a literal cannot refer to itself). Only the keys a preset changes are listed; vllm_lora is ours (see grpo_config).
-_SEQMASK = {"vllm_importance_sampling_mode": "sequence_mask", "vllm_importance_sampling_clip_max": 3.0,
-            "vllm_importance_sampling_clip_min": None}  # TRL's defaults, written out
-_TIS = {"vllm_importance_sampling_mode": "token_truncate", "vllm_importance_sampling_clip_max": 2.0,
-        "vllm_importance_sampling_clip_min": None}  # C = 2, SkyRL's token default
-NUMERICS = {
-    "bf16-seqmask": _SEQMASK,  # ADR option C: the control (B1 and B3)
-    "bf16-tis": _TIS,  # option B
-    "bf16-tis-opsm": {**_TIS, "off_policy_mask_threshold": 0.5},  # option E; train_rl --opsm-start-delta overrides 0.5
-    "fp16-seqmask": {**_SEQMASK, "bf16": False, "fp16": True},  # option A numerics, the control's IS mode
-    "lora-seqmask": {**_SEQMASK, "vllm_lora": True},  # option F, the control's IS mode
-}
-DEFAULT_NUMERICS = "bf16-seqmask"
+def truncated(ids, stop) -> bool:
+    """TRL's rule: a completion is truncated when its last id is not a stop id (an empty one has no end either)."""
+    return not ids or ids[-1] not in stop
 
 
-def grpo_config(model: str, output_dir: str, reward=REWARD_V4, numerics: str = DEFAULT_NUMERICS,
-                **overrides) -> "GRPOConfig":
-    """reward: the reward spec (its group sets num_generations). numerics: a key of NUMERICS; explicit overrides win
-    over the preset. vllm_lora is not a TRL field: it is set as an attribute of the returned config, for FastGRPO to
-    read (False elsewhere)."""
-    if numerics not in NUMERICS:
-        raise ValueError(f"numerics {numerics!r}: not one of {sorted(NUMERICS)}")
-    preset = dict(NUMERICS[numerics])
-    lora = preset.pop("vllm_lora", False)
-    overrides = preset | overrides
-    g = reward.group
-    for k in ("num_generations", "num_generations_eval"):
-        if overrides.get(k) not in (None, g):
-            raise ValueError(f"{k}={overrides[k]}: {reward.name} scores groups of exactly {g} (its group)")
-    from trl import GRPOConfig  # here, as in sft_config
-
-    cfg = GRPOConfig(**{
-        "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
-        # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM
-        "per_device_train_batch_size": 2 * g, "gradient_accumulation_steps": 16, "per_device_eval_batch_size": 2 * g,
-        "gradient_checkpointing": True,
-        "max_completion_length": MAX_COMPLETION[model], "temperature": 1.0,
-        "loss_type": "dr_grpo", "epsilon": 0.2, "epsilon_high": 0.28, "beta": 1e-3, "mask_truncated_completions": True,
-        "learning_rate": rl_lr(model), "lr_scheduler_type": "constant", "warmup_steps": 0,
-        "multi_objective_aggregation": "sum_then_normalize", "scale_rewards": "none",
-        "reward_weights": [0.0] * len(LOGGED) + [1.0],  # TRLReward.funcs() order: loggers, then AGGREGATOR
-        "use_vllm": True, "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,
-        "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
-        "remove_unused_columns": False,  # key, W, H, names reach the reward functions
-        "log_completions": True, "report_to": "none", "seed": 0} | overrides)
-    train, spg = cfg.per_device_train_batch_size, cfg.steps_per_generation
-    b = {"per_device_train_batch_size": train, "per_device_eval_batch_size": cfg.per_device_eval_batch_size,
-         "per_device_train_batch_size * steps_per_generation": train * spg}
-    for k, v in b.items():  # TRLReward scores whole groups: refuse here, not at the first held-out eval
-        if v % g:
-            raise ValueError(f"{k}={v}: must be a multiple of the group size {g} ({reward.name}'s group)")
-    cfg.vllm_lora = lora
-    return cfg
-
+def _text(completion) -> str:
+    """Conversational completions are [{"role": "assistant", "content": str | [parts]}]."""
+    if isinstance(completion, list):
+        content = completion[0]["content"]
+        return content if isinstance(content, str) else "".join(p.get("text", "") for p in content)
+    return completion

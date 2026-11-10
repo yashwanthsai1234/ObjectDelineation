@@ -49,9 +49,11 @@ def test_the_real_tree_keeps_every_contract():
     [
         ("data/__init__.py", "import torch", "never imports the ML stack"),  # (a)
         ("data/__init__.py", "def f():\n    import torch", "never imports the ML stack"),  # (d) function level
-        ("geom/__init__.py", "import objdel.train", "objdel layers (current packages) BROKEN"),  # (b)
-        # (e): the ignored edge's target from a module not on the list
-        ("data/lidc.py", "import objdel.train.dataset", "objdel layers (current packages) BROKEN"),
+        ("geom/__init__.py", "import objdel.rl", "objdel layers (current packages) BROKEN"),  # (b)
+        ("verify/__init__.py", "import objdel.data", "objdel layers (current packages) BROKEN"),  # verify below data
+        # E5 gate: rl and sft are independent, and policy sits below both
+        ("sft/__init__.py", "import objdel.rl", "objdel layers (current packages) BROKEN"),
+        ("policy/__init__.py", "import objdel.rl", "objdel layers (current packages) BROKEN"),
     ],
 )
 def test_a_planted_violation_breaks_a_contract(scratch, rel, line, broken):
@@ -67,7 +69,8 @@ def test_ruff_bans_the_private_trl_module_outside_the_allowed_files():
     code = "from trl.trainer import grpo_trainer\n"
     ruff = [sys.executable, "-m", "ruff", "check", "--no-cache", "--select", "TID251", "--stdin-filename"]
     bad = subprocess.run([*ruff, "src/objdel/rl_new.py", "-"], cwd=ROOT, input=code, capture_output=True, text=True)
-    ok = subprocess.run([*ruff, "src/objdel/train/fast.py", "-"], cwd=ROOT, input=code, capture_output=True, text=True)
+    ok = subprocess.run([*ruff, "src/objdel/rl/trl_adapter.py", "-"], cwd=ROOT, input=code, capture_output=True,
+                        text=True)
     assert bad.returncode == 1 and "TID251" in bad.stdout, bad.stdout
     assert ok.returncode == 0, ok.stdout
 

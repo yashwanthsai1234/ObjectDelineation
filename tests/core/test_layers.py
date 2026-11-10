@@ -11,8 +11,8 @@ GOLDENS = TESTS / "goldens/phase_e"
 PRIVATE = {"_get_per_token_logps_and_entropies", "_generate_and_score_completions", "_prepare_inputs", "_compute_loss",
            "_generate", "_calculate_rewards", "shuffle_sequence_dict", "_iter_named_params", "_metrics", "_step",
            "_buffered_inputs"}
-# Allowed to touch private TRL names. E5 leaves only rl/trl_adapter.py (Implementation.md E5 step 4).
-TRL_ADAPTER_FILES = {"train/fast.py", "train/trl_adapter.py", "train/sample.py"}
+# Allowed to touch private TRL names: the one TRL adapter (Implementation.md E5 step 4).
+TRL_ADAPTER_FILES = {"rl/trl_adapter.py"}
 TRL_BASES = {"GRPOTrainer", "VLLMGeneration"}
 HOST_SYNC = re.compile(r"\.(item|cpu|tolist|numpy)\(\)")
 
@@ -184,11 +184,10 @@ def test_module_strings_resolve():
     assert set(unresolved_module_strings()) <= stale
 
 
-def test_eval_init_imports_nothing():
-    """U10 (E3b): objdel/eval/__init__.py is a docstring only, so no re-export keeps a moved verify module in eval
-    (E5 deletes the file)."""
-    init = SRC / "eval" / "__init__.py"
-    assert not init.exists() or not [n for n in parse(init).body if isinstance(n, ast.Import | ast.ImportFrom)]
+def test_old_packages_gone():
+    """E-G14 (R-1): the pre-E packages and fast.py are gone from the E5 move commit on (no shim)."""
+    old = ("checker", "geometry", "reward", "eval", "targets", "train")
+    assert [p for p in old if (SRC / p).exists()] == [] and not list(SRC.rglob("fast.py"))
 
 
 def test_g_probe_lr_not_read():

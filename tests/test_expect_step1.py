@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 torch = pytest.importorskip("torch")
-from objdel.train import callbacks  # noqa: E402
+from objdel.policy import callbacks  # noqa: E402
 
 R5 = {"rewards/iou_tc/mean": 0.5467, "rewards/legal/mean": 0.8984, "completions/mean_length": 117.89,
       "grad_norm": 0.003264, "sampling/sampling_logp_difference/mean": 0.009515}  # runs/r5/shared_rl.json step 1

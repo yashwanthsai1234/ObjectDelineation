@@ -21,7 +21,8 @@ import numpy as np
 
 from objdel.hashing import file_sha256
 from objdel.io import read_jsonl
-from objdel.train import configs, dataset
+from objdel.policy import models as configs
+from objdel.policy import rows as dataset
 from objdel.verify import store as verify_store
 
 LIMITS = (256, 512, 800, 1000, 1200, 1536)

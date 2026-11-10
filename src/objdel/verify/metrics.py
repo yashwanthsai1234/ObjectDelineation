@@ -69,7 +69,7 @@ Definitions and choices:
   2 px LIDC, 9 px disc, 16 px cup. 4-connected boundary pixels (A4's prototype) differ from the reference by up to
   0.14 on LIDC rater pairs (impl/M4.md). The device counts surfels per length class beyond the cut, so the length
   sums run in another order than the host's: NSD may differ from the host value by <= 1e-12 (D7, D-G9).
-- Token statistics: per sample completion token counts when the caller passes them (objdel.train.sample);
+- Token statistics: per sample completion token counts when the caller passes them (objdel.policy.sampler);
   summarize reports the truncated share, mean and p95 tokens.
 
 References:

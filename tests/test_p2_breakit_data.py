@@ -327,8 +327,9 @@ def test_every_row_renders_aligned_with_its_mask_and_target(bk_views):
 @pytest.fixture
 def D():
     pytest.importorskip("datasets")
-    from objdel.train import dataset
-    return dataset
+    from objdel.sft import rows
+
+    return rows
 
 
 class Chars:
@@ -422,12 +423,12 @@ def bundled(tmp_path_factory, synthetic_items):
     from experiments.phase2 import build_views as BV
     from objdel.data import prepare as data_prepare
     from objdel.infra import bundle as B
-    from objdel.train import dataset as D
+    from objdel.policy import prompt as policy_prompt
     root = tmp_path_factory.mktemp("bk1bundle")
     data = root / "data"
     store.write(synthetic_items(("train", "val")), root / "store")
     # both datasets, as data/prepared does
-    data_prepare.prepare(root / "store", data / "prepared", procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(root / "store", data / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
     BV.build(root / "store", data / "views" / "lidc-train", procs=1)
     for n in B.LIDC_EVAL:
         (data / "eval_views" / n).mkdir(parents=True)
@@ -501,10 +502,10 @@ def test_real_view_rows_match_the_store_reference():
 def test_real_a0_targets_stay_legal():
     pytest.importorskip("datasets")
     from objdel.geom.text import SCHEMAS
-    from objdel.train import dataset as D
+    from objdel.sft import rows as sft_rows
     _need(REAL / "rows.jsonl")
     for line in (REAL / "rows.jsonl").read_text().splitlines():
         r = json.loads(line)
         if not r["simple"]:
-            t = D._no_holes(r["target"], SCHEMAS["lidc"])
+            t = sft_rows._no_holes(r["target"], SCHEMAS["lidc"])
             assert to_mask(parse(t, NOD).objs["nodule"], r["side"], r["side"]).legal, r["row_id"]

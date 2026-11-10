@@ -125,3 +125,13 @@ e_moves_manual's targets objdel.data.targets and objdel.data.targets.build (they
 dropped targets re-exports name the defining module (objdel.data.targets.build.build_target). old_names re-recorded
 for the split module that stays: train/dataset.py loses _PINS, _BATCH, _prepare, window_record, _jobs and prepare
 (all in objdel.data.prepare). Goldens 1-6, host_syncs and tests_import_experiments unchanged.
+E5 (impl2-emoves2, policy / rl / sft move commit): host_syncs re-recorded per new file, the total 55 unchanged:
+train/fast.py 40 -> policy/caches.py 24 + rl/forward.py 8 + rl/trl_adapter.py 8; eval/vision.py, train/callbacks.py,
+train/f_check.py, train/gpu_pixels.py, train/record.py and train/sample.py keep their counts under policy/vision.py,
+policy/callbacks.py, rl/f_check.py, policy/gpu_pixels.py, rl/record.py and policy/sampler.py.
+tests_import_experiments: tests/test_train_fast.py -> tests/rl/test_trl_adapter_equivalence.py (git mv; its pure and
+cache tests went to tests/rl/test_forward.py and tests/policy/test_caches.py). invariance.json gains "renamed_paths"
+{tests/test_train_fast.py: tests/rl/test_trl_adapter_equivalence.py}: golden 5 maps a pytest path of a live spec
+through it (later_edits) instead of re-recording the chain argv. module_strings_stale re-recorded on its own tree: it
+loses objdel.policy.rows, objdel.policy.models and objdel.rl.reward (they exist now) and gains the e_moves tools' and
+their tests' planted objdel.train / objdel.eval names (those packages are gone). Goldens 1-6 and old_names unchanged.

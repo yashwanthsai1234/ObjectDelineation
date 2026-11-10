@@ -432,7 +432,7 @@ def test_eval_run_scores_with_the_prepared_caches(stores):
     pytest.importorskip("cv2")
     from experiments.phase1 import eval_run
     from objdel.data import prepare as data_prepare
-    from objdel.train import dataset as D
+    from objdel.policy import prompt as D
     from objdel.verify import store as verify_store
     data_prepare.prepare(stores / "store", stores / "prep", splits=("val",), procs=1, prompts=D.PROMPTS)
     frames = eval_run.load_prepared(stores / "prep", "val")
@@ -512,7 +512,7 @@ def _items(n=4):
 
 
 def test_vision_check_of_a_model_against_itself_has_ratio_one(vlm):
-    from objdel.eval import vision
+    from objdel.policy import vision
     build, proc = vlm
     model = build()
     ref = vision.projector_distance(model, proc, _images(4), PROMPT)
@@ -525,7 +525,7 @@ def test_vision_check_of_a_model_against_itself_has_ratio_one(vlm):
 
 def test_vision_check_restores_the_training_mode(vlm):
     """S1-9: check runs in eval mode and leaves the model in the mode it found (train mode mid-SFT)."""
-    from objdel.eval import vision
+    from objdel.policy import vision
     build, proc = vlm
     model = build()
     for mode in (True, False):
@@ -537,7 +537,7 @@ def test_vision_check_restores_the_training_mode(vlm):
 def test_vision_check_fails_when_the_projector_is_constant(vlm):
     import torch
 
-    from objdel.eval import vision
+    from objdel.policy import vision
     build, proc = vlm
     base = build()
     ref = vision.projector_distance(base, proc, _images(4), PROMPT)
@@ -556,7 +556,7 @@ def test_vision_tv_equals_a_numpy_reference(vlm):
     float64 numpy from logits of a forward pass built here."""
     import torch
 
-    from objdel.eval import vision
+    from objdel.policy import vision
     build, proc = vlm
     model = build(3)
     items, T = _items(3), 5
@@ -593,7 +593,7 @@ def test_next_token_probs_keeps_every_input_on_the_model_device(monkeypatch):
 
     import torch
 
-    from objdel.eval import vision
+    from objdel.policy import vision
 
     dev = torch.device("meta")
     monkeypatch.setattr(vision, "_batch", lambda *a: {
@@ -616,7 +616,7 @@ def test_next_token_probs_keeps_every_input_on_the_model_device(monkeypatch):
 ])
 def test_vision_decision_rule(ratio, tv_black, tv_other, action):
     """Plan §5.1 / M8: thresholds ratio >= 0.5 and both TVs >= 0.002; in training, both failing aborts, one warns."""
-    from objdel.eval import vision
+    from objdel.policy import vision
     d = vision.decide(ratio, tv_black, tv_other)
     assert d["action"] == action and d["pass"] is (action == "ok")
 
@@ -629,7 +629,7 @@ def test_vision_module_imports_without_torch():
             "    def find_spec(self, name, path=None, target=None):\n"
             "        if name.split('.')[0] in ('torch', 'transformers'): raise ImportError(name)\n"
             "sys.meta_path.insert(0, Block())\n"
-            "from objdel.eval import vision; print(vision.decide(1, 1, 1)['action'])")
+            "from objdel.policy import vision; print(vision.decide(1, 1, 1)['action'])")
     out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "ok"
 
@@ -641,7 +641,7 @@ def test_vision_fixed_sets_are_pinned_by_hash(tmp_path):
 
     from PIL import Image
 
-    from objdel.eval import vision
+    from objdel.policy import vision
     recs = []
     (tmp_path / "lidc").mkdir()
     for i, im in enumerate(_images(12)):
@@ -673,7 +673,7 @@ B1_SET_SHA256 = "b776dd12a085b69affc2cd1a07e4b723a9333f350c7409a76c0c562a5ea4f30
 @pytest.mark.data
 def test_vision_fixed_set_on_the_prepared_val_is_pinned():
     """The G-vision sets of B1 §2.5 (8 LIDC val items, the first 4 also the image set), fixed by hash."""
-    from objdel.eval import vision
+    from objdel.policy import vision
     if not (PREPARED / "lidc" / "val.jsonl").is_file():
         pytest.skip("data/prepared not found")
     items, h = vision.fixed_set(PREPARED, vision.N_ITEMS)

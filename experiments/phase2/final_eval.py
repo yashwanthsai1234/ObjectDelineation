@@ -18,7 +18,7 @@ The model forms read their flags as an objdel.core.spec.EvalStage (cli_stage: ke
 
 Every RL-eligible item of the view's <split> records (the G-probe uses a 128-item subset of the val view; this uses
 all of them, and runs on the test split's view built by build_eval_views --split test). Samples with
-objdel.train.sample.VllmSampler, no trainer (E4: vllm_native image only; one engine per process, built from --ckpt,
+objdel.policy.sampler.VllmSampler, no trainer (E4: vllm_native image only; one engine per process, built from --ckpt,
 serving --adapter unmerged when given; params_for's sampling at T = 1 with the checkpoint's stop ids; torch seeded
 before each view, each request seeded request_seed(seed, item_id)) and scores through objdel.policy.evaluate.evaluate
 (score_items in this process: D7, one CUDA context, after sampling). Until V4 passes every result carries
@@ -184,7 +184,7 @@ def limit_rows(rows: list[dict], limit: int | None) -> list[dict]:
 
 def view_groups(view: Path, split: str) -> dict[str, str]:
     """{item_id: group_id} of a view's LIDC records (never from the prompt rows: TRL forwards their columns)."""
-    from objdel.train import dataset
+    from objdel.policy import rows as dataset
 
     return {r["item_id"]: r["group_id"] for r in dataset.records(view, "lidc", split)}
 
@@ -261,7 +261,7 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
 def load_sampler(a):
     """(VllmSampler of the stage's ckpt, built once per process, serving a.adapter unmerged when given; params_for's
     dict at K = a.k and seed a.seed with the checkpoint's stop ids)."""
-    from objdel.train import sample
+    from objdel.policy import sampler as sample
 
     s = sample.VllmSampler(Path(a.ckpt), a.model, adapter=a.adapter and Path(a.adapter))
     stop = sorted(sample.stop_ids(Path(a.ckpt), s.processor))
@@ -364,7 +364,7 @@ def _identity(view: Path, split: str) -> dict:
 def rescore(src: Path, view: Path, split: str, out: Path) -> None:
     """--rescore: score src/answers.jsonl again on the view, with no model; exit 2 when the view's manifest is not
     the one src was sampled on."""
-    from objdel.train import dataset
+    from objdel.policy import rows as dataset
     from objdel.verify import store as serve
 
     f = src / "final_eval.json"
@@ -434,7 +434,7 @@ def main(argv=None) -> None:
 
     import torch
 
-    from objdel.train import dataset
+    from objdel.policy import rows as dataset
     from objdel.verify import store as serve
 
     t0 = time.time()

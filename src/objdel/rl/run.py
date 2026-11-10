@@ -54,10 +54,10 @@ def check_flags(a) -> None:
     """Refusals that need no model: the completion limit (C7: set from the outline count, never above the model's
     budget) and the runaway cap (C11: a capped answer is cut mid-text, so masking it would bias the update toward
     more capping)."""
-    from objdel.train import configs
+    from objdel.policy import models as policy_models
 
     over = a.grpo
-    budget = configs.MAX_COMPLETION[a.model]
+    budget = policy_models.MAX_COMPLETION[a.model]
     if over.get("max_completion_length", budget) > budget:
         raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
     if a.runaway_cap and over.get("mask_truncated_completions", True):
@@ -66,9 +66,9 @@ def check_flags(a) -> None:
 
 def numerics_overrides(a) -> dict:
     """The grpo_config arguments of --numerics and --opsm-start-delta (absent: the preset's own threshold)."""
-    from objdel.train import configs
+    from objdel.rl import config as rl_config
 
-    return {"numerics": a.numerics or configs.DEFAULT_NUMERICS} | ({} if a.opsm_start_delta is None
+    return {"numerics": a.numerics or rl_config.DEFAULT_NUMERICS} | ({} if a.opsm_start_delta is None
                                        else {"off_policy_mask_threshold": a.opsm_start_delta})
 
 
@@ -97,7 +97,7 @@ def session_budget(a, environ=os.environ):
     for field, var in (("session_start", "OBJDEL_SESSION_START"), ("rate_usd_per_h", "OBJDEL_RATE_USD_PER_H")):
         if got[field] is None:
             raise BudgetFlagError(f"--budget-usd needs --{field.replace('_', '-')} or {var} (run.sh exports it)")
-    from objdel.train.callbacks import BudgetStop
+    from objdel.policy.callbacks import BudgetStop
 
     return BudgetStop(got["rate_usd_per_h"], a.budget_usd, got["session_start"], fixed_usd=got["fixed_usd"] or 0.0)
 
@@ -158,10 +158,10 @@ def heldout_rows(view: Path, n: int):
     from datasets import Dataset, Image
 
     from objdel.data.splits import val_half
-    from objdel.train import dataset
+    from objdel.policy import rows as policy_rows
 
-    shape = {r["item_id"] for r in dataset.records(view, "lidc", "val") if val_half(r["group_id"]) == "shape"}
-    rows = [r for r in dataset.prompts(view, "lidc", "val") if r["key"] in shape]
+    shape = {r["item_id"] for r in policy_rows.records(view, "lidc", "val") if val_half(r["group_id"]) == "shape"}
+    rows = [r for r in policy_rows.prompts(view, "lidc", "val") if r["key"] in shape]
     if not rows:
         raise ValueError(f"--heldout {view}: no val-shape RL item")
     if n < len(rows):
@@ -233,10 +233,10 @@ def merge_last(a) -> int:
     from peft import PeftModel
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
-    from objdel.train import configs
+    from objdel.policy import models as policy_models
 
     model = PeftModel.from_pretrained(AutoModelForImageTextToText.from_pretrained(a.ckpt), last)
-    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs(a.model, "lidc")), out)
+    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model, "lidc")), out)
     return save_json(out / "rl.json", {
         "model": a.model, "steps": int(Path(last).name.split("-")[1]), "partial": True, "merged_from": last,
         "ckpt": str(a.ckpt),
@@ -249,12 +249,14 @@ def with_caps(train, a):
     record."""
     from transformers import AutoProcessor
 
-    from objdel.train import configs, dataset, runaway
+    from objdel.policy import models as policy_models
+    from objdel.policy import rows as policy_rows
+    from objdel.rl import runaway
 
-    tok = AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs(a.model, "lidc")).tokenizer
-    caps = runaway.row_caps(train["key"], dataset.records(a.train, "lidc", "train"),
-                            lambda text: dataset.target_tokens(tok, text),
-                            a.grpo.get("max_completion_length", configs.MAX_COMPLETION[a.model]),
+    tok = AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model, "lidc")).tokenizer
+    caps = runaway.row_caps(train["key"], policy_rows.records(a.train, "lidc", "train"),
+                            lambda text: policy_rows.target_tokens(tok, text),
+                            a.grpo.get("max_completion_length", policy_models.MAX_COMPLETION[a.model]),
                             a.runaway_cap, runaway.MARGIN)
     return train.add_column("cap", caps)
 
@@ -270,7 +272,7 @@ def f_check_callback(a, trainer, train):
 
     import torch
 
-    from objdel.train import f_check
+    from objdel.rl import f_check
 
     vg = trainer.vllm_generation
     if a.numerics == "fp16-seqmask":
@@ -320,8 +322,11 @@ def run_rl(a) -> dict:
     merge the LoRA, save <out>/final, write <out>/rl.json; returns the rl.json document."""
     from transformers.trainer_utils import get_last_checkpoint
 
-    from objdel.train import configs, dataset, record
-    from objdel.train.callbacks import ExpectStep1, LocGuard
+    from objdel.policy import models as policy_models
+    from objdel.policy import rows as policy_rows
+    from objdel.policy.callbacks import ExpectStep1, LocGuard
+    from objdel.rl import record
+    from objdel.rl import rows as rl_rows
     from objdel.verify import store as serve
     from objdel.verify.reward.spec import REWARDS, reward_fingerprint
 
@@ -332,8 +337,8 @@ def run_rl(a) -> dict:
     if a.record_batches:
         record.open_dir(a.record_batches)
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)
-    train = dataset.grpo_rows(a.train, "lidc", "train",
-                              oversample=1 if schedule is not None else dataset.DISAGREEMENT_OVERSAMPLE)
+    train = rl_rows.grpo_rows(a.train, "lidc", "train",
+                              oversample=1 if schedule is not None else policy_rows.DISAGREEMENT_OVERSAMPLE)
     if schedule is not None:
         check_rows(train["key"], schedule)
     if a.runaway_cap:
@@ -380,7 +385,7 @@ def run_rl(a) -> dict:
         "opsm_start_delta": a.opsm_start_delta if a.opsm_start_delta is not None else cfg.off_policy_mask_threshold,
         "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
         "max_completion_length": cfg.max_completion_length,
-        "loss_scale": configs.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L (C7)
+        "loss_scale": policy_models.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L (C7)
         "reward": {"name": spec.name, "fingerprint": reward_fingerprint(spec), "c_topo": spec.c_topo,
                    "loc_width": getattr(spec, "loc_width", None), "area_gate": getattr(spec, "area_gate", None)},
         "rows": rows, "train_rows": len(train), "budget_stopped": bool(stop and stop.tripped),

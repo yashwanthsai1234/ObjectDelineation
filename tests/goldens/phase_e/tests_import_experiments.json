@@ -1,6 +1,7 @@
 [
  "core/test_move_invariance.py",
  "infra/test_chain.py",
+ "rl/test_trl_adapter_equivalence.py",
  "test_a_gpu.py",
  "test_b1_plans.py",
  "test_b2_attribution.py",
@@ -81,7 +82,6 @@
  "test_scorer_sums.py",
  "test_series_z.py",
  "test_topology_device.py",
- "test_train_fast.py",
  "test_train_rl_guards.py",
  "test_v3_records.py",
  "test_vast.py"

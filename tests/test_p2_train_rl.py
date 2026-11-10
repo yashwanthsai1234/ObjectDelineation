@@ -21,11 +21,11 @@ def test_full_rl_saves_resumes_and_leaves_a_merged_tuned_model(tmp_path, synthet
     pytest.importorskip("trl")
     from objdel.data import prepare as data_prepare
     from objdel.data import store
-    from objdel.train import dataset
+    from objdel.policy import prompt as policy_prompt
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")  # LoRA (configs.lora), like the real run
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=dataset.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
 
     def run(steps, *extra):
@@ -63,11 +63,11 @@ def test_full_rl_runs_with_the_shared_prefix_forward(tmp_path, synthetic_items):
     pytest.importorskip("trl")
     from objdel.data import prepare as data_prepare
     from objdel.data import store
-    from objdel.train import dataset
+    from objdel.policy import prompt as policy_prompt
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=dataset.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
     r = _module("experiments.phase2.train_rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
                 str(tmp_path / "prepared"), "--out", str(out), "--steps", "2", "--save-steps", "100",
@@ -83,7 +83,7 @@ def test_full_rl_runs_with_the_shared_prefix_forward(tmp_path, synthetic_items):
 SPY = """
 import json, sys
 from objdel.data import splits
-from objdel.train import rewards
+from objdel.rl import reward as rewards
 splits.val_half = lambda g: "shape"  # the held-out curve's val-shape rule on synthetic patients
 orig = rewards.TRLReward._terms
 def spy(self, completions, completion_ids, key, *a, **k):
@@ -107,11 +107,11 @@ def rows_run(tmp_path, synthetic_items):
 
     from objdel.data import prepare as data_prepare
     from objdel.data import store
-    from objdel.train import dataset
+    from objdel.policy import prompt as policy_prompt
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=dataset.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
     root, keys, sha = schedule_root(tmp_path / "prepared", tmp_path / "rows")
     env = os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
 
@@ -227,7 +227,7 @@ def stub(tmp_path, monkeypatch):
 
     from experiments.phase2 import train_rl
     from objdel.rl import build
-    from objdel.train import dataset
+    from objdel.rl import rows as rl_rows
     from objdel.verify import store as serve
 
     calls = []
@@ -240,7 +240,7 @@ def stub(tmp_path, monkeypatch):
         monkeypatch.setattr(owner, name, boom)
     monkeypatch.setattr(serve, "preload", lambda root, ds: calls.append("preload"))
     monkeypatch.setattr(gc, "freeze", lambda: calls.append("freeze"))
-    monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: ["k1", "k2"])
+    monkeypatch.setattr(rl_rows, "grpo_rows", lambda *a, **k: ["k1", "k2"])
     monkeypatch.setattr(rl_run, "heldout_rows", lambda view, n: ["h1"])  # val_half lands with L2 (B1.3)
     saver = SimpleNamespace(save_pretrained=lambda p: None)
     trainer = SimpleNamespace(train=lambda resume_from_checkpoint=None: calls.append("train"), model=saver,
@@ -328,7 +328,7 @@ def test_no_stale_procs_for_train_rl():
 
 def test_resume_truncates_seq_gaps_to_the_checkpoint_step(stub):
     """B2.0 handoff: --resume from checkpoint-2 keeps 2 steps of <out>/trainer/seq_gaps.f32 before training appends."""
-    from objdel.train.fast import write_seq_gaps
+    from objdel.rl.forward import write_seq_gaps
 
     trainer = stub.out / "trainer"
     (trainer / "checkpoint-2").mkdir(parents=True)

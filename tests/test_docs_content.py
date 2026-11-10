@@ -234,7 +234,7 @@ def test_output_format_page_lists_every_schema_2_key():
 
 
 def test_profiling_page_lists_the_range_names_and_the_gate_numbers():
-    from objdel.train import nvtx
+    from objdel.policy import marks as nvtx
 
     page = _read("docs/guides/profiling.md")
     names = re.search(r"Range names are fixed .*?: (.*?)\.\n", nvtx.__doc__, re.S)[1].replace("\n", " ").split(", ")

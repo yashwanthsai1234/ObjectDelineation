@@ -3,7 +3,7 @@ r0_parity, archived in CLEAN8).
 
     .venv/bin/python -I -m experiments.phase2.parity --prompts P.jsonl --completions C.jsonl --model DIR --out R.json
 
-Inputs (C-BRIDGE): export_prompts' prompts JSONL and `python -I -m objdel.train.sample --logprobs` completions (vLLM's processed
+Inputs (C-BRIDGE): export_prompts' prompts JSONL and `python -I -m objdel.policy.sampler --logprobs` completions (vLLM's processed
 logprob of every sampled token). Each completion is teacher-forced through HF: the processor on the exported prompt
 text and image (TRL GRPO's prompt ids, B5: equal to vLLM's), the sampled ids appended, one forward in --dtype,
 float32 log_softmax. Δ = vLLM - HF per token and its per-sequence sum. Pass: median |Δ| <= 1e-3 in float32 (0.02
@@ -69,7 +69,7 @@ def compare(model_dir, prompts_path, comps_path, dtype: str, teach=None) -> dict
     prompts = {x["id"]: x for x in map(json.loads, Path(prompts_path).read_text().splitlines())}
     comps = [json.loads(x) for x in Path(comps_path).read_text().splitlines()]
     if any("logprobs" not in c for c in comps):
-        raise SystemExit("parity: completions without logprobs (run python -I -m objdel.train.sample --logprobs)")
+        raise SystemExit("parity: completions without logprobs (run python -I -m objdel.policy.sampler --logprobs)")
     model, processor = load(model_dir, prompts, dtype)
     echoed = {c["id"]: c.get("prompt_token_ids") for c in comps}
     bad = [i for i, ids in echoed.items() if encode(processor, prompts[i])["input_ids"][0].tolist() != ids]
@@ -86,8 +86,8 @@ def compare(model_dir, prompts_path, comps_path, dtype: str, teach=None) -> dict
 
 def main(argv=None) -> dict:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--prompts", required=True, help="JSONL from objdel.train.sample.export_prompts")
-    ap.add_argument("--completions", required=True, help="JSONL from python -I -m objdel.train.sample --logprobs")
+    ap.add_argument("--prompts", required=True, help="JSONL from objdel.policy.sampler.export_prompts")
+    ap.add_argument("--completions", required=True, help="JSONL from python -I -m objdel.policy.sampler --logprobs")
     ap.add_argument("--model", required=True, help="the checkpoint directory vLLM sampled (with its processor)")
     ap.add_argument("--dtype", choices=sorted(MEDIAN), default="float32")
     ap.add_argument("--out", required=True, help="report JSON")

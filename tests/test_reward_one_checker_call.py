@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from objdel.geom import engine as _gpucheck
-from objdel.train import rewards as R
+from objdel.rl import reward as R
 from objdel.verify.reward.cache import ExpertCache
 
 G, W = 8, 50

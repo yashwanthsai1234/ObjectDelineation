@@ -17,7 +17,7 @@ from objdel.infra.vast.ledger import accrued, active, home, ledger
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
 # sync_up runs it on the box after the install: library modules and the box stack only, no tests.* or experiments.*
-IMPORT_CHECK = ("import objdel.geom.engine, objdel.verify, objdel.train.trl_adapter, objdel.train.sample, pydantic, "
+IMPORT_CHECK = ("import objdel.geom.engine, objdel.verify, objdel.rl.trl_adapter, objdel.policy.sampler, pydantic, "
                 "vllm")  # vllm and the sampler: the vllm_native image, one venv (ADR 0023)
 # The one list of live CLI modules (E8 step 2); the CLI smoke and import tests and the module-string gate read it
 LIVE_CLIS = tuple(f"experiments.phase1.{m}" for m in ("build_data", "build_targets", "fetch_lidc_pixels",

@@ -5,7 +5,7 @@ import warnings
 import pytest
 
 torch = pytest.importorskip("torch")
-from objdel.train import nvtx  # noqa: E402
+from objdel.policy import marks as nvtx  # noqa: E402
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def test_fast_grpo_logs_host_syncs_per_phase_and_the_vllm_range_apart(fake_cuda,
     from collections import defaultdict
 
     pytest.importorskip("trl")
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as fast
 
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
     t = object.__new__(fast.FastGRPO)

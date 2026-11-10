@@ -36,7 +36,7 @@ from objdel.data.targets.frame import FRAMES, frame
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS, parse, serialize
 from objdel.geom.topology import signature
-from objdel.train.configs import MODELS  # the three screened models; their tokenizers measure answer lengths
+from objdel.policy.models import MODELS  # the three screened models; their tokenizers measure answer lengths
 
 PINS = ("numpy", "numba", "opencv-python-headless", "objdel", "transformers")
 _TOK = {}

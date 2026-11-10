@@ -5,7 +5,7 @@ import copy
 
 import pytest
 
-from objdel.train.vllm_requests import group_requests, grouped
+from objdel.rl.vllm_requests import group_requests, grouped
 
 
 def rows(*blocks, G=2):
@@ -118,9 +118,8 @@ def test_grouped_with_caps_sends_one_cap_per_block_and_refuses_two():
 def test_fast_grpo_groups_outside_the_one_pad_check():
     pytest.importorskip("torch")
     pytest.importorskip("trl")
-    from test_train_fast import END, IMG, START, vllm_trainer
-
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as fast
+    from tests.rl.test_trl_adapter_equivalence import END, IMG, START, vllm_trainer
 
     t, sent = vllm_trainer(expand=2)
     t.group_requests, t.num_generations, t.num_generations_eval = True, 2, 4
@@ -139,9 +138,8 @@ def test_fast_grpo_caps_then_groups_one_request_per_block_with_its_cap():
     """U-RC3 wiring: --runaway-cap and --group-requests together send one n = G request per prompt, max_tokens = cap."""
     pytest.importorskip("torch")
     pytest.importorskip("trl")
-    from test_train_fast import END, IMG, START, vllm_trainer
-
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as fast
+    from tests.rl.test_trl_adapter_equivalence import END, IMG, START, vllm_trainer
 
     t, sent = vllm_trainer(expand=2)
     t.group_requests, t.runaway_cap, t.num_generations = True, True, 2

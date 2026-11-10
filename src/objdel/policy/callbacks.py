@@ -23,7 +23,7 @@ import torch
 from transformers import TrainerCallback
 
 from objdel.io import read_json
-from objdel.train import nvtx
+from objdel.policy import marks as nvtx
 
 
 class TraceStep(TrainerCallback):
@@ -72,7 +72,7 @@ class TraceStep(TrainerCallback):
 class NvtxSteps(TrainerCallback):
     """NVTX range `step` over each step period (one on_step_end to the next: the previous step's log, this step's
     loader, micro-batches, grad clip and optimizer) and `optimizer` from on_pre_optimizer_step to on_optimizer_step
-    (objdel.train.nvtx: no-ops unless OBJDEL_NVTX=1 and CUDA). With window = (s, e), 1 <= s <= e, and CUDA, the
+    (objdel.policy.marks: no-ops unless OBJDEL_NVTX=1 and CUDA). With window = (s, e), 1 <= s <= e, and CUDA, the
     cudaProfilerApi capture (nsys --capture-range=cudaProfilerApi, nsys_capture.sh) holds exactly the step ranges of
     steps s..e: it starts at the end of step s - 1 (at on_train_begin for s = 1, so (1, steps) traces the whole run),
     between the pop and the next push, and stops at the end of step e after the pop (or at on_train_end, when the

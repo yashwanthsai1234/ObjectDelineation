@@ -8,13 +8,13 @@ The flags are an objdel.core.spec.ProbeStage (cli_stage), with the trainer flags
 --grpo JSON, --shared-prefix, --compile, --plain, --trace, the C flags); objdel.rl.build.build_trainer builds the
 trainer from them.
 
-configs.grpo_config with prereg.G_PROBE: LR 5e-5 (LoRA; every model, ADR-0008), constant, 20 steps, G = 8, 32 LIDC train
+rl.config.grpo_config with prereg.G_PROBE: LR 5e-5 (LoRA; every model, ADR-0008), constant, 20 steps, G = 8, 32 LIDC train
 prompts per step (disagreement items x4), vLLM colocate generation (owner 2026-11-06, perf F1: HF generate of 256
 sequences needs 20-51 GiB of KV cache; needs the Phase 3 single-venv image, D15), sampling from
-configs.sampling(model, "grpo") (D13);
-fast.FastGRPO (per-chunk trimmed forwards, a per-step vision cache: perf C1, C6), TRLReward on the
+policy.models.sampling(model, "grpo") (D13);
+rl.trl_adapter.FastGRPO (per-chunk trimmed forwards, a per-step vision cache: perf C1, C6), TRLReward on the
 preloaded caches; the probe metrics run in this process (D7). Probe set: a seeded subset of `items`
-(128) shifted-val records (policy.evaluate.eval_rows), K = 8 through the trainer's own generation (sample.sample), twice
+(128) shifted-val records (policy.evaluate.eval_rows), K = 8 through the trainer's own generation (trl_adapter.sample), twice
 at step 0 (the null, h0) and once at step 20; per item the raw composite R. Verdict: prereg.g_probe, step-0 legal =
 the mean of both draws. Also: Spearman of step-0 sd_geom / r_std / mixed with the gain (D12 veto, §6.2), the
 training-log form (mean logged R, steps 1-5 vs 11-20) and the step timing.
@@ -47,7 +47,7 @@ def score(trainer, rows, probe_root: Path, seed: int) -> dict:
     """K = 8 samples per probe row -> per-item panel metrics."""
     import torch
 
-    from objdel.train import sample
+    from objdel.rl import trl_adapter as sample
 
     torch.manual_seed(seed)
     _, groups = score_items(rows, {d["item_id"]: d for d in sample.sample(trainer, rows, 8)}, probe_root)
@@ -118,9 +118,10 @@ def main(argv=None) -> int:
         serve.preload(root, ["lidc"])
     from PIL import Image
 
-    from objdel.train import dataset
+    from objdel.policy import rows as policy_rows
+    from objdel.rl import rows as rl_rows
 
-    train = dataset.grpo_rows(a.train, "lidc", "train", oversample=dataset.DISAGREEMENT_OVERSAMPLE)
+    train = rl_rows.grpo_rows(a.train, "lidc", "train", oversample=policy_rows.DISAGREEMENT_OVERSAMPLE)
     rows = eval_rows(a.probe, a.items or G_PROBE["items"])
     rows = [r | {"image": Image.open(r["image"]).convert("RGB")} for r in rows]
     docs = []

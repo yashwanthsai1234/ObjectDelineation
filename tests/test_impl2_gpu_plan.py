@@ -113,7 +113,7 @@ def test_bash_steps_are_valid_shell_and_their_python_snippets_compile():
 
 def test_named_files_exist():
     for f in ("experiments/cuda_checker/run_box.sh", "experiments/phase2/docker/env_check.sh",
-              "tests/test_gpu_scoring.py", "tests/test_train_fast.py"):
+              "tests/test_gpu_scoring.py", "tests/rl/test_trl_adapter_equivalence.py"):
         assert (ROOT / f).is_file(), f
     box = (ROOT / "experiments/cuda_checker/run_box.sh").read_text()
     assert "--build-only" in box

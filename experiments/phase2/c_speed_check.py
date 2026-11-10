@@ -26,7 +26,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from objdel.train import fast, vllm_sync
+from objdel.rl import trl_adapter as fast
+from objdel.rl import vllm_sync
 
 MAX_PUSH_S, MAX_SPREAD = 0.2, 2.0  # G-SY2 median push seconds; G-SY3 max / median seconds
 MAX_RISE_B, MAX_LEAK_B = 100 << 20, 1 << 20  # G-SY1 peak memory rise; G-SY3 allocated memory drift
@@ -82,7 +83,7 @@ def make_batches(generate, rows, n_rows: int, out) -> list[Path]:
     import torch
 
     from objdel.hashing import pixels_sha256
-    from objdel.train import record
+    from objdel.rl import record
 
     out, adv = record.open_dir(out), centred_advantages()
     paths = []
@@ -102,7 +103,7 @@ def compare_pixels(images, ip, device, backend: str, chunk: int = CHUNK) -> dict
     {backend, views, mismatches, first (index of the first differing image or None), median_ms (per chunk call)}."""
     import torch
 
-    from objdel.train import gpu_pixels
+    from objdel.policy import gpu_pixels
 
     bad, ms = [], []
     for start in range(0, len(images), chunk):
@@ -331,7 +332,7 @@ def trainer_generate(trainer, scratch):
     (_generate_and_score_completions in train mode), recorded by FastGRPO as --record-batches does and read back."""
     import torch
 
-    from objdel.train import record
+    from objdel.rl import record
 
     trainer.record_dir, trainer.checks_from_step = record.open_dir(scratch), 1
 
@@ -354,7 +355,8 @@ def run_pixels(trainer, rows, n_rows: int, out: Path) -> dict:
 
     import torch
 
-    from objdel.train import gpu_pixels, nvtx
+    from objdel.policy import gpu_pixels
+    from objdel.policy import marks as nvtx
 
     check = out / "c_check"
     paths = make_batches(trainer_generate(trainer, check / "scratch"), rows, n_rows, check / "batches")
@@ -384,9 +386,9 @@ def main(argv=None) -> int:
         return 2
     if flag.pixels:
         refuse_val(a.train)
+    from objdel.rl import rows as dataset
     from objdel.rl.build import build_trainer
     from objdel.rl.run import save_json
-    from objdel.train import dataset
 
     a = a.model_copy(update={"fast_sync": flag.sync or a.fast_sync, "gpu_pixels": "auto" if flag.pixels else a.gpu_pixels})
     out = Path(a.out)

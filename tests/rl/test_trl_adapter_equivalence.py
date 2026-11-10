@@ -1,4 +1,5 @@
-"""objdel.train.fast: per-chunk trimming of the GRPO forwards and the per-step vision cache (perf C1, C6, RL-6).
+"""objdel.rl.trl_adapter: FastGRPO against the plain GRPOTrainer: per-chunk trimming of the GRPO forwards, shared
+prefixes, the vLLM paths and the importance-ratio logs (perf C1, C6, RL-6; from the old test_train_fast.py, E5).
 
 The reference for every equality test is TRL 1.17's own `_get_per_token_logps_and_entropies` on the untrimmed batch,
 run on a tiny random Qwen3-VL (CPU, fp32) with TRL's fused LM head.
@@ -6,15 +7,12 @@ run on a tiny random Qwen3-VL (CPU, fp32) with TRL's fused LM head.
 
 import collections
 import contextlib
-import functools
 import json
 import math
 import time
 
 import numpy as np
 import pytest
-from hypothesis import HealthCheck, given, settings
-from hypothesis import strategies as st
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
@@ -23,7 +21,11 @@ from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration  # noqa:
 from trl import GRPOTrainer  # noqa: E402
 from trl.trainer.utils import add_fused_lm_head  # noqa: E402
 
-from objdel.train import fast  # noqa: E402
+from objdel.policy import caches as policy_caches  # noqa: E402
+from objdel.policy import models as policy_models  # noqa: E402
+from objdel.rl import forward as rl_forward  # noqa: E402
+from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
+from tests.rl.test_forward import rows  # noqa: E402
 
 IMG, START, END = 100, 102, 103
 PATCH = 3 * 2 * 16 * 16  # channels x temporal patch x patch x patch
@@ -67,7 +69,7 @@ class Plain(GRPOTrainer):
     pass
 
 
-class Fast(fast.FastForward, GRPOTrainer):
+class Fast(rl_trl_adapter.FastForward, GRPOTrainer):
     pass
 
 
@@ -88,18 +90,6 @@ def batch(pads, lengths, P=12, T=10, images=None, seed=1):
     return ids, mask, T, kw
 
 
-def test_window_cuts_to_the_longest_real_answer_rounded_to_a_bucket():
-    # prompt width 12 (left pads 3 and 5 -> 9 real columns), completion width 10, longest real answer 4
-    mask = torch.ones(2, 22, dtype=torch.long)
-    mask[0, :3], mask[1, :5] = 0, 0
-    mask[0, 12 + 4:], mask[1, 12 + 2:] = 0, 0
-    assert fast.window(mask, 10, buckets=(8, 16, 20)) == (3, 7)  # need 9 + 4 = 13 -> bucket 16: keep 16 - 9 = 7
-    assert fast.window(mask, 10, buckets=(13,)) == (3, 4)  # an exact fit keeps the 3 left pads, no more
-    assert fast.window(mask, 10, buckets=(64,)) == (0, 10)  # a bucket wider than the batch: nothing to cut
-    mask[:, 12:] = 0  # no real answer token: keep 1 column (TRL's labels[:, :-keep] needs keep >= 1)
-    assert fast.window(mask, 10, buckets=(9, 10)) == (3, 1)
-
-
 @pytest.mark.parametrize("batch_size", [None, 1, 2])
 def test_trimmed_logps_equal_trls_untrimmed(batch_size):
     m = tiny_model()
@@ -115,100 +105,11 @@ def test_trimmed_logps_equal_trls_untrimmed(batch_size):
     assert (lp[~real] == 0).all()  # cut positions come back as 0, as TRL's own masked positions
 
 
-def counted_tower(m):
-    """Counts the images the real vision tower encodes (grid rows per call)."""
-    seen, orig = [], m.model.visual.forward
-
-    def forward(pixel_values, grid_thw=None, **kw):
-        seen.append(len(grid_thw))
-        return orig(pixel_values, grid_thw=grid_thw, **kw)
-
-    m.model.visual.forward = forward
-    return seen
-
-
-def test_vision_cache_gives_trls_logps_and_encodes_each_image_once():
-    m = tiny_model()
-    ids, mask, T, kw = batch(pads=[2, 0, 5, 1, 0], lengths=[3, 7, 1, 2, 5], images=[0, 0, 1, 1, 0])  # 2 images
-    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
-    seen = counted_tower(m)
-    cache = fast.VisionCache.install(m)
-    t = trainer(Fast, buckets=(4, 8, 12, 16))
-    for _ in range(3):  # old-logprob, reference and update passes of one generation batch
-        lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
-        torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
-    assert sum(seen) == 2  # 5 rows x 3 passes = 15 image uses, 2 distinct images encoded
-    cache.clear()  # a new generation batch: the next pass encodes again
-    t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
-    assert sum(seen) == 4
-
-
-def test_rope_cache_gives_trls_logps_and_computes_each_row_once():
-    """C5: Qwen3-VL's 3-D rope positions (get_rope_index: per-row host reads) are computed once per row per generation
-    batch at the full width and sliced per chunk, not once per chunk in each of the old, reference and update passes.
-    The update's micro-batches are other row subsets (TRL shuffles): rows are found by content."""
-    m = tiny_model()
-    ids, mask, T, kw = batch(pads=[2, 0, 5, 1, 0], lengths=[3, 7, 1, 2, 5])
-    ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
-    rows, orig = [], m.model.get_rope_index
-    m.model.get_rope_index = lambda input_ids, **k: rows.append(len(input_ids)) or orig(input_ids, **k)
-    t = trainer(Fast, buckets=(4, 8, 12, 16), rope=fast.RopeCache.install(m))
-    for _ in range(2):  # old-logprob and reference passes over the whole batch
-        lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
-        torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
-    perm = [3, 0, 4]  # an update micro-batch: a shuffled subset
-    sub = {"pixel_values": kw["pixel_values"].reshape(5, 16, PATCH)[perm].reshape(-1, PATCH), "num_images": [1] * 3,
-           "image_grid_thw": kw["image_grid_thw"][perm], "mm_token_type_ids": kw["mm_token_type_ids"][perm]}
-    lp, _, _ = t._get_per_token_logps_and_entropies(m, ids[perm], mask[perm], T, **sub)
-    torch.testing.assert_close(lp, ref[perm], atol=1e-5, rtol=1e-5)
-    assert sum(rows) == 5  # 5 rows x 3 passes, each row's positions computed once
-    t.rope.clear()  # a new generation batch
-    t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=2, **kw)
-    assert sum(rows) == 10 and t.rope.pending is None
-
-
-def test_rope_cache_keys_rows_by_their_exact_tokens_and_image_grids():
-    """The prompt text is fixed per dataset, so a row's ids carry only its pad count t*h/2*w/2: grids (1, 4, 8) and
-    (1, 8, 4) give the same ids but other image positions. Rows are keyed exactly, ids, mask and grids."""
-
-    class Base(torch.nn.Module):
-        calls = []
-
-        def get_rope_index(self, input_ids, image_grid_thw, **k):
-            self.calls.append(image_grid_thw.tolist())
-            pos = image_grid_thw[:, 1:2].float().expand(len(input_ids), input_ids.size(1))  # h as the position
-            return pos.unsqueeze(0).expand(3, -1, -1), None
-
-    cache = fast.RopeCache(Base())
-    ids, mask, mm = torch.ones(3, 4, dtype=torch.long), torch.ones(3, 4, dtype=torch.long), torch.zeros(3, 4)
-    grid = torch.tensor([[1, 4, 8], [1, 8, 4], [1, 4, 8]])
-    pos = cache.positions(ids, mask, mm, grid, [1, 1, 1])
-    assert Base.calls == [[[1, 4, 8], [1, 8, 4]]]  # row 2 repeats row 0 exactly: computed once
-    assert pos[0, :, 0].tolist() == [4.0, 8.0, 4.0]
-
-
-
-def test_rope_positions_are_computed_on_host_copies_and_returned_on_the_rows_device():
-    """get_rope_index reads the host several times per row (~9 syncs on CUDA tensors); on the host copies keys()
-    already makes, the same function makes none, and one copy returns the positions to the rows' device."""
-    seen = []
-
-    class Base(torch.nn.Module):
-        def get_rope_index(self, input_ids, image_grid_thw, attention_mask, mm_token_type_ids):
-            seen.append({t.device.type for t in (input_ids, image_grid_thw, attention_mask, mm_token_type_ids)})
-            return torch.zeros(3, *input_ids.shape), None
-
-    ids = torch.ones(2, 4, dtype=torch.long)
-    pos = fast.RopeCache(Base()).positions(ids, torch.ones_like(ids), torch.zeros_like(ids),
-                                           torch.tensor([[1, 4, 8], [1, 8, 4]]), [1, 1])  # fmt: skip
-    assert seen == [{"cpu"}] and pos.device == ids.device and pos.shape == (3, 2, 4)
-
-
 def test_lora_leaves_the_vision_tower_frozen():
     """The cache is valid only because no trainable weight sits in the tower or the projector (configs.lora, D6)."""
     from peft import get_peft_model
 
-    from objdel.train import configs
+    from objdel.policy import models as configs
 
     m = get_peft_model(tiny_model(), configs.lora("qwen3-vl-2b"))
     trainable = [n for n, p in m.named_parameters() if p.requires_grad]
@@ -217,7 +118,7 @@ def test_lora_leaves_the_vision_tower_frozen():
 
 def test_fast_grpo_clears_the_vision_cache_per_generation_batch(monkeypatch):
     m = tiny_model()
-    t = trainer(fast.FastGRPO, vision=fast.VisionCache.install(m))
+    t = trainer(rl_trl_adapter.FastGRPO, vision=policy_caches.VisionCache.install(m))
     t.vision.store["old image"] = None
     monkeypatch.setattr(GRPOTrainer, "_generate_and_score_completions", lambda self, inputs: {"done": inputs})
     assert t._generate_and_score_completions(["prompts"]) == {"done": ["prompts"]}
@@ -225,21 +126,21 @@ def test_fast_grpo_clears_the_vision_cache_per_generation_batch(monkeypatch):
 
 
 def test_fast_grpo_trains_on_open_once_rows_from_the_main_process(monkeypatch):
-    from objdel.train.dataset import OpenOnce
+    from objdel.rl.rows import OpenOnce
 
     seen = []
     monkeypatch.setattr(GRPOTrainer, "get_train_dataloader", lambda self: seen.append(self.train_dataset) or "dl")
     rows = Dataset.from_list([{"prompt": "q", "image": None, "key": "k"}])
-    t = trainer(fast.FastGRPO, train_dataset=rows, args=type("A", (), {"dataloader_num_workers": 0})())
-    assert fast.FastGRPO.get_train_dataloader(t) == "dl"
+    t = trainer(rl_trl_adapter.FastGRPO, train_dataset=rows, args=type("A", (), {"dataloader_num_workers": 0})())
+    assert rl_trl_adapter.FastGRPO.get_train_dataloader(t) == "dl"
     assert isinstance(seen[0], OpenOnce) and t.train_dataset is rows  # wrapped only for the loader
     t.args.dataloader_num_workers = 2  # a worker would keep its own last stack: the 16 fetches spread over workers
     with pytest.raises(ValueError, match="dataloader_num_workers"):
-        fast.FastGRPO.get_train_dataloader(t)
+        rl_trl_adapter.FastGRPO.get_train_dataloader(t)
 
 
 def test_fast_grpo_skips_flop_counting():
-    assert trainer(fast.FastGRPO).floating_point_ops({"input_ids": torch.ones(2, 3)}) == 0
+    assert trainer(rl_trl_adapter.FastGRPO).floating_point_ops({"input_ids": torch.ones(2, 3)}) == 0
 
 
 def test_compiled_text_layers_give_eager_logps():
@@ -248,12 +149,12 @@ def test_compiled_text_layers_give_eager_logps():
     ids, mask, T, kw = batch(pads=[2, 0], lengths=[3, 7])
     ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
     names = [n for n, _ in m.named_parameters()]
-    assert fast.compile_text_layers(m, "default") == 3
+    assert policy_models.compile_text_layers(m, "default") == 3
     lp, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
     torch.testing.assert_close(lp, ref, atol=1e-4, rtol=1e-4)
     assert [n for n, _ in m.named_parameters()] == names  # the vLLM weight sync reads these names
     import torch._dynamo.config as dc  # 8 widths x grad on/off x adapter on/off (ref pass): past the default 8, eager
-    assert dc.recompile_limit >= 4 * len(fast.BUCKETS) and dc.accumulated_recompile_limit >= 1024
+    assert dc.recompile_limit >= 4 * len(rl_forward.BUCKETS) and dc.accumulated_recompile_limit >= 1024
 
 
 def test_vllm_prompts_carry_one_image_pad_per_image():
@@ -261,7 +162,7 @@ def test_vllm_prompts_carry_one_image_pad_per_image():
     ids, not vLLM's (grpo_trainer.py 1844). One pad per image is the input vLLM's processor expands itself."""
     rows = [{"prompt_token_ids": [1, START, IMG, IMG, IMG, END, 7, IMG, IMG, 8], "multi_modal_data": {"image": "a"}},
             {"prompt_token_ids": [1, 2, 3]}]  # fmt: skip
-    assert fast.one_pad_per_image(rows, IMG) == [
+    assert rl_trl_adapter.one_pad_per_image(rows, IMG) == [
         {"prompt_token_ids": [1, START, IMG, END, 7, IMG, 8], "multi_modal_data": {"image": "a"}},
         {"prompt_token_ids": [1, 2, 3]}]  # fmt: skip
 
@@ -276,15 +177,15 @@ def vllm_trainer(expand):
             ids = [[x for t in r["prompt_token_ids"] for x in ([t] * expand if t == IMG else [t])] for r in prompts]
             return [type("O", (), {"prompt_token_ids": i})() for i in ids]
 
-    t = trainer(fast.FastGRPO, vision=None, vllm_generation=type("G", (), {"llm": LLM()})(), use_vllm=True,
+    t = trainer(rl_trl_adapter.FastGRPO, vision=None, vllm_generation=type("G", (), {"llm": LLM()})(), use_vllm=True,
                 model=type("M", (), {"config": type("C", (), {"image_token_id": IMG})()})())  # fmt: skip
     return t, sent
 
 
 def test_fast_grpo_sends_vllm_one_pad_per_image():
     t, sent = vllm_trainer(expand=2)
-    fast.FastGRPO.patch_vllm_prompts(t)
-    fast.FastGRPO.patch_vllm_prompts(t)  # idempotent
+    rl_trl_adapter.FastGRPO.patch_vllm_prompts(t)
+    rl_trl_adapter.FastGRPO.patch_vllm_prompts(t)  # idempotent
     rows = [{"prompt_token_ids": [START, IMG, IMG, END], "multi_modal_data": {"image": "a"}}]
     out = t.vllm_generation.llm.generate(rows, sampling_params=None)
     assert [o.prompt_token_ids for o in out] == [[START, IMG, IMG, END]]
@@ -294,7 +195,7 @@ def test_fast_grpo_sends_vllm_one_pad_per_image():
 def test_fast_grpo_fails_loudly_when_vllm_expands_the_image_differently():
     """vLLM then samples from other image features than the trainer scores: off-policy without an error."""
     t, _ = vllm_trainer(expand=3)
-    fast.FastGRPO.patch_vllm_prompts(t)
+    rl_trl_adapter.FastGRPO.patch_vllm_prompts(t)
     rows = [{"prompt_token_ids": [START, IMG, IMG, END], "multi_modal_data": {"image": "a"}}]
     with pytest.raises(RuntimeError, match="vLLM expanded the image"):
         t.vllm_generation.llm.generate(rows, sampling_params=None)
@@ -310,20 +211,20 @@ def test_vllm_generate_checked_is_the_one_prompt_path():
         return [type("O", (), {"prompt_token_ids": i})() for i in ids]
 
     rows = [{"prompt_token_ids": [START, IMG, IMG, END], "multi_modal_data": {"image": "a"}}]
-    fast.vllm_generate_checked(generate, rows, IMG, lora_request=None)
+    rl_trl_adapter.vllm_generate_checked(generate, rows, IMG, lora_request=None)
     assert sent == [([{"prompt_token_ids": [START, IMG, END], "multi_modal_data": {"image": "a"}}],
                      {"lora_request": None})]
     with pytest.raises(RuntimeError, match="vLLM expanded the image to 3 pads"):
-        fast.vllm_generate_checked(generate, rows, IMG, expand=3)
+        rl_trl_adapter.vllm_generate_checked(generate, rows, IMG, expand=3)
 
 
 def test_fast_grpo_prefetch_waits_for_a_generation_batch(monkeypatch):
     """g_probe's step-0 sampling calls _generate outside a generation batch: no rows, nothing to prefetch."""
     f = type("F", (), {"__call__": lambda self, **kw: None})()
     f.trl_reward = type("R", (), {"prefetch": lambda self, *a: pytest.fail("prefetch outside a batch")})()
-    t = object.__new__(fast.FastGRPO)  # rows as __init__ leaves them
+    t = object.__new__(rl_trl_adapter.FastGRPO)  # rows as __init__ leaves them
     t.accelerator, t.model, t.use_vllm, t.reward_funcs = _Accel(), type("M", (), {"training": True})(), False, [f]
-    t._metrics, t.rows = {"train": __import__("collections").defaultdict(list)}, fast.FastGRPO.rows
+    t._metrics, t.rows = {"train": __import__("collections").defaultdict(list)}, rl_trl_adapter.FastGRPO.rows
     out = ("pids", [[1]], None, ["a"], None, None, {}, None, [])
     monkeypatch.setattr(GRPOTrainer, "_generate", lambda self, prompts: out)
     assert t._generate(["p"]) == out
@@ -332,7 +233,7 @@ def test_fast_grpo_prefetch_waits_for_a_generation_batch(monkeypatch):
 def test_fast_grpo_logs_the_phase_times(monkeypatch):
     """time/generate_s (vLLM), time/rewards_s (checker + scoring), time/batch_s (generate + old/ref logprobs +
     rewards); TRL's step_time adds the update. They reach log_history through TRL's metric means."""
-    t = trainer(fast.FastGRPO, vision=None, use_vllm=False, reward_funcs=[])
+    t = trainer(rl_trl_adapter.FastGRPO, vision=None, use_vllm=False, reward_funcs=[])
     out = ("pids", [[1]], None, ["a"], None, None, {}, None, [])
     monkeypatch.setattr(GRPOTrainer, "_generate", lambda self, prompts: out)
     monkeypatch.setattr(GRPOTrainer, "_calculate_rewards", lambda self, *a: "rewards")
@@ -354,7 +255,7 @@ def test_fast_grpo_starts_scoring_when_vllm_returns(monkeypatch):
     reward = type("R", (), {"prefetch": lambda self, *a: got.append(a)})()
     f = type("F", (), {"__call__": lambda self, **kw: None})()
     f.trl_reward = reward
-    t = trainer(fast.FastGRPO, vision=None, use_vllm=False, reward_funcs=[f])
+    t = trainer(rl_trl_adapter.FastGRPO, vision=None, use_vllm=False, reward_funcs=[f])
     rows = [{"prompt": [], "key": k, "W": 50, "H": 40, "names": ["nodule"]} for k in ("a", "a", "b", "b")]
     answers = [[{"role": "assistant", "content": c}] for c in "wxyz"]
     ids = [[1, 7], [2, 7], [3], [4, 7]]
@@ -369,23 +270,10 @@ def test_fast_grpo_starts_scoring_when_vllm_returns(monkeypatch):
     assert len(got) == 1
 
 
-def test_is_ratio_follows_trls_modes_on_a_worked_example():
-    """TRL 1.17's vLLM importance-sampling ratio (grpo_trainer.py 2776-2824): token gaps 0, 0.5 and a masked one;
-    the sequence gap is 0.5; exp(0.5) = 1.6487."""
-    lp, smp, m = torch.tensor([[0.0, -1.0, -2.0]]), torch.tensor([[0.0, -1.5, -1.0]]), torch.tensor([[1.0, 1.0, 0.0]])
-    e = 1.6487212707
-    cases = {("token_truncate", None, 1.5): [[1.0, 1.5, 1.0]], ("token_mask", None, 1.5): [[1.0, 0.0, 1.0]],
-             ("sequence_mask", None, 3.0): [[e]], ("sequence_mask", None, 1.5): [[0.0]],
-             ("sequence_truncate", None, 1.5): [[1.5]], ("sequence_mask", 2.0, None): [[0.0]]}  # fmt: skip
-    for (mode, lo, hi), want in cases.items():
-        torch.testing.assert_close(fast.is_ratio(lp, smp, m, mode, lo, hi), torch.tensor(want), msg=mode)
-    nan = torch.tensor([[0.0, float("nan"), -1.0]])  # a token vLLM could not score: no correction
-    torch.testing.assert_close(fast.is_ratio(lp, nan, m, "token_mask", None, 3.0), torch.tensor([[1.0, 1.0, 1.0]]))
-
-
 def c10_trainer(steps_per_generation=16, num_iterations=1):
     args = type("A", (), {"gradient_accumulation_steps": 16, "steps_per_generation": steps_per_generation})()
-    return trainer(fast.FastGRPO, vision=None, use_vllm=True, vllm_importance_sampling_correction=True, args=args,
+    return trainer(rl_trl_adapter.FastGRPO, vision=None, use_vllm=True, vllm_importance_sampling_correction=True,
+        args=args,
                    num_iterations=num_iterations, loss_type="dr_grpo", vllm_importance_sampling_mode="sequence_mask",
                    vllm_importance_sampling_clip_min=None, vllm_importance_sampling_clip_max=3.0,
                    off_policy_mask_threshold=None)  # fmt: skip
@@ -410,7 +298,8 @@ def test_update_forward_gives_trl_its_importance_ratio(monkeypatch, tmp_path):
     multiplies by inputs["importance_sampling_ratio"]. TRL's sampling metrics cover the whole generation batch (min,
     max and token-weighted means over every micro-batch), kept on the device and read once, at log time."""
     lp = torch.tensor([[0.0, -1.0, -2.0], [-0.5, -0.5, -0.5]], requires_grad=True)
-    monkeypatch.setattr(fast.FastForward, "_get_per_token_logps_and_entropies", lambda self, *a, **k: (lp, None, None))
+    monkeypatch.setattr(rl_trl_adapter.FastForward, "_get_per_token_logps_and_entropies", lambda self, *a, **k: (lp,
+        None, None))
     logged = []
     monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: logged.append({**self._metrics["train"]}))
     t = c10_trainer()
@@ -439,18 +328,6 @@ def test_update_forward_gives_trl_its_importance_ratio(monkeypatch, tmp_path):
     assert logged[1]["sampling/importance_sampling_ratio/min"] == [1.0]
 
 
-def test_by_length_orders_rows_longest_first_and_moves_every_field_with_them():
-    """TRL shuffles the generation batch before splitting it into update micro-batches, so each chunk is as wide as
-    its longest row; sorted, rows of like length share a chunk and FastForward trims each to its own width."""
-    d = {"prompt_mask": torch.tensor([[0, 1], [1, 1], [1, 1], [0, 1]]),
-         "completion_mask": torch.tensor([[1, 0, 0], [1, 1, 1], [1, 0, 0], [1, 1, 0]]),
-         "pixel_values": ["p0", "p1", "p2", "p3"], "num_items_in_batch": torch.tensor(9), "tool_mask": None}
-    out = fast.by_length(d)  # real lengths 2, 5, 3, 3: ties keep their order
-    assert out["pixel_values"] == ["p1", "p2", "p3", "p0"]
-    assert out["completion_mask"].tolist() == [[1, 1, 1], [1, 0, 0], [1, 1, 0], [1, 0, 0]]
-    assert out["num_items_in_batch"] == 9 and out["tool_mask"] is None
-
-
 def test_update_micro_batches_are_length_sorted_only_when_that_leaves_the_gradient_unchanged(monkeypatch):
     """dr_grpo divides each micro-batch's sum by a constant (micro-batch rows x max_completion_length, then the
     accumulation steps: grpo_trainer.py 3285-3289), so when every micro-batch of a generation batch lands in one
@@ -464,7 +341,7 @@ def test_update_micro_batches_are_length_sorted_only_when_that_leaves_the_gradie
     t = c10_trainer()
     t.model = type("M", (), {"training": True})()
     t._prepare_inputs({})
-    assert seen == [fast.by_length] and G.shuffle_sequence_dict is shuffle  # restored after the call
+    assert seen == [rl_forward.by_length] and G.shuffle_sequence_dict is shuffle  # restored after the call
     t.args.steps_per_generation = 32  # micro-batches of one generation batch span two optimizer steps
     t._prepare_inputs({})
     t.args.steps_per_generation, t.loss_type = 16, "bnpo"  # a per-micro-batch token-count normaliser
@@ -478,19 +355,20 @@ def test_lora_input_cast_is_dropped_only_under_bf16_autocast_where_it_is_bit_ide
     and FastGRPO turns it off. Without autocast the cast is what makes the dtypes match, so it stays."""
     from peft import get_peft_model
 
-    from objdel.train import configs
+    from objdel.policy import models as configs
 
     m = get_peft_model(tiny_model().to(torch.bfloat16), configs.lora("qwen3-vl-2b"), autocast_adapter_dtype=True)
     assert next(p for n, p in m.named_parameters() if "lora_A" in n).dtype == torch.float32
     ids = torch.randint(0, 100, (2, 9))
     with torch.autocast("cpu", torch.bfloat16):
         ref = m(input_ids=ids).logits
-        n = fast.no_lora_input_cast(m)
+        n = rl_trl_adapter.no_lora_input_cast(m)
         assert n > 0 and all(not mod.cast_input_dtype_enabled for _, mod in m.named_modules()
                              if hasattr(mod, "cast_input_dtype_enabled"))  # fmt: skip
         assert torch.equal(m(input_ids=ids).logits, ref)
-    t = trainer(fast.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False})(), model=m)
-    assert fast.FastGRPO.drop_lora_input_cast(t) is False  # no autocast: nothing changed (and the model left as is)
+    t = trainer(rl_trl_adapter.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False})(), model=m)
+    # no autocast: nothing changed (and the model left as is)
+    assert rl_trl_adapter.FastGRPO.drop_lora_input_cast(t) is False
 
 
 def _lora_bf16():
@@ -498,7 +376,7 @@ def _lora_bf16():
     moves the weights (a fresh adapter has B = 0)."""
     from peft import get_peft_model
 
-    from objdel.train import configs
+    from objdel.policy import models as configs
 
     m = get_peft_model(tiny_model(), configs.lora("qwen3-vl-2b")).to(torch.bfloat16)
     g = torch.Generator().manual_seed(1)
@@ -522,7 +400,7 @@ def _trl_iter(model):
 
 def test_vllm_sync_pushes_the_same_weights_as_trls_merge():
     m = _lora_bf16()
-    ours = {n: t.clone() for n, t in fast.lora_merged_params(m)}
+    ours = {n: t.clone() for n, t in rl_trl_adapter.lora_merged_params(m)}
     trl = {n: t.clone() for n, t in _trl_iter(m)}
     assert ours.keys() == trl.keys() and not any("lora_" in n for n in ours)
     assert all(torch.equal(ours[n], trl[n]) for n in ours)
@@ -534,7 +412,7 @@ def test_vllm_sync_never_writes_the_base_weights():
     m = _lora_bf16()
     before = {n: p.detach().clone() for n, p in m.named_parameters()}
     for _ in range(20):
-        for _ in fast.lora_merged_params(m):
+        for _ in rl_trl_adapter.lora_merged_params(m):
             pass
     assert all(torch.equal(p, before[n]) for n, p in m.named_parameters())
     for _ in range(20):  # the bug this replaces, so the test above is not vacuous
@@ -547,13 +425,13 @@ def test_fast_grpo_routes_trls_vllm_sync_through_the_no_merge_path():
     from types import SimpleNamespace
 
     m = _lora_bf16()
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.model, t.accelerator = m, SimpleNamespace(num_processes=1)
     t.vllm_generation = SimpleNamespace(model=m, _dist=SimpleNamespace(is_fsdp=False))
     assert t.sync_without_merge()
     before = {n: p.detach().clone() for n, p in m.named_parameters()}
     pushed = dict(t.vllm_generation._iter_named_params())
-    assert pushed.keys() == dict(fast.lora_merged_params(m)).keys()
+    assert pushed.keys() == dict(rl_trl_adapter.lora_merged_params(m)).keys()
     assert all(torch.equal(p, before[n]) for n, p in m.named_parameters())
     t.vllm_generation = None  # no vLLM (use_vllm False): nothing to route
     assert not t.sync_without_merge()
@@ -564,18 +442,19 @@ def test_uncompiled_chunks_round_widths_to_64_not_to_the_compile_buckets():
     mask = torch.zeros(2, 1000, dtype=torch.long)  # prompt width P = 400, 600 answer columns
     mask[:, 70:400] = 1  # 330 prompt tokens
     mask[0, 400:500] = 1  # the longest answer: 100 tokens
-    start, keep = fast.window(mask, 600, fast.FastForward.buckets)
-    assert fast.FastForward.buckets == tuple(range(64, 2049, 64))
+    start, keep = rl_forward.window(mask, 600, rl_trl_adapter.FastForward.buckets)
+    assert rl_trl_adapter.FastForward.buckets == tuple(range(64, 2049, 64))
     assert (400 + keep - start, keep) == (448, 118)  # 330 + 100 = 430 -> 448
-    start, keep = fast.window(mask, 600, fast.BUCKETS)
+    start, keep = rl_forward.window(mask, 600, rl_forward.BUCKETS)
     assert 400 + keep - start == 512
 
 
 def test_compiled_layers_go_back_to_the_compile_buckets():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[1] / "src/objdel/rl/build.py").read_text()
-    assert "fast.compile_text_layers(trainer.model, flags.compile)" in src and "trainer.buckets = fast.BUCKETS" in src
+    src = (Path(__file__).resolve().parents[2] / "src/objdel/rl/build.py").read_text()
+    assert "policy_models.compile_text_layers(trainer.model, flags.compile)" in src
+    assert "trainer.buckets = rl_forward.BUCKETS" in src
 
 
 def test_vllm_sync_wake_and_sleep_are_timed():
@@ -586,7 +465,7 @@ def test_vllm_sync_wake_and_sleep_are_timed():
     llm = SimpleNamespace(wake_up=lambda tags=None: calls.append(("wake", tags)),
                           sleep=lambda level=1: calls.append(("sleep", level)))
     vg = SimpleNamespace(llm=llm, sync_weights=lambda: calls.append(("sync",)))
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.model, t.vllm_generation = SimpleNamespace(training=True), vg
     t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
     t.time_vllm_phases()
@@ -604,9 +483,9 @@ def test_wake_time_is_split_by_tags_and_no_wake_time_is_lost(monkeypatch):
     from types import SimpleNamespace
 
     clock = iter(range(100))
-    monkeypatch.setattr(fast.time, "perf_counter", lambda: next(clock) * 1.0)
+    monkeypatch.setattr(rl_trl_adapter.time, "perf_counter", lambda: next(clock) * 1.0)
     llm = SimpleNamespace(wake_up=lambda tags=None: None, sleep=lambda level=1: None)
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.model, t.vllm_generation = SimpleNamespace(training=True), SimpleNamespace(llm=llm, sync_weights=lambda: None)
     t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
     t.time_vllm_phases()
@@ -639,7 +518,7 @@ def group_batch(groups, G, lengths, pads=None, P=12, T=10, seed=3):
 
 
 def shared(m, **attrs):
-    return trainer(Fast, shared_prefix=True, rope=fast.RopeCache.install(m), **attrs)
+    return trainer(Fast, shared_prefix=True, rope=policy_caches.RopeCache.install(m), **attrs)
 
 
 @pytest.mark.parametrize("batch_size", [8, 4])
@@ -702,18 +581,6 @@ def test_shared_prefix_falls_back_when_rows_do_not_share_prompts():
     torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
 
 
-def test_by_group_length_keeps_each_group_together_longest_group_first():
-    n = torch.tensor([3, 9, 2, 4, 5, 5, 1, 1, 7, 2, 2, 2])  # 3 groups of 4: longest members 9, 5, 7
-    batch_ = {"prompt_mask": torch.ones(12, 1, dtype=torch.long),
-              "completion_mask": torch.zeros(12, 9, dtype=torch.long),
-              "tag": list(range(12)), "advantages": torch.arange(12.0)}
-    for r, L in enumerate(n.tolist()):
-        batch_["completion_mask"][r, :L] = 1
-    out = fast.by_group_length(batch_, 4)
-    assert out["tag"] == [0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6, 7]
-    assert out["advantages"].tolist() == [float(i) for i in out["tag"]]
-
-
 def test_shared_prefix_update_micro_batches_keep_whole_groups(monkeypatch):
     """With shared_prefix the update's order keeps each prompt's G answers together (by_group_length), so a
     micro-batch of whole groups packs; micro-batches that cannot hold whole groups keep by_length."""
@@ -725,10 +592,10 @@ def test_shared_prefix_update_micro_batches_keep_whole_groups(monkeypatch):
     t.model, t.shared_prefix, t.num_generations = type("M", (), {"training": True})(), True, 8
     t.args.per_device_train_batch_size = 16
     t._prepare_inputs({})
-    assert seen[0].func is fast.by_group_length and seen[0].keywords == {"G": 8}
+    assert seen[0].func is rl_forward.by_group_length and seen[0].keywords == {"G": 8}
     t.args.per_device_train_batch_size = 12  # not whole groups of 8
     t._prepare_inputs({})
-    assert seen[1] is fast.by_length
+    assert seen[1] is rl_forward.by_length
 
 
 def test_shared_prefix_normalizes_over_the_sampled_support_as_trl():
@@ -752,7 +619,7 @@ def test_train_rl_and_g_probe_turn_on_shared_prefix_by_flag(capsys):
     with pytest.raises(SystemExit):
         train_rl.main(["--help"])
     assert "--shared-prefix" in capsys.readouterr().out
-    src = (Path(__file__).resolve().parents[1] / "src/objdel/rl/build.py").read_text()
+    src = (Path(__file__).resolve().parents[2] / "src/objdel/rl/build.py").read_text()
     assert "trainer.shared_prefix = flags.shared_prefix" in src
 
 
@@ -768,19 +635,10 @@ def test_shared_prefix_mask_works_under_both_attention_kinds(impl):
     torch.testing.assert_close(lp[real], ref[real], atol=1e-5, rtol=1e-5)
 
 
-def test_packing_is_chosen_only_when_it_costs_less():
-    """Packed attention is dense over the whole packed row (prompt + 8 answers): with long answers its square
-    outgrows the 8 prompts it saves. Real sizes: 325-token prompts, 16 rows, linear cost ~12,000x an attention pair."""
-    short = [127] * 16
-    assert fast.packing_wins(325, short, groups=2)
-    assert not fast.packing_wins(325, [1536] * 16, groups=2)  # answers at the cap: per-row is cheaper
-    assert not fast.packing_wins(325, short, groups=16)  # nothing shared
-
-
 def test_long_answers_fall_back_to_the_per_row_forward(monkeypatch):
     m = tiny_model()
     ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10])
-    monkeypatch.setattr(fast, "packing_wins", lambda *a, **k: False)
+    monkeypatch.setattr(rl_trl_adapter, "packing_wins", lambda *a, **k: False)
     t = shared(m)
     ref, _, _ = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
     lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, **kw)
@@ -814,7 +672,7 @@ def test_update_order_keeps_trls_shuffle_under_a_per_micro_batch_entropy_cut(mon
 def test_shared_prefix_is_off_when_the_text_layers_are_compiled():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[1] / "src/objdel/rl/build.py").read_text()
+    src = (Path(__file__).resolve().parents[2] / "src/objdel/rl/build.py").read_text()
     assert "trainer.shared_prefix = flags.shared_prefix and not flags.compile" in src
 
 
@@ -866,8 +724,9 @@ def tiny_loop_vllm_fake(monkeypatch, out, steps=3, eval_steps=None):
     from trl import GRPOConfig
 
     monkeypatch.setattr(G, "VLLMGeneration", FakeVLLM)
-    monkeypatch.setattr(fast.FastGRPO, "get_train_dataloader", GRPOTrainer.get_train_dataloader)  # rows: no image
-    monkeypatch.setattr(fast.FastGRPO, "patch_vllm_prompts", lambda self: None)  # text only: no image pads
+    # rows: no image
+    monkeypatch.setattr(rl_trl_adapter.FastGRPO, "get_train_dataloader", GRPOTrainer.get_train_dataloader)
+    monkeypatch.setattr(rl_trl_adapter.FastGRPO, "patch_vllm_prompts", lambda self: None)  # text only: no image pads
     vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "prompt", *map(str, range(FakeVLLM.VOCAB - 3))])}
     tk = Tokenizer(models.WordLevel(vocab, unk_token="<pad>"))
     tk.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
@@ -884,7 +743,8 @@ def tiny_loop_vllm_fake(monkeypatch, out, steps=3, eval_steps=None):
                       vllm_importance_sampling_correction=True, vllm_importance_sampling_mode="sequence_mask",
                       **ev)  # fmt: skip
     rows = lambda *n: Dataset.from_list([{"prompt": f"prompt {i}"} for i in n])  # noqa: E731
-    t = fast.FastGRPO(model=model, reward_funcs=lambda completions, **kw: [len(c) % 3 * 1.0 for c in completions],
+    t = rl_trl_adapter.FastGRPO(model=model, reward_funcs=lambda completions,
+        **kw: [len(c) % 3 * 1.0 for c in completions],
                       args=args, train_dataset=rows(1, 2, 3, 4), eval_dataset=rows(7) if eval_steps else None,
                       processing_class=tok)  # fmt: skip
     t.train()
@@ -920,25 +780,11 @@ B21_KEYS = ("is_masked_share", "is_clamped_share", "seq_logdiff_mean", "seq_logd
             "seq_kl/q99.5")  # fmt: skip
 
 
-def rows(*gaps, adv=None, kl_nan=()):
-    """One micro-batch from per-row trainer-minus-vLLM token gaps (rows right-padded): logps 0, sampling = -gap;
-    kl_nan: (row, token) places where vLLM could not score (sampling NaN)."""
-    T = max(map(len, gaps))
-    g = torch.zeros(len(gaps), T)
-    m = torch.zeros(len(gaps), T, dtype=torch.long)
-    for i, x in enumerate(gaps):
-        g[i, : len(x)], m[i, : len(x)] = torch.tensor(x, dtype=torch.float32), 1
-    s = -g
-    for i, j in kl_nan:
-        s[i, j] = float("nan")
-    a = torch.tensor(adv if adv is not None else [1.0] * len(gaps))
-    return torch.zeros_like(g), {"sampling_per_token_logps": s, "completion_mask": m, "advantages": a}
-
-
 def is_trainer(mode, lo, hi, out, opsm=None):
     from types import SimpleNamespace
 
-    return trainer(fast.FastGRPO, use_vllm=True, vllm_importance_sampling_correction=True, args=SimpleNamespace(
+    return trainer(rl_trl_adapter.FastGRPO, use_vllm=True, vllm_importance_sampling_correction=True,
+        args=SimpleNamespace(
         output_dir=str(out)), vllm_importance_sampling_mode=mode, vllm_importance_sampling_clip_min=lo,
         vllm_importance_sampling_clip_max=hi, off_policy_mask_threshold=opsm)  # fmt: skip
 
@@ -975,14 +821,6 @@ def test_u37_clamped_counts_only_outside_the_bounds(monkeypatch, tmp_path):
     assert m["is_clamped_share"] == 0.25 and m["is_masked_share"] == 0.0
     m = logged(monkeypatch, tmp_path, "token_truncate", 0.1, hi, rows([0.8, 0.3, -5.0, 0.0]))
     assert m["is_clamped_share"] == 0.5  # e^-5 < 0.1 now counts
-
-
-def test_u37_summary_is_float32_on_the_input_device():
-    lp, x = rows([0.1, 0.2], [0.3])
-    s = fast.is_summary(lp, x["sampling_per_token_logps"], x["completion_mask"].bool(),
-                        fast.is_ratio(lp, x["sampling_per_token_logps"], x["completion_mask"], "token_mask", None, 3.0),
-                        x["advantages"], "token_mask", None, 3.0)  # fmt: skip
-    assert s.dtype == torch.float32 and s.device == lp.device and s.shape == (len(fast.SUMMARY),)
 
 
 U54 = rows([0.005] * 800,  # 0: sum 4.0 (e^4 > 3), mean 0.005 inside the geo band, seq_kl -0.005
@@ -1037,24 +875,6 @@ def test_u54_modified_token_share_counts_a_mask_and_a_2pct_clamp_not_half_a_pct(
     assert m["modified_token_share"] == 0.25
 
 
-def test_u62_counterfactual_opsm_equals_trls_off_policy_mask():
-    """Oracle: TRL's own GRPOTrainer.get_off_policy_mask (imported here only), drops = rows it returns 0 for."""
-    g = torch.Generator().manual_seed(0)
-    names = list(fast.SUMMARY)
-    for _ in range(200):
-        lp = -torch.rand(6, 9, generator=g) * 3
-        sp = lp + torch.randn(6, 9, generator=g) * torch.rand(6, 1, generator=g)
-        sp[0, 2] = float("nan")
-        mask = (torch.rand(6, 9, generator=g) < 0.8).long()
-        mask[1] = 0
-        adv = torch.randn(6, generator=g)
-        r = fast.is_ratio(lp, sp, mask, "sequence_mask", None, 3.0)
-        s = fast.is_summary(lp, sp, mask.bool(), r, adv, "sequence_mask", None, 3.0).tolist()
-        for d in fast.OPSM_DELTAS:
-            keep = GRPOTrainer.get_off_policy_mask(adv[:, None], lp, sp, mask.float(), d)
-            assert s[names.index(f"cf_opsm_{d}")] == float((keep == 0).sum())
-
-
 def test_u67_sixteen_micro_batches_give_the_quantiles_of_one_batch(monkeypatch, tmp_path):
     g = torch.Generator().manual_seed(1)
     gaps = torch.randn(256, 20, generator=g) * 0.1
@@ -1091,25 +911,14 @@ def test_u75_active_opsm_logs_its_drops(monkeypatch, tmp_path):
     assert "opsm_masked_share" not in logged(monkeypatch, tmp_path, "sequence_mask", None, 3.0, x)
 
 
-def test_u36_is_ratio_and_summary_edges():
-    lp, x = rows([0.0, 0.0], [1e4], [-1e4], [0.3])
-    x["completion_mask"][0] = 0  # an all-masked row
-    sp, mask = x["sampling_per_token_logps"], x["completion_mask"]
-    for mode in ("sequence_mask", "token_mask", "token_truncate", "sequence_truncate"):
-        r = fast.is_ratio(lp, sp, mask, mode, None, 3.0)
-        s = fast.is_summary(lp, sp, mask.bool(), r, x["advantages"], mode, None, 3.0)
-        assert torch.isfinite(r).all() and torch.isfinite(s[: len(fast.SUMS)]).all(), mode
-    with pytest.raises(ValueError, match="clip_max"):
-        fast.is_ratio(lp, sp, mask, "token_truncate", 0.5, None)
-
-
 def test_p13_the_summary_never_changes_the_ratio(monkeypatch, tmp_path):
     """The ratio TRL multiplies by is is_ratio's (A7 pins is_ratio to TRL's block), whatever the summary computes."""
     t = is_trainer("sequence_mask", None, 3.0, tmp_path)
     lp, x = U54
     t.set_is_ratio(lp, x)
     assert torch.equal(x["importance_sampling_ratio"],
-                       fast.is_ratio(lp, x["sampling_per_token_logps"], x["completion_mask"], "sequence_mask", None,
+                       rl_forward.is_ratio(lp, x["sampling_per_token_logps"], x["completion_mask"], "sequence_mask",
+                           None,
                                      3.0))  # fmt: skip
 
 
@@ -1212,7 +1021,7 @@ def test_g02_log_on_a_cuda_build_takes_the_engine_keys(monkeypatch, tmp_path):
     got = []
     monkeypatch.setattr(engine, "build", lambda: "cuda")
     monkeypatch.setattr(engine, "stats", lambda: {"sync_alloc": 2})
-    monkeypatch.setattr(fast.torch.cuda, "max_memory_reserved", lambda *a, **k: 7)
+    monkeypatch.setattr(policy_caches.torch.cuda, "max_memory_reserved", lambda *a, **k: 7)
     monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: got.append(logs))
     t = is_trainer("sequence_mask", None, 3.0, tmp_path)
     t.set_is_ratio(*rows([0.1, 0.1]))
@@ -1239,8 +1048,9 @@ def test_f04_is_summary_costs_under_2pct_of_a_step():
     lp = -torch.rand(16, 1536, device="cuda", generator=g) * 3
     sp, adv = lp + torch.randn(16, 1536, device="cuda", generator=g) * 1e-3, torch.randn(16, device="cuda")
     mask = torch.rand(16, 1536, device="cuda", generator=g) < 0.7
-    r = fast.is_ratio(lp, sp, mask, "sequence_mask", None, 3.0)
-    run = lambda: [fast.is_summary(lp, sp, mask, r, adv, "sequence_mask", None, 3.0) for _ in range(16)]  # noqa: E731
+    r = rl_forward.is_ratio(lp, sp, mask, "sequence_mask", None, 3.0)
+    # noqa: E731
+    run = lambda: [rl_forward.is_summary(lp, sp, mask, r, adv, "sequence_mask", None, 3.0) for _ in range(16)]
     run()
     torch.cuda.synchronize()
     t0 = time.perf_counter()  # host launches and device time together
@@ -1249,132 +1059,23 @@ def test_f04_is_summary_costs_under_2pct_of_a_step():
     assert time.perf_counter() - t0 < 0.02 * 23.6
 
 
-def rope_rows(prompt, answers, pads, W):
-    """Rows laid out as TRL builds them: left pads, the shared prompt, an answer of text tokens, right pads."""
-    ids, mask = torch.zeros(len(answers), W, dtype=torch.long), torch.zeros(len(answers), W, dtype=torch.long)
-    for r, (a, p) in enumerate(zip(answers, pads, strict=True)):
-        row = prompt + a
-        ids[r, p:p + len(row)], mask[r, p:p + len(row)] = torch.tensor(row), 1
-    return ids, mask, (ids == IMG).long() * mask
-
-
-def test_rope_positions_equal_get_rope_index_and_flag_rows_off_the_template():
-    """C2: one get_rope_index call on the bare prompt gives a template; every row's positions follow from its real
-    token count by one cumsum, gather and where. Rows that leave the template set `bad` (no host read inside)."""
-    m, g = tiny_model(), torch.Generator().manual_seed(3)
-    prompt = [5, 6, START, *[IMG] * 4, END, 7, 8, 9]
-    grid = torch.tensor([[1, 4, 4]])
-    ans = lambda n: torch.randint(0, 99, (n,), generator=g).tolist()  # noqa: E731
-    answers, pads = [[], ans(1), ans(13), ans(20), ans(9)], [3, 0, 2, 0, 1]
-    ids, mask, mm = rope_rows(prompt, answers, pads, W=34)
-    mask[4, 1 + len(prompt) + 4] = 0  # a hole in an answer
-    mask[3, len(prompt):] = 0  # a truncated row whose answer is masked
-    mm = mm * mask
-    tmpl = fast.rope_template(m.model, torch.tensor(prompt), (torch.tensor(prompt) == IMG).long(), grid)
-    pos, bad = fast.rope_positions(tmpl, ids, mask, mm)
-    want, _ = m.model.get_rope_index(ids, mm_token_type_ids=mm, image_grid_thw=grid.repeat(5, 1), attention_mask=mask)
-    assert torch.equal(pos, want) and pos.dtype == torch.int64 and not bad.any()
-    odd = ids.clone()
-    odd[0, 3 + 1] = 9  # a prompt token differs
-    mm_odd = mm.clone()
-    mm_odd[2, 2 + len(prompt) + 3] = 1  # an image token in an answer
-    short = mask.clone()
-    short[1, 4:] = 0  # fewer real tokens than the prompt
-    assert fast.rope_positions(tmpl, odd, mask, mm)[1].tolist() == [True, False, False, False, False]
-    assert fast.rope_positions(tmpl, ids, mask, mm_odd)[1].tolist() == [False, False, True, False, False]
-    assert fast.rope_positions(tmpl, ids, short, mm * short)[1].tolist() == [False, True, False, False, False]
-
-
-@functools.cache
-def rope_model():
-    return tiny_model()
-
-
-@settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-@given(rows=st.lists(st.tuples(st.integers(0, 40), st.integers(0, 6), st.booleans()), min_size=1, max_size=6),
-       seed=st.integers(0, 2**16))  # fmt: skip
-def test_rope_positions_equal_get_rope_index_on_random_rows(rows, seed):
-    """C2 property: any answer lengths, left pads, a mask hole or a masked (truncated) answer: rope_positions equals
-    get_rope_index on every column and no row is bad."""
-    m, g = rope_model(), torch.Generator().manual_seed(seed)
-    prompt = [5, 6, START, *[IMG] * 4, END, 7, 8, 9]
-    answers = [torch.randint(0, 99, (n,), generator=g).tolist() for n, _, _ in rows]
-    ids, mask, mm = rope_rows(prompt, answers, [p for _, p, _ in rows], W=6 + len(prompt) + 40)
-    for r, (n, p, odd) in enumerate(rows):
-        if odd and n > 1:
-            mask[r, p + len(prompt) + int(torch.randint(0, n, (1,), generator=g))] = 0  # a hole in the answer
-        elif odd:
-            mask[r, p + len(prompt):] = 0  # a truncated answer, masked
-    mm = mm * mask
-    grid = torch.tensor([[1, 4, 4]])
-    tmpl = fast.rope_template(m.model, torch.tensor(prompt), (torch.tensor(prompt) == IMG).long(), grid)
-    pos, bad = fast.rope_positions(tmpl, ids, mask, mm)
-    want, _ = m.model.get_rope_index(ids, mm_token_type_ids=mm, image_grid_thw=grid.repeat(len(rows), 1),
-                                     attention_mask=mask)  # fmt: skip
-    assert torch.equal(pos, want) and not bad.any()
-
-
-def test_rope_positions_equal_get_rope_index_on_the_real_lidc_prompt():
-    """C2: the real processor's LIDC prompt (325 tokens, grid (1, 32, 32)) on a model with the real vision token ids:
-    answers of 0, 1, 131 and 1,536 tokens, left pads, a mask hole and a truncated masked row equal get_rope_index;
-    an image pad in an answer sets bad."""
-    import PIL.Image
-    from transformers import AutoConfig, AutoProcessor
-
-    from objdel.train import dataset
-
-    try:
-        name = "Qwen/Qwen3-VL-2B-Instruct"
-        proc, cfg = AutoProcessor.from_pretrained(name, local_files_only=True), AutoConfig.from_pretrained(
-            name, local_files_only=True)
-    except OSError:
-        pytest.skip("the Qwen3-VL processor is not in the local HF cache")
-    text = proc.apply_chat_template([dataset._user("lidc")], add_generation_prompt=True, tokenize=False)
-    one = proc(text=[text], images=[PIL.Image.new("RGB", (512, 512))], return_tensors="pt")
-    prompt, grid = one["input_ids"][0].tolist(), one["image_grid_thw"]
-    assert len(prompt) == 325 and grid.tolist() == [[1, 32, 32]]
-    m = tiny_model(vocab_size=cfg.text_config.vocab_size, img=cfg.image_token_id, video=cfg.video_token_id,
-                   start=cfg.vision_start_token_id, end=cfg.vision_end_token_id)  # fmt: skip
-    g = torch.Generator().manual_seed(5)
-    answers = [torch.randint(0, 151000, (n,), generator=g).tolist() for n in (0, 1, 131, 1536, 131)]
-    ids, mask, _ = rope_rows(prompt, answers, [3, 0, 2, 0, 1], W=325 + 1536 + 3)
-    mm = (ids == cfg.image_token_id).long() * mask
-    mask[2, 2 + 325 + 7] = 0  # a hole
-    mask[4, 1 + 325:] = 0  # truncated and masked
-    mm = mm * mask
-    tmpl = fast.rope_template(m.model, torch.tensor(prompt), one["mm_token_type_ids"][0], grid)
-    pos, bad = fast.rope_positions(tmpl, ids, mask, mm)
-    want, _ = m.model.get_rope_index(ids, mm_token_type_ids=mm, image_grid_thw=grid.repeat(5, 1), attention_mask=mask)
-    assert torch.equal(pos, want) and not bad.any()
-    mm[3, 325 + 10] = 1  # an image token in an answer
-    assert fast.rope_positions(tmpl, ids, mask, mm)[1].tolist() == [False, False, False, True, False]
-
-
-def test_rope_bad_rows_routes_on_host_data_only():
-    """U-RP7: a prompt off its template, an answer holding the image pad id or the vision start id; a clean row."""
-    tmpl, vision = (1, 2, 3), (IMG, 101, START, END)
-    bad = fast.rope_bad_rows([(1, 2, 3), (1, 2, 4), (1, 2, 3), (1, 2, 3)], [[7, 8], [7], [7, IMG], [START]],
-                             [tmpl] * 4, vision)  # fmt: skip
-    assert bad.dtype == bool and bad.tolist() == [False, True, True, True]
-
-
 def test_vllm_kwargs_wraps_trls_llm_only_inside_the_block(monkeypatch):
     import trl.generation.vllm_generation as vg
 
     seen = []
     monkeypatch.setattr(vg, "LLM", lambda **kw: seen.append(kw) or "engine", raising=False)
     outer = vg.LLM
-    with fast.vllm_kwargs(dtype="float16"):
+    with rl_trl_adapter.vllm_kwargs(dtype="float16"):
         assert vg.LLM(model="m") == "engine"
     assert seen == [{"dtype": "float16", "model": "m"}] and vg.LLM is outer
-    with fast.vllm_kwargs():  # nothing to add: TRL's name is left alone
+    with rl_trl_adapter.vllm_kwargs():  # nothing to add: TRL's name is left alone
         assert vg.LLM is outer
 
 
 def _fp16_trainer(engine_dtype, fp16=True):
     from types import SimpleNamespace
 
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.args = SimpleNamespace(fp16=fp16)
     t.vllm_generation = SimpleNamespace(llm=SimpleNamespace(
         llm_engine=SimpleNamespace(model_config=SimpleNamespace(dtype=engine_dtype))))  # fmt: skip
@@ -1393,8 +1094,9 @@ def test_fp16_run_refuses_an_engine_that_is_not_float16():
 
 def test_lora_input_cast_is_dropped_under_fp16_autocast_too():
     m = _lora_bf16()
-    t = trainer(fast.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False, "fp16": True})(), model=m)
-    assert fast.FastGRPO.drop_lora_input_cast(t) is True
+    t = trainer(rl_trl_adapter.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False, "fp16": True})(),
+        model=m)
+    assert rl_trl_adapter.FastGRPO.drop_lora_input_cast(t) is True
     assert all(not mod.cast_input_dtype_enabled for _, mod in m.named_modules()
                if hasattr(mod, "cast_input_dtype_enabled"))  # fmt: skip
 
@@ -1409,7 +1111,7 @@ def test_g08b_fp16_dtype():
     import trl.generation.vllm_generation as vg
 
     ckpt = os.environ["OBJDEL_RUN_DIR"] + "/ckpt"
-    with fast.vllm_kwargs(dtype="float16"):
+    with rl_trl_adapter.vllm_kwargs(dtype="float16"):
         llm = vg.LLM(model=ckpt, gpu_memory_utilization=0.3, max_model_len=2048, enforce_eager=True)
     assert llm.llm_engine.model_config.dtype == torch.float16
 
@@ -1437,7 +1139,7 @@ def test_log_by_prompt_adds_the_per_prompt_rewards_to_train_logs_only(monkeypatc
     seen = []
     monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start_time=None: seen.append(dict(logs)))
     reward = SimpleNamespace(by_prompt=[0.5, 0.25])
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.model, t.is_stats, t.cuda_times, t.last_log = SimpleNamespace(training=True), None, None, None
     t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
     t.reward_funcs = [SimpleNamespace(trl_reward=reward)]
@@ -1457,7 +1159,7 @@ def capped_trainer(caps):
     seen, llm = [], t.vllm_generation.llm
     generate = llm.generate
     llm.generate = lambda prompts, sampling_params=None, **kw: seen.append(sampling_params) or generate(prompts, **kw)
-    fast.FastGRPO.patch_vllm_prompts(t)
+    rl_trl_adapter.FastGRPO.patch_vllm_prompts(t)
     return t, seen
 
 
@@ -1483,7 +1185,7 @@ def test_runaway_cap_gives_each_prompt_its_own_max_tokens():
 
 
 def test_capped_share_counts_answers_that_reached_their_cap():
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.runaway_cap, t._metrics = True, {"train": collections.defaultdict(list)}
     t.model = type("M", (), {"training": True})()
     t.rows = [{"cap": 3}, {"cap": 3}, {"cap": 4}, {"cap": 2}]
@@ -1494,8 +1196,8 @@ def test_capped_share_counts_answers_that_reached_their_cap():
 def test_beta_zero_runs_only_the_update_forward(monkeypatch, tmp_path):
     """C8: beta 0 loads no reference adapter and runs no reference pass; with one generation per step the old-logprob
     pass is skipped too (C10): one forward per update micro-batch (8 rows, micro-batch 8: one) and nothing else."""
-    calls, real = [], fast.FastGRPO._get_per_token_logps_and_entropies
-    monkeypatch.setattr(fast.FastGRPO, "_get_per_token_logps_and_entropies",
+    calls, real = [], rl_trl_adapter.FastGRPO._get_per_token_logps_and_entropies
+    monkeypatch.setattr(rl_trl_adapter.FastGRPO, "_get_per_token_logps_and_entropies",
                         lambda self, *a, **k: calls.append(self.loss_inputs is not None) or real(self, *a, **k))
     t = tiny_loop_vllm_fake(monkeypatch, tmp_path, steps=2)
     assert t.args.beta == 0.0 and calls == [True, True]  # U-CO1: every call is an update forward (loss_inputs set)
@@ -1540,7 +1242,7 @@ def test_tokenize_prompts_with_prompt_memo_gives_trls_prompt_ids_tokenizing_each
                  environment_factories=None, use_vllm=True)  # fmt: skip
     want_ids, want_images, _ = trainer(Plain, **attrs)._tokenize_prompts(prompts)
     calls, real = [], GRPOTrainer._tokenize_prompts
-    t = trainer(fast.FastGRPO, prompt_memo=True, **attrs)
+    t = trainer(rl_trl_adapter.FastGRPO, prompt_memo=True, **attrs)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(GRPOTrainer, "_tokenize_prompts", lambda self, p: calls.append(len(p)) or real(self, p))
         ids, images, fields = t._tokenize_prompts(prompts)
@@ -1554,7 +1256,8 @@ def meta_for(mask, T, G, bad=()):
     rows; rows `bad` marked for the HF rope path; 16 pixel rows (one 4 x 4-patch image) per row."""
     n, P = mask.size(0), mask.size(1) - T
     grp = np.arange(n, dtype=np.int32) // G
-    return fast.RowMeta(mask[:, :P].sum(1).numpy().astype(np.int32), mask[:, P:].sum(1).numpy().astype(np.int32),
+    return policy_caches.RowMeta(mask[:, :P].sum(1).numpy().astype(np.int32), mask[:,
+        P:].sum(1).numpy().astype(np.int32),
                         grp, grp, grp, np.isin(np.arange(n), bad).astype(np.int32),
                         np.full(n, 16, dtype=np.int32))  # fmt: skip
 
@@ -1563,8 +1266,8 @@ def no_device_reads(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("device read under host_meta")
 
-    monkeypatch.setattr(fast, "window", boom)
-    monkeypatch.setattr(fast, "prompt_groups", boom)
+    monkeypatch.setattr(rl_trl_adapter, "window", boom)
+    monkeypatch.setattr(rl_trl_adapter, "prompt_groups", boom)
 
 
 @pytest.mark.parametrize("batch_size", [8, 4, 3])
@@ -1595,8 +1298,8 @@ def test_host_meta_forward_never_reads_the_grid(monkeypatch, shared_prefix):
 
     def spy(x):
         f = sys._getframe(1).f_code
-        reads.append(f.co_filename.endswith("fast.py") and f.co_name in ("_get_per_token_logps_and_entropies",
-                                                                         "grid_rows"))  # fmt: skip
+        here = f.co_filename.endswith(("trl_adapter.py", "forward.py"))
+        reads.append(here and f.co_name in ("_get_per_token_logps_and_entropies", "grid_rows"))
         return real(x)
 
     monkeypatch.setattr(torch.Tensor, "tolist", spy)
@@ -1613,17 +1316,17 @@ def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch
     without them under --host-meta it raises; the old and reference passes get the generation batch's RowMeta (C2:
     their rope positions, windows and pixel rows from the host too), none outside a generation batch."""
     seen = []
-    monkeypatch.setattr(fast.FastForward, "_get_per_token_logps_and_entropies",
+    monkeypatch.setattr(rl_trl_adapter.FastForward, "_get_per_token_logps_and_entropies",
                         lambda self, *a, **k: seen.append(k.get("host_meta")) or (None, None, None))
     monkeypatch.setattr(GRPOTrainer, "_compute_loss",
                         lambda self, model, inputs: self._get_per_token_logps_and_entropies(model, None, None, 1))
-    t = trainer(fast.FastGRPO, host_meta=True, use_vllm=False)
-    rows = [fast.MetaRow(5, 3, 0, 0, 0, 0, 16), fast.MetaRow(4, 0, 1, 1, 1, 0, 16)]
+    t = trainer(rl_trl_adapter.FastGRPO, host_meta=True, use_vllm=False)
+    rows = [rl_forward.MetaRow(5, 3, 0, 0, 0, 0, 16), rl_forward.MetaRow(4, 0, 1, 1, 1, 0, 16)]
     t._compute_loss(None, {"host_meta": rows})
     t._get_per_token_logps_and_entropies(None, None, None, 1)
-    t.meta = fast.meta_of({"host_meta": rows[::-1]})
+    t.meta = rl_forward.meta_of({"host_meta": rows[::-1]})
     t._get_per_token_logps_and_entropies(None, None, None, 1)
-    assert fast.host_rows(seen[0]) == rows and seen[1] is None and seen[2] is t.meta
+    assert rl_forward.host_rows(seen[0]) == rows and seen[1] is None and seen[2] is t.meta
     t.meta = None
     with pytest.raises(KeyError, match="host_meta"):
         t._compute_loss(None, {})
@@ -1646,7 +1349,7 @@ def test_packed_chunks_stage_their_indices_in_one_fresh_buffer_each(monkeypatch)
             bufs.append((out, pin_memory))
         return out
 
-    monkeypatch.setattr(fast.torch, "empty", spy)
+    monkeypatch.setattr(policy_caches.torch, "empty", spy)
     t = shared(m)
     lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)
     torch.testing.assert_close(lp, ref, atol=1e-5, rtol=1e-5)
@@ -1694,7 +1397,7 @@ def test_host_meta_rope_positions_come_from_one_template_per_layout_bad_rows_fro
     host's bad rows take get_rope_index in the same chunk (rope/fallback_rows); positions equal HF's on every row."""
     m = tiny_model()
     ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
-    rope = fast.RopeCache.install(m)
+    rope = policy_caches.RopeCache.install(m)
     ref = rope.positions(ids, mask, kw["mm_token_type_ids"], kw["image_grid_thw"], kw["num_images"])
     rope.clear()
     calls = counted_rope(m)
@@ -1705,7 +1408,7 @@ def test_host_meta_rope_positions_come_from_one_template_per_layout_bad_rows_fro
     assert calls == [1, 1, 1]  # two layout templates, one bad row
     rope.clear()
     with pytest.MonkeyPatch.context() as mp:  # C2: the keyed cache is the no-host_meta path only
-        mp.setattr(fast.RopeCache, "keys", None)
+        mp.setattr(policy_caches.RopeCache, "keys", None)
         assert torch.equal(rope.template_positions(ids, mask, kw["mm_token_type_ids"], kw["image_grid_thw"],
                                                    kw["num_images"], ids.size(1) - T, meta_for(mask, T, 4, bad=[5]),
                                                    check=True)[0], pos)  # fmt: skip
@@ -1725,16 +1428,16 @@ def test_check_rope_compares_every_row_with_hf_on_check_steps(monkeypatch):
     ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
     args = (ids, mask, kw["mm_token_type_ids"], kw["image_grid_thw"], kw["num_images"], ids.size(1) - T,
             meta_for(mask, T, 4))  # fmt: skip
-    rope = fast.RopeCache.install(m)
+    rope = policy_caches.RopeCache.install(m)
     rope.template_positions(*args, check=True)
-    real = fast.rope_positions
-    monkeypatch.setattr(fast, "rope_positions", lambda *a: (real(*a)[0] + 1, real(*a)[1]))
+    real = policy_caches.rope_positions
+    monkeypatch.setattr(policy_caches, "rope_positions", lambda *a: (real(*a)[0] + 1, real(*a)[1]))
     rope.clear()
     with pytest.raises(AssertionError, match="rope positions differ from HF"):
         rope.template_positions(*args, check=True)
     rope.clear()
     rope.template_positions(*args, check=False)
-    monkeypatch.setattr(fast, "rope_positions", lambda *a: (real(*a)[0], torch.ones_like(real(*a)[1])))
+    monkeypatch.setattr(policy_caches, "rope_positions", lambda *a: (real(*a)[0], torch.ones_like(real(*a)[1])))
     rope.clear()
     with pytest.raises(AssertionError, match="bad on the device"):
         rope.template_positions(*args, check=True)
@@ -1743,9 +1446,10 @@ def test_check_rope_compares_every_row_with_hf_on_check_steps(monkeypatch):
 def test_vllm_engine_kwargs_follow_the_config_and_default_to_none():
     from types import SimpleNamespace as NS
 
-    assert fast.vllm_engine_kwargs(NS(fp16=False)) == {}  # the B1 control: TRL's engine untouched
-    assert fast.vllm_engine_kwargs(NS(fp16=True)) == {"dtype": "float16"}
-    assert fast.vllm_engine_kwargs(NS(fp16=False, vllm_lora=True)) == {"enable_lora": True, "max_lora_rank": 16}
+    assert rl_trl_adapter.vllm_engine_kwargs(NS(fp16=False)) == {}  # the B1 control: TRL's engine untouched
+    assert rl_trl_adapter.vllm_engine_kwargs(NS(fp16=True)) == {"dtype": "float16"}
+    assert rl_trl_adapter.vllm_engine_kwargs(NS(fp16=False, vllm_lora=True)) == {"enable_lora": True,
+        "max_lora_rank": 16}
 
 
 def test_generate_carries_the_lora_request_only_under_option_f(monkeypatch, tmp_path):
@@ -1760,6 +1464,6 @@ def test_generate_carries_the_lora_request_only_under_option_f(monkeypatch, tmp_
         t.lora_dir, seen = lora_dir, []
         gen = t.vllm_generation.llm.generate
         t.vllm_generation.llm.generate = lambda p, seen=seen, gen=gen, **kw: seen.append(kw) or gen(p, **kw)
-        fast.FastGRPO.patch_vllm_prompts(t)
+        rl_trl_adapter.FastGRPO.patch_vllm_prompts(t)
         t.vllm_generation.llm.generate([{"prompt_token_ids": [START, END]}], sampling_params=None)
         assert seen == [{"sampling_params": None, **want}]

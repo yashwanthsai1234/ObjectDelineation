@@ -6,7 +6,7 @@ rows of an eval view, one item's checker metrics, and the per-item and summary s
   CUDA context, D7) and the signal groups.
 - per_item(result) and summarize(items, groups): final_eval's K-sample means, answer choices (A4) and the schema-2
   summary with item, nodule and patient bootstrap intervals (final_eval's module docstring names every key).
-- evaluate(sampler, rows, params, view_root, keep): the scoring half of final_eval on any objdel.train.sample
+- evaluate(sampler, rows, params, view_root, keep): the scoring half of final_eval on any objdel.policy.sampler
   Sampler (VllmSampler on the box, HfSampler on the Mac): the K answers per row, handed to `keep` before scoring (a
   crash in scoring keeps the paid sampling), then score_items and per_item. No trainer.
 """
@@ -23,7 +23,7 @@ from objdel.verify import store as serve
 from objdel.verify.metrics import metrics
 
 if TYPE_CHECKING:  # the sampler module imports TRL's data utils; a rescore loads no ML stack
-    from objdel.train.sample import Sampler
+    from objdel.policy.sampler import Sampler
 
 SUBSET_SEED = 0  # eval_rows' `items`: one fixed subset for every branch and rung
 
@@ -46,7 +46,7 @@ def _score(job) -> dict:
 def eval_rows(view: Path, items: int | None = None, rl_only: bool = True) -> list[dict]:
     """Prompt rows of an eval view's lidc/val records (images checked against their records): the scored items (rl,
     with caches) or, with rl_only=False, every record (probe records are rl: false); `items` = a seeded subset."""
-    from objdel.train import dataset as D
+    from objdel.policy import rows as D
 
     return D.prompts(view, "lidc", "val", rl_only, subset=items and (items, SUBSET_SEED))
 

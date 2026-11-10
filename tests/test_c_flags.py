@@ -34,7 +34,7 @@ def test_no_ckpt_layers_is_a_range_checked_count_with_no_clamp(capsys):
 
 
 def test_build_trainer_adds_no_ckpt_layers_only_when_asked(built):  # noqa: F811
-    from objdel.train.callbacks import NoCkptLayers
+    from objdel.policy.callbacks import NoCkptLayers
 
     assert built() == []
     (cb,) = built(no_ckpt_layers=8)
@@ -48,7 +48,7 @@ def test_build_trainer_fast_sync_refuses_a_trainer_without_colocate_vllm(built):
 
 
 def test_build_trainer_option_f_refuses_a_trainer_without_colocate_vllm(built, monkeypatch, tmp_path):  # noqa: F811
-    from objdel.train import configs
+    from objdel.rl import config as configs
 
     monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace(
         fp16=False, off_policy_mask_threshold=None, output_dir="o", vllm_lora=True))
@@ -58,9 +58,8 @@ def test_build_trainer_option_f_refuses_a_trainer_without_colocate_vllm(built, m
 
 
 def test_no_ckpt_layers_turns_off_the_last_k_after_trainer_enables_all():
-    from test_train_fast import tiny_model
-
-    from objdel.train.callbacks import NoCkptLayers
+    from objdel.policy.callbacks import NoCkptLayers
+    from tests.rl.test_trl_adapter_equivalence import tiny_model
 
     m = tiny_model()
     m.gradient_checkpointing_enable()  # Trainer.train does this just before on_train_begin
@@ -73,9 +72,8 @@ def test_no_ckpt_layers_turns_off_the_last_k_after_trainer_enables_all():
 
 
 def test_no_ckpt_layers_zero_changes_nothing():
-    from test_train_fast import tiny_model
-
-    from objdel.train.callbacks import NoCkptLayers
+    from objdel.policy.callbacks import NoCkptLayers
+    from tests.rl.test_trl_adapter_equivalence import tiny_model
 
     m = tiny_model()
     m.gradient_checkpointing_enable()
@@ -86,9 +84,8 @@ def test_no_ckpt_layers_zero_changes_nothing():
 def test_no_ckpt_layers_changes_exactly_k_layers_and_neither_logprobs_nor_grads():
     """U-CO3 (the tiny model has 3 layers, so K = 2 stands in for 4): exactly K layers keep their activations, and the
     logprobs and gradients are torch.equal to K = 0 (no dropout: the recompute repeats the forward bit for bit)."""
-    from test_train_fast import tiny_model
-
-    from objdel.train.callbacks import NoCkptLayers
+    from objdel.policy.callbacks import NoCkptLayers
+    from tests.rl.test_trl_adapter_equivalence import tiny_model
 
     ids = torch.randint(0, 99, (2, 12), generator=torch.Generator().manual_seed(3))
     out = {}

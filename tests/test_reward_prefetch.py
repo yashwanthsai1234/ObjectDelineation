@@ -1,11 +1,11 @@
 """TRLReward.prefetch: rewards start scoring (parse, one checker call) as soon as vLLM returns the answers, and
 overlap TRL's old-logprob and reference forwards on the GPU; the reward call takes the result only for the same
-answers (objdel.train.fast.FastGRPO._generate)."""
+answers (objdel.rl.trl_adapter.FastGRPO._generate)."""
 
 import threading
 
 from objdel.geom import engine as _gpucheck
-from objdel.train import rewards as R
+from objdel.rl import reward as R
 from tests.test_reward_one_checker_call import CACHES, EOS, EXPECTED, PAD, batch
 
 

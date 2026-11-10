@@ -17,7 +17,7 @@ def stub(tmp_path, monkeypatch):
     `body(start)` (start = the resumed checkpoint's step, 0 on a fresh run)."""
     from experiments.phase2 import train_rl
     from objdel.rl import build
-    from objdel.train import dataset
+    from objdel.rl import rows as dataset
     from objdel.verify import store as serve
 
     monkeypatch.setattr(serve, "preload", lambda root, ds: None)
@@ -69,7 +69,7 @@ def test_check_sampler_refuses_zero_steps():
 
 
 def test_resume_mid_run_keeps_one_seq_gaps_row_block_per_step(stub):
-    from objdel.train.fast import write_seq_gaps
+    from objdel.rl.forward import write_seq_gaps
 
     rows = 4
     trainer_dir = stub.out / "trainer"
@@ -110,7 +110,7 @@ def _control():
 
 @pytest.mark.parametrize("case", ["start_in_ms", "nan_rate", "nan_cap"])
 def test_budget_stop_cannot_be_silently_off(case):
-    from objdel.train.callbacks import BudgetStop
+    from objdel.policy.callbacks import BudgetStop
 
     now = 1_800_000_000.0
     kw = {"rate_usd_per_h": 1.0, "cap_usd": 2.0, "session_start": now - 10 * 3600, "clock": lambda: now}
@@ -137,7 +137,7 @@ def test_nvtx_capture_window_survives_resume(monkeypatch, tmp_path, window, resu
 
     import torch
 
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     calls = []
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
@@ -163,7 +163,7 @@ def _fake_terms(n, iou):
 
 
 def test_nan_term_does_not_reach_trl_as_nan_advantages(monkeypatch):
-    from objdel.train import rewards
+    from objdel.rl import reward as rewards
 
     g = 8
     iou = np.linspace(0.2, 0.9, g)
@@ -181,7 +181,7 @@ def test_nan_term_does_not_reach_trl_as_nan_advantages(monkeypatch):
 
 
 def test_grpo_config_refuses_eval_batch_not_multiple_of_group(tmp_path):
-    from objdel.train import configs
+    from objdel.rl import config as configs
 
     with pytest.raises(ValueError):
         configs.grpo_config("qwen3-vl-2b", str(tmp_path), per_device_eval_batch_size=12, use_vllm=False)
@@ -190,7 +190,7 @@ def test_grpo_config_refuses_eval_batch_not_multiple_of_group(tmp_path):
 def test_contract_catches_dropped_reward_kwargs(monkeypatch):
     import trl.trainer.grpo_trainer as grpo
 
-    from objdel.train import trl_adapter
+    from objdel.rl import trl_adapter
 
     def _calculate_rewards(self, inputs, prompts, completions, completion_ids_list):  # same signature, no kwargs
         return None

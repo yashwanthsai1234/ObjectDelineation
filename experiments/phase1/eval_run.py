@@ -18,7 +18,7 @@ the probes and G-vision and is made by select_ckpt), decided per dataset (--data
 on); per-item results go to items.jsonl. Reads untrusted data: run with python -I.
 
 References:
-- Metrics, audit and gates: objdel.eval (plan §4.7, §7, §9; experiments/phase1/impl/M8_eval.md).
+- Metrics, audit and gates: objdel.verify.metrics, objdel.data.audit, objdel.verify.gates (plan §4.7, §7, §9; experiments/phase1/impl/M8_eval.md).
 - Training frame: objdel.data.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: experiments/phase2/
   EXECUTION.md §4 C-VIEW; single-rater items and prepared caches: experiments/phase1/impl/ISSUES.md I45, plan D25.
 - Process pool: https://docs.python.org/3/library/multiprocessing.html#multiprocessing.pool.Pool ; JSON without NaN
@@ -60,7 +60,7 @@ def load_frames(root, split: str, ids=None, every: dict | None = None) -> dict:
 def load_prepared(root, split: str, ids=None) -> dict:
     """{item_id: {"dataset", "W", "H", "k", "prepared"}} from the prepared records of every dataset present under
     root (all items when ids is None); caches are loaded when scored. KeyError if a requested id is missing."""
-    from objdel.train.dataset import records  # lazy: needs the train extra
+    from objdel.policy.rows import records  # lazy: needs the train extra
     want = None if ids is None else set(ids)
     out = {r["item_id"]: {"dataset": ds, "W": r["W"], "H": r["H"], "k": len(r["raters"]) if r["rl"] else 1,
                           "prepared": str(Path(root).resolve())}

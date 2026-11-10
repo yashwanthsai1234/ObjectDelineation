@@ -7,7 +7,7 @@
     python -I -m experiments.phase2.train_rl --merge-last --model qwen3-vl-2b --ckpt {rd}/ckpt --out {rd}/b1-rows
 
 The flags are an objdel.core.spec.RlStage (cli_stage: one flag per field, --grpo as JSON, --profile-window S,E with
-1 <= S <= E: `1,STEPS` traces every step, S >= 2 with --trace); parse adds the rules that need objdel.train (the
+1 <= S <= E: `1,STEPS` traces every step, S >= 2 with --trace); parse adds the rules that need objdel.rl (the
 numerics preset names, the --grpo keys train_rl owns). The run itself (rows, saves, budget, held-out curve,
 rl.json): objdel.rl.run.
 """
@@ -16,10 +16,11 @@ import sys
 
 
 def parse(argv=None):
-    """The RlStage of the flags (or of --spec/--stage), and the rules that need objdel.train; exit 2 on a broken one.
+    """The RlStage of the flags (or of --spec/--stage), and the rules that need objdel.rl; exit 2 on a broken one.
     The returned stage has f_check resolved: --f-check, --no-f-check, else on under the f_check.PRESETS."""
     from objdel.core.spec import RlStage, cli_stage
-    from objdel.train import configs, f_check
+    from objdel.rl import config as configs
+    from objdel.rl import f_check
 
     a = cli_stage(RlStage, sys.argv[1:] if argv is None else argv)
 

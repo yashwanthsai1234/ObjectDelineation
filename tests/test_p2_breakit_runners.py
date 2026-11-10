@@ -36,12 +36,12 @@ def _train_sft():
 def test_every_config_builds_its_sft_config(path):
     """train_sft builds SFTConfig as trainer() does (its fixed overrides | the YAML's sft block) before the model."""
     _train_sft()
-    from objdel.train import configs
+    from objdel.sft import config as sft_config
 
     a = stage_of(path)
     o = {"seed": a.seed, "data_seed": a.seed, "save_strategy": "no", "save_total_limit": 3, "logging_steps": 10}
     for b in (None, 100):
-        cfg = configs.sft_config(a.model, "o", 200, b, **(o | a.sft))
+        cfg = sft_config.sft_config(a.model, "o", 200, b, **(o | a.sft))
         assert cfg.per_device_train_batch_size * cfg.gradient_accumulation_steps == 32
 
 
@@ -51,12 +51,13 @@ def test_configs_carry_the_plan_values(path):
     for full fine-tuning stays a frozen record), WSD."""
     _train_sft()
     from experiments.phase2.prereg import G_PROBE
-    from objdel.train import configs
+    from objdel.policy import models as policy_models
+    from objdel.sft import config as sft_config
 
     a = stage_of(path)
-    cfg = configs.sft_config(a.model, "o", 100, **({"dataloader_prefetch_factor": None} | a.sft))
+    cfg = sft_config.sft_config(a.model, "o", 100, **({"dataloader_prefetch_factor": None} | a.sft))
     assert cfg.learning_rate == 5e-4
-    assert configs.MAX_COMPLETION[a.model] == configs.sampling(a.model)["max_tokens"] == 1536
+    assert policy_models.MAX_COMPLETION[a.model] == policy_models.sampling(a.model)["max_tokens"] == 1536
     assert G_PROBE["lr_full"] == 5e-6 and G_PROBE["lr_lora"] == 5e-5 and G_PROBE["steps"] == 20
     assert cfg.lr_scheduler_type == "warmup_stable_decay" and not cfg.packing and cfg.max_length is None
     assert set(a.sft) <= {f.name for f in dataclasses.fields(type(cfg))}
@@ -95,7 +96,7 @@ def test_plan_at_odd_epoch_sizes(spe):
     """warmup 3 % of the 2-epoch stable run, decay 15 % of each branch point, every branch point distinct and
     reachable, the deepest decay inside a 3-epoch view and beyond 2 epochs (S1-8)."""
     TS = _train_sft()
-    from objdel.train import configs
+    from objdel.sft import config as sft_config
 
     p = TS.plan(stage("qwen3-vl-2b", "v", "o"), spe)
     at = [b["at"] for b in p["branches"].values()]
@@ -103,7 +104,7 @@ def test_plan_at_odd_epoch_sizes(spe):
     assert abs(p["warmup"] - 0.03 * p["stable"]) <= 0.5
     for b in p["branches"].values():
         assert abs(b["decay"] - 0.15 * b["at"]) <= 0.5
-        cfg = configs.sft_config("qwen3-vl-2b", "o", p["stable"], b["at"])
+        cfg = sft_config.sft_config("qwen3-vl-2b", "o", p["stable"], b["at"])
         assert cfg.max_steps == b["at"] + b["decay"] and cfg.warmup_steps == p["warmup"] < b["at"]
     deepest = max(b["at"] + b["decay"] for b in p["branches"].values())
     assert 2 * spe < deepest <= 3 * spe
@@ -195,26 +196,27 @@ def test_validate_and_resume_manifest(tmp_path):
 def test_grpo_and_bridge_get_the_same_sampling_fields():
     """g_probe's GRPOConfig mapping and the exported prompts carry configs.sampling's values (D13)."""
     pytest.importorskip("trl")
-    from objdel.train import configs
+    from objdel.policy import models as policy_models
+    from objdel.rl import config as rl_config
 
-    for m in configs.MODELS:
-        s = configs.sampling(m)
+    for m in policy_models.MODELS:
+        s = policy_models.sampling(m)
         same = {k: s[k] for k in ("temperature", "top_p", "top_k", "min_p", "repetition_penalty")}
-        g = configs.grpo_config(m, "o", use_vllm=False, bf16=False, max_completion_length=s["max_tokens"], **same)
+        g = rl_config.grpo_config(m, "o", use_vllm=False, bf16=False, max_completion_length=s["max_tokens"], **same)
         assert (g.temperature, g.top_p, g.top_k, g.min_p, g.repetition_penalty) == (1.0, 1.0, 0, 0.0, 1.0)
-        assert g.max_completion_length == configs.MAX_COMPLETION[m]
+        assert g.max_completion_length == policy_models.MAX_COMPLETION[m]
         assert s["presence_penalty"] == s["frequency_penalty"] == 0
 
 
 def _hf_sample_kwargs(tmp_path, monkeypatch):
-    """objdel.train.sample's HF child on a mocked model / processor -> the kwargs it hands to generate."""
+    """objdel.policy.sampler's HF child on a mocked model / processor -> the kwargs it hands to generate."""
     torch = pytest.importorskip("torch")
     pytest.importorskip("trl")
     import transformers
     from PIL import Image
 
-    from objdel.train import configs
-    from objdel.train import sample as HS
+    from objdel.policy import models as policy_models
+    from objdel.policy import sampler as HS
 
     seen = {}
 
@@ -242,7 +244,7 @@ def _hf_sample_kwargs(tmp_path, monkeypatch):
     monkeypatch.setattr(transformers.AutoModelForImageTextToText, "from_pretrained", lambda *a, **k: Model())
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda *a, **k: Proc())
     Image.new("RGB", (8, 8)).save(tmp_path / "i.png")
-    s = configs.sampling("qwen3-vl-2b") | {"seed": 0, "stop_token_ids": [7]}
+    s = policy_models.sampling("qwen3-vl-2b") | {"seed": 0, "stop_token_ids": [7]}
     line = {"id": "a", "prompt": "p", "image": str(tmp_path / "i.png"), "processor_kwargs": {}, "sampling": s, "n": 2}
     (tmp_path / "p.jsonl").write_text(json.dumps(line) + "\n")
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
@@ -348,7 +350,7 @@ def test_items_subset_is_for_selection_only(tmp_path, monkeypatch):
 
 def test_import_completions_refuses_a_partial_group(tmp_path):
     pytest.importorskip("trl")
-    from objdel.train import sample
+    from objdel.policy import sampler as sample
 
     rows = [{"id": "a", "k": k, "text": "{}", "token_ids": [1, 7], "finish_reason": "stop"} for k in range(4)]
     (tmp_path / "c.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
@@ -362,7 +364,7 @@ def test_sampler_child_failure_stops_select(tmp_path, monkeypatch):
     cmd = sft_select.sampler_cmd("hf", tmp_path / "p", tmp_path / "m", tmp_path / "c")
     with pytest.raises(subprocess.CalledProcessError):
         subprocess.run(cmd[:2] + ["-c", "raise SystemExit(1)"], check=True)
-    assert cmd[2:6] == ["-m", "objdel.train.sample", "--kind", "hf"]
+    assert cmd[2:6] == ["-m", "objdel.policy.sampler", "--kind", "hf"]
 
 
 # ---------------------------------------------------------------- g_probe null
@@ -401,7 +403,7 @@ def tiny_run(tmp_path, synthetic_items, monkeypatch):
                     steps_per_epoch=8)  # e0.5 at 4, e1 at 8, each with a 1-step decay (decay 0 is refused, BK3-10)
         return stage(**(base | kw))
 
-    from objdel.eval import vision
+    from objdel.policy import vision
 
     monkeypatch.setattr(vision, "fixed_set", lambda prepared: ([], "set-sha"))  # vision_check is mocked where used
     return TS, args, tmp_path
@@ -525,7 +527,7 @@ def test_lora_branches_are_saved_merged(tiny_run, monkeypatch):
 def test_vision_reference_only_writes_the_r0_reference(tiny_run, monkeypatch):
     """BK3-13: --vision-reference-only computes the base projector distance (CPU float32) into vision.reference,
     under run_dir; a later run reads it."""
-    from objdel.eval import vision
+    from objdel.policy import vision
 
     TS, args, tmp = tiny_run
     from PIL import Image

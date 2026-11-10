@@ -9,7 +9,7 @@ build writes data/eval_views/probe-precision (lidc/val.jsonl = probe-test on the
 patients; lidc/train.jsonl = the probe-train capacity set when --n-train > 0) and data/eval_views/probe-topology
 (D20: 120 one-hole items per bin, 160 two-part, 160 simple, on LIDC val patches), and records the v3e fidelity
 check (P5.2) of the build seed in the topology manifest. Completions: {"item_id", "samples": [text, ...]} per line
-(objdel.train.sample.import_completions); several lines of one item (seeds) are pooled. Reads untrusted data: -I.
+(objdel.policy.sampler.import_completions); several lines of one item (seeds) are pooled. Reads untrusted data: -I.
 """
 
 import argparse

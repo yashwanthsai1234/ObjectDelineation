@@ -290,7 +290,7 @@ def test_rows_revision_compares_the_pinned_hf_revision(rows_cfg, monkeypatch, tm
 
 
 def test_the_trl_contract_is_the_first_code_check(monkeypatch):
-    from objdel.train import trl_adapter as T
+    from objdel.rl import trl_adapter as T
 
     name, fn = next(c for c in PF.CHECKS if c[0].startswith("CODE"))
     assert name == "CODE TRL private names" and fn(None) == []

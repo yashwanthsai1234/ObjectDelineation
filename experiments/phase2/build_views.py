@@ -13,7 +13,7 @@ clearance, no other outlined nodule), the op (D4 for LIDC, id / fh for RIGA), an
 W 1400 +- 80) and noise (sigma <= 10 HU). The target is build_target on the op applied to the rater's mask in that
 window (certified, and pixel-exact for LIDC, or ValueError); its raster is compared pixel for pixel with the mask for
 the per-op exact share (RIGA < 1). The answer-token budget (I5) is applied when rows are read
-(objdel.train.dataset.view_rows), per tokenizer.
+(objdel.sft.rows.view_rows), per tokenizer.
 
 Writes <out>/rows.jsonl (sorted by epoch, item_id, rater_index, rep), <out>/context/<item_id>.npz (augment.
 write_context: int16 HU for LIDC, uint8 RGB for RIGA) and <out>/manifest.json (config, source manifests' SHA-256,

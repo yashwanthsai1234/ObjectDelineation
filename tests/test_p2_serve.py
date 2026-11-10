@@ -14,8 +14,8 @@ import pytest
 
 from experiments.phase1.reward_gates import make_jobs
 from objdel.geom.text import SCHEMAS
+from objdel.rl.reward import TRLReward
 from objdel.sft import select as sft_select
-from objdel.train.rewards import TRLReward
 from objdel.verify import store as serve
 from objdel.verify.reward.advantages import advantages_v4
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
@@ -70,7 +70,7 @@ def _workloads(root) -> dict[str, list]:
 
 
 def _trl_call(reward, jobs) -> dict:
-    """TRLReward's 8 functions in TRL's order with TRL's kwargs (objdel.train.rewards)."""
+    """TRLReward's 8 functions in TRL's order with TRL's kwargs (objdel.rl.reward)."""
     funcs, _ = reward.funcs()
     kw = {
         "prompts": [[{"role": "user", "content": "p"}]] * len(jobs),

@@ -1,7 +1,7 @@
 """TRL (version pinned in pyproject.toml) integration on a tiny offline model: R2 (TRL advantages = advantages_v4),
 group contiguity per process
 (world size 2 simulated with TRL's RepeatSampler and accelerate's sharding), the completions table -> eval JSONL
-exporter and the checkpoint sampler (objdel.train.sample). The Controller tests are in archive/controller/tests/."""
+exporter and the checkpoint sampler (objdel.policy.sampler). The Controller tests are in archive/controller/tests/."""
 import json
 
 import numpy as np
@@ -19,8 +19,11 @@ from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast 
 from trl import GRPOConfig, GRPOTrainer  # noqa: E402
 from trl.trainer.utils import RepeatSampler  # noqa: E402
 
-from objdel.train import configs, sample  # noqa: E402
-from objdel.train import rewards as R  # noqa: E402
+from objdel.policy import models as policy_models  # noqa: E402
+from objdel.policy import sampler as policy_sampler  # noqa: E402
+from objdel.rl import config as rl_config  # noqa: E402
+from objdel.rl import reward as rl_reward  # noqa: E402
+from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
 from objdel.verify.reward import advantages as reward_advantages  # noqa: E402
 from objdel.verify.reward.advantages import advantages_v4, legal_gate  # noqa: E402
 from objdel.verify.reward.cache import ExpertCache  # noqa: E402
@@ -78,9 +81,9 @@ def tiny(tmp_path_factory):
 
 
 def tiny_trainer(tiny, out, monkeypatch, prompts=(0, 1, 2, 3, 4), steps=1, eval_prompts=None, **kw):
-    monkeypatch.setattr(R, "score_batch", fake_score_batch)
+    monkeypatch.setattr(rl_reward, "score_batch", fake_score_batch)
     path, tok = tiny
-    rw = R.TRLReward(lambda key: {"key": key}, stop_ids={tok.eos_token_id, tok.pad_token_id})
+    rw = rl_reward.TRLReward(lambda key: {"key": key}, stop_ids={tok.eos_token_id, tok.pad_token_id})
     funcs, weights = rw.funcs()
     row = lambda k: {"prompt": f"prompt {k}", "key": k, "W": 50, "H": 50, "names": ["nodule"]}
     args = dict(output_dir=str(out), max_steps=steps, per_device_train_batch_size=G * len(prompts),
@@ -143,18 +146,18 @@ def first_local_batch(cfg, world, rank, n_prompts=200):
 
 
 def call_reward_on(keys):
-    rw = R.TRLReward(lambda key: {"key": key}, stop_ids={1})
+    rw = rl_reward.TRLReward(lambda key: {"key": key}, stop_ids={1})
     f = rw.funcs()[0][-1]
     n = len(keys)
     return f(prompts=[""] * n, completions=["x"] * n, completion_ids=[[1]] * n, key=keys, W=[50] * n, H=[50] * n,
              names=[["nodule"]] * n)
 
 
-@pytest.mark.parametrize("model", list(configs.MODELS))
+@pytest.mark.parametrize("model", list(policy_models.MODELS))
 def test_every_process_receives_whole_groups(model, tmp_path, monkeypatch):
-    monkeypatch.setattr(R, "score_batch", lambda jobs: fake_score_batch(
+    monkeypatch.setattr(rl_reward, "score_batch", lambda jobs: fake_score_batch(
         [(None, None, None, {"key": k % 5}) for k in (j[3]["key"] for j in jobs)]))
-    cfg = configs.grpo_config(model, str(tmp_path))
+    cfg = rl_config.grpo_config(model, str(tmp_path))
     for world in (1, 2, 4):
         local = [first_local_batch(cfg, world, rank) for rank in range(world)]
         prompts = [k for b in local for k in b[::G]]
@@ -201,8 +204,8 @@ def scripted_trainer(char_model, out, policy, steps=2, **kw):
     train = Dataset.from_list([row(k) for k in ("lidc/t1", "lidc/t2")])
     val = Dataset.from_list([row(k) for k in ("lidc/v1", "lidc/v2")])
     model = LlamaForCausalLM.from_pretrained(path)
-    funcs, _ = R.TRLReward(caches.__getitem__, R.stop_ids(model, tok)).funcs()
-    args = configs.grpo_config("qwen3-vl-2b", str(out), use_vllm=False, **{  # HF generate on the tiny model
+    funcs, _ = rl_reward.TRLReward(caches.__getitem__, policy_models.stop_ids(model, tok)).funcs()
+    args = rl_config.grpo_config("qwen3-vl-2b", str(out), use_vllm=False, **{  # HF generate on the tiny model
         "max_steps": steps, "per_device_train_batch_size": 2 * G, "gradient_accumulation_steps": 1,
         "per_device_eval_batch_size": 2 * G, "use_cpu": True, "bf16": False, "logging_steps": 1,
         "save_strategy": "no", "eval_strategy": "steps", "eval_steps": 1, "learning_rate": 1e-2} | kw)
@@ -239,14 +242,14 @@ def test_completions_table_exports_to_eval_jsonl(char_model, tmp_path):
     path = tmp_path / "completions" / "completions_00001.parquet"
     df = pd.read_parquet(path)
     assert {"key", "truncated", "group"} <= set(df.columns)  # B4-3
-    rows = sample.export([path], keys=["lidc/v1", "lidc/v2"])  # this step's evaluation rewrote the table
+    rows = policy_sampler.export([path], keys=["lidc/v1", "lidc/v2"])  # this step's evaluation rewrote the table
     assert sorted(r["item_id"] for r in rows) == ["lidc/v1", "lidc/v2"]
     for r in rows:
         assert r["samples"] == [t for t, _ in texts[r["item_id"]]] and r["truncated"] == [False] * G
         assert r["step"] == 1
-    sample.write(rows, tmp_path / "x.jsonl")
+    policy_sampler.write(rows, tmp_path / "x.jsonl")
     assert [json.loads(line) for line in (tmp_path / "x.jsonl").read_text().splitlines()] == rows
-    train_rows = sample.export([path], keys=["lidc/t2"])
+    train_rows = policy_sampler.export([path], keys=["lidc/t2"])
     if train_rows:  # the step's training completions, when still in TRL's table
         assert train_rows[0]["truncated"] == [i % 3 == 0 for i in range(G)]
 
@@ -256,7 +259,7 @@ def test_export_refuses_a_table_that_is_not_whole_groups(tmp_path):
                        "truncated": [False] * G, "group": [0] * G})
     df.to_parquet(tmp_path / "c.parquet")
     with pytest.raises(ValueError, match="not one group"):
-        sample.export([tmp_path / "c.parquet"])
+        policy_sampler.export([tmp_path / "c.parquet"])
 
 
 def test_sampler_returns_k_completions_per_row_with_trls_truncation_rule(char_model, tmp_path, monkeypatch):
@@ -273,16 +276,16 @@ def test_sampler_returns_k_completions_per_row_with_trls_truncation_rule(char_mo
     trainer._generate_and_score_completions = None  # the sampler neither scores nor trains
     mode, rows = trainer.model.training, []
     for key[0] in ("lidc/v1", "lidc/v2"):
-        rows += sample.sample(trainer, [{"prompt": "x", "key": key[0]}], k=16)
+        rows += rl_trl_adapter.sample(trainer, [{"prompt": "x", "key": key[0]}], k=16)
     assert trainer.model.training == mode
     assert [r["item_id"] for r in rows] == ["lidc/v1", "lidc/v2"]
     assert rows[0]["samples"] == [t for t, _ in script["lidc/v1"]] * 2
     assert rows[0]["truncated"] == [i % G == 2 for i in range(16)] and rows[1]["truncated"] == [False] * 16
     with pytest.raises(ValueError, match="whole groups"):
-        sample.sample(trainer, [{"prompt": "x", "key": "lidc/v1"}], k=12)
+        rl_trl_adapter.sample(trainer, [{"prompt": "x", "key": "lidc/v1"}], k=12)
     stops = []  # the reward's stop ids (REVIEW #7): one rule for the sampler and the reward
-    monkeypatch.setattr(R, "stop_ids", lambda model, proc: stops.append((model, proc)) or set())
-    (row,) = sample.sample(trainer, [{"prompt": "x", "key": "lidc/v1"}], k=8)
+    monkeypatch.setattr(policy_models, "stop_ids", lambda model, proc: stops.append((model, proc)) or set())
+    (row,) = rl_trl_adapter.sample(trainer, [{"prompt": "x", "key": "lidc/v1"}], k=8)
     assert stops == [(trainer.model, trainer.processing_class)] and row["truncated"] == [True] * G
 
 
@@ -297,10 +300,10 @@ def test_sampler_generates_with_the_real_model(tiny, tmp_path):
                           train_dataset=Dataset.from_list([{"prompt": "prompt 1"}]))
     ids, real = [], trainer._generate
     trainer._generate = lambda prompts: (out := real(prompts), ids.extend(out[1]))[0]
-    (row,) = sample.sample(trainer, [{"prompt": "prompt 3", "key": "lidc/x"}], k=16)
+    (row,) = rl_trl_adapter.sample(trainer, [{"prompt": "prompt 3", "key": "lidc/x"}], k=16)
     assert len(row["samples"]) == len(ids) == 16 and all(isinstance(t, str) for t in row["samples"])
     assert all(len(x) <= 4 for x in ids) and any(row["truncated"])
-    assert row["truncated"] == [x[-1] not in R.stop_ids(trainer.model, tok) for x in ids]
+    assert row["truncated"] == [x[-1] not in policy_models.stop_ids(trainer.model, tok) for x in ids]
 
 
 # ------------------------------------------------------------------ CLEAN6: the Controller is archived (CT-08)
@@ -310,7 +313,7 @@ def test_controller_is_gone_and_the_live_callbacks_stay():
     import subprocess
     from pathlib import Path
 
-    from objdel.train import callbacks
+    from objdel.policy import callbacks
 
     assert callbacks.TraceStep and callbacks.NvtxSteps and callbacks.BudgetStop
     for name in ("Contr" + "oller", "audit_" + "alarm", "FI" + "RED"):

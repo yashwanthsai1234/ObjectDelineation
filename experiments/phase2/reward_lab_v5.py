@@ -148,7 +148,7 @@ def main(argv=None) -> None:
     ap.add_argument("--out", type=Path, required=True, help="report JSON")
     a = ap.parse_args(argv)
     from objdel.data.splits import val_half
-    from objdel.train import dataset
+    from objdel.policy import rows as dataset
     from objdel.verify import store as serve
 
     rows = {r["key"]: r for r in dataset.prompts(a.view, "lidc", "val")}

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from transformers import TrainerControl
 
-from objdel.train.callbacks import LocGuard, slope_nw
+from objdel.policy.callbacks import LocGuard, slope_nw
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SD = 0.038  # per-step sd of rewards/iou_tc around its trend, full RL run (runs/rl/train_rl/rl.json)

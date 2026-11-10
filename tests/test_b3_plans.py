@@ -23,7 +23,7 @@ def test_b3_v5_holds_the_b3_9_steps_in_order():
     build, smoke, b1_eval, train, merge, evals, rc0 = steps("b3_v5.yaml")
     assert build == steps("b1_rows.yaml")[0]
     assert smoke[:2] == ["bash", "-c"] and smoke[2].startswith("OBJDEL_DATA_ROOT=")
-    assert smoke[2].endswith("tests/test_train_fast.py::test_g08b_smoke")
+    assert smoke[2].endswith("tests/rl/test_trl_adapter_equivalence.py::test_g08b_smoke")
     assert after(b1_eval, "--ckpt").endswith("/b1/final") and "eval_b1v3_val_shifted" in after(b1_eval, "--out")
     assert train[0] == "~" and merge[0] != "~" and "--merge-last" in merge and after(merge, "--out") == after(
         train, "--out")

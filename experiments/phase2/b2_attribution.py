@@ -27,7 +27,8 @@ from types import SimpleNamespace
 import torch
 from trl import GRPOTrainer
 
-from objdel.train import fast
+from objdel.policy import caches as policy_caches
+from objdel.rl import trl_adapter as rl_trl_adapter
 
 PAIRS = (("a", "d"), ("b", "d"), ("c", "d"), ("a", "b"), ("c", "b"))
 BIN = 64
@@ -66,7 +67,7 @@ def score_ways(peft, batches, load_base) -> dict:
     plain = forward_obj(GRPOTrainer, bf16=True)
     lp = {"b": score(plain, peft, batches)}
     merged = load_base()
-    missing, unexpected = merged.load_state_dict(dict(fast.lora_merged_params(peft)), strict=False)
+    missing, unexpected = merged.load_state_dict(dict(rl_trl_adapter.lora_merged_params(peft)), strict=False)
     if unexpected or any(not k.endswith("lm_head.weight") for k in missing):  # a tied head is not a named parameter
         raise RuntimeError(f"merged weights do not fit the base: missing {missing[:3]}, unexpected {unexpected[:3]}")
     lp["c"] = score(plain, merged.eval(), batches)
@@ -79,8 +80,10 @@ def score_ways(peft, batches, load_base) -> dict:
     for n, p in peft.named_parameters():
         if n in low:
             p.data = p.data.to(low[n])  # exact: the values came from that dtype
-    caches = [c for c in (fast.VisionCache.install(peft), fast.RopeCache.install(peft)) if c is not None]
-    t = forward_obj(fast.FastGRPO, bf16=True, shared_prefix=True, loss_inputs=None, rope=caches[-1] if caches else None)
+    caches = [c for c in (policy_caches.VisionCache.install(peft),
+        policy_caches.RopeCache.install(peft)) if c is not None]
+    t = forward_obj(rl_trl_adapter.FastGRPO, bf16=True, shared_prefix=True, loss_inputs=None,
+        rope=caches[-1] if caches else None)
     lp["a"] = score(t, peft, batches, clear=caches)
     return lp
 
@@ -152,7 +155,7 @@ def main(argv=None) -> int:
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl.trainer.utils import add_fused_lm_head
 
-    from objdel.train import configs
+    from objdel.policy import models as configs
 
     def load_base():
         m = AutoModelForImageTextToText.from_pretrained(a.base).eval()

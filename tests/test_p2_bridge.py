@@ -1,5 +1,5 @@
-"""Phase 2 M5: the JSONL sampling bridge (C-BRIDGE) between the training env (objdel.train.sample) and the vLLM env
-(objdel.train.sample's vLLM request builder and output records)."""
+"""Phase 2 M5: the JSONL sampling bridge (C-BRIDGE) between the training env (objdel.policy.sampler) and the vLLM env
+(objdel.policy.sampler's vLLM request builder and output records)."""
 import json
 import types
 from pathlib import Path
@@ -26,28 +26,28 @@ class Processor:
 @pytest.fixture
 def rows(tmp_path):
     pytest.importorskip("datasets")  # BK4-1: the CI [dev] job has no datasets
-    from objdel.train.dataset import _user
+    from objdel.policy.prompt import _user
     return [{"prompt": [_user("lidc")], "image": str(tmp_path / f"im{i}.png"), "key": f"lidc/1.2.1/n000/z00{i}"}
             for i in (1, 3)]
 
 
 @pytest.fixture
 def V():
-    """objdel.train.sample, which imports TRL's data utils: the CI [dev]-only job skips the tests that use it."""
-    return pytest.importorskip("objdel.train.sample")
+    """objdel.policy.sampler, which imports TRL's data utils: the CI [dev]-only job skips the tests that use it."""
+    return pytest.importorskip("objdel.policy.sampler")
 
 
 def export(rows, tmp_path, model="qwen3-vl-2b", **kw):
     pytest.importorskip("trl")
-    from objdel.train import sample
+    from objdel.policy import sampler as sample
     path = tmp_path / "prompts.jsonl"
     sample.export_prompts(rows, path, model, "lidc", 8, processor=Processor(), **kw)
     return path, [json.loads(line) for line in path.read_text().splitlines()]
 
 
 def test_export_schema_kwargs_and_sampling(rows, tmp_path):
-    from objdel.train import configs
-    from objdel.train.dataset import PROMPTS
+    from objdel.policy import models as configs
+    from objdel.policy.prompt import PROMPTS
     _, lines = export(rows, tmp_path, stop_ids={2, 1}, seed=3)
     assert [set(x) for x in lines] == [{"id", "prompt", "image", "processor_kwargs", "sampling", "n"}] * 2
     x = lines[0]
@@ -60,7 +60,7 @@ def test_export_schema_kwargs_and_sampling(rows, tmp_path):
 
 def test_export_caps_the_completion_only_when_asked(rows, tmp_path):
     """CLEAN8: select_ckpt's max_tokens (the CPU smoke's cap on a random Qwen3-VL) replaces the model's budget."""
-    from objdel.train import configs
+    from objdel.policy import models as configs
     assert export(rows, tmp_path, max_tokens=32)[1][0]["sampling"]["max_tokens"] == 32
     assert export(rows, tmp_path)[1][0]["sampling"]["max_tokens"] == configs.MAX_COMPLETION["qwen3-vl-2b"]
 
@@ -103,7 +103,8 @@ def test_requests_echo_the_exported_sampling(V, rows, tmp_path):
 
 
 def test_round_trip_and_truncation_is_the_rewards_rule(V, rows, tmp_path):
-    from objdel.train import rewards, sample
+    from objdel.policy import models as rewards
+    from objdel.policy import sampler as sample
     _, lines = export(rows, tmp_path)
     stop = {1, 2}
     outs = [types.SimpleNamespace(outputs=[completion(f"t{i}{k}", ids, f) for k, (ids, f) in enumerate(
@@ -130,7 +131,7 @@ def test_round_trip_and_truncation_is_the_rewards_rule(V, rows, tmp_path):
 def test_import_refuses_short_duplicate_or_missing_items(tmp_path):
     """BK2-3 / BK3-7: every exported id comes back with exactly n samples (default G = 8), each (id, k) once."""
     pytest.importorskip("trl")
-    from objdel.train import sample
+    from objdel.policy import sampler as sample
 
     def run(recs, **kw):
         path = tmp_path / "c.jsonl"
@@ -173,8 +174,8 @@ def test_logprob_parity_on_a_tiny_model(tmp_path):
     from trl.data_utils import prepare_multimodal_messages
 
     from experiments.phase2 import parity
-    from objdel.train import sample
-    from objdel.train.dataset import _user
+    from objdel.policy import sampler as sample
+    from objdel.policy.prompt import _user
     from tests.test_p2_scripts import _tiny_vlm
 
     model_dir = _tiny_vlm(tmp_path / "tiny")

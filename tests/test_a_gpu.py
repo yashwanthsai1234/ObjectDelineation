@@ -45,7 +45,7 @@ def test_g02b_builds():
 def test_g03_device_bytes(monkeypatch):
     """G03: the ceiling scores on the leave-one-out caches' device tables, and only per-object numbers come back
     (no returned array as large as a mask)."""
-    from objdel.train import dataset
+    from objdel.policy import rows as dataset
     from objdel.verify import store as verify_store
 
     called, sizes = set(), []

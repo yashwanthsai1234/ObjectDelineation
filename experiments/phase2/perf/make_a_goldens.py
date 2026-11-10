@@ -35,7 +35,7 @@ def texts_sha256(texts: dict[str, list[str]]) -> str:
 
 def inputs(prepared: Path, n: int = 50) -> dict[str, list[str]]:
     """{item_id: 8 texts} of the golden's items (module docstring)."""
-    from objdel.train import dataset
+    from objdel.policy import rows as dataset
 
     recs = sorted((r for r in dataset.records(prepared, "lidc", "val") if r["rl"] and any(r["targets"])),
                   key=lambda r: r["item_id"])[:n]
@@ -46,7 +46,7 @@ def inputs(prepared: Path, n: int = 50) -> dict[str, list[str]]:
 
 def values(prepared: Path, texts: dict[str, list[str]]) -> dict[str, list[str]]:
     """{item_id: [doctor, model] as float hex} on this venv's build."""
-    from objdel.train import dataset
+    from objdel.policy import rows as dataset
     from objdel.verify import store as verify_store
 
     caches = verify_store.cache_loader(prepared)

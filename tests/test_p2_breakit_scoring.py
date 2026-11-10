@@ -18,8 +18,8 @@ from experiments.phase2 import select_ckpt as SC
 from objdel.data import probes
 from objdel.data.targets.build import build_target
 from objdel.policy import evaluate
+from objdel.policy import sampler as V
 from objdel.sft import select as sft_select
-from objdel.train import sample as V
 from objdel.verify import gates
 from objdel.verify import stats as S
 from objdel.verify import store as serve
@@ -64,8 +64,9 @@ def _rec(i, k, text="x", ids=(5, 1), finish="stop"):
 @pytest.fixture
 def sample_mod():
     pytest.importorskip("trl")
-    from objdel.train import sample
-    return sample
+    from objdel.policy import sampler
+
+    return sampler
 
 
 def test_bridge_unicode_empty_and_length_round_trip(sample_mod, tmp_path):

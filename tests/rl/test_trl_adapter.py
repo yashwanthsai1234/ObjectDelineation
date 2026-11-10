@@ -1,4 +1,4 @@
-"""objdel.train.trl_adapter: the start-up check of the private TRL names and silent couplings FastGRPO relies on (A7).
+"""objdel.rl.trl_adapter: the start-up check of the private TRL names and silent couplings FastGRPO relies on (A7).
 
 Every case patches the real TRL classes with monkeypatch (never the library files). A passing check alone cannot catch a
 typo in a checked substring; the negative cases do.
@@ -22,10 +22,11 @@ import trl.trainer.grpo_trainer as grpo  # noqa: E402
 from trl import GRPOTrainer  # noqa: E402
 from trl.generation.vllm_generation import VLLMGeneration  # noqa: E402
 
-from objdel.train import fast  # noqa: E402
-from objdel.train import trl_adapter as T  # noqa: E402
+from objdel.policy import caches as policy_caches  # noqa: E402
+from objdel.rl import forward as rl_forward  # noqa: E402
+from objdel.rl import trl_adapter as T  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_the_environment_has_the_pinned_trl():
@@ -35,7 +36,7 @@ def test_the_environment_has_the_pinned_trl():
 def test_check_passes_on_the_pin_without_vllm_and_quickly():
     code = ("import sys, time; sys.modules['vllm'] = None\n"
             "import trl.trainer.grpo_trainer\n"
-            "from objdel.train import trl_adapter as T\n"
+            "from objdel.rl import trl_adapter as T\n"
             "for _ in range(2):\n"
             "    t = time.perf_counter(); r = T.check(); dt = time.perf_counter() - t\n"
             "    assert r is None and dt < 1.0, (r, dt)\n"
@@ -221,7 +222,7 @@ def test_trls_ratio_block_equals_fast_is_ratio(mode, lo):
         mask[0], mask[2, 8:] = 0.0, 0.0  # an all-masked row, a masked tail
         ns = dict(old_per_token_logps=old, sampling_per_token_logps=samp, mask=mask, torch=torch, math=math, self=stub)
         exec(code, ns)
-        assert torch.equal(ns["vllm_importance_sampling_ratio"], fast.is_ratio(old, samp, mask, mode, lo, 3.0))
+        assert torch.equal(ns["vllm_importance_sampling_ratio"], rl_forward.is_ratio(old, samp, mask, mode, lo, 3.0))
 
 
 def test_fast_grpo_checks_the_contract_before_anything_else(monkeypatch):
@@ -234,7 +235,7 @@ def test_fast_grpo_checks_the_contract_before_anything_else(monkeypatch):
     monkeypatch.setattr(GRPOTrainer, "__init__", init)
     monkeypatch.setattr(T, "check", lambda: calls.append("check"))
     with pytest.raises(RuntimeError, match="stop after"):
-        fast.FastGRPO()
+        T.FastGRPO()
     assert calls == ["check", "GRPOTrainer.__init__"]
 
     def broken():
@@ -243,7 +244,7 @@ def test_fast_grpo_checks_the_contract_before_anything_else(monkeypatch):
     calls.clear()
     monkeypatch.setattr(T, "check", broken)
     with pytest.raises(T.TRLContractError, match="boom"):
-        fast.FastGRPO()
+        T.FastGRPO()
     assert calls == []
 
 
@@ -251,7 +252,7 @@ def test_fast_grpo_refuses_another_trl_version_without_the_opt_in(monkeypatch):
     monkeypatch.delenv("OBJDEL_TRL_UNPINNED", raising=False)
     monkeypatch.setattr(trl, "__version__", "1.18.0")
     with pytest.raises(T.TRLContractError, match="1.18.0"):
-        fast.FastGRPO()
+        T.FastGRPO()
 
 
 def lora_engine(**drop):
@@ -283,15 +284,16 @@ def test_fast_grpo_checks_the_option_f_names_only_under_lora_seqmask(monkeypatch
     monkeypatch.setattr(T, "check_lora", lambda llm: seen.append(llm))
     monkeypatch.setattr(GRPOTrainer, "__init__", lambda self, *a, **k: None)
     monkeypatch.setattr(T, "check", lambda: None)
-    monkeypatch.setattr(fast, "vllm_kwargs", lambda **kw: contextlib.nullcontext())  # no vLLM LLM class on the Mac
+    # no vLLM LLM class on the Mac
+    monkeypatch.setattr(T, "vllm_kwargs", lambda **kw: contextlib.nullcontext())
     for name in ("check_engine_dtype", "drop_lora_input_cast", "sync_without_merge"):
-        monkeypatch.setattr(fast.FastGRPO, name, lambda self: None)
-    monkeypatch.setattr(fast.VisionCache, "install", classmethod(lambda cls, m: None))
-    monkeypatch.setattr(fast.RopeCache, "install", classmethod(lambda cls, m: None))
-    monkeypatch.setattr(fast.ImageMemo, "install", classmethod(lambda cls, p: None))
+        monkeypatch.setattr(T.FastGRPO, name, lambda self: None)
+    monkeypatch.setattr(policy_caches.VisionCache, "install", classmethod(lambda cls, m: None))
+    monkeypatch.setattr(policy_caches.RopeCache, "install", classmethod(lambda cls, m: None))
+    monkeypatch.setattr(policy_caches.ImageMemo, "install", classmethod(lambda cls, p: None))
     for lora in (False, True):
-        t = object.__new__(fast.FastGRPO)
+        t = object.__new__(T.FastGRPO)
         t.args, t.vllm_generation, t.model, t.processing_class = SimpleNamespace(vllm_lora=lora), \
             SimpleNamespace(llm="engine"), None, None
-        fast.FastGRPO.__init__(t, args=t.args)
+        T.FastGRPO.__init__(t, args=t.args)
     assert seen == ["engine"]

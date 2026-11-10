@@ -19,8 +19,13 @@ from objdel.data import store  # noqa: E402
 from objdel.data.targets.build import build_target, min_areas  # noqa: E402
 from objdel.geom.shape import canonicalize, to_mask  # noqa: E402
 from objdel.geom.text import SCHEMAS, parse, serialize  # noqa: E402
-from objdel.train import configs  # noqa: E402
-from objdel.train import dataset as D  # noqa: E402
+from objdel.policy import models as policy_models  # noqa: E402
+from objdel.policy import prompt as policy_prompt  # noqa: E402
+from objdel.policy import rows as policy_rows  # noqa: E402
+from objdel.rl import config as rl_config  # noqa: E402
+from objdel.rl import rows as rl_rows  # noqa: E402
+from objdel.sft import config as sft_config  # noqa: E402
+from objdel.sft import rows as sft_rows  # noqa: E402
 from objdel.verify import store as verify_store  # noqa: E402
 
 # ------------------------------------------------------------------ a tiny training view directory (C-VIEW)
@@ -92,20 +97,20 @@ def chars(text, add_special_tokens=False):  # a one-token-per-character tokenize
 
 def test_view_rows_schema_and_lazy_render(view_dir, fake_augment):
     root, rows = view_dir
-    ds = D.view_rows(root, chars)
+    ds = sft_rows.view_rows(root, chars)
     assert len(ds) == 4 and not fake_augment.calls  # building renders nothing
     r = ds[1]
     assert {"messages", "image", "key", "rater", "row_id", "epoch", "length"} <= set(r) and "target" not in r
     assert ds["epoch"] == [0] * 4  # S1-7: the view epoch as a column
     user, answer = r["messages"]
     assert [c["type"] for c in user["content"]] == ["image", "text"]  # Arrow adds "text": None to the image part
-    assert user["content"][1]["text"] == D.PROMPTS["lidc"]  # as sft_rows
+    assert user["content"][1]["text"] == policy_prompt.PROMPTS["lidc"]  # as sft_rows
     assert answer == {"role": "assistant", "content": [{"type": "text", "text": rows[1]["target"]}]}
     assert (r["key"], r["rater"], r["row_id"], r["length"]) == (rows[1]["item_id"], "2", rows[1]["row_id"],
                                                                len(rows[1]["target"]))
     assert r["image"].mode == "RGB" and r["image"].size == (512, 512) and r["image"].getpixel((0, 0))[0] == 40
     assert fake_augment.calls == [{k: v for k, v in rows[1].items() if k != "target"}]  # the row is the spec
-    assert ds[3]["messages"][0]["content"][1]["text"] == D.PROMPTS["riga"]
+    assert ds[3]["messages"][0]["content"][1]["text"] == policy_prompt.PROMPTS["riga"]
 
 
 def test_length_column_and_the_sampler_render_nothing(view_dir, fake_augment):
@@ -113,7 +118,7 @@ def test_length_column_and_the_sampler_render_nothing(view_dir, fake_augment):
     every row there (impl note M2: 1,005 renders per 1,000 rows)."""
     from transformers.trainer_pt_utils import LengthGroupedSampler
     root, rows = view_dir
-    ds = D.view_rows(root, chars)
+    ds = sft_rows.view_rows(root, chars)
     assert ds["length"] == [len(r["target"]) for r in rows] and "length" in ds.column_names
     assert sorted(LengthGroupedSampler(2, dataset=ds, lengths=ds["length"])) == [0, 1, 2, 3]
     assert not fake_augment.calls
@@ -123,23 +128,23 @@ def test_length_column_and_the_sampler_render_nothing(view_dir, fake_augment):
 
 def test_view_rows_pickle_for_dataloader_workers(view_dir, fake_augment):
     root, _ = view_dir
-    ds = pickle.loads(pickle.dumps(D.view_rows(root, chars)))
+    ds = pickle.loads(pickle.dumps(sft_rows.view_rows(root, chars)))
     assert type(ds).__name__ == "_ViewRows" and ds[0]["image"].size == (512, 512)
 
 
 def test_view_rows_drop_answers_beyond_the_budget(view_dir, fake_augment):
     root, rows = view_dir
     n = sorted(len(r["target"]) for r in rows)
-    kept = D.view_rows(root, chars, max_tokens=n[1] + 1)  # + 1: the end-of-turn token (I5)
+    kept = sft_rows.view_rows(root, chars, max_tokens=n[1] + 1)  # + 1: the end-of-turn token (I5)
     assert len(kept) == sum(k <= n[1] for k in n) < len(rows)
-    assert D.view_rows(root)["length"] == [len(r["target"]) for r in rows]  # no tokenizer: characters
+    assert sft_rows.view_rows(root)["length"] == [len(r["target"]) for r in rows]  # no tokenizer: characters
     with pytest.raises(ValueError, match="tokenizer"):
-        D.view_rows(root, max_tokens=1024)  # BK1-5: a token budget needs the tokenizer
+        sft_rows.view_rows(root, max_tokens=1024)  # BK1-5: a token budget needs the tokenizer
 
 
 def test_a0_empties_holes_and_keeps_parts(view_dir, fake_augment):
     root, rows = view_dir
-    a0 = D.view_rows(root, chars, a0=True)
+    a0 = sft_rows.view_rows(root, chars, a0=True)
     for r, row in zip(rows, a0, strict=True):
         names = SCHEMAS[r["dataset"]]
         text = row["messages"][1]["content"][0]["text"]
@@ -158,7 +163,7 @@ def test_view_rows_refuse_a_changed_rows_file(view_dir, tmp_path, fake_augment):
     with open(tmp_path / "v" / "rows.jsonl", "a") as f:
         f.write("\n")
     with pytest.raises(ValueError, match="view_hash"):
-        D.view_rows(tmp_path / "v")
+        sft_rows.view_rows(tmp_path / "v")
 
 
 def test_a0_drops_a_part_inside_another_parts_hole(disc_mask):
@@ -169,7 +174,7 @@ def test_a0_drops_a_part_inside_another_parts_hole(disc_mask):
     blob = disc_mask(50, 50, 6, 44, 3)
     text = build_target({"nodule": ring | blob}, SCHEMAS["lidc"], None, {"nodule": 5}).text
     assert len(parse(text, SCHEMAS["lidc"]).objs["nodule"]) == 3
-    parts = parse(D._no_holes(text, SCHEMAS["lidc"]), SCHEMAS["lidc"]).objs["nodule"]
+    parts = parse(sft_rows._no_holes(text, SCHEMAS["lidc"]), SCHEMAS["lidc"]).objs["nodule"]
     g = to_mask(parts, 50, 50)
     assert g.legal and len(parts) == 2 and np.array_equal(g.mask, binary_fill_holes(ring | blob))
 
@@ -187,7 +192,7 @@ def test_view_rows_check_every_context(view_dir, tmp_path, fake_augment):
         edit(m, v / "context" / "riga" / "MESSIDOR" / "image001.npz")
         (v / "manifest.json").write_text(json.dumps(m))
         with pytest.raises(ValueError, match="context"):
-            D.view_rows(v)
+            sft_rows.view_rows(v)
 
 
 def test_view_rows_on_the_real_view_builder(tmp_path, synthetic_items, disc_mask):
@@ -206,14 +211,14 @@ def test_view_rows_on_the_real_view_builder(tmp_path, synthetic_items, disc_mask
                 ["1", "2", "3"], {})
     store.write(sorted([*synthetic_items(), item], key=lambda i: (i.dataset, i.split, i.item_id)), tmp_path / "s")
     m = build.build(tmp_path / "s", tmp_path / "v", "lidc", "train", procs=1)
-    ds = D.view_rows(tmp_path / "v")
+    ds = sft_rows.view_rows(tmp_path / "v")
     assert len(ds) == m["counts"]["rows"] > 0 and not any(r["key"] == item.item_id and r["rater"] == "3" for r in ds)
     by = {(r["key"], r["rater"]) for r in ds}
     assert {(item.item_id, "1"), (item.item_id, "2"), ("lidc/1.2.1/n000/z001", "2")} <= by
     spec = json.loads((tmp_path / "v" / "rows.jsonl").read_text().splitlines()[0])
     want = augment.render(spec, augment.load_context(tmp_path / "v", spec["item_id"]))
     assert np.array_equal(np.asarray(ds[0]["image"]), want) and want.shape == (512, 512, 3)
-    assert len(D.view_rows(tmp_path / "v", a0=True)) == len(ds)
+    assert len(sft_rows.view_rows(tmp_path / "v", a0=True)) == len(ds)
 
 
 # ------------------------------------------------------------------ configs (plan D4-D7, D13, §6.0)
@@ -251,15 +256,15 @@ def toy(names):
 
 
 def test_models_and_budgets():
-    assert configs.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
-    assert configs.MAX_COMPLETION["qwen3-vl-2b"] == 1536
+    assert policy_models.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
+    assert policy_models.MAX_COMPLETION["qwen3-vl-2b"] == 1536
 
 
 @pytest.mark.parametrize("model", list(LINEAR))
 def test_sampling_is_explicit_and_card_free(model):
-    s = configs.sampling(model)
+    s = policy_models.sampling(model)
     assert s == {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "min_p": 0.0, "repetition_penalty": 1.0,
-                 "presence_penalty": 0.0, "frequency_penalty": 0.0, "max_tokens": configs.MAX_COMPLETION[model]}
+                 "presence_penalty": 0.0, "frequency_penalty": 0.0, "max_tokens": policy_models.MAX_COMPLETION[model]}
 
 
 def test_sampling_names_for_grpo_and_hf_generate(tmp_path):
@@ -268,15 +273,15 @@ def test_sampling_names_for_grpo_and_hf_generate(tmp_path):
     from transformers import GenerationConfig
     m = "qwen3-vl-2b"
     common = {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "min_p": 0.0, "repetition_penalty": 1.0}
-    assert configs.sampling(m, "grpo") == common | {"max_completion_length": 1536}
-    assert configs.sampling(m, "hf") == common | {"max_new_tokens": 1536, "do_sample": True}
-    configs.grpo_config(m, str(tmp_path), use_cpu=True, **configs.sampling(m, "grpo"))  # accepted names
-    exported = configs.sampling(m) | {"seed": 3, "stop_token_ids": [7]}  # a prompts JSONL "sampling" field
-    hf = configs.as_names(exported, "hf")
+    assert policy_models.sampling(m, "grpo") == common | {"max_completion_length": 1536}
+    assert policy_models.sampling(m, "hf") == common | {"max_new_tokens": 1536, "do_sample": True}
+    rl_config.grpo_config(m, str(tmp_path), use_cpu=True, **policy_models.sampling(m, "grpo"))  # accepted names
+    exported = policy_models.sampling(m) | {"seed": 3, "stop_token_ids": [7]}  # a prompts JSONL "sampling" field
+    hf = policy_models.as_names(exported, "hf")
     assert hf == common | {"max_new_tokens": 1536, "do_sample": True, "eos_token_id": [7]}
     GenerationConfig(**hf).validate(strict=True)
     with pytest.raises(ValueError, match="presence_penalty"):
-        configs.as_names(exported | {"presence_penalty": 1.5}, "grpo")
+        policy_models.as_names(exported | {"presence_penalty": 1.5}, "grpo")
 
 
 @pytest.mark.parametrize("model", list(LINEAR))
@@ -284,7 +289,7 @@ def test_lora_targets_the_language_model_only(model):
     """PEFT's own injection on the recorded module names: no vision tower or projector module gets an adapter,
     every language-model linear layer does (B1 §2.5: the all-linear adapter collapsed vision)."""
     from peft import inject_adapter_in_model
-    cfg = configs.lora("qwen3-vl-2b")  # the adapter config is the same for any model
+    cfg = policy_models.lora("qwen3-vl-2b")  # the adapter config is the same for any model
     assert (cfg.r, cfg.lora_alpha) == (16, 32)
     names = [n for n in LINEAR[model] if n != "lm_head"]
     m = inject_adapter_in_model(cfg.__class__(**{**cfg.to_dict(), "target_modules": sorted(
@@ -295,21 +300,22 @@ def test_lora_targets_the_language_model_only(model):
 
 
 def test_every_model_is_lora():
-    assert configs.lora("qwen3-vl-2b") is not None and configs.lora("qwen3-vl-2b").target_modules == "all-linear"
-    assert configs._LORA == frozenset(configs.MODELS)  # ADR-0008: no full fine-tuning
+    lora = policy_models.lora("qwen3-vl-2b")
+    assert lora is not None and lora.target_modules == "all-linear"
+    assert policy_models._LORA == frozenset(policy_models.MODELS)  # ADR-0008: no full fine-tuning
 
 
 @pytest.mark.parametrize("model", list(LINEAR))
 def test_sft_config_bundle(model, tmp_path):
-    c = configs.sft_config(model, str(tmp_path))
+    c = sft_config.sft_config(model, str(tmp_path))
     assert c.lr_scheduler_type == "warmup_stable_decay" and c.lr_scheduler_kwargs["decay_type"] == "linear"
     assert c.train_sampling_strategy == "group_by_length" and c.length_column_name == "length"
     assert (c.dataloader_num_workers, c.dataloader_persistent_workers, c.dataloader_prefetch_factor) == (6, True, 2)
     assert c.gradient_checkpointing == (model == "qwen3-vl-2b")
     assert c.assistant_only_loss and c.max_length is None and not c.remove_unused_columns
     assert c.learning_rate == 5e-4  # LoRA
-    assert configs.sft_config(model, str(tmp_path), learning_rate=1e-4).learning_rate == 1e-4  # override
-    c = configs.sft_config(model, str(tmp_path), dataloader_num_workers=0)  # BK3-1: R0's workers-0 timing arms
+    assert sft_config.sft_config(model, str(tmp_path), learning_rate=1e-4).learning_rate == 1e-4  # override
+    c = sft_config.sft_config(model, str(tmp_path), dataloader_num_workers=0)  # BK3-1: R0's workers-0 timing arms
     assert (c.dataloader_num_workers, c.dataloader_persistent_workers, c.dataloader_prefetch_factor) == (0, False,
                                                                                                          None)
 
@@ -331,14 +337,14 @@ def lrs(c, n):
 def test_wsd_branches_follow_the_stable_run_then_decay_to_zero(tmp_path):
     """D5: 3 % warmup, constant LR, a branch at step s decays linearly to 0 over 15 % of s; up to s the branch's
     schedule is the stable run's, so a branch resumes the stable checkpoint without a jump."""
-    stable = configs.sft_config("qwen3-vl-2b", str(tmp_path), steps=1000)
-    branch = configs.sft_config("qwen3-vl-2b", str(tmp_path), steps=1000, branch_at=500)
+    stable = sft_config.sft_config("qwen3-vl-2b", str(tmp_path), steps=1000)
+    branch = sft_config.sft_config("qwen3-vl-2b", str(tmp_path), steps=1000, branch_at=500)
     assert (stable.max_steps, branch.max_steps) == (1000, 575)
     a, b = lrs(stable, 1000), lrs(branch, 575)
     assert a[:500] == b[:500] and a[0] == 0 and a[30] == a[999] == 5e-4 and max(a) == 5e-4
     assert b[500] == 5e-4 and b[574] == pytest.approx(5e-4 / 75) and all(np.diff(b[500:]) < 0)
     with pytest.raises(ValueError):
-        configs.sft_config("qwen3-vl-2b", str(tmp_path), branch_at=500)  # a branch needs the stable length
+        sft_config.sft_config("qwen3-vl-2b", str(tmp_path), branch_at=500)  # a branch needs the stable length
 
 
 def test_qwen3_vl_trains_with_trls_own_template():
@@ -348,7 +354,7 @@ def test_qwen3_vl_trains_with_trls_own_template():
     from trl import chat_template_utils as ct
 
     try:
-        proc = AutoProcessor.from_pretrained(configs.MODELS["qwen3-vl-2b"], local_files_only=True)
+        proc = AutoProcessor.from_pretrained(policy_models.MODELS["qwen3-vl-2b"], local_files_only=True)
     except OSError:
         pytest.skip("Qwen3-VL-2B processor not in the local HF cache")
     train = ct.get_training_chat_template(proc)
@@ -363,7 +369,7 @@ def test_qwen3_vl_trains_with_trls_own_template():
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep9")
     store.write(synthetic_items(), root / "store")
-    data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=policy_prompt.PROMPTS)
     return root / "out"
 
 
@@ -401,8 +407,10 @@ def test_cache_loader_unbounded_preload(prepared, tmp_path):
 def test_prompt_rows_with_and_without_the_rl_filter(prepared):
     """Public prompt rows from the records (select_ckpt, probes): rl_only keeps RL-eligible items (grpo_rows without
     oversampling); rl_only=False keeps every item with pixels (probe records are rl: false)."""
-    recs = D.records(prepared, "lidc", "train")
-    every, rl = D.prompt_rows(prepared, "lidc", "train", rl_only=False), D.prompt_rows(prepared, "lidc", "train")
+    recs = policy_rows.records(prepared, "lidc", "train")
+    every, rl = rl_rows.prompt_rows(prepared, "lidc", "train", rl_only=False), rl_rows.prompt_rows(prepared, "lidc",
+        "train")
     assert every["key"] == [r["item_id"] for r in recs] and rl["key"] == [r["item_id"] for r in recs if r["rl"]]
-    assert len(rl) < len(every) and rl.to_list() == D.grpo_rows(prepared, "lidc", "train").to_list()
-    assert every[0]["prompt"][0]["content"][1]["text"] == D.PROMPTS["lidc"] and every[0]["image"].mode == "RGB"
+    assert len(rl) < len(every) and rl.to_list() == rl_rows.grpo_rows(prepared, "lidc", "train").to_list()
+    assert every[0]["prompt"][0]["content"][1]["text"] == policy_prompt.PROMPTS["lidc"]
+    assert every[0]["image"].mode == "RGB"

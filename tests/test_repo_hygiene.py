@@ -293,9 +293,9 @@ def test_topology_any_docstring_does_not_claim_the_reward_uses_it():
 
 
 def test_one_stated_rl_learning_rate():
-    from objdel.train import configs
+    from objdel.policy import models
 
-    assert "prereg.G_PROBE" in configs.__doc__ and "1e-6 full, 1e-5 LoRA" not in configs.__doc__
+    assert "prereg.G_PROBE" in models.__doc__ and "1e-6 full, 1e-5 LoRA" not in models.__doc__
 
 
 # --- CLEAN12: dead-code gate and dependency direction ----------------------------------------------------------------

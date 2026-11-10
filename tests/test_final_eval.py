@@ -173,13 +173,15 @@ def test_group_id_stays_out_of_the_prompt_rows(tmp_path, synthetic_items):
     """U50: TRL forwards extra prompt columns to the reward functions, so group_id comes from the records."""
     from objdel.data import prepare as data_prepare
     from objdel.data import store
-    from objdel.train import dataset as D
+    from objdel.policy import prompt as policy_prompt
+    from objdel.policy import rows as policy_rows
 
     store.write(synthetic_items(), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
-    rows = D.prompts(tmp_path / "out", "lidc", "train", rl_only=False)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1,
+        prompts=policy_prompt.PROMPTS)
+    rows = policy_rows.prompts(tmp_path / "out", "lidc", "train", rl_only=False)
     assert rows and all("group_id" not in r for r in rows)
-    recs = D.records(tmp_path / "out", "lidc", "train")
+    recs = policy_rows.records(tmp_path / "out", "lidc", "train")
     assert FE.view_groups(tmp_path / "out", "train") == {r["item_id"]: r["group_id"] for r in recs}
     assert all(r["group_id"] for r in recs)
 
@@ -212,7 +214,7 @@ def tree(path):
 
 def test_resummarize_writes_schema_2_beside_the_run(tmp_path, monkeypatch):
     """U08b: no model is loaded, DIR is untouched, metrics_absent lists the METRICS keys the items lack."""
-    from objdel.train import sample
+    from objdel.policy import sampler as sample
 
     monkeypatch.setattr(sample, "VllmSampler", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model")))
     run, store, items = finished_run(tmp_path)
@@ -437,10 +439,10 @@ def answer_texts(rec, K=8):
 
 def fake_sampler(view, K=8, calls=None, loads=None):
     """A load_sampler stand-in: a Sampler answering answer_texts (answer 7 flagged truncated), tokens len + 1."""
-    from objdel.train import dataset as D
-    from objdel.train.sample import Sample
+    from objdel.policy import rows as policy_rows
+    from objdel.policy.sampler import Sample
 
-    recs = {r["item_id"]: r for r in D.records(view, "lidc", "val")}
+    recs = {r["item_id"]: r for r in policy_rows.records(view, "lidc", "val")}
 
     class Fake:
         def sample(self, rows, params):
@@ -519,7 +521,7 @@ def test_full_run_replaces_the_partial(ev, tmp_path, monkeypatch):
     """I07, I10, I21: four files; items.jsonl is per_item of metrics.jsonl; answers keep types and order; the
     truncated legal answer scores 0; tokens reach metrics."""
     from objdel.geom import engine as _gpucheck
-    from objdel.train import dataset as D
+    from objdel.policy import rows as policy_rows
 
     out = tmp_path / "out"
     run_fe(ev, out, monkeypatch)
@@ -532,7 +534,7 @@ def test_full_run_replaces_the_partial(ev, tmp_path, monkeypatch):
     assert fe["view_manifest_sha256"] == hashlib.sha256((ev / "manifest.json").read_bytes()).hexdigest()
     assert fe["view_content_sha256"] == FE.Q.view_content_sha256(ev)
     ans, met, items = jsonl(out / "answers.jsonl"), jsonl(out / "metrics.jsonl"), jsonl(out / "items.jsonl")
-    ids = [r["item_id"] for r in D.records(ev, "lidc", "val") if r["rl"]]
+    ids = [r["item_id"] for r in policy_rows.records(ev, "lidc", "val") if r["rl"]]
     assert [r["item_id"] for r in ans] == [r["item_id"] for r in met] == [r["item_id"] for r in items] == ids
     assert items == [EV.per_item(m) for m in met]
     for r, m in zip(ans, met, strict=True):
@@ -784,7 +786,7 @@ def test_view_content_hash(tmp_path, monkeypatch, capsys):
     """U54: SHA-256 of the newline-joined (item_id, offset, side, image_sha256) tuples; manifest versions and the
     reward fingerprint do not enter it; an offset, an image SHA or the record order does. --hash-view writes its
     record and exits 0 without a model."""
-    from objdel.train import sample
+    from objdel.policy import sampler as sample
 
     recs = [{"item_id": f"lidc/p/n000/z{i}", "view": {"offset": [i, 2 * i], "side": 50}, "image_sha256": f"{i:064x}",
              "W": 50, "H": 50} for i in range(3)]
@@ -976,7 +978,7 @@ def test_rescore_of_300_items_is_fast(tmp_path, clean_store, monkeypatch, synthe
     from objdel.data import prepare as data_prepare
     from objdel.data import store
     from objdel.data.store import Item
-    from objdel.train import dataset as D
+    from objdel.policy import prompt as policy_prompt
 
     y, x = np.ogrid[:100, :100]
     rng = np.random.default_rng(0)
@@ -986,7 +988,7 @@ def test_rescore_of_300_items_is_fast(tmp_path, clean_store, monkeypatch, synthe
                   ["1", "2"], {}) for i in range(300)]
     riga = [it for it in synthetic_items(("val",)) if it.dataset == "riga"]  # prepare builds every dataset
     store.write(riga + sorted(items, key=lambda it: it.item_id), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4, prompts=D.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4, prompts=policy_prompt.PROMPTS)
     view = tmp_path / "view"
     run_fe(view, tmp_path / "src", monkeypatch)
     t = time.time()
@@ -1105,11 +1107,12 @@ def test_the_test_view_needs_the_explicit_split_flag(frozen, tmp_path):
 
 
 def test_no_phase_b_script_but_final_eval_scores_the_test_view():
-    """I28 (grep): the scoring code (experiments/phase2/*.py, objdel.eval, objdel.train) names the test view only in
-    final_eval (freeze_views hashes it, never scores it), and every config line that names it is a final_eval step."""
-    hits = [p.relative_to(ROOT).as_posix() for p in [*(ROOT / "experiments/phase2").glob("*.py"),
-                                                       *(ROOT / "src/objdel/eval").glob("*.py"),
-                                                       *(ROOT / "src/objdel/train").glob("*.py")]
+    """I28 (grep): the scoring code (experiments/phase2/*.py; objdel.verify, policy, rl, sft; data audit, probes and
+    prepare) names the test view only in final_eval (freeze_views hashes it, never scores it), and every config line
+    that names it is a final_eval step."""
+    lib = [*(f for d in ("verify", "policy", "rl", "sft") for f in (ROOT / "src/objdel" / d).rglob("*.py")),
+           *(ROOT / "src/objdel/data" / f for f in ("audit.py", "probes.py", "prepare.py"))]
+    hits = [p.relative_to(ROOT).as_posix() for p in [*(ROOT / "experiments/phase2").glob("*.py"), *lib]
             if re.search(r"lidc-test|--split\W+test", p.read_text())]
     assert sorted(hits) == ["experiments/phase2/final_eval.py", "experiments/phase2/freeze_views.py"]
     from objdel.infra.vast import chain as C
@@ -1152,7 +1155,7 @@ def test_load_sampler_serves_the_adapter_unmerged_with_the_checkpoints_stop_ids(
     at K and seed with the checkpoint's stop ids."""
     from types import SimpleNamespace as NS
 
-    from objdel.train import sample
+    from objdel.policy import sampler as sample
 
     made = []
 

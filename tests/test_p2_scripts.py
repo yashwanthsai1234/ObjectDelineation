@@ -78,14 +78,14 @@ def test_config_set_complete():
 
 def test_plan_branches_decay_warmup():
     pytest.importorskip("trl")
-    from objdel.train import configs
+    from objdel.sft import config as sft_config
 
     p = sft_train.plan(stage("qwen3-vl-2b", "v", "o"), 1000)
     assert p["branches"] == {"e0.5": {"at": 500, "decay": 75}, "e1": {"at": 1000, "decay": 150},
                              "e2": {"at": 2000, "decay": 300}}
     assert p["stable"] == 2000 and p["warmup"] == 60  # 3 % of the stable steps
     for b in p["branches"].values():  # the plan is the schedule configs.sft_config builds
-        cfg = configs.sft_config("qwen3-vl-2b", "o", p["stable"], b["at"])
+        cfg = sft_config.sft_config("qwen3-vl-2b", "o", p["stable"], b["at"])
         assert cfg.max_steps == b["at"] + b["decay"] and cfg.warmup_steps == p["warmup"]
 
 
@@ -95,7 +95,7 @@ def test_plan_branches_decay_warmup():
 )
 def test_vision_abort_only_when_both_fail(ratio, tv, action, stop):
     """train_sft's reaction to mocked G-vision results (E's decide rule): stop and record a reason only on abort."""
-    from objdel.eval import vision
+    from objdel.policy import vision
 
     res = {"ratio": ratio, "tv": tv, "tv_black": tv, "tv_other": 0.5} | vision.decide(ratio, tv, 0.5)
     man = {"vision": []}
@@ -130,7 +130,7 @@ def test_select_refuses_sampler_after_cuda_init(monkeypatch):
     with pytest.raises(RuntimeError, match="CUDA is initialized"):
         sft_select.cuda_untouched()
     cmd = sft_select.sampler_cmd("vllm", Path("p"), Path("m"), Path("c"))
-    assert cmd[:4] == [sys.executable, "-I", "-m", "objdel.train.sample"]  # vllm_native: one venv
+    assert cmd[:4] == [sys.executable, "-I", "-m", "objdel.policy.sampler"]  # vllm_native: one venv
 
 
 def _summary(fmt=1.0, legal=0.95, dup=0.0, sigma=0.9):
@@ -240,7 +240,7 @@ def test_sampler_child_is_bounded_checked_and_reused(tmp_path, monkeypatch):
 def test_items_subset_is_seeded_not_the_first_n(monkeypatch):
     """S1-12 / BK2-2: --items draws a fixed seeded subset of the scored (rl) items; rl_only=False keeps every record."""
     pytest.importorskip("datasets")
-    from objdel.train import dataset as D
+    from objdel.policy import rows as D
 
     recs = [{"item_id": f"lidc/n{i:03d}/z0", "rl": i % 5 != 0, "disagreement": False, "W": 50, "H": 50}
             for i in range(100)]
@@ -325,7 +325,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     from objdel.core.spec import to_argv
     from objdel.data import prepare as data_prepare
     from objdel.data import store
-    from objdel.train import dataset
+    from objdel.policy import prompt as dataset
 
     name = "qwen3-vl-2b"
     model = _tiny_vlm(tmp_path / "tiny", name)
@@ -376,9 +376,9 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     assert gp.returncode == 0, gp.stderr[-4000:]
     res = json.loads((run / "gp/g_probe.json").read_text())
     assert res["verdict"] in ("PASS", "FAIL", "INCONCLUSIVE") and res["steps"] == 20
-    from objdel.train import configs
+    from objdel.rl import config as rl_config
 
-    assert res["lr"] == configs.rl_lr(name)
+    assert res["lr"] == rl_config.rl_lr(name)
 
 
 # use_vllm off: vLLM needs a GPU (TRL 1.17 refuses use_vllm without it installed); the box's profile arms run vLLM

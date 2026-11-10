@@ -1,7 +1,7 @@
 """S13 of Implementation.md D.9: the V3 records of D-G14, D-G15 and D-G17 read on the Mac after the V3 `pull.sh`.
 
 The run folder is runs/$OBJDEL_V3_RUN. Without the variable both tests skip (no V3 run pulled); with it a missing file
-or key fails. The records are written by D7 step 5 (objdel.train.fast.FastGRPO.log and .train, final_eval).
+or key fails. The records are written by D7 step 5 (objdel.rl.trl_adapter.FastGRPO.log and .train, final_eval).
 """
 import json
 import os

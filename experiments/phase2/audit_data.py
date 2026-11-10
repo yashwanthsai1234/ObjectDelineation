@@ -26,7 +26,7 @@ def tokenizer(model: str):
     """(tokenizer, max completion tokens) of a train config model, from the local HF cache."""
     from transformers import AutoTokenizer
 
-    from objdel.train.configs import MAX_COMPLETION, MODELS
+    from objdel.policy.models import MAX_COMPLETION, MODELS
 
     return AutoTokenizer.from_pretrained(MODELS[model]), MAX_COMPLETION[model]
 

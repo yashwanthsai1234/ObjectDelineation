@@ -1,4 +1,4 @@
-"""E4: one sampler interface (objdel.train.sample; policy/sampler.py after the E5 move): params_for, build_prompt,
+"""E4: one sampler interface (objdel.policy.sampler): params_for, build_prompt,
 the vLLM request builder, HfSampler on a tiny offline model, the child-process entry and a light import (no
 trl.trainer, no vllm)."""
 import json
@@ -12,8 +12,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from objdel.train import configs, rewards
-from objdel.train import sample as S
+from objdel.policy import models as configs
+from objdel.policy import models as rewards
+from objdel.policy import sampler as S
 
 ROOT = Path(__file__).resolve().parents[2]
 VIEW = ROOT / "data/eval_views/lidc-val-shifted"
@@ -130,14 +131,14 @@ def test_vllm_sampler_serves_an_adapter_unmerged(monkeypatch, tmp_path):
 
 
 def test_import_loads_neither_trl_trainer_nor_vllm():
-    code = ("import sys, objdel.train.sample, objdel.policy.evaluate\n"
+    code = ("import sys, objdel.policy.sampler, objdel.policy.evaluate\n"
             "print(sorted(m for m in sys.modules if m.startswith(('trl.trainer', 'vllm'))))")
     out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
 
 
 def test_help_runs_without_vllm():
-    out = subprocess.run([sys.executable, "-I", "-m", "objdel.train.sample", "--help"], capture_output=True,
+    out = subprocess.run([sys.executable, "-I", "-m", "objdel.policy.sampler", "--help"], capture_output=True,
                          text=True, check=True)
     assert "--kind" in out.stdout and "--logprobs" in out.stdout and "--batch_items" in out.stdout
 
@@ -147,7 +148,7 @@ def test_select_ckpt_runs_the_library_sampler_not_a_script():
 
     for kind in ("vllm", "hf"):
         cmd = select.sampler_cmd(kind, Path("p"), Path("m"), Path("c"), ["--logprobs"])
-        assert cmd[:5] == [sys.executable, "-I", "-m", "objdel.train.sample", "--kind"] and cmd[5] == kind
+        assert cmd[:5] == [sys.executable, "-I", "-m", "objdel.policy.sampler", "--kind"] and cmd[5] == kind
         assert cmd[6:] == ["--prompts", "p", "--model", "m", "--out", "c", "--logprobs"]
         assert not any(x.endswith(".py") for x in cmd)
 
@@ -163,7 +164,7 @@ def test_build_prompt_ids_equal_trls_own_on_64_validation_rows():
     from transformers import AutoProcessor
     from trl.data_utils import prepare_multimodal_messages
 
-    from objdel.train import dataset
+    from objdel.policy import rows as dataset
 
     os.environ["HF_HUB_OFFLINE"] = "1"
     try:
@@ -189,7 +190,7 @@ def tiny(tmp_path):
     from PIL import Image
     from test_p2_scripts import _tiny_vlm
 
-    from objdel.train.dataset import _user
+    from objdel.policy.prompt import _user
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
     rng, rows = np.random.default_rng(0), []

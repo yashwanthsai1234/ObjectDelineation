@@ -16,8 +16,8 @@ pytest.importorskip("trl")
 from experiments.phase2 import g_probe as GP  # noqa: E402
 from experiments.phase2 import select_ckpt as SC  # noqa: E402
 from objdel.policy import evaluate  # noqa: E402
+from objdel.policy import sampler as V  # noqa: E402
 from objdel.sft import select as sft_select  # noqa: E402
-from objdel.train import sample as V  # noqa: E402
 from objdel.verify import store as serve  # noqa: E402
 
 
@@ -54,7 +54,7 @@ def test_g_probe_skips_when_the_gates_failed(tmp_path, monkeypatch, kw, why):
 
 
 def test_g_probe_with_passing_gates_keeps_the_d12c_repair(tmp_path, monkeypatch):
-    from objdel.train import dataset
+    from objdel.rl import rows as dataset
 
     monkeypatch.setattr(serve, "preload", lambda *a, **k: 0)
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: [])

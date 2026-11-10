@@ -3,7 +3,7 @@ answers are kept before scoring and scored with score_items and per_item."""
 from pathlib import Path
 
 from objdel.policy import evaluate as EV
-from objdel.train.sample import Sample
+from objdel.policy.sampler import Sample
 
 
 class FakeSampler:

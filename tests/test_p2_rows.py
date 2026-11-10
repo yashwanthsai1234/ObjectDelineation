@@ -80,7 +80,7 @@ def test_each_window_has_its_own_png_and_caches_and_they_load(built):
 
 
 def test_cache_loader_and_grpo_rows_read_the_root_in_schedule_order(built, world):  # noqa: F811
-    from objdel.train import dataset as D
+    from objdel.rl import rows as D
     from objdel.verify import store as verify_store
     rows = D.grpo_rows(built.out, "lidc", "train", oversample=1)
     assert list(rows["key"]) == [w.window_id for w in world.sched]

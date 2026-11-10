@@ -19,14 +19,15 @@ from trl import GRPOTrainer  # noqa: E402
 
 from experiments.phase2 import final_eval as FE  # noqa: E402
 from objdel.geom import engine as _gpucheck  # noqa: E402
-from objdel.train import fast  # noqa: E402
+from objdel.policy import caches as policy_caches  # noqa: E402
+from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
 
 STATS = {"arena_bytes": 11, "sync_alloc": 2, "sync_free": 2, "pool_allocs": 5, "pool_frees": 4, "pinned_grows": 0,
          "table_bytes": 7, "eval_scratch_peak": 3, "live_device_bytes": 18}
 
 
 def _trainer(step: int):
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.model = type("M", (), {"training": True})()
     t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
     t.state = type("S", (), {"global_step": step, "log_history": []})()
@@ -37,7 +38,7 @@ def _trainer(step: int):
 def cuda_fakes(monkeypatch):
     monkeypatch.setattr(_gpucheck, "build", lambda: "cuda")
     monkeypatch.setattr(_gpucheck, "stats", lambda: dict(STATS))
-    monkeypatch.setattr(fast.torch.cuda, "max_memory_reserved", lambda *a, **k: 12345)
+    monkeypatch.setattr(policy_caches.torch.cuda, "max_memory_reserved", lambda *a, **k: 12345)
 
 
 @pytest.mark.usefixtures("cuda_fakes")
