@@ -50,6 +50,33 @@ from objdel.core.io import read_json
 from objdel.rl import build
 
 
+def checked(a):
+    """The RlStage `a` with f_check resolved (--f-check, --no-f-check, else on under the f_check.PRESETS), after the
+    rules that need objdel.rl (numerics preset names, the --grpo keys train_rl owns); exit 2 on a broken one."""
+    from objdel.rl import config as configs
+    from objdel.rl import f_check
+
+    def error(msg: str):
+        print(f"train_rl: error: {msg}", file=sys.stderr)
+        sys.exit(2)
+
+    numerics = a.numerics or configs.DEFAULT_NUMERICS
+    if numerics not in configs.NUMERICS:
+        error(f"--numerics {a.numerics}: one of {sorted(configs.NUMERICS)}")
+    if a.f_check and numerics not in f_check.PRESETS:
+        error(f"--f-check: only under --numerics {' or '.join(f_check.PRESETS)}, not {numerics}")
+    a = a.model_copy(update={"f_check": a.f_check or (numerics in f_check.PRESETS and not a.no_f_check)})
+    if a.f_check and numerics == "lora-seqmask" and not a.merge_last and a.b1_adapter is None:
+        error("--f-check under --numerics lora-seqmask needs --b1-adapter (the comparator's B1 adapter)")
+    if a.opsm_start_delta is not None and (numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
+        error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
+    if "off_policy_mask_threshold" in a.grpo:
+        error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
+    if a.grpo.get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
+        error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
+    return a
+
+
 def check_flags(a) -> None:
     """Refusals that need no model: the completion limit (C7: set from the outline count, never above the model's
     budget) and the runaway cap (C11: a capped answer is cut mid-text, so masking it would bias the update toward

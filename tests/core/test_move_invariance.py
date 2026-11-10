@@ -119,12 +119,14 @@ class _Captured(Exception):
 
 
 def grpo_config_dict(argv: list[str], **over) -> dict:
-    """The GRPOConfig that build_trainer resolves for `train_rl.parse(argv)`, as to_dict() without VOLATILE keys."""
-    from experiments.phase2 import train_rl
+    """The GRPOConfig that build_trainer resolves for train_rl's stage of `argv` (objdel.rl.run.checked of the
+    RlStage), as to_dict() without VOLATILE keys."""
+    from objdel.core.spec import RlStage, cli_stage
     from objdel.rl.build import build_trainer
+    from objdel.rl.run import checked
 
     budget = ["--session-start", "0", "--rate-usd-per-h", "0.5"] if "--budget-usd" in argv else []  # as run.sh
-    a, seen = train_rl.parse([*argv, *budget]), []
+    a, seen = checked(cli_stage(RlStage, [*argv, *budget])), []
 
     def stop(cfg):
         seen.append(cfg)

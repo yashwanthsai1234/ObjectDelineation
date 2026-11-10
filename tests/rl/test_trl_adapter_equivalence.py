@@ -623,14 +623,13 @@ def test_shared_prefix_normalizes_over_the_sampled_support_as_trl():
     torch.testing.assert_close(lp[real], ref[real], atol=1e-5, rtol=1e-5)
 
 
-def test_train_rl_and_g_probe_turn_on_shared_prefix_by_flag(capsys):
+def test_train_rl_and_g_probe_turn_on_shared_prefix_by_flag():
     from pathlib import Path
 
-    from experiments.phase2 import train_rl
+    from objdel.core.spec import RlStage, cli_parse
 
-    with pytest.raises(SystemExit):
-        train_rl.main(["--help"])
-    assert "--shared-prefix" in capsys.readouterr().out
+    argv = ["--model", "m", "--ckpt", "c", "--out", "o", "--train", "t", "--steps", "1", "--shared-prefix"]
+    assert cli_parse(RlStage, argv).shared_prefix
     src = (Path(__file__).resolve().parents[2] / "src/objdel/rl/build.py").read_text()
     assert "trainer.shared_prefix = flags.shared_prefix" in src
 
