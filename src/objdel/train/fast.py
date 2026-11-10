@@ -831,16 +831,33 @@ class ImageMemo:
         return copy.deepcopy(self.inner, memo)
 
     def clear(self) -> None:
-        """Drop the cached images and zero the counters (one generation batch: 32 misses, 256 hits expected)."""
+        """Drop the cached images. The counters run on (a generation batch adds 32 misses and 256 hits: read deltas)."""
         self.memo.clear()
-        self.hits = self.misses = self.fallback_calls = 0
 
     def prefill(self, images, **kwargs) -> None:
         """Prepare the distinct images of a generation batch before TRL's processor calls (C1: on the GPU); counts
-        one miss per distinct image and no hit."""
+        one miss per image not yet in the memo and no hit (an empty list, or images already there: nothing)."""
         from transformers.image_utils import make_flat_list_of_images
 
-        self(list({id(x): x for x in make_flat_list_of_images(images)}.values()), **kwargs)
+        kw = repr(sorted(kwargs.items()))
+        miss = self.missing(make_flat_list_of_images(images) if images else [], kw)
+        self.misses += len(miss)
+        if miss:
+            self.store(miss, kw, kwargs)
+
+    def missing(self, flat: list, kw: str) -> list:
+        """The distinct images of `flat` that the memo does not hold for these kwargs (kw: their repr)."""
+        return list({id(x): x for x in flat if (id(x), kw) not in self.memo}.values())
+
+    def store(self, miss: list, kw: str, kwargs: dict) -> bool:
+        """Prepare the missed images into the memo; False (nothing stored) for another processor family."""
+        out = self.prepare(miss, kwargs)
+        if out is None:
+            return False
+        pv, grid = out
+        for x, r, g in zip(miss, torch.split(pv, grid.prod(-1).tolist()), grid, strict=True):
+            self.memo[(id(x), kw)] = (x, r, g)
+        return True
 
     def prepare(self, miss: list, kwargs: dict):
         """(pixel_values, image_grid_thw) of the missed images: gpu_pixels.patchify when self.gpu is set and every
@@ -868,16 +885,10 @@ class ImageMemo:
             from transformers.image_utils import make_flat_list_of_images
 
             flat, kw = make_flat_list_of_images(images), repr(sorted(kwargs.items()))
-            miss = list({id(x): x for x in flat if (id(x), kw) not in self.memo}.values())
+            miss = self.missing(flat, kw)
             self.misses, self.hits = self.misses + len(miss), self.hits + len(flat) - len(miss)
-            if miss:
-                out = self.prepare(miss, kwargs)
-                if out is None:  # another processor family: no memo
-                    return self.inner(images, **kwargs)
-                pv, grid = out
-                rows = torch.split(pv, grid.prod(-1).tolist())
-                for x, r, g in zip(miss, rows, grid, strict=True):
-                    self.memo[(id(x), kw)] = (x, r, g)
+            if miss and not self.store(miss, kw, kwargs):  # another processor family: no memo
+                return self.inner(images, **kwargs)
             parts = [self.memo[(id(x), kw)] for x in flat]
             once = {id(x): p for x, p in zip(flat, parts, strict=True)}.values() if self.per_image else parts
             data = {"pixel_values": torch.cat([r for _, r, _ in once]),

@@ -132,10 +132,28 @@ def test_gpu_memo_equals_the_processor_and_counts_one_miss_per_distinct_image(co
     got = memo(rows, return_tensors="pt")
     assert all(torch.equal(got[k], want[k]) for k in want) and seen == []  # never the CPU processor
     assert (memo.misses, memo.hits) == (32, 224)
-    memo.clear()
-    memo.prefill(imgs, return_tensors="pt")
+
+
+def test_counters_run_on_across_clear_and_prefill_counts_misses_only(counted):  # U-IM3
+    ip, seen = counted
+    imgs = [image(i) for i in range(32)]
+    rows = [x for x in imgs for _ in range(8)]
+    memo = fast.ImageMemo(ip, gpu=("torch", "cpu"))
     memo(rows, return_tensors="pt")
-    assert (memo.misses, memo.hits) == (32, 256)
+    assert (memo.misses, memo.hits) == (32, 224)
+    memo(rows, return_tensors="pt")  # a second call: 256 hits
+    assert (memo.misses, memo.hits) == (32, 480)
+    memo.clear()  # the counters are not reset by clear()
+    assert (memo.misses, memo.hits) == (32, 480)
+    memo.prefill(imgs, return_tensors="pt")
+    assert (memo.misses, memo.hits) == (64, 480)
+    memo.prefill(imgs, return_tensors="pt")  # twice: nothing new
+    memo.prefill([], return_tensors="pt")  # empty: a no-op
+    assert (memo.misses, memo.hits) == (64, 480)
+    memo(rows, return_tensors="pt")  # after prefill: 256 hits, 0 misses
+    assert (memo.misses, memo.hits) == (64, 736) and seen == []
+    memo(rows)  # other kwargs than the prefill's are another key: prepared again
+    assert memo.misses == 96
 
 
 def test_per_image_memo_returns_each_distinct_images_patches_once_with_the_row_grid(counted):  # C1 --encoder-once

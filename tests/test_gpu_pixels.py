@@ -17,6 +17,12 @@ def ip():
     return Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)  # Qwen3-VL's patch and merge
 
 
+@pytest.fixture(autouse=True)
+def picked_torch(monkeypatch):
+    """backend="auto" is what pick_backend picked; these tests call patchify without one."""
+    monkeypatch.setattr(gpu_pixels, "picked", "torch")
+
+
 def rand(seed, h=64, w=64):
     return np.random.default_rng(seed).integers(0, 256, (h, w, 3), dtype=np.uint8)
 
@@ -84,3 +90,27 @@ def test_a_scalar_reciprocal_differs_from_the_true_divide_it_must_not_replace():
 def test_pick_backend_returns_a_backend_that_matches_on_cpu_and_none_for_an_unsupported_image(ip):
     assert gpu_pixels.pick_backend([rand(0), digits(0)], ip, "cpu") in gpu_pixels.BACKENDS
     assert gpu_pixels.pick_backend([rand(0, 500, 500)], ip, "cpu") is None
+
+
+def test_auto_is_the_default_and_means_the_backend_that_passed_the_self_check(ip, monkeypatch):
+    """C1 interface: backend="auto" = the first backend that passed pick_backend; none picked yet is an error."""
+    monkeypatch.setattr(gpu_pixels, "picked", None)
+    with pytest.raises(RuntimeError, match="pick_backend"):
+        gpu_pixels.patchify([rand(0)], ip)
+    with pytest.raises(ValueError, match="bogus"):
+        gpu_pixels.patchify([rand(0)], ip, backend="bogus")
+    chosen = gpu_pixels.pick_backend([rand(0), digits(0)], ip, "cpu")
+    assert gpu_pixels.picked == chosen
+    assert same(ip, [rand(1), digits(1)], backend="auto") and same(ip, [rand(2)], backend=chosen)
+    calls = []
+    real = gpu_pixels._patchify
+    monkeypatch.setattr(gpu_pixels, "_patchify", lambda *a: calls.append(1) or real(*a))
+    monkeypatch.setattr(gpu_pixels, "picked", "torch")
+    gpu_pixels.patchify([rand(3)], ip, device="cpu")  # the default backend is "auto"
+    assert calls == [1]
+
+
+def test_a_failed_self_check_clears_the_picked_backend(ip, monkeypatch):
+    monkeypatch.setattr(gpu_pixels, "picked", "torch")
+    assert gpu_pixels.pick_backend([rand(0, 500, 500)], ip, "cpu") is None
+    assert gpu_pixels.picked is None
