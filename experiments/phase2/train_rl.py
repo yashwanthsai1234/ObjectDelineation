@@ -172,8 +172,6 @@ def check_flags(a) -> None:
         raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
     if a.runaway_cap and over.get("mask_truncated_completions", True):
         raise ValueError("--runaway-cap needs --grpo '{\"mask_truncated_completions\": false}'")
-    if a.runaway_cap and a.group_requests:
-        raise ValueError("--runaway-cap and --group-requests exclude each other: one n = G request has one max_tokens")
 
 
 def numerics_overrides(a) -> dict:

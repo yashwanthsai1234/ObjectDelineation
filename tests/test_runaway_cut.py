@@ -126,9 +126,8 @@ def test_row_caps_follow_each_rows_own_outline():
     assert caps == [1536, 81, 81]  # a: ceil(1.5 x 11) = 17, + 64; b: capped by L
 
 
-def test_runaway_cap_refuses_group_requests():
-    """One request of n = G has one max_tokens: it cannot carry a cap per row."""
-    with pytest.raises(ValueError, match="group-requests"):
-        a = args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}')
-        a.group_requests = True
-        train_rl.check_flags(a)
+def test_runaway_cap_and_group_requests_go_together():
+    """U-RC3: one n = G request per block carries the block's one cap (vllm_requests.group_params)."""
+    a = args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}')
+    a.group_requests = True
+    train_rl.check_flags(a)  # no raise

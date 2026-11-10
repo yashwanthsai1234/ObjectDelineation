@@ -1288,27 +1288,26 @@ class FastGRPO(FastForward, GRPOTrainer):
                                        "vLLM would sample from other image features than the trainer scores")
             return outputs
 
-        one_pad.one_pad = True
         llm.generate = one_pad
-        if self.runaway_cap:  # C11: the generation batch's rows hold the caps; outside one (g_probe) the limit stays
-
-            def capped(prompts, *args, sampling_params=None, **kwargs):
-                if self.rows is not None:
-                    if len(self.rows) != len(prompts):
-                        raise ValueError(f"{len(self.rows)} caps for {len(prompts)} prompts")
-                    sampling_params = runaway.per_row_params(sampling_params, [r["cap"] for r in self.rows])
-                return one_pad(prompts, *args, sampling_params=sampling_params, **kwargs)
-
-            capped.one_pad = True
-            llm.generate = capped
         if self.group_requests:  # C6: outside one_pad, so its check compares the 32 sent prompts
 
             def by_group(prompts, *args, **kwargs):
                 G = self.num_generations if self.model.training else self.num_generations_eval
                 return vllm_requests.grouped(one_pad, G)(prompts, *args, **kwargs)
 
-            by_group.one_pad = True
             llm.generate = by_group
+        inner = llm.generate
+        if self.runaway_cap:  # C11: outermost; the batch's rows hold the caps; outside one (g_probe) the limit stays
+
+            def capped(prompts, *args, sampling_params=None, **kwargs):
+                if self.rows is not None:
+                    if len(self.rows) != len(prompts):
+                        raise ValueError(f"{len(self.rows)} caps for {len(prompts)} prompts")
+                    sampling_params = runaway.per_row_params(sampling_params, [r["cap"] for r in self.rows])
+                return inner(prompts, *args, sampling_params=sampling_params, **kwargs)
+
+            llm.generate = capped
+        llm.generate.one_pad = True
 
     def floating_point_ops(self, inputs):
         """FLOP count: always 0, which skips the Trainer's per-micro-batch module walk."""
