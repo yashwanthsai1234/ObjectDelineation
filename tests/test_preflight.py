@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from experiments.phase2 import preflight as PF
+from objdel.infra import preflight as PF
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = b'{"schedule": {}}\n'
@@ -45,7 +45,7 @@ def cfg(tmp_path, monkeypatch):
 
 def run(cfg, monkeypatch, checks):
     monkeypatch.setattr(PF, "CHECKS", checks)
-    code = PF.main(["--config", str(cfg)])
+    code = PF.run(cfg)
     return code, json.loads(PF.stamp_path(cfg).read_text())
 
 
@@ -277,22 +277,25 @@ def test_the_bundle_check_samples_the_caches_and_needs_the_bundle(cfg, tmp_path)
 
 
 def test_preflight_reads_the_bundle_sync_up_uploads(cfg, monkeypatch, tmp_path):
-    from experiments.phase2.vast import policy
+    from experiments.phase2 import preflight as cli
+    from objdel.infra.vast.__main__ import CLI
 
-    assert PF.BUNDLE_DIR == policy.CLI["sync_up"]["--bundle-dir"]["default"]
+    assert PF.BUNDLE_DIR == CLI["sync_up"]["--bundle-dir"]["default"]
     assert PF.inputs(cfg).bundle == PF.BUNDLE_DIR / "bundle-lidc.tar"
     assert [n for n, _ in PF.CHECKS][:2] == ["DATA spec inputs", "DATA upload bundle"]
     seen = []
     monkeypatch.setattr(PF, "CHECKS", [("DATA a", lambda s: seen.append(s.bundle) or [])])
-    assert PF.main(["--config", str(cfg), "--bundle-dir", str(tmp_path / "b")]) == 0
+    assert cli.main(["--config", str(cfg), "--bundle-dir", str(tmp_path / "b")]) == 0
     assert seen == [tmp_path / "b" / "bundle-lidc.tar"]
 
 
 # ------------------------------------------------------------------------------- ROWS root and revision (B1.3, I19)
 def gates_report(monkeypatch, report):
-    from experiments.phase2 import audit_data
+    from objdel.data import quality as Q
+    from objdel.policy import models
     seen = []
-    monkeypatch.setattr(audit_data, "audit", lambda root, *a, **k: seen.append(root) or report)
+    monkeypatch.setattr(models, "tokenizer", lambda model: (None, 1536))
+    monkeypatch.setattr(Q, "audit", lambda root, *a, **k: seen.append(root) or report)
     return seen
 
 
@@ -357,7 +360,7 @@ def test_rows_revision_compares_the_pinned_hf_revision(rows_cfg, monkeypatch, tm
 
 
 def test_the_trl_contract_is_the_first_code_check(monkeypatch):
-    from objdel.train import trl_adapter as T
+    from objdel.rl import trl_adapter as T
 
     name, fn = next(c for c in PF.CHECKS if c[0].startswith("CODE"))
     assert name == "CODE TRL private names" and fn(None) == []

@@ -1,6 +1,6 @@
 """C11 step 1: size the per-row answer cap on the Mac ($0), on val only.
 
-For each val image cap_i = min(L, ceil(factor x T_i) + margin) (objdel.train.runaway). Reports, per factor, the
+For each val image cap_i = min(L, ceil(factor x T_i) + margin) (objdel.rl.runaway). Reports, per factor, the
 share of found answers (IoU_tc >= 0.1) longer than cap_i (gate G-RC1: < 0.5 %) and the decode seconds per step the cap
 would remove (4.3 ms per token of the longest answer of a block of 32 images, replayed on the logged lengths).
 
@@ -14,7 +14,9 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.train import configs, dataset, runaway
+from objdel.policy import models as configs
+from objdel.policy import rows as dataset
+from objdel.rl import runaway
 
 FOUND = 0.1  # a found answer: IoU_tc at or above this (the BRIEF counts IoU < 0.1 as a miss)
 SECONDS_PER_TOKEN = 0.0043  # B_gpu_audit.md:40

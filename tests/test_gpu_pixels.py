@@ -9,7 +9,7 @@ import pytest
 torch = pytest.importorskip("torch")
 from transformers import Qwen2VLImageProcessor  # noqa: E402
 
-from objdel.train import gpu_pixels  # noqa: E402
+from objdel.policy import gpu_pixels  # noqa: E402
 
 
 @pytest.fixture(scope="module")

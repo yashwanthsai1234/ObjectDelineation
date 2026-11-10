@@ -13,13 +13,13 @@ import probe_models as M
 import pytest
 from oracles.eval_oracle import pairwise_iou
 
+from experiments.phase2 import baselines
 from experiments.phase2 import prereg as P
-from experiments.phase2 import select_ckpt as SC
 from objdel.data import probes
 from objdel.data.targets.build import build_target
 from objdel.policy import evaluate
+from objdel.policy import sampler as V
 from objdel.sft import select as sft_select
-from objdel.train import sample as V
 from objdel.verify import gates
 from objdel.verify import stats as S
 from objdel.verify import store as serve
@@ -64,8 +64,9 @@ def _rec(i, k, text="x", ids=(5, 1), finish="stop"):
 @pytest.fixture
 def sample_mod():
     pytest.importorskip("trl")
-    from objdel.train import sample
-    return sample
+    from objdel.policy import sampler
+
+    return sampler
 
 
 def test_bridge_unicode_empty_and_length_round_trip(sample_mod, tmp_path):
@@ -271,7 +272,7 @@ def test_topology_probe_on_select_ckpt_items_subset_can_pass(monkeypatch, tmp_pa
     monkeypatch.setattr(probes, "score_topology", lambda rows, root: topo(rows, root, B=200))
     a = SimpleNamespace(run=tmp_path, items=256, k=8, shifted=VIEWS / "lidc-val-shifted", rescaled=None,
                         rotated=None, prepared=None, probes=VIEWS)  # --items 256 (the HF path)
-    rep = SC.judge(a, {"name": "e1", "vision": {}, "panel": {}}, tmp_path)
+    rep = sft_select.judge(a, {"name": "e1", "vision": {}, "panel": {}}, tmp_path, baselines)
     assert seen["probe-topology"] == 680 and rep["probes"]["topology"]["pass"]  # every probe record, a perfect model
 
 

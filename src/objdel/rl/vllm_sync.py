@@ -13,7 +13,7 @@ discards the weights and the LoRA slots, so every sync after a sleep re-pushes b
 import time
 from typing import NamedTuple
 
-from objdel.train.fast import lora_merged_params
+from objdel.rl.trl_adapter import lora_merged_params
 
 LORA_NAME = "policy"  # the vLLM name of the trained adapter ("default" in PEFT); generate's LoRARequest uses it too
 

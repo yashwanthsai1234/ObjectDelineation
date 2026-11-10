@@ -24,8 +24,8 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache, partial
 from pathlib import Path
 
+from objdel.core.io import read_json
 from objdel.geom.text import SCHEMAS
-from objdel.io import read_json
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import rater_answers
 

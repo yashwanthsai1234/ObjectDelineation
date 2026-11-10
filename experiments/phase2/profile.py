@@ -5,7 +5,7 @@ selected branch, one process per arm, nvidia-smi sampled alongside. Replaces pro
 
 Arms (each: STEPS optimizer steps of 32 prompts x G = 8 answers, ITEMS probe items, step 1 left out of s/step):
 - trl: TRL 1.17 as shipped (g_probe --plain), the reference for the gains below;
-- fast: objdel.train.fast.FastGRPO (per-chunk trimmed forwards, vision cache, rewards overlapped), 16 x 16;
+- fast: objdel.rl.trl_adapter.FastGRPO (per-chunk trimmed forwards, vision cache, rewards overlapped), 16 x 16;
 - mb32: fast at micro-batch 32 x 8 (fewer, larger launches);
 - no_ckpt: fast without gradient checkpointing (may run out of memory: recorded);
 - compile / graphs: fast with the text decoder layers compiled, without and with CUDA Graphs (Stage F: adopted
@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 ROOT = Path(__file__).resolve().parents[2]
 STEPS, ITEMS = 4, 8

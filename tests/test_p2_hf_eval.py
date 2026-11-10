@@ -55,7 +55,7 @@ def tiny_prompts(tmp_path):
 
 def test_hf_sample_batched_items_equal_one_item_per_call(tiny_prompts, tmp_path):
     """Left padding with per-item image tokens: a batch of 3 items (+ 1) gives each item what it gets alone."""
-    from objdel.train import sample as HS
+    from objdel.policy import sampler as HS
 
     model, prompts = tiny_prompts
     outs = {}
@@ -76,7 +76,8 @@ def test_hf_sample_batched_items_equal_one_item_per_call(tiny_prompts, tmp_path)
 
 def test_sample_generates_several_items_per_call(monkeypatch):
     pytest.importorskip("trl")
-    from objdel.train import rewards, sample
+    from objdel.policy import models as rewards
+    from objdel.rl import trl_adapter as rl_trl_adapter
 
     calls = []
 
@@ -90,7 +91,7 @@ def test_sample_generates_several_items_per_call(monkeypatch):
     monkeypatch.setattr(rewards, "stop_ids", lambda m, p: {7})
     monkeypatch.setattr(rewards, "_text", lambda c: c)
     rows = [{"prompt": f"p{i}", "key": f"k{i}"} for i in range(5)]
-    out = sample.sample(trainer, rows, 8, items=2)
+    out = rl_trl_adapter.sample(trainer, rows, 8, items=2)
     assert calls == [16, 16, 8]  # 2 items x K = 8 per call, then the last item
     assert [r["item_id"] for r in out] == [f"k{i}" for i in range(5)]
     assert all(r["samples"] == [f"c-p{i}"] * 8 and r["truncated"] == [False] * 8 for i, r in enumerate(out))
@@ -161,13 +162,13 @@ def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
     monkeypatch.setattr(sft_select, "run_sampler", lambda kind, p, m, c, timeout, extra=(): got.append(timeout))
     import transformers
 
-    from objdel.train import sample
+    from objdel.policy import sampler as policy_sampler
 
-    monkeypatch.setattr(sample, "stop_ids", lambda path, proc: {7})
+    monkeypatch.setattr(policy_sampler, "stop_ids", lambda path, proc: {7})
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda path: None)
     caps = []
-    monkeypatch.setattr(sample, "export_prompts", lambda *a, **k: caps.append(k["max_tokens"]))
-    monkeypatch.setattr(sample, "import_completions", lambda *a, **k: [])
+    monkeypatch.setattr(policy_sampler, "export_prompts", lambda *a, **k: caps.append(k["max_tokens"]))
+    monkeypatch.setattr(policy_sampler, "import_completions", lambda *a, **k: [])
     a = SimpleNamespace(model="qwen3-vl-2b", seed=0, sampler="hf", timeout_s=None, max_tokens=32)
     sft_select.sample_view(a, tmp_path, [{"key": str(i)} for i in range(100)], tmp_path / "o", 8)
     assert got == [600 + 3.0 * 800] and sft_select.TIMEOUT_S["hf"] == 3.0  # EV-5: 3x HF's ~1 s per answer
@@ -179,7 +180,7 @@ def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize(("rollout_ms", "code"), [(1.0, 0), (10.0, 1)])
 def test_k3_harness_exits_1_on_a_failed_gate(tmp_path, monkeypatch, rollout_ms, code):
-    from experiments.phase2 import k3_harness as K3
+    from harness import k3_harness as K3
 
     root = str(tmp_path.resolve())
     monkeypatch.setattr(K3.serve, "preload", lambda r, ds: K3.serve.STORE.setdefault(root, {"lidc/a": None}) and 1)
@@ -220,7 +221,7 @@ def test_every_config_that_samples_on_v1_names_its_sampler():
 
 def test_g_probe_json_writes_null_for_nan(tmp_path):
     pytest.importorskip("scipy")
-    from experiments.phase2 import g_probe as GP
+    from objdel.rl import probe as GP
     from objdel.verify import stats as S
 
     gains = np.zeros(40)  # constant gains: Spearman undefined
@@ -241,7 +242,7 @@ def test_hf_sample_loads_bf16_on_the_gpu_whatever_the_checkpoint_dtype(monkeypat
     torch = pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")
 
-    from objdel.train import sample as hf_sample
+    from objdel.policy import sampler as hf_sample
 
     seen = []
 

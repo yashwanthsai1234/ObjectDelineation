@@ -28,6 +28,8 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.policy.prompt import PROMPTS
+
 RATIO, TV = 0.5, 0.002
 N_IMAGES, N_ITEMS, T = 4, 8, 24
 POOL, SEED = 64, 0  # B1: C.eval_records("lidc", 64) (seed 0), then [:4] images, [:8] items
@@ -66,7 +68,6 @@ def black(image):
 
 def _prompt(prompt):
     if prompt is None:
-        from objdel.train.dataset import PROMPTS  # lazy: needs the train extra
         prompt = PROMPTS["lidc"]
     return prompt
 

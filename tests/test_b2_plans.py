@@ -23,7 +23,7 @@ def test_b2_fp16_is_the_b1_recipe_with_fp16_numerics():
     build, g08b, train = steps("b2_fp16.yaml")
     b1 = next(s for s in steps("b1_rows.yaml") if s[:3] == ["~", "-m", "experiments.phase2.train_rl"])
     assert build == steps("b1_rows.yaml")[0]  # the CUDA build of b1_rows.yaml step 0, else CPU scoring
-    assert g08b[-1] == "tests/test_train_fast.py::test_g08b_fp16_dtype" and "gpu" in g08b
+    assert g08b[-1] == "tests/rl/test_trl_adapter_equivalence.py::test_g08b_fp16_dtype" and "gpu" in g08b
     assert train[:2] == ["-m", "experiments.phase2.train_rl"]
     assert after(train, "--numerics") == "fp16-seqmask" and "--numerics" not in b1
     for flag in ("--ckpt", "--train", "--lr", "--rows-revision", "--rows-manifest-sha256"):

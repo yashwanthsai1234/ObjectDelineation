@@ -1,5 +1,6 @@
 """B2.3b Mac part (G04's CPU half): the four trainer-side ways of scoring the same answers on a tiny random Qwen3-VL
-(tests/test_train_fast.tiny_model) with a LoRA adapter; the real 2B run is the `data` test at the end."""
+(tests/rl/test_trl_adapter_equivalence.tiny_model) with a LoRA adapter; the real 2B run is the `data` test at the
+end."""
 
 import hashlib
 import math
@@ -13,7 +14,7 @@ pytest.importorskip("peft")
 from peft import LoraConfig, get_peft_model  # noqa: E402
 
 from experiments.phase2 import b2_attribution as B  # noqa: E402
-from tests.test_train_fast import GRPOTrainer, group_batch, tiny_model  # noqa: E402
+from tests.rl.test_trl_adapter_equivalence import GRPOTrainer, group_batch, tiny_model  # noqa: E402
 
 WAYS = ("a", "b", "c", "d")
 

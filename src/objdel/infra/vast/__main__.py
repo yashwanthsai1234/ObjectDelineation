@@ -1,10 +1,11 @@
-"""Vast AI operations for Phase 2 (PLAN §4, D16, G1-G10): the CLI. Every decision and every command is built here or in
-objdel.infra.vast (offers, ledger, remote, chain); the
-`*.sh` files next to this module are symlinks to the one shim `vast.sh` (the link's name is the command), and
-`watchdog.sh` is the only logic that runs on the box.
+"""Vast AI operations for Phase 2 (PLAN §4, D16, G1-G10): the CLI, `python -I -m objdel.infra.vast <cmd>`. Every
+decision and every command is built here or in objdel.infra.vast (offers, ledger, remote, chain); the `*.sh` files in
+experiments/phase2/vast/ are symlinks to the one shim `vast.sh` (the link's name is the command), and `watchdog.sh`
+there is the only logic that runs on the box.
 
     offers.sh GPU [--riga] [--disk GB] [--pick OFFER_ID|top]   search (§4.2 filter, US/CA hosts), top 5; --pick saves it
-    launch.sh OFFER_ID RUN_ID --config CONFIG.yaml [--cap-hours H] [--idle-minutes M] [--allow-parallel] [--owner-approved]
+    launch.sh OFFER_ID RUN_ID --config CONFIG.yaml [--cap-hours H] [--idle-minutes M] [--allow-parallel]
+              [--owner-approved]
     sync_up.sh RUN_ID [--bundle lidc|riga] [--bundle-dir DIR] [--code-only]   code (git ls-files) + bundle, SHA-256
     run.sh RUN_ID MODULE|CONFIG.yaml [ARGS]                    timeout + tmux + heartbeat; a config runs its chain
     pull.sh [RUN_ID]                                           rsync runs/<id>/ to the Mac (not PULL_EXCLUDE), then
@@ -18,15 +19,16 @@ objdel.infra.vast (offers, ledger, remote, chain); the
 
 G10: a launch is refused when the money committed (closed sessions + every active run to its deadline) plus its own
 worst case passes HARD_STOP, and needs --owner-approved (recorded in the ledger) when that projection reaches ALARM.
-Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB); teardown saves
-the raw charges and records what Vast billed beside that estimate (`billed`, BK4-18).
+Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB);
+teardown saves the raw charges and records what Vast billed beside that estimate (`billed`, BK4-18).
 
-Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; default: this directory), VAST_RUNS
-(pull target, default <repo>/runs), DRY_RUN=1 (ssh / rsync are printed, not run; `vastai` is still called, so tests
-put a fake one on PATH), VAST_POLL_S, VAST_LAUNCH_TIMEOUT_S. Secrets live in the macOS keychain and are read with
-`security`: objdel-vast-scoped (scoped API key, passed to vastai as VAST_API_KEY), objdel-ghcr-read (read-only GHCR
-PAT, Vast --login), objdel-riga-age (age identity: only ever the stdin of the ssh decrypt command; D16),
-objdel-hf-write (HF token: checked by objdel.infra.hf.token_problems, then only ever the stdin of the ssh upload command).
+Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; default:
+<repo>/experiments/phase2/vast), VAST_RUNS (pull target, default <repo>/runs), DRY_RUN=1 (ssh / rsync are printed,
+not run; `vastai` is still called, so tests put a fake one on PATH), VAST_POLL_S, VAST_LAUNCH_TIMEOUT_S. Secrets live
+in the macOS keychain and are read with `security`: objdel-vast-scoped (scoped API key, passed to vastai as
+VAST_API_KEY), objdel-ghcr-read (read-only GHCR PAT, Vast --login), objdel-riga-age (age identity: only ever the stdin
+of the ssh decrypt command; D16), objdel-hf-write (HF token: checked by objdel.infra.hf.token_problems, then only ever
+the stdin of the ssh upload command).
 """
 
 import argparse
@@ -39,6 +41,7 @@ import signal
 import time
 from pathlib import Path
 
+from objdel.core.io import code_sha, git_sha, read_json
 from objdel.core.provenance import repo_root
 from objdel.core.spec import load_spec
 from objdel.infra import hf
@@ -76,7 +79,6 @@ from objdel.infra.vast.remote import (
     secret,
     vast,
 )
-from objdel.io import code_sha, git_sha, read_json
 
 
 def cmd_offers(a) -> None:
@@ -123,7 +125,7 @@ def cmd_launch(a) -> None:
         die(f"run_id must match {RUN_ID_RE.pattern}")
     if a.run_id in active():
         die(f"run {a.run_id} is still active (teardown.sh first)")
-    from experiments.phase2 import preflight
+    from objdel.infra import preflight
 
     if why := preflight.refusal(Path(a.config)):  # the mandatory Mac preflight (make preflight): no pass, no rental
         die(f"preflight gate: {why}")
@@ -179,16 +181,11 @@ def cmd_launch(a) -> None:
         for s in sigs:
             signal.signal(s, signal.SIG_IGN)
         # create failed or its reply was lost: a box may exist all the same, found by its label
-        ids = [iid] if iid else [i["id"] for i in vast("show", "instances", "--raw", tries=3) if i.get("label") == a.run_id]
+        ids = [iid] if iid else [i["id"] for i in vast("show", "instances", "--raw", tries=3)
+                                 if i.get("label") == a.run_id]
         for i in ids:
             destroy(i, a.run_id, "destroy")
         raise
-
-
-
-
-
-
 
 
 def cmd_sync_up(a) -> None:
@@ -221,16 +218,13 @@ def cmd_sync_up(a) -> None:
         need = -(-(a.bundle_dir / name).stat().st_size * 11 // 10240)  # KB, ciphertext + 10 %
         shm = f"avail=$(df -Pk /dev/shm | awk 'NR==2 {{print $4}}') && [ \"$avail\" -ge {need} ]"
         unpack = unpack.format(d="/dev/shm/riga", x=f"age -d -i /dev/stdin {name} | tar -x")
-        remote(run, f"{verify} && {shm} && {unpack}", secret("objdel-riga-age") + "\n", "age identity from the keychain")
+        remote(run, f"{verify} && {shm} && {unpack}", secret("objdel-riga-age") + "\n",
+               "age identity from the keychain")
         detail = f"recipient={allow.get('riga_recipient', '')} shm=UNVERIFIED until V0 (BK4-19)"
     else:
         remote(run, f"{verify} && " + unpack.format(d=a.bundle, x=f"tar -xf {name}"))
         detail = ""
     ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], bundle=name, detail=detail)
-
-
-
-
 
 
 def cmd_run(a) -> None:
@@ -243,7 +237,7 @@ def cmd_run(a) -> None:
     if a.module.endswith(".yaml"):
         stages, name = chain(repo_root() / a.module, a.run_id), Path(a.module).stem
         if a.module.startswith("specs/"):  # E6.5: the spec, code and versions beside the log, before any stage
-            guard = [f"/opt/venv/bin/python -I -m experiments.phase2.vast.policy run_spec {shlex.quote(a.module)} "
+            guard = [f"/opt/venv/bin/python -I -m objdel.infra.vast run_spec {shlex.quote(a.module)} "
                      f"/workspace/runs/{a.run_id}/run_spec.json"]
         guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run train_sft "
                  f"--vision-reference-only first' >&2; false; }}; }}"
@@ -270,16 +264,17 @@ def cmd_run(a) -> None:
     inner = (f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} {clock} && mkdir -p {rd} && rm -f {rd}/EXIT "
              "|| exit 1; "
              f"(while :; do date -u +%s > {rd}/HEARTBEAT; sleep 60; done) & "
-             f"timeout -k 120 {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1")  # fmt: skip
+             f"timeout -k 120 {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; "
+             f"echo $? > {rd}/EXIT; kill %1")  # fmt: skip
     remote(run, f"tmux new-session -d -s {a.run_id}-{name} {shlex.quote('bash -c ' + shlex.quote(inner))}")
     ledger(event="run", run_id=a.run_id, instance_id=run["instance"], detail=f"{a.module} cap_s={cap}")
 
 
 def cmd_run_spec(a) -> None:
-    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (objdel.io.code_sha: CODE_SHA,
-    written by sync_up, else git; else "unknown"), the trl, torch and transformers versions and the reward fingerprint,
-    as strict JSON. A different spec already in OUT stops the chain: a second run with the same id never overwrites it
-    silently."""
+    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (objdel.core.io.code_sha:
+    CODE_SHA, written by sync_up, else git; else "unknown"), the trl, torch and transformers versions and the reward
+    fingerprint, as strict JSON. A different spec already in OUT stops the chain: a second run with the same id never
+    overwrites it silently."""
     from importlib.metadata import version
 
     from objdel.verify.reward.spec import fingerprint
@@ -306,8 +301,6 @@ def cmd_pull(a) -> None:
         remote(run, f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK")
 
 
-
-
 def cmd_push_hf(a) -> None:
     """hf_push on the box for CONFIG's run (CONFIG is a run spec, or an SFT launch config: repo branch = its
     output_dir); the token is checked here first."""
@@ -322,8 +315,9 @@ def cmd_push_hf(a) -> None:
         path = f"/workspace/runs/{a.run_id}/{out}"
     token = secret("objdel-hf-write")
     if bad := hf.token_problems(hf.whoami(token), hf.REPO):
-        die(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: {'; '.join(bad)}. Recreate it at "
-            f"huggingface.co/settings/tokens as fine-grained with only {hf.REPO}: write (no other boxes ticked)")
+        die(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: {'; '.join(bad)}. "
+            f"Recreate it at huggingface.co/settings/tokens as fine-grained with only {hf.REPO}: write "
+            "(no other boxes ticked)")
     cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push {kind} {path} "
            f"--repo {hf.REPO} --revision {out}")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
@@ -367,8 +361,6 @@ def cmd_fetch_hf(a) -> None:
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
 
 
-
-
 def cmd_teardown(a) -> None:
     """teardown.sh: pull the run (three tries), then destroy the instance and record the session's cost."""
     run, lost = get_run(a.run_id), None
@@ -391,8 +383,6 @@ def cmd_teardown(a) -> None:
            detail=f"billed={usd} (Vast charges accrue late; invoices/{a.run_id}.json)")
     if lost:
         die(f"final pull failed ({lost}); instance {run['instance']} destroyed")
-
-
 
 
 def cmd_sweep_orphans(a) -> None:

@@ -21,12 +21,12 @@ reuse it (the same `completions` list object is passed to each function).
 Groups: advantages_v4 needs each prompt's G completions contiguous within one call. TRL computes rewards on each
 process's local slice before gathering; TRL's RepeatSampler yields each prompt G times in a row and accelerate
 gives process p the p-th block of per_device_train_batch_size * steps_per_generation indices, so a local slice
-holds whole groups exactly when that size is a multiple of G (objdel.train.configs guarantees it). The call
+holds whole groups exactly when that size is a multiple of G (objdel.rl.config guarantees it). The call
 checks it anyway (one key per block of G) and raises otherwise.
 
 Truncation: TRL's HF and vLLM generation cut completion_ids after the first EOS; a completion is truncated when
 its last id is not an EOS or pad id (GRPOTrainer: `ids[-1] not in eos_and_pad`). The reward uses the same rule
-(`truncated` on `stop_ids`, also objdel.train.sample's), so a truncated completion is a format failure (plan D10)
+(`truncated` on `stop_ids`, also objdel.policy.sampler's), so a truncated completion is a format failure (plan D10)
 even when its prefix parses.
 
 Typed logs (log_metric, averaged by TRL per logging step, eval-prefixed in evaluation): error/<parser code> is
@@ -35,7 +35,7 @@ defect/<class> the share with that checker defect, allmiss_share the share of gr
 missed answers (gated IoU_tc < MISS_IOU); rows with the kind and cell columns (a B1 rows root) add kind/<k>/iou_tc,
 cell/<ij>/iou_tc and cell/<ij>/allmiss_groups. log_extra adds the columns key (item id), truncated and group
 (index of the completion's group within its reward call) to the completions table (log_completions=True), so
-objdel.train.sample.export can turn it into eval_run JSONL (break-it B4-3), and error (the parser code).
+objdel.policy.sampler.export can turn it into eval_run JSONL (break-it B4-3), and error (the parser code).
 
 Reward v5 (Implementation.md B3.5; train_rl --reward v5): TRLReward(..., spec=REWARD_V5) aggregates with
 objdel.verify.reward.advantages.advantages_v5 (RLOO, group mean 0, so TRL leaves it unchanged as above) under the name
@@ -45,7 +45,7 @@ count), for the run report. The default spec is REWARD_V4.
 
 Group size: TRL's num_generations must be the spec's group, or v4 would silently score each TRL group as several
 independent groups (break-it B2-5). The keys cannot show it (an oversampled item drawn twice in a row gives 16
-equal keys), so objdel.train.configs.grpo_config refuses any other value.
+equal keys), so objdel.rl.config.grpo_config refuses any other value.
 
 References:
 - TRL GRPOTrainer docs (reward function kwargs, log_metric / log_extra, multi_objective_aggregation,
@@ -61,13 +61,15 @@ References:
   normalize_then_sum implements and v4 replaces): https://arxiv.org/abs/2601.05242
 - Lab: archive/phase1_lab/t_stack/prod.py (TRLReward), r2_trl_equiv.py, results/INTEGRATION.md.
 """
+
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
 from objdel.geom.engine import DEFECTS
-from objdel.train import nvtx
+from objdel.policy import marks as nvtx
+from objdel.policy.models import _text, truncated
 from objdel.verify.reward.advantages import (
     LOGGED,
     advantages_v4,
@@ -87,35 +89,16 @@ def aggregator(spec) -> str:
 
 
 AGGREGATOR = aggregator(REWARD_V4)
+
 MISS_IOU = 0.1  # a missed answer: gated IoU_tc below this (glossary)
-
-
-def stop_ids(model, processing_class) -> set[int]:
-    """The ids that end a completion for TRL: generation_config.eos_token_id, the tokenizer's EOS and pad."""
-    tok = getattr(processing_class, "tokenizer", processing_class)
-    eos = model.generation_config.eos_token_id
-    return {*(eos if isinstance(eos, list) else [eos]), tok.eos_token_id, tok.pad_token_id} - {None}
-
-
-def truncated(ids, stop) -> bool:
-    """TRL's rule: a completion is truncated when its last id is not a stop id (an empty one has no end either)."""
-    return not ids or ids[-1] not in stop
 
 
 def score_jobs(jobs) -> dict:
     """score_batch inside the NVTX range `checker`, on whichever thread scores (the prefetch thread or the reward
-    call). The range lives here, not in objdel.verify.reward, which never imports objdel.train (S12); the verifier
-    service (objdel.verify.api) calls score_batch itself."""
+    call). The range lives here, not in objdel.verify.reward, which never imports objdel.policy, rl or sft (S12); the
+    verifier service (objdel.verify.api) calls score_batch itself."""
     with nvtx.range("checker"):
         return score_batch(jobs)
-
-
-def _text(completion) -> str:
-    """Conversational completions are [{"role": "assistant", "content": str | [parts]}]."""
-    if isinstance(completion, list):
-        content = completion[0]["content"]
-        return content if isinstance(content, str) else "".join(p.get("text", "") for p in content)
-    return completion
 
 
 class TRLReward:

@@ -558,6 +558,14 @@ def trimmed_import(node: ast.stmt, keep: set[str]) -> str | None:
     return "\n".join(f"import {a.name} as {a.asname}" if a.asname else f"import {a.name}" for a in names)
 
 
+def is_type_checking(node: ast.stmt) -> bool:
+    """A top-level `if TYPE_CHECKING:` block that holds only imports (an import group of its own)."""
+    test = getattr(node, "test", None)
+    name = test.id if isinstance(test, ast.Name) else getattr(test, "attr", "")
+    return (isinstance(node, ast.If) and name == "TYPE_CHECKING" and not node.orelse
+            and all(isinstance(i, ast.Import | ast.ImportFrom) for i in node.body))
+
+
 def split_module(plan: Plan, rel: str, targets: dict[str, list[str]], apply: bool) -> list[str]:
     """Cut one old module into its new modules. Returns the touched paths."""
     root = plan.root
@@ -569,8 +577,9 @@ def split_module(plan: Plan, rel: str, targets: dict[str, list[str]], apply: boo
     name_to = {n: t for t, names in targets.items() for n in names} | dict.fromkeys(stay, old_mod)
     imports = [n for n in tree.body if isinstance(n, ast.Import | ast.ImportFrom)]
     future = [n for n in imports if isinstance(n, ast.ImportFrom) and n.module == "__future__"]
+    guarded = [i for n in tree.body if is_type_checking(n) for i in n.body]  # `if TYPE_CHECKING:` imports
     chunks: dict[str, list[tuple[ast.stmt, str]]] = {}
-    body = [n for n in tree.body if not isinstance(n, ast.Import | ast.ImportFrom)]
+    body = [n for n in tree.body if not isinstance(n, ast.Import | ast.ImportFrom) and not is_type_checking(n)]
     doc = ast.get_docstring(tree)
     for node in body:
         names = top_names(node)
@@ -579,6 +588,10 @@ def split_module(plan: Plan, rel: str, targets: dict[str, list[str]], apply: boo
                 continue
             if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
                 continue
+            calls = {name_to[n] for n in used_names([node]) if n in name_to}  # `if __name__ == "__main__": main()`
+            if isinstance(node, ast.If) and len(calls) == 1:
+                names = [n for n in used_names([node]) if n in name_to]
+        if not names:
             raise SystemExit(f"{rel}:{node.lineno}: top-level statement with no name ({type(node).__name__}): "
                              "split it by hand")
         homes = {name_to[n] for n in names if n != "__all__"}
@@ -595,6 +608,9 @@ def split_module(plan: Plan, rel: str, targets: dict[str, list[str]], apply: boo
         own = {n for node in nodes for n in top_names(node)}
         header = []
         self_alias = None
+        typed = [ln for imp in guarded if (ln := trimmed_import(imp, used - own))]
+        if typed:
+            used.add("TYPE_CHECKING")
         for imp in imports:
             if imp in future:
                 continue
@@ -617,6 +633,8 @@ def split_module(plan: Plan, rel: str, targets: dict[str, list[str]], apply: boo
             if n in name_to and name_to[n] != target:
                 sib.setdefault(name_to[n], []).append((n, None))
         header += [from_line(m, ns) for m, ns in sorted(sib.items())]
+        if typed:
+            header.append("\nif TYPE_CHECKING:\n" + "\n".join("    " + ln for t in typed for ln in t.splitlines()))
         code = "\n\n".join(c.rstrip("\n") for _, c in items) + "\n"
         if self_alias:
             code = re.sub(rf"\b{re.escape(self_alias)}\.", "", code)
@@ -700,11 +718,12 @@ def strip_init(text: str) -> str:
     return f'"""{doc}"""\n' if doc is not None else ""
 
 
-def wrap_prose(text: str, limit: int = 120) -> tuple[str, list[int]]:
+def wrap_prose(text: str, limit: int = 120, keep: frozenset[str] | set[str] = frozenset()) -> tuple[str, list[int]]:
     """Wrap lines that a longer module name pushed past `limit`. Comment and docstring lines: the tail after the last
     space that fits goes to a new line with the same indent (and `# ` for a comment). Code lines: a trailing comment
-    moves to its own line above; else the line breaks after its last comma inside brackets. Returns the text and the
-    numbers of the long lines it left (the hand edit)."""
+    moves to its own line above; else the line breaks after its last comma inside brackets. A line in `keep` (the
+    tree's lines before the move) was long already: it stays as it is. Returns the text and the numbers of the long
+    lines it left (the hand edit)."""
     import io
     import tokenize
 
@@ -733,7 +752,7 @@ def wrap_prose(text: str, limit: int = 120) -> tuple[str, list[int]]:
     left: list[int] = []
     for i, line in enumerate(lines):
         body = line.rstrip("\n")
-        if len(body) <= limit:
+        if len(body) <= limit or body in keep:
             out.append(line)
             continue
         cut = body.rfind(" ", 0, limit + 1)
@@ -771,11 +790,13 @@ def run(root: Path, apply: bool, stage: str = STAGES[-1]) -> int:
     text_files += [root / x for x in table["text_extra"] if (root / x).is_file()]
     notes: list[str] = []
     changed: list[str] = []
+    before: set[str] = set()  # every line of the scanned Python files before the move (wrap_prose keeps them)
     for p in py_files:
         rel = str(p.relative_to(root))
         if rel in ("experiments/phase2/tools/e_moves.py", "tests/test_e_moves.py"):  # their old names are planted
             continue
         text = p.read_text()
+        before.update(text.splitlines())
         new, n1 = rewrite_python(plan, rel, text, rel in keep)
         new, n2 = rewrite_strings(plan, rel, new, rel in keep)
         new = resolve_plain(plan, new)
@@ -864,7 +885,7 @@ def run(root: Path, apply: bool, stage: str = STAGES[-1]) -> int:
     for f in sorted(set(changed + touched)):
         if f.endswith(".py") and (root / f).exists():
             text = (root / f).read_text()
-            new, left = wrap_prose(text)
+            new, left = wrap_prose(text, keep=before)
             if apply and new != text:
                 (root / f).write_text(new)
             notes += [f"{f}:{n}: line longer than 120 after the rename: wrap it by hand" for n in left]

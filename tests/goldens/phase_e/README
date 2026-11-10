@@ -127,3 +127,34 @@ for the split module that stays: train/dataset.py loses _PINS, _BATCH, _prepare,
 (all in objdel.data.prepare). Goldens 1-6, host_syncs and tests_import_experiments unchanged.
 GPU retest fix (impl2-gpufix2, 2026-11-10): old_names re-recorded: preflight gains BUNDLE_DIR, CACHE_SAMPLE, bundle
 and sampled (the DATA upload bundle check). The other goldens are unchanged.
+E5 (impl2-emoves2, policy / rl / sft move commit): host_syncs re-recorded per new file, the total 55 unchanged:
+train/fast.py 40 -> policy/caches.py 24 + rl/forward.py 8 + rl/trl_adapter.py 8; eval/vision.py, train/callbacks.py,
+train/f_check.py, train/gpu_pixels.py, train/record.py and train/sample.py keep their counts under policy/vision.py,
+policy/callbacks.py, rl/f_check.py, policy/gpu_pixels.py, rl/record.py and policy/sampler.py.
+tests_import_experiments: tests/test_train_fast.py -> tests/rl/test_trl_adapter_equivalence.py (git mv; its pure and
+cache tests went to tests/rl/test_forward.py and tests/policy/test_caches.py). invariance.json gains "renamed_paths"
+{tests/test_train_fast.py: tests/rl/test_trl_adapter_equivalence.py}: golden 5 maps a pytest path of a live spec
+through it (later_edits) instead of re-recording the chain argv. module_strings_stale re-recorded on its own tree: it
+loses objdel.policy.rows, objdel.policy.models and objdel.rl.reward (they exist now) and gains the e_moves tools' and
+their tests' planted objdel.train / objdel.eval names (those packages are gone). Goldens 1-6 and old_names unchanged.
+E8.1 finish (impl2-emoves2): old_names re-recorded: experiments/phase2/preflight.py keeps only main (its library
+names live in objdel.infra.preflight; run() is main's body after the flag); vast/policy.py is gone (src/objdel/infra/
+vast/__main__.py holds every recorded name). objdel.io and objdel.hashing became objdel.core.io and
+objdel.core.hashing. Goldens 1-6, host_syncs and tests_import_experiments unchanged.
+E8.2 final_eval (impl2-emoves2): the library body moves to objdel.policy.final_eval (run = main after cli_stage;
+hash_view takes the render-file commits as an argument), the script keeps main and no_model. old_names re-recorded:
+final_eval.py keeps main and no_model (ROOT is gone: repo_root()). host_syncs gains policy/final_eval.py 1 (gate_a's
+bootstrap .tolist(), moved from the script, which the scan did not cover). Goldens 1-6 and tests_import_experiments
+unchanged.
+E8.2 g_probe (impl2-emoves2): the library body moves to objdel.rl.probe (run = main after cli_stage; the CLI passes
+the pre-registered record, experiments.phase2.prereg, as an argument: G_PROBE's steps and items and the g_probe rule,
+which verdict takes). old_names re-recorded: g_probe.py keeps main. host_syncs gains rl/probe.py 3 (probe's three
+.tolist() of the per-item R, moved from the script, which the scan did not cover). Goldens 1-6 and
+tests_import_experiments unchanged.
+E8.2 select_ckpt (impl2-emoves2): the library body moves to objdel.sft.select (run = main after cli_stage, judge,
+topology_only, vision_config, dump, PATHS); the CLI passes the experiment modules prereg (select_rb, entry) and
+baselines (fit_prior, score_prior) as arguments. old_names re-recorded: select_ckpt.py keeps main. train_sft.py was
+already main only. Goldens 1-6, host_syncs and tests_import_experiments unchanged.
+Merge impl2-emoves2 into impl2-final (2026-11-10): the GPU retest fix's DATA upload bundle check (BUNDLE_DIR,
+CACHE_SAMPLE, bundle, sampled, --bundle-dir) moves with the rest of the library into objdel.infra.preflight;
+old_names re-recorded: experiments/phase2/preflight.py keeps only main. The other goldens are unchanged.

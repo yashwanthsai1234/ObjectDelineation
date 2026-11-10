@@ -14,7 +14,7 @@ order, and a manifest written only when every hard B data gate passes.
 3. Each scheduled window is materialized once by `objdel.data.prepare.window_record` (item id = window_id: its own
    PNG and cache folder) in a spawn `multiprocessing.Pool(procs)`.
 4. `lidc/train.jsonl` in schedule order (a reused disagreement window repeats its record); the gates of
-   `experiments.phase2.audit_data.audit` run on the root with this plan; the manifest (build_eval_views' fields plus
+   `objdel.data.quality.audit` run on the root with this plan; the manifest (build_eval_views' fields plus
    `schedule`, with `files_count` and `files_sha256` of the root without manifest.json) is written only when
    `quality.failures` is empty. Exit 1 and no manifest otherwise.
 No upload (B1.4 step 5 is a separate, owner-run step). Reads untrusted data: run with python -I.
@@ -34,10 +34,10 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core.io import write_json
 from objdel.data import quality as Q
 from objdel.data import store, windows
 from objdel.data.coverage import cell_coverage
-from objdel.io import write_json
 
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "docs" / "reference"
@@ -105,10 +105,10 @@ def files_digest(root: Path) -> tuple[int, str]:
 
 
 def build(a) -> int:
-    from experiments.phase2 import audit_data
     from objdel.data import prepare as data_prepare
     from objdel.data.targets.build import target_set_hash
-    from objdel.train import dataset as D
+    from objdel.policy import models
+    from objdel.policy import prompt as D
     from objdel.verify.reward.spec import fingerprint
 
     if a.steps <= 0 or a.steps % a.block_steps:
@@ -157,8 +157,8 @@ def build(a) -> int:
             "disagreement_weight": a.disagreement_weight, "disagreement_max_reuse": table[draws]["max_reuse"],
             "exclusions_sha256": _sha(exclude_bytes), "excluded_ids": sorted(excluded),
             "draws_table": {str(d): {k: v for k, v in r.items() if k != "scheduled"} for d, r in table.items()}}
-    report = audit_data.audit(out, a.store, a.eval_views, a.val_view, a.exclude, a.review, a.frozen, a.series_z,
-                              a.model, a.audit_out, plan=plan)
+    report = Q.audit(out, *models.tokenizer(a.model), a.store, a.eval_views, a.val_view, a.exclude, a.review,
+                     a.frozen, a.series_z, a.audit_out, plan=plan)
     gs = Q.gates(report)
     for g in gs:
         print(f"{g.name:6s} {'report' if not g.hard else 'ok' if g.ok else 'FAIL':6s} {g.value:10.4f}  {g.limit}")

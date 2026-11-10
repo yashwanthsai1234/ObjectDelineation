@@ -1,9 +1,13 @@
 {
- "eval/vision.py": 2,
- "train/callbacks.py": 2,
- "train/f_check.py": 2,
- "train/fast.py": 40,
- "train/gpu_pixels.py": 3,
- "train/record.py": 5,
- "train/sample.py": 1
+ "policy/caches.py": 24,
+ "policy/callbacks.py": 2,
+ "policy/final_eval.py": 1,
+ "policy/gpu_pixels.py": 3,
+ "policy/sampler.py": 1,
+ "policy/vision.py": 2,
+ "rl/f_check.py": 2,
+ "rl/forward.py": 8,
+ "rl/probe.py": 3,
+ "rl/record.py": 5,
+ "rl/trl_adapter.py": 8
 }

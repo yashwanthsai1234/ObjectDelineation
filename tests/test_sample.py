@@ -1,11 +1,11 @@
-"""objdel.train.sample.sample: K answers per row with their completion token counts (U46)."""
+"""objdel.rl.trl_adapter.sample: K answers per row with their completion token counts (U46)."""
 
 from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("trl")
-from objdel.train import sample  # noqa: E402
+from objdel.rl import trl_adapter as sample  # noqa: E402
 
 EOS, PAD = 1, 0
 

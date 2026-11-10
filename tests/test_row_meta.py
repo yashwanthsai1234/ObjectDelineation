@@ -6,7 +6,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
-from objdel.train import fast  # noqa: E402
+from objdel.rl import forward as rl_forward  # noqa: E402
+from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
 
 EOS, PAD = 7, 0
 
@@ -38,7 +39,7 @@ def device_masks(prompt, comp, pm, T, mask_truncated):
 @pytest.mark.parametrize("seed", range(5))
 def test_row_meta_lengths_equal_the_device_mask_sums(seed, mask_truncated):
     prompt, comp, pm, P, T, G = rows(seed)
-    meta = fast.row_meta(prompt, comp, list(range(len(prompt))), G, mask_truncated, [EOS, PAD])
+    meta = rl_forward.row_meta(prompt, comp, list(range(len(prompt))), G, mask_truncated, [EOS, PAD])
     cm = device_masks(prompt, comp, pm, T, mask_truncated)
     assert meta.prompt_len.tolist() == pm.sum(1).tolist() and meta.completion_len.tolist() == cm.sum(1).tolist()
     assert meta.group.tolist() == [i // G for i in range(len(prompt))]
@@ -46,37 +47,37 @@ def test_row_meta_lengths_equal_the_device_mask_sums(seed, mask_truncated):
 
 def test_row_meta_refuses_an_empty_answer():
     with pytest.raises(ValueError):
-        fast.row_meta([[1, 2]], [[]], [0], 1, True, [EOS, PAD])
+        rl_forward.row_meta([[1, 2]], [[]], [0], 1, True, [EOS, PAD])
 
 
 @pytest.mark.parametrize("seed", range(5))
 def test_window_order_and_group_order_from_meta_equal_the_device_derivations(seed):
     prompt, comp, pm, P, T, G = rows(seed)
-    meta = fast.row_meta(prompt, comp, list(range(len(prompt))), G, True, [EOS, PAD])
+    meta = rl_forward.row_meta(prompt, comp, list(range(len(prompt))), G, True, [EOS, PAD])
     cm = device_masks(prompt, comp, pm, T, True)
     mask = torch.cat([pm, cm], 1)
     for sel in (list(range(8)), list(range(8, 16)), [3, 1, 12]):
-        for buckets in (fast.FINE, (8, 16, 20), (13,)):
-            want = fast.window(mask[sel], T, buckets)
-            assert fast.window_from_meta(meta, np.array(sel), P, T, buckets) == want
+        for buckets in (rl_trl_adapter.FINE, (8, 16, 20), (13,)):
+            want = rl_forward.window(mask[sel], T, buckets)
+            assert rl_forward.window_from_meta(meta, np.array(sel), P, T, buckets) == want
     batch = {"prompt_mask": pm, "completion_mask": cm, "i": list(range(len(prompt)))}
-    assert fast.length_order(meta).tolist() == fast.by_length(batch)["i"]
-    assert fast.group_order(meta, G).tolist() == fast.by_group_length(batch, G)["i"]
+    assert rl_forward.length_order(meta).tolist() == rl_forward.by_length(batch)["i"]
+    assert rl_forward.group_order(meta, G).tolist() == rl_forward.by_group_length(batch, G)["i"]
 
 
 def test_image_ids_are_dense_by_object_in_first_appearance_order():
     a, b, c = object(), object(), object()
-    assert fast.image_ids([{"image": x} for x in (b, b, a, b, c, a)]) == [0, 0, 1, 0, 2, 1]
+    assert rl_forward.image_ids([{"image": x} for x in (b, b, a, b, c, a)]) == [0, 0, 1, 0, 2, 1]
 
 
 def test_host_meta_orders_without_the_device_masks_and_moves_with_the_rows():
     """U-RM4 / C4 step 3: by_length and by_group_length take the order from host_meta when the batch has it."""
     prompt, comp, pm, P, T, G = rows(3)
-    meta = fast.row_meta(prompt, comp, list(range(len(prompt))), G, True, [EOS, PAD])
+    meta = rl_forward.row_meta(prompt, comp, list(range(len(prompt))), G, True, [EOS, PAD])
     cm = device_masks(prompt, comp, pm, T, True)
-    host = fast.host_rows(meta)
+    host = rl_forward.host_rows(meta)
     assert [r.prompt_len for r in host] == pm.sum(1).tolist()
-    for order in (fast.by_length, lambda b: fast.by_group_length(b, G)):
+    for order in (rl_forward.by_length, lambda b: rl_forward.by_group_length(b, G)):
         want = order({"prompt_mask": pm, "completion_mask": cm, "i": list(range(len(prompt)))})
         got = order({"prompt_mask": None, "completion_mask": None, "host_meta": host, "i": list(range(len(prompt)))})
         assert got["i"] == want["i"] and [r.prompt_len for r in got["host_meta"]] == pm.sum(1)[want["i"]].tolist()
@@ -90,8 +91,8 @@ def generation_trainer(monkeypatch, every, step=0):
     cm = device_masks(prompt, comp, pm, T, True)
     imgs = [object() for _ in range(len(prompt) // G)]
     out = (prompt, comp, None, ["x"] * len(comp), None, None, {}, None, None)
-    monkeypatch.setattr(fast.GRPOTrainer, "_generate", lambda self, prompts: out)
-    t = object.__new__(fast.FastGRPO)
+    monkeypatch.setattr(rl_trl_adapter.GRPOTrainer, "_generate", lambda self, prompts: out)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.host_meta, t.check_meta_every, t.use_vllm, t.images = True, every, False, None
     t.num_generations, t.mask_truncated_completions, t.eos_token_ids = G, True, [EOS]
     t._tokenizer = type("Tok", (), {"pad_token_id": PAD})()
@@ -104,7 +105,7 @@ def generation_trainer(monkeypatch, every, step=0):
         self._generate(prompt)
         return {"prompt_mask": pm, "completion_mask": cm.clone()}
 
-    monkeypatch.setattr(fast.GRPOTrainer, "_generate_and_score_completions", build)
+    monkeypatch.setattr(rl_trl_adapter.GRPOTrainer, "_generate_and_score_completions", build)
     inputs = [{"image": imgs[i // G]} for i in range(len(prompt))]
     return t, inputs, G
 
@@ -131,8 +132,8 @@ def test_generate_without_host_meta_keeps_the_batch(monkeypatch):
 def test_check_meta_every_compares_the_device_derivation(monkeypatch, every, step, checks):
     """U-RM5: a host length one off raises naming field and row on a checked step; other steps never compare."""
     t, inputs, _ = generation_trainer(monkeypatch, every, step)
-    real = fast.host_rows
-    monkeypatch.setattr(fast, "host_rows", lambda m: [r._replace(completion_len=r.completion_len + (i == 3))
+    real = rl_forward.host_rows
+    monkeypatch.setattr(rl_trl_adapter, "host_rows", lambda m: [r._replace(completion_len=r.completion_len + (i == 3))
                                                       for i, r in enumerate(real(m))])  # fmt: skip
     if checks:
         with pytest.raises(AssertionError, match="row 3: completion_len"):
@@ -146,7 +147,7 @@ def test_row_meta_gives_prompt_layouts_and_the_hosts_rope_routing():
     marked rope_bad."""
     prompt = [[1, 2], [1, 2], [1, 2], [3, 4]]
     comp = [[5, EOS], [100, EOS], [6, EOS], [7, EOS]]
-    meta = fast.row_meta(prompt, comp, [0, 0, 1, 2], 2, True, [EOS, PAD], sizes=[(8, 8), (8, 8), (16, 8), (8, 8)],
+    meta = rl_forward.row_meta(prompt, comp, [0, 0, 1, 2], 2, True, [EOS, PAD], sizes=[(8, 8), (8, 8), (16, 8), (8, 8)],
                          vision_ids=(100, 102))  # fmt: skip
     assert meta.layout.tolist() == [0, 0, 1, 2] and meta.rope_bad.tolist() == [0, 1, 0, 0]
 
@@ -181,17 +182,17 @@ def test_row_meta_counts_each_rows_pixel_rows_from_its_image_pads():
     image size, so no forward reads the grid; 0 without an image pad id (a text model)."""
     prompt = [[1, 9, 9, 9, 9, 2], [1, 9, 2], [3, 4]]
     comp = [[5, EOS]] * 3
-    meta = fast.row_meta(prompt, comp, [0, 1, 2], 1, True, [EOS, PAD], image_pad=(9, 2))
+    meta = rl_forward.row_meta(prompt, comp, [0, 1, 2], 1, True, [EOS, PAD], image_pad=(9, 2))
     assert meta.pixel_rows.tolist() == [16, 4, 0]
-    assert fast.row_meta(prompt, comp, [0, 1, 2], 1, True, [EOS, PAD]).pixel_rows.tolist() == [0, 0, 0]
+    assert rl_forward.row_meta(prompt, comp, [0, 1, 2], 1, True, [EOS, PAD]).pixel_rows.tolist() == [0, 0, 0]
 
 
 def test_check_meta_compares_pixel_rows_with_the_grid():
     """C4 step 5 for step 3's field: host pixel rows equal each row's images' grid t*h*w on check steps."""
-    host = [fast.MetaRow(2, 1, 0, 0, 0, 0, 16), fast.MetaRow(2, 1, 1, 1, 1, 0, 8)]
+    host = [rl_forward.MetaRow(2, 1, 0, 0, 0, 0, 16), rl_forward.MetaRow(2, 1, 1, 1, 1, 0, 8)]
     batch = {"host_meta": host, "prompt_mask": torch.ones(2, 2), "completion_mask": torch.ones(2, 1),
              "image_grid_thw": torch.tensor([[1, 4, 4], [1, 2, 4]]), "num_images": [1, 1]}  # fmt: skip
-    fast.check_meta(batch)
+    rl_forward.check_meta(batch)
     batch["host_meta"] = [host[0], host[1]._replace(pixel_rows=4)]
     with pytest.raises(AssertionError, match="row 1: pixel_rows 4 != device 8"):
-        fast.check_meta(batch)
+        rl_forward.check_meta(batch)

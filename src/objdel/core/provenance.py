@@ -10,11 +10,11 @@ import hashlib
 import os
 from pathlib import Path
 
-from objdel.hashing import file_sha256
-from objdel.io import git_sha
+from objdel.core.hashing import file_sha256
+from objdel.core.io import git_sha
 
 CODE = ("src/objdel/**/*.py", "src/objdel/*.cpp", "cpp/**/*.hpp", "cuda/*.h", "cuda/*.cpp", "experiments/phase2/*.py",
-        "experiments/phase2/vast/*.py", "CMakeLists.txt", "pyproject.toml")  # everything that runs on the box
+        "CMakeLists.txt", "pyproject.toml")  # everything that runs on the box
 
 
 def repo_root() -> Path:
@@ -31,7 +31,7 @@ def repo_root() -> Path:
 
 
 def code_hashes() -> dict:
-    """SHA-256 over (path, file SHA-256) of every CODE file, the git code identity (objdel.io.git_sha; None without
+    """SHA-256 over (path, file SHA-256) of every CODE file, the git code identity (objdel.core.io.git_sha; None without
     .git) and the file count."""
     root = repo_root()
     files = sorted({p for g in CODE for p in root.glob(g)})

@@ -183,7 +183,7 @@ def test_r5_view_stamp_chain(tmp_path, monkeypatch):
     one byte of lidc/val.jsonl changed (manifest's file sha updated with it) -> different."""
     import hashlib
 
-    from experiments.phase2 import preflight as PF
+    from objdel.infra import preflight as PF
     data = tmp_path / "data"
     for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in PF.EXAMS)):
         (data / d).mkdir(parents=True)

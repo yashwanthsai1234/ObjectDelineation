@@ -113,7 +113,7 @@ def test_bash_steps_are_valid_shell_and_their_python_snippets_compile():
 
 def test_named_files_exist():
     for f in ("experiments/cuda_checker/run_box.sh", "experiments/phase2/docker/env_check.sh",
-              "tests/test_gpu_scoring.py", "tests/test_train_fast.py"):
+              "tests/test_gpu_scoring.py", "tests/rl/test_trl_adapter_equivalence.py"):
         assert (ROOT / f).is_file(), f
     box = (ROOT / "experiments/cuda_checker/run_box.sh").read_text()
     assert "--build-only" in box
@@ -205,7 +205,7 @@ def test_rl_smoke_is_one_block_with_one_lost_run_recovery():
 
 def test_budget_stop_has_the_run_py_clock_inputs():
     """--budget-usd needs OBJDEL_SESSION_START and OBJDEL_RATE_USD_PER_H, which run.sh exports (policy.cmd_run)."""
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import __main__ as policy
 
     src = Path(policy.__file__).read_text()
     for var in ("OBJDEL_SESSION_START", "OBJDEL_RATE_USD_PER_H", "OBJDEL_FIXED_USD"):
@@ -216,7 +216,7 @@ def test_budget_stop_has_the_run_py_clock_inputs():
 
 
 def test_rows_pins_equal_the_b1_rows_pins_and_resolve_for_fetch_hf():
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import __main__ as policy
     from objdel.infra.vast import chain as CH
 
     def pins(name):
@@ -258,7 +258,7 @@ def test_the_two_box_split_runs_the_plan_steps_unchanged(name):
 
 
 def test_budget_block_gives_a_cap_inside_the_three_dollars(tmp_path, monkeypatch):
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import __main__ as policy
     from objdel.infra.vast import ledger as LG
     from objdel.infra.vast import remote as RM
 

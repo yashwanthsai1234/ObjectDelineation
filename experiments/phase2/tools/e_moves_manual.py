@@ -50,7 +50,7 @@ EDITS: list[tuple[str, str, str, str]] = [
     ("E3a", "tests/test_variants.py", 'CERTIFY = f"""\nfrom objdel.checker import certify\n',
      'CERTIFY = f"""\nfrom objdel.geom.certify import certify\n'),
     ("E5", "tests/test_p2_train_rl.py", "from objdel.train import rewards\n", "from objdel.rl import reward as rewards\n"),
-    ("E5", "tests/test_trl_adapter.py", '"from objdel.train import trl_adapter as T\\n"', '"from objdel.rl import trl_adapter as T\\n"'),
+    ("E5", "tests/rl/test_trl_adapter.py", '"from objdel.train import trl_adapter as T\\n"', '"from objdel.rl import trl_adapter as T\\n"'),
     ("E5", "tests/test_p2_eval.py", '"from objdel.eval import vision; print(vision.decide(1, 1, 1)[\'action\'])"',
      '"from objdel.policy import vision; print(vision.decide(1, 1, 1)[\'action\'])"'),
     ("E5", "tests/test_nvtx.py", '"\\n\\ndef _planted():\\n    from objdel.train import nvtx\\n    return nvtx\\n"',

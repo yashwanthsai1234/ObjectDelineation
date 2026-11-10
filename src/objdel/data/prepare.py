@@ -31,12 +31,12 @@ from pathlib import Path
 
 import cv2
 
+from objdel.core.hashing import pixels_sha256
+from objdel.core.io import read_json, write_json
 from objdel.data import store
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
 from objdel.geom.text import SCHEMAS
-from objdel.hashing import pixels_sha256
-from objdel.io import read_json, write_json
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
 from objdel.verify.reward.score import rater_answers
 from objdel.verify.reward.spec import fingerprint

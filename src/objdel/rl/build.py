@@ -37,22 +37,28 @@ def build_trainer(model: str, ckpt: Path, rows, out: Path, roots: Sequence[Path]
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
-    from objdel.train import callbacks, configs, fast, rewards, vllm_sync
+    from objdel.policy import callbacks
+    from objdel.policy import models as policy_models
+    from objdel.rl import config as rl_config
+    from objdel.rl import forward as rl_forward
+    from objdel.rl import reward as rl_reward
+    from objdel.rl import trl_adapter as rl_trl_adapter
+    from objdel.rl import vllm_sync
     from objdel.verify import store as serve
     from objdel.verify.reward.spec import REWARD_V4
 
-    peft = configs.lora(model)
-    lr = flags.lr or configs.rl_lr(model)
+    peft = policy_models.lora(model)
+    lr = flags.lr or rl_config.rl_lr(model)
     over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
-    over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(model, "grpo") | dict(flags.grpo)
+    over |= {"logging_steps": 1, "log_completions": False} | policy_models.sampling(model, "grpo") | dict(flags.grpo)
     reward = reward or REWARD_V4
-    cfg = configs.grpo_config(model, str(Path(out) / "trainer"), reward=reward, **over)
+    cfg = rl_config.grpo_config(model, str(Path(out) / "trainer"), reward=reward, **over)
     if check:
         check(cfg)
     net = AutoModelForImageTextToText.from_pretrained(ckpt, **({"dtype": torch.float16} if cfg.fp16 else {}))
-    proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(model, "lidc"))
-    funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(net, proc), spec=reward).funcs()
-    cls = GRPOTrainer if flags.plain else fast.FastGRPO
+    proc = AutoProcessor.from_pretrained(ckpt, **policy_models.processor_kwargs(model, "lidc"))
+    funcs, _ = rl_reward.TRLReward(serve.loader(*roots), policy_models.stop_ids(net, proc), spec=reward).funcs()
+    cls = GRPOTrainer if flags.plain else rl_trl_adapter.FastGRPO
     win = flags.profile_window  # --profile-window S,E: NVTX steps and the nsys capture window
     calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])
     if flags.trace:  # torch.profiler on step S (the nsys fallback; raises on S < 2), else on step 3
@@ -64,12 +70,14 @@ def build_trainer(model: str, ckpt: Path, rows, out: Path, roots: Sequence[Path]
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = flags.shared_prefix and not flags.compile
     trainer.log_by_prompt = flags.log_by_prompt
-    if cfg.off_policy_mask_threshold is not None and cls is fast.FastGRPO:  # bf16-tis-opsm: B2.4 rule 4's live delta
+    # bf16-tis-opsm: B2.4 rule 4's live delta
+    if cfg.off_policy_mask_threshold is not None and cls is rl_trl_adapter.FastGRPO:
         trainer.opsm_watch = callbacks.OpsmDelta(trainer, cfg.output_dir)
         trainer.add_callback(trainer.opsm_watch)
     trainer.group_requests = flags.group_requests  # C6: one n = G vLLM request per prompt
     trainer.runaway_cap = bool(flags.runaway_cap)  # C11: each prompt's max_tokens from the rows' `cap`
-    if cfg.vllm_lora and cls is fast.FastGRPO:  # option F: vLLM serves the unmerged adapter from a tmpfs folder
+    # option F: vLLM serves the unmerged adapter from a tmpfs folder
+    if cfg.vllm_lora and cls is rl_trl_adapter.FastGRPO:
         shm = "/dev/shm" if Path("/dev/shm").is_dir() else None
         trainer.lora_dir = Path(tempfile.mkdtemp(prefix="objdel-lora-", dir=shm))
         if not vllm_sync.install(trainer, "lora-seqmask", trainer.lora_dir):  # C5's sync_lora each sync
@@ -89,6 +97,6 @@ def build_trainer(model: str, ckpt: Path, rows, out: Path, roots: Sequence[Path]
         imgs = [rows[i]["image"] for i in range(min(8, len(rows)))]
         print(f"gpu_pixels/backend={trainer.use_gpu_pixels(imgs, flags.allow_cpu_pixels)}")
     if flags.compile:
-        fast.compile_text_layers(trainer.model, flags.compile)
-        trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers
+        policy_models.compile_text_layers(trainer.model, flags.compile)
+        trainer.buckets = rl_forward.BUCKETS  # few shapes for the compiled layers
     return Built(trainer, proc, lr)

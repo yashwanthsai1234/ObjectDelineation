@@ -83,12 +83,12 @@ def score_corpus() -> dict[str, list[str]]:
 
 
 def update_norms(monkeypatch, tmp_path) -> dict[str, str]:
-    """Golden 4: one FastGRPO update on the tiny offline model of tests/test_train_fast.py (CPU, seed 0): the loss, the
-    gradient L2 norm and the L2 norm of the parameter change, as float hex."""
+    """Golden 4: one FastGRPO update on the tiny offline model of tests/rl/test_trl_adapter_equivalence.py (CPU, seed
+    0): the loss, the gradient L2 norm and the L2 norm of the parameter change, as float hex."""
     import torch
 
-    from objdel.train import fast
-    from tests.test_train_fast import tiny_loop_vllm_fake
+    from objdel.rl import trl_adapter as fast
+    from tests.rl.test_trl_adapter_equivalence import tiny_loop_vllm_fake
 
     before, train = {}, fast.FastGRPO.train
 
@@ -119,12 +119,14 @@ class _Captured(Exception):
 
 
 def grpo_config_dict(argv: list[str], **over) -> dict:
-    """The GRPOConfig that build_trainer resolves for `train_rl.parse(argv)`, as to_dict() without VOLATILE keys."""
-    from experiments.phase2 import train_rl
+    """The GRPOConfig that build_trainer resolves for train_rl's stage of `argv` (objdel.rl.run.checked of the
+    RlStage), as to_dict() without VOLATILE keys."""
+    from objdel.core.spec import RlStage, cli_stage
     from objdel.rl.build import build_trainer
+    from objdel.rl.run import checked
 
     budget = ["--session-start", "0", "--rate-usd-per-h", "0.5"] if "--budget-usd" in argv else []  # as run.sh
-    a, seen = train_rl.parse([*argv, *budget]), []
+    a, seen = checked(cli_stage(RlStage, [*argv, *budget])), []
 
     def stop(cfg):
         seen.append(cfg)
@@ -163,7 +165,7 @@ def record() -> None:
     from objdel.verify.reward.spec import fingerprint
 
     flat = {"reference_value": reference_value(), "target_set_hash": target_hash(), "chain_argv": chain_argv(),
-            "dropped_flags": golden().get("dropped_flags", {}),
+            "dropped_flags": golden().get("dropped_flags", {}), "renamed_paths": golden().get("renamed_paths", {}),
             "grpo_config": jsonable(configs_golden()),
             "fingerprint": {"value": fingerprint(), "versions": [np.__version__, cv2.__version__, scipy.__version__]}}
     (GOLDENS / "invariance.json").write_text(json.dumps(flat, indent=1, sort_keys=True) + "\n")
@@ -178,12 +180,16 @@ def golden(name: str = "invariance.json") -> dict:
     return json.loads((GOLDENS / name).read_text())
 
 
-def drop_flags(argvs: list[list[str]]) -> list[list[str]]:
-    """Golden 5's argv lists without the flags a later commit deleted, each with its value (golden()["dropped_flags"]:
-    {module: [flag, ...]}, applied like a module rename; E4 step 3 deletes final_eval's --train)."""
-    dropped, out = golden()["dropped_flags"], []
+def later_edits(argvs: list[list[str]]) -> list[list[str]]:
+    """Golden 5's argv lists with the edits of later commits, applied like a module rename: the test files a later
+    commit moved get their new path (golden()["renamed_paths"]: {old: new}; E5 splits test_train_fast.py), and the
+    flags a later commit deleted go, each with its value (golden()["dropped_flags"]: {module: [flag, ...]}; E4 step 3
+    deletes final_eval's --train)."""
+    dropped, renamed, out = golden()["dropped_flags"], golden()["renamed_paths"], []
     for argv in argvs:
         a = list(argv)
+        for old, new in renamed.items():
+            a = [x.replace(old, new) for x in a]
         for flag in next((f for m, f in dropped.items() if m in a), ()):
             while flag in a:
                 del a[a.index(flag):a.index(flag) + 2]
@@ -229,7 +235,7 @@ def test_golden_4_one_update(monkeypatch, tmp_path):
 def test_golden_5_chain_argv_of_the_live_plans():
     got, want = json.loads(json.dumps(jsonable(chain_argv()))), json.loads(json.dumps(golden()["chain_argv"]))
     for g in want.values():
-        g["argv"] = drop_flags(g["argv"])
+        g["argv"] = later_edits(g["argv"])
     for g in (got, want):  # r1 train: `--config <yaml>` before E6, SftStage flags after (test_chain compares by value)
         del g["r1_qwen3vl2b"]["argv"][1]
     assert got == want

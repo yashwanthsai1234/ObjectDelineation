@@ -29,7 +29,7 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from objdel.io import read_json
+from objdel.core.io import read_json
 
 REPO = "svenk029/objdel-sft"  # the owner's private model repo (2026-11-02)
 TOKEN_OK = {"repo.content.read", "repo.write"}
@@ -128,7 +128,7 @@ def rl_ops(out: Path, hub, repo: str) -> list:
     """--rl: the commit's files (final/ at the root, final_adapter/ under its name, LICENSE, README.md)."""
     from huggingface_hub import CommitOperationAdd
 
-    from objdel.train import configs
+    from objdel.policy import models
 
     for d in ("final", "final_adapter"):
         if not (out / d).is_dir():
@@ -136,7 +136,7 @@ def rl_ops(out: Path, hub, repo: str) -> list:
     if not hub.repo_info(repo, repo_type="model").private:
         sys.exit(f"hf_push: {repo} is not private")
     doc = read_json(out / "rl.json")
-    base = configs.MODELS[doc["model"]]
+    base = models.MODELS[doc["model"]]
     lic, meta = base_card(base)
     files = [(f.relative_to(out / "final"), f) for f in sorted((out / "final").rglob("*")) if f.is_file()]
     files += [(f.relative_to(out), f) for f in sorted((out / "final_adapter").rglob("*")) if f.is_file()]
@@ -197,7 +197,7 @@ def card_only(repo: str, revision: str, headline: Path, token: str) -> int:
 def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path | None, token: str) -> int:
     """One commit on branch `revision` of `repo`: a train_sft run's selected branch (`run`) or a train_rl output
     (`rl`), with the base model's licence and a card; refused as the module docstring says."""
-    from objdel.train import configs
+    from objdel.policy import models
 
     if rl:
         hub = api(token)
@@ -222,7 +222,7 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
         sys.exit(f"hf_push: {repo} is not private")
     from huggingface_hub import CommitOperationAdd
 
-    base = configs.MODELS[man["config"]["model"]]
+    base = models.MODELS[man["config"]["model"]]
     lic, meta = base_card(base)
     src = run / "branches" / sel["selected"]
     ops = [CommitOperationAdd(f.relative_to(src).as_posix(), str(f)) for f in sorted(src.rglob("*")) if f.is_file()]

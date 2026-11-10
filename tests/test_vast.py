@@ -21,14 +21,14 @@ from unittest import mock
 
 import pytest
 
-from experiments.phase2 import preflight as PF
-from experiments.phase2.vast import policy as P
+from objdel.core.io import git_sha
 from objdel.infra import bundle as B
+from objdel.infra import preflight as PF
+from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import chain as CH
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
-from objdel.io import git_sha
 
 ROOT = Path(__file__).resolve().parents[1]
 VAST = ROOT / "experiments" / "phase2" / "vast"
@@ -144,7 +144,7 @@ class Env:
 
     def stamp(self, ok=True, **hashes):
         """The preflight stamp launch.sh checks (the gate): passing and current, or as given."""
-        path = PF.ROOT / self.env["OBJDEL_RUN_DIR"] / "preflight" / f"{self.config.stem}.json"
+        path = PF.repo_root() / self.env["OBJDEL_RUN_DIR"] / "preflight" / f"{self.config.stem}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         with mock.patch.dict(os.environ, OBJDEL_DATA_ROOT=self.env["OBJDEL_DATA_ROOT"]):
             now = PF.hashes(self.config)
@@ -606,7 +606,8 @@ SHIPPED = ("docs/reference/frozen_views.json", "docs/reference/val_halves.json")
 
 
 def _child(cwd: Path, code: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-I", "-c", code], cwd=cwd, capture_output=True, text=True, timeout=120)
+    return subprocess.run([sys.executable, "-I", "-c", code], cwd=cwd, capture_output=True, text=True, timeout=120,
+                          env=dict(os.environ, OBJDEL_REPO=str(cwd)))
 
 
 def test_frozen_views_ship(tmp_path, monkeypatch):
@@ -634,8 +635,8 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
     (view / "lidc").mkdir(parents=True)
     (view / "lidc" / "val.jsonl").write_text("")
     (view / "manifest.json").write_text(json.dumps({"sets": {"lidc/val": {"target_set_sha256": "0"}}}))
-    fe = (f"import sys, json; sys.path.insert(0, {str(box)!r}); from experiments.phase2 import final_eval as FE; "
-          f"assert FE.__file__.startswith({str(box)!r}), FE.__file__; "
+    fe = ("import json; from objdel.policy import final_eval as FE; "  # OBJDEL_REPO=box: the box's repo_root()
+          f"assert str(FE.FROZEN_VIEWS).startswith({str(box)!r}), FE.FROZEN_VIEWS; "
           "print(json.dumps(FE.frozen_entry('lidc-val-edge')), flush=True); "
           f"FE.check_view(FE.Path({str(view)!r}), 'val')")
     p = _child(box, fe)
@@ -1035,8 +1036,8 @@ def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
     """Audit: one session and one run.log per run_id made a second job (K3 under R1's load, §4.7 step 6) fail and
     overwrote logs."""
     E.launched()
-    out = E.sh("run.sh", "r1", "experiments.phase2.k3_harness", "--out", "/workspace/runs/r1/k3_load.json").stdout
-    assert "tmux new-session -d -s r1-k3_harness" in out and "/workspace/runs/r1/k3_harness.log" in out
+    out = E.sh("run.sh", "r1", "experiments.phase2.final_eval", "--out", "/workspace/runs/r1/k3_load.json").stdout
+    assert "tmux new-session -d -s r1-final_eval" in out and "/workspace/runs/r1/final_eval.log" in out
     out = E.sh("run.sh", "r1", "experiments/phase2/configs/r1_qwen3vl2b.yaml").stdout
     assert "-s r1-r1_qwen3vl2b" in out and "/workspace/runs/r1/r1_qwen3vl2b.log" in out
     E.sh("run.sh", "r1", "experiments.phase1.bench.xarch_hashes", "--out", "x.json")
@@ -1077,9 +1078,9 @@ def test_run_sh_job_runs_in_the_code_dir_with_the_run_dir_exported(E, tmp_path):
     """Audit: `cd ... && export ... && (heartbeat) &` backgrounded the whole && list, so the job ran in ssh's home dir
     without OBJDEL_RUN_DIR (relative --config paths and train_sft's /workspace/runs check fail on the box)."""
     E.launched()
-    calls, code, rd = _on_box(E, tmp_path, "experiments.phase2.k3_harness", "--out", "x.json")
-    assert calls == [[str(tmp_path / "src"), str(rd), "-I -m experiments.phase2.k3_harness --out x.json"]]
-    assert code == "0" and (rd / "k3_harness.log").exists() and (rd / "HEARTBEAT").exists()
+    calls, code, rd = _on_box(E, tmp_path, "experiments.phase2.final_eval", "--out", "x.json")
+    assert calls == [[str(tmp_path / "src"), str(rd), "-I -m experiments.phase2.final_eval --out x.json"]]
+    assert code == "0" and (rd / "final_eval.log").exists() and (rd / "HEARTBEAT").exists()
 
 
 def test_soft_steps_continue_and_hard_steps_stop_the_chain(E, tmp_path):
@@ -1220,7 +1221,7 @@ def test_teardown_destroys_on_ctrl_c_during_the_final_pull(monkeypatch, tmp_path
 def test_run_cap_kills_a_job_that_ignores_sigterm(E):
     """A process stuck in CUDA can ignore timeout's SIGTERM; -k sends SIGKILL 120 s later."""
     E.launched()
-    assert re.search(r"timeout -k 120 \d+s bash -c", E.tmux("experiments.phase2.k3_harness"))
+    assert re.search(r"timeout -k 120 \d+s bash -c", E.tmux("experiments.phase2.final_eval"))
 
 
 def test_pull_stamps_its_start_and_skips_full_checkpoints(E):
@@ -1379,7 +1380,8 @@ def test_image_check_handles_one_and_two_venvs():
     assert "else" in text  # one venv: vLLM in /opt/venv
 
 
-ENV_CHECKS = ("nvidia_smi", "capability", "bf16_matmul", "triton_compile", "torch_compile", "vllm_engine", "nvcc")
+ENV_CHECKS = ("nvidia_smi", "capability", "bf16_matmul", "triton_compile", "torch_compile", "vllm_engine", "nvcc",
+              "trl_private_names")
 
 
 def test_env_check_lists_every_check():
@@ -1448,7 +1450,7 @@ def test_a_spec_run_writes_run_spec_json_first(E):
     """run.sh on a spec: the first (hard) job on the box writes /workspace/runs/<id>/run_spec.json beside the log."""
     E.launched()
     line = E.tmux("specs/b1_rows.yaml")
-    assert "-m experiments.phase2.vast.policy run_spec specs/b1_rows.yaml /workspace/runs/r1/run_spec.json &&" in line
+    assert "-m objdel.infra.vast run_spec specs/b1_rows.yaml /workspace/runs/r1/run_spec.json &&" in line
     assert line.index("run_spec.json") < line.index("run_box.sh --build-only")
 
 
@@ -1493,7 +1495,7 @@ def test_launch_without_an_image_in_the_allowlist_refuses(monkeypatch, tmp_path)
     monkeypatch.setattr(P, "load_spec", lambda p: SimpleNamespace(compute=compute))
     monkeypatch.setattr(P, "reasons", lambda *a: [])
     monkeypatch.setattr(P, "vast", lambda *a, **k: [])
-    monkeypatch.setattr("experiments.phase2.preflight.refusal", lambda cfg: "")
+    monkeypatch.setattr("objdel.infra.preflight.refusal", lambda cfg: "")
     a = SimpleNamespace(run_id="r1", config="c.yaml", offer=1, cap_hours=2.0, owner_approved=False,
                         allow_parallel=False, idle_minutes=30)
     with pytest.raises(SystemExit, match="no image in .vast-allowlist"):

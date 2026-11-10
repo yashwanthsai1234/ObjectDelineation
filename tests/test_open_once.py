@@ -14,7 +14,7 @@ pytest.importorskip("trl")
 from datasets import Dataset, Image  # noqa: E402
 from trl.trainer.utils import RepeatSampler  # noqa: E402
 
-from objdel.train.dataset import OpenOnce  # noqa: E402
+from objdel.rl.rows import OpenOnce  # noqa: E402
 
 G, PROMPTS, GA = 8, 32, 16
 

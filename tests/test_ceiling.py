@@ -318,7 +318,7 @@ def _view(tmp_path, synthetic_items):
     from objdel.data import prepare as data_prepare
     from objdel.data import store
     from objdel.data.store import Item
-    from objdel.train import dataset as D
+    from objdel.policy import prompt as policy_prompt
 
     S, rng = 100, np.random.default_rng(0)
     y, x = np.ogrid[:S, :S]
@@ -335,7 +335,7 @@ def _view(tmp_path, synthetic_items):
                   [str(j + 1) for j in range(len(st))], {}) for i, st in enumerate(stacks)]
     riga = [it for it in synthetic_items(("val",)) if it.dataset == "riga"]
     store.write(riga + items, tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=1, prompts=policy_prompt.PROMPTS)
     return tmp_path / "view"
 
 
@@ -350,9 +350,9 @@ def view(view_root, clean_store):
 
 
 def _answers(view, path, drop=None):
-    from objdel.train import dataset as D
+    from objdel.policy import rows as policy_rows
 
-    recs = [r for r in D.records(view, "lidc", "val") if r["rl"] and r["item_id"] != drop]
+    recs = [r for r in policy_rows.records(view, "lidc", "val") if r["rl"] and r["item_id"] != drop]
     lines = [{"item_id": r["item_id"], "group_id": r["group_id"], "W": r["W"], "H": r["H"],
               "samples": ([t for t in r["targets"] if t] * 8)[:7] + ["garbage"], "truncated": [False] * 8,
               "tokens": [10] * 8} for r in recs]

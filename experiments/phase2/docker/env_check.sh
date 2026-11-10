@@ -4,7 +4,7 @@
 # Checks: nvidia_smi (name, driver, PCIe gen/width, power limit), capability ((12, 0) and sm_120 on a 5090),
 # bf16_matmul (>= 0.6 of the dense BF16 peak, as image_check.sh), triton_compile, torch_compile (small MLP fwd+bwd),
 # vllm_engine (Qwen3-VL-2B at MODEL_DIR, CUDA graphs on, VLLM_USE_FLASHINFER_SAMPLER=0, attention backend logged),
-# nvcc (--list-gpu-arch, when nvcc exists).
+# nvcc (--list-gpu-arch, when nvcc exists), trl_private_names (objdel.rl.trl_adapter.check(), E5).
 set -euo pipefail
 MODEL=${1:?usage: env_check.sh MODEL_DIR [OUT_JSON]}
 OUT=${2:-/workspace/runs/env_check.json}
@@ -84,6 +84,13 @@ def _():
     out = subprocess.check_output(["nvcc", "--list-gpu-arch"], text=True).split()
     assert not is5090 or "compute_120" in out, f"nvcc has no compute_120: {out}"
     return {"present": True, "gpu_arch": out}
+
+@check("trl_private_names")
+def _():
+    import trl
+    from objdel.rl import trl_adapter
+    trl_adapter.check()  # a TRL change that breaks the adapter fails the rental here, before any training (E-G13)
+    return {"trl": trl.__version__, "items": len(trl_adapter.ALL_ITEMS)}
 
 json.dump({"bad": bad, **r}, open(sys.argv[1], "w"), indent=1)
 print(json.dumps(r, indent=1))

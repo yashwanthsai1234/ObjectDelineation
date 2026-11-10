@@ -11,11 +11,11 @@ import sys
 from pathlib import Path
 
 import pytest
+from harness.k3_harness import make_jobs
 
-from experiments.phase1.reward_gates import make_jobs
 from objdel.geom.text import SCHEMAS
+from objdel.rl.reward import TRLReward
 from objdel.sft import select as sft_select
-from objdel.train.rewards import TRLReward
 from objdel.verify import store as serve
 from objdel.verify.reward.advantages import advantages_v4
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
@@ -70,7 +70,7 @@ def _workloads(root) -> dict[str, list]:
 
 
 def _trl_call(reward, jobs) -> dict:
-    """TRLReward's 8 functions in TRL's order with TRL's kwargs (objdel.train.rewards)."""
+    """TRLReward's 8 functions in TRL's order with TRL's kwargs (objdel.rl.reward)."""
     funcs, _ = reward.funcs()
     kw = {
         "prompts": [[{"role": "user", "content": "p"}]] * len(jobs),
@@ -136,7 +136,7 @@ def test_trl_reward_on_preloaded_caches(prepared):
 
 def test_k3_harness_help():
     r = subprocess.run(
-        [sys.executable, "-I", "-m", "experiments.phase2.k3_harness", "--help"],
+        [sys.executable, "-I", "-m", "tests.harness.k3_harness", "--help"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -146,7 +146,7 @@ def test_k3_harness_help():
 
 
 def test_k3_harness_smoke(prepared, tmp_path):
-    from experiments.phase2 import k3_harness
+    from harness import k3_harness
 
     out = tmp_path / "k3.json"
     k3_harness.main(

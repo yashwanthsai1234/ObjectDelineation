@@ -1,4 +1,4 @@
-"""Prepare the training set once: model frames (PNG), SFT targets and expert caches with hashes (objdel.train.dataset).
+"""Prepare the training set once: model frames (PNG), SFT targets and expert caches with hashes (objdel.data.prepare).
 
     .venv/bin/python -I -m experiments.phase1.prepare_rl [--store data/store] [--out data/prepared] [--procs 3]
 
@@ -18,20 +18,21 @@ import json
 import time
 
 from objdel.data import prepare as data_prepare
-from objdel.train import dataset as D
+from objdel.policy import prompt as policy_prompt
+from objdel.policy import rows as policy_rows
 
 
 def token_budget(out):
     """Issue I5: per model, train targets whose answer (+1 end-of-turn token) exceeds max_completion_length."""
     from transformers import AutoTokenizer
 
-    from objdel.train.configs import MAX_COMPLETION, MODELS
+    from objdel.policy.models import MAX_COMPLETION, MODELS
     res = {}
     for m, mid in MODELS.items():
         tok = AutoTokenizer.from_pretrained(mid)
         for ds in ("riga", "lidc"):
             n = [len(tok(t, add_special_tokens=False)["input_ids"]) + 1
-                 for r in D.records(out, ds, "train") for t in r["targets"] if t]
+                 for r in policy_rows.records(out, ds, "train") for t in r["targets"] if t]
             over = sorted(x for x in n if x > MAX_COMPLETION[m])
             res[f"{m}/{ds}"] = {"targets": len(n), "budget": MAX_COMPLETION[m], "over": len(over), "max": max(n),
                                 "over_lengths": over}
@@ -46,7 +47,7 @@ def main():
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()
     t0 = time.time()
-    m = data_prepare.prepare(a.store, a.out, a.splits.split(","), a.procs, prompts=D.PROMPTS)
+    m = data_prepare.prepare(a.store, a.out, a.splits.split(","), a.procs, prompts=policy_prompt.PROMPTS)
     print(json.dumps(m["sets"], indent=1), f"\n{time.time() - t0:.0f}s", flush=True)
     print(json.dumps(m["files"], indent=1))
     print(json.dumps(token_budget(a.out), indent=1))

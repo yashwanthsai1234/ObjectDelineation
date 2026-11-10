@@ -652,5 +652,8 @@
   }
  },
  "reference_value": "0757966c169611b018037b9a08a6103de2a5f7f4c0db6e4cfb17ee7624923ce2",
+ "renamed_paths": {
+  "tests/test_train_fast.py": "tests/rl/test_trl_adapter_equivalence.py"
+ },
  "target_set_hash": "10cfc759265f7363ee6131dff626a425cc86a80a588c78257a80f9ec050e7da8"
 }

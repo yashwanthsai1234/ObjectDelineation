@@ -17,16 +17,18 @@ pytest.importorskip("trl")
 from transformers import Trainer  # noqa: E402
 from trl import GRPOTrainer  # noqa: E402
 
-from experiments.phase2 import final_eval as FE  # noqa: E402
+from experiments.phase2 import final_eval as CLI
 from objdel.geom import engine as _gpucheck  # noqa: E402
-from objdel.train import fast  # noqa: E402
+from objdel.policy import caches as policy_caches  # noqa: E402
+from objdel.policy import final_eval as FE  # noqa: E402
+from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
 
 STATS = {"arena_bytes": 11, "sync_alloc": 2, "sync_free": 2, "pool_allocs": 5, "pool_frees": 4, "pinned_grows": 0,
          "table_bytes": 7, "eval_scratch_peak": 3, "live_device_bytes": 18}
 
 
 def _trainer(step: int):
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.model = type("M", (), {"training": True})()
     t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
     t.state = type("S", (), {"global_step": step, "log_history": []})()
@@ -37,7 +39,7 @@ def _trainer(step: int):
 def cuda_fakes(monkeypatch):
     monkeypatch.setattr(_gpucheck, "build", lambda: "cuda")
     monkeypatch.setattr(_gpucheck, "stats", lambda: dict(STATS))
-    monkeypatch.setattr(fast.torch.cuda, "max_memory_reserved", lambda *a, **k: 12345)
+    monkeypatch.setattr(policy_caches.torch.cuda, "max_memory_reserved", lambda *a, **k: 12345)
 
 
 @pytest.mark.usefixtures("cuda_fakes")
@@ -121,7 +123,7 @@ def test_final_eval_writes_engine_records_and_topology(ev, tmp_path, monkeypatch
     bin_ = _fake_smi(tmp_path, "123, 900 MiB\\n456, 800 MiB\\n", "2048 MiB\\n")
     monkeypatch.setenv("PATH", f"{bin_}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("OBJDEL_RUN_DIR", str(tmp_path / "run"))
-    FE.main(argv)
+    CLI.main(argv)
     assert len(resets) == 2
     for name in names:
         engine = json.loads((tmp_path / "O" / name / "final_eval.json").read_text())["engine"]
@@ -144,7 +146,7 @@ def test_final_eval_topology_falls_back_to_proc_and_needs_the_run_dir(ev, tmp_pa
     monkeypatch.setattr(FE, "_proc_count", lambda: 1)
     monkeypatch.setenv("PATH", f"{_fake_smi(tmp_path, '', '10 MiB')}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("OBJDEL_RUN_DIR", str(tmp_path / "run"))
-    FE.main(argv)
+    CLI.main(argv)
     topo = json.loads((tmp_path / "run" / "d" / "topology.json").read_text())
     assert {r["method"] for r in topo.values()} == {"proc"} and all(r["before"] == 1 for r in topo.values())
     started = []

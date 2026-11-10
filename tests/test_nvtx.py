@@ -1,4 +1,4 @@
-"""A6: objdel.train.nvtx (inert import, cached CUDA query, balanced ranges), the FastGRPO ranges and counters,
+"""A6: objdel.policy.marks (inert import, cached CUDA query, balanced ranges), the FastGRPO ranges and counters,
 callbacks.NvtxSteps (step ranges and the capture window), the build_trainer / train_rl wiring, the `checker` range on
 the reward path, and S12 (`reward` never imports `train`). CUDA and NVTX are fakes (monkeypatch); no GPU."""
 
@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import torch
 
-from objdel.train import nvtx
+from objdel.policy import marks as nvtx
 
 
 @pytest.fixture
@@ -79,7 +79,7 @@ def no_nvtx_calls(monkeypatch):
 
 def test_import_is_inert_it_imports_no_torch():
     """an import-time CUDA query would poison a later fork (the reward test pool forks, tests/test_eval_device.py)."""
-    code = "import sys, objdel.train.nvtx as n; assert 'torch' not in sys.modules, 'torch imported'; print(n._ON)"
+    code = "import sys, objdel.policy.marks as n; assert 'torch' not in sys.modules, 'torch imported'; print(n._ON)"
     out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True,
                          env=os.environ | {"OBJDEL_NVTX": "1"}, cwd=os.path.dirname(__file__))  # fmt: skip
     assert out.returncode == 0, out.stderr
@@ -235,7 +235,7 @@ def label(out):
 
 @pytest.mark.parametrize("n", [0, 1, 2, 10, 30])
 def test_pushes_and_pops_balance_and_nest(rec, n):
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     drive(NvtxSteps(None), n)
     stack = []
@@ -254,7 +254,7 @@ def test_pushes_and_pops_balance_and_nest(rec, n):
 def test_unpaired_hooks_pop_nothing(rec):
     import types
 
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     cb, st = NvtxSteps(None), types.SimpleNamespace(global_step=3)
     cb.on_optimizer_step(None, st, None)  # no pre-step (a skipped optimizer step)
@@ -263,7 +263,7 @@ def test_unpaired_hooks_pop_nothing(rec):
 
 
 def test_profiler_window_starts_after_pop_before_push_and_stops_once(rec, tmp_path):
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     drive(NvtxSteps((4, 6)), 8, out=tmp_path)
     assert label(tmp_path) == {"asked": [4, 6], "captured": [4, 6], "partial": False}
@@ -281,7 +281,7 @@ def test_profiler_window_starts_after_pop_before_push_and_stops_once(rec, tmp_pa
 def test_profiler_window_edges(rec, tmp_path):
     import types
 
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     cb, st = NvtxSteps((4, 6)), types.SimpleNamespace(global_step=0)
     args = types.SimpleNamespace(output_dir=str(tmp_path))
@@ -303,7 +303,7 @@ def test_profiler_window_edges(rec, tmp_path):
 def test_resume_inside_the_window_captures_the_steps_left_labeled_partial(rec, tmp_path, capsys, first):
     """owner decision 2026-11-09 (BR1-rl-6, choice 1): resumed at step s or later and before e, the capture starts
     at on_train_begin and holds steps first + 1 .. e."""
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     drive(NvtxSteps((4, 6)), 8 - first, first=first, out=tmp_path)
     names = [e[0] for e in rec.ev]
@@ -316,7 +316,7 @@ def test_resume_inside_the_window_captures_the_steps_left_labeled_partial(rec, t
 
 @pytest.mark.parametrize("first", [6, 9])
 def test_resume_at_or_past_the_window_end_captures_nothing_and_says_why(rec, tmp_path, capsys, first):
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     drive(NvtxSteps((4, 6)), 2, first=first, out=tmp_path)
     assert not any(e[0] in ("start", "stop") for e in rec.ev)
@@ -327,7 +327,7 @@ def test_resume_at_or_past_the_window_end_captures_nothing_and_says_why(rec, tmp
 
 @pytest.mark.parametrize("first", [0, 3])
 def test_a_start_before_the_window_is_not_partial(rec, tmp_path, first):
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     drive(NvtxSteps((4, 6)), 8 - first, first=first, out=tmp_path)
     assert label(tmp_path) == {"asked": [4, 6], "captured": [4, 6], "partial": False}
@@ -335,7 +335,7 @@ def test_a_start_before_the_window_is_not_partial(rec, tmp_path, first):
 
 def test_a_window_from_step_1_covers_every_step(rec, tmp_path):
     """owner decision 2026-11-09: the tracer covers all steps; S = 1 starts the capture at on_train_begin."""
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     drive(NvtxSteps((1, 5)), 5, out=tmp_path)
     names = [e[0] for e in rec.ev]
@@ -346,14 +346,14 @@ def test_a_window_from_step_1_covers_every_step(rec, tmp_path):
 
 def test_trace_step_needs_one_warm_up_step(tmp_path):
     """torch.profiler's schedule warms up one step before the traced step: --trace needs S >= 2."""
-    from objdel.train.callbacks import TraceStep
+    from objdel.policy.callbacks import TraceStep
 
     with pytest.raises(ValueError, match="S >= 2"):
         TraceStep(str(tmp_path), wait=-1)
 
 
 def test_no_cuda_no_profiler_and_no_ranges(monkeypatch, no_nvtx_calls):
-    from objdel.train.callbacks import NvtxSteps
+    from objdel.policy.callbacks import NvtxSteps
 
     monkeypatch.setattr(nvtx, "enabled", lambda: False)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
@@ -372,9 +372,9 @@ def fake_trainer(**attrs):
     from collections import defaultdict
     from types import SimpleNamespace
 
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as rl_trl_adapter
 
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.model, t._metrics = SimpleNamespace(training=True), {"train": defaultdict(list), "eval": defaultdict(list)}
     t.off_policy_mask_threshold, t.reward_funcs = None, []  # TRL's attributes
     t.accelerator = SimpleNamespace(is_main_process=False)  # log writes no seq_gaps file
@@ -424,14 +424,14 @@ class Clock:
 
 def capture_log(monkeypatch) -> list:
     """GRPOTrainer.log replaced by a recorder of the train metrics it would log."""
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as rl_trl_adapter
 
     logged = []
 
     def log(self, logs, start_time=None):
         logged.append(dict(self._metrics["train"]))
 
-    monkeypatch.setattr(fast.GRPOTrainer, "log", log)
+    monkeypatch.setattr(rl_trl_adapter.GRPOTrainer, "log", log)
     return logged
 
 
@@ -448,11 +448,11 @@ def test_timed_opens_the_range_and_records_the_phase_also_when_it_raises(rec, mo
 
 
 def test_timed_syncs_once_by_default_and_uses_events_when_sync_is_off(monkeypatch):
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as rl_trl_adapter
 
     clock = Clock(0.0, 2.0, 10.0, 13.5)
     cuda = FakeCuda(monkeypatch, clock)
-    monkeypatch.setattr(fast.time, "perf_counter", clock)
+    monkeypatch.setattr(rl_trl_adapter.time, "perf_counter", clock)
     monkeypatch.setattr(nvtx, "SYNC", True)
     t = fake_trainer()
     with t.timed("rewards"):
@@ -465,17 +465,17 @@ def test_timed_syncs_once_by_default_and_uses_events_when_sync_is_off(monkeypatc
     assert cuda.syncs == 1 and len(cuda.events) == 2  # one event pair, no sync
     assert "time/generate_s" not in t._metrics["train"]  # read later, in log's host read
     logged = capture_log(monkeypatch)
-    monkeypatch.setattr(fast.time, "perf_counter", lambda: 0.0)
+    monkeypatch.setattr(rl_trl_adapter.time, "perf_counter", lambda: 0.0)
     t.log({})
     assert cuda.syncs == 1 and logged[0]["time/generate_s"] == [pytest.approx(3.5)]
 
 
 def test_timed_without_cuda_uses_the_host_clock_even_with_sync_off(monkeypatch):
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as rl_trl_adapter
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(torch.cuda, "Event", lambda **k: pytest.fail("event without CUDA"))
-    monkeypatch.setattr(fast.time, "perf_counter", Clock(1.0, 4.0))
+    monkeypatch.setattr(rl_trl_adapter.time, "perf_counter", Clock(1.0, 4.0))
     monkeypatch.setattr(nvtx, "SYNC", False)
     t = fake_trainer()
     with t.timed("sync"):
@@ -484,15 +484,18 @@ def test_timed_without_cuda_uses_the_host_clock_even_with_sync_off(monkeypatch):
 
 
 def range_names():
-    """Every string literal passed to nvtx.range / nvtx.push / .timed under src/objdel/train (AST scan), and the
-    phase names of FastGRPO.time_vllm_phases's `hooks` table and WAKE_PHASE (its wrappers pass them to `timed`)."""
+    """Every string literal passed to nvtx.range / nvtx.push / .timed under src/objdel/policy and src/objdel/rl (AST
+    scan), and the phase names of FastGRPO.time_vllm_phases's `hooks` table and WAKE_PHASE (its wrappers pass them to
+    `timed`)."""
     import ast
     from pathlib import Path
 
-    import objdel.train
+    import objdel.policy
+    import objdel.rl
 
     names, bad = set(), []
-    for f in Path(objdel.train.__file__).parent.glob("*.py"):
+    pkgs = (Path(objdel.policy.__file__).parent, Path(objdel.rl.__file__).parent)
+    for f in (f for d in pkgs for f in d.glob("*.py")):
         for node in ast.walk(ast.parse(f.read_text())):
             call = isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
             if call and (node.func.attr == "timed" or node.func.attr in ("range", "push")
@@ -524,7 +527,7 @@ MODES = ("sequence_mask", "sequence_truncate", "token_mask", "token_truncate")
 @pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("bounds", [(None, 3.0), (0.1, 3.0)])  # TRL: *_truncate needs a bound; clip_max default 3
 def test_raw_ratio_then_bounded_is_is_ratio(mode, bounds):
-    from objdel.train import fast
+    from objdel.rl import forward as rl_forward
 
     g = torch.Generator().manual_seed(0)
     for _ in range(50):
@@ -535,8 +538,8 @@ def test_raw_ratio_then_bounded_is_is_ratio(mode, bounds):
         mask = torch.arange(T)[None] < torch.randint(0, T + 1, (B, 1), generator=g)
         mask[1], mask[2] = False, True  # an all-masked and a fully valid row
         lo, hi = bounds
-        want = fast.is_ratio(logps, sampling, mask, mode, lo, hi)
-        got = fast.bounded(fast.raw_ratio(logps, sampling, mask, mode), mode, lo, hi)
+        want = rl_forward.is_ratio(logps, sampling, mask, mode, lo, hi)
+        got = rl_forward.bounded(rl_forward.raw_ratio(logps, sampling, mask, mode), mode, lo, hi)
         assert torch.equal(got, want)
 
 
@@ -546,13 +549,13 @@ RAW = torch.tensor([0.0, 0.05, 0.5, 1.0, 2.9, 3.0, 3.1, 100.0])
 @pytest.mark.parametrize("mode,lo,want", [("sequence_mask", 0.1, [4, 2, 2]), ("sequence_truncate", None, [1, 2, 1]),
                                           ("sequence_truncate", 0.1, [0, 2, 2])])  # fmt: skip
 def test_share_counts_equal_numpy_counts(mode, lo, want, monkeypatch):
-    from objdel.train import fast
+    from objdel.rl import forward as rl_forward
 
     raw = RAW[:, None]
-    r = fast.bounded(raw, mode, lo, 3.0)
+    r = rl_forward.bounded(raw, mode, lo, 3.0)
     for name in ("item", "tolist", "__float__"):  # no host read in the computation
         monkeypatch.setattr(torch.Tensor, name, lambda *a: pytest.fail("host read"))
-    got = fast.clip_counts(raw, r, torch.ones_like(raw, dtype=torch.bool), lo, 3.0)
+    got = rl_forward.clip_counts(raw, r, torch.ones_like(raw, dtype=torch.bool), lo, 3.0)
     monkeypatch.undo()
     assert isinstance(got, torch.Tensor) and got.tolist() == want
     n = RAW.numpy()
@@ -561,13 +564,13 @@ def test_share_counts_equal_numpy_counts(mode, lo, want, monkeypatch):
 
 
 def test_token_counts_leave_padding_out():
-    from objdel.train import fast
+    from objdel.rl import forward as rl_forward
 
     raw = torch.tensor([[0.5, 4.0, 0.0], [1.0, 0.0, 0.0]])  # padding (mask 0) underflows to 0
     keep = torch.tensor([[True, True, True], [True, False, False]])
-    r = fast.bounded(raw, "token_mask", None, 3.0)
-    assert fast.clip_counts(raw, r, keep, None, 3.0).tolist() == [2, 1, 1]
-    assert fast.clip_counts(raw, r, torch.zeros_like(keep), None, None).tolist() == [0, 0, 0]
+    r = rl_forward.bounded(raw, "token_mask", None, 3.0)
+    assert rl_forward.clip_counts(raw, r, keep, None, 3.0).tolist() == [2, 1, 1]
+    assert rl_forward.clip_counts(raw, r, torch.zeros_like(keep), None, None).tolist() == [0, 0, 0]
 
 
 def test_log_writes_the_shares_from_one_read(monkeypatch):
@@ -591,10 +594,10 @@ def test_log_writes_the_shares_from_one_read(monkeypatch):
 
 
 def test_step_time_is_the_gap_between_logs_without_a_sync(monkeypatch):
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as rl_trl_adapter
 
     logged = capture_log(monkeypatch)
-    monkeypatch.setattr(fast.time, "perf_counter", Clock(10.0, 40.0, 75.0))
+    monkeypatch.setattr(rl_trl_adapter.time, "perf_counter", Clock(10.0, 40.0, 75.0))
     monkeypatch.setattr(torch.cuda, "synchronize", lambda *a: pytest.fail("sync in log"))
     t = fake_trainer()
     for _ in range(3):
@@ -635,9 +638,9 @@ def test_sync_calls_is_the_count_of_syncs_between_logs(monkeypatch):
 
 def test_log_adds_no_host_read(monkeypatch):
     """Q03: with the counters, the step time and the NVTX range, log reads the device once (the stats), as before."""
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as rl_trl_adapter
 
-    monkeypatch.setattr(fast.GRPOTrainer, "log", lambda self, logs, start=None: None)
+    monkeypatch.setattr(rl_trl_adapter.GRPOTrainer, "log", lambda self, logs, start=None: None)
     reads = []
     for name in ("item", "cpu", "tolist"):
         orig = getattr(torch.Tensor, name)
@@ -664,7 +667,7 @@ def tiny_grpo(tmp_path_factory):
     from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
     from trl import GRPOConfig
 
-    from objdel.train import fast
+    from objdel.rl import trl_adapter as rl_trl_adapter
 
     vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "prompt", *map(str, range(40))])}
     tk = Tokenizer(models.WordLevel(vocab, unk_token="<pad>"))
@@ -677,7 +680,8 @@ def tiny_grpo(tmp_path_factory):
     args = GRPOConfig(output_dir=str(tmp_path_factory.mktemp("grpo")), max_steps=1, per_device_train_batch_size=8,
                       num_generations=8, max_completion_length=4, use_cpu=True, bf16=False, report_to="none",
                       logging_steps=1, save_strategy="no", seed=0, remove_unused_columns=False)  # fmt: skip
-    t = fast.FastGRPO(model=model, reward_funcs=lambda completions, **kw: [sum(map(ord, c)) % 7.0 for c in completions],
+    t = rl_trl_adapter.FastGRPO(model=model, reward_funcs=lambda completions, **kw: [sum(map(ord,
+        c)) % 7.0 for c in completions],
                       args=args, train_dataset=Dataset.from_list([{"prompt": "prompt 1"}] * 2), processing_class=tok)
     t.current_gradient_accumulation_steps = 1  # set by the Trainer loop
     return t
@@ -722,7 +726,7 @@ def test_checker_range_opens_on_the_thread_that_scores(monkeypatch):
 
     import numpy as np
 
-    from objdel.train import rewards as R
+    from objdel.rl import reward as R
 
     seen = []
     monkeypatch.setattr(nvtx, "range", lambda name: seen.append((name, threading.current_thread().name))
@@ -752,8 +756,11 @@ def built(monkeypatch, tmp_path):
     from types import SimpleNamespace
 
     from objdel.core.spec import TrainerFlags
+    from objdel.policy import models as policy_models
+    from objdel.rl import config as configs
+    from objdel.rl import reward as rl_reward
+    from objdel.rl import trl_adapter as rl_trl_adapter
     from objdel.rl.build import build_trainer
-    from objdel.train import configs, fast, rewards
     from objdel.verify import store as serve
 
     got = []
@@ -771,10 +778,10 @@ def built(monkeypatch, tmp_path):
     monkeypatch.setattr("transformers.AutoProcessor", stub)
     monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace(
         fp16=False, vllm_lora=False, off_policy_mask_threshold=k.get("off_policy_mask_threshold"), output_dir="o"))
-    monkeypatch.setattr(rewards, "TRLReward", lambda *a, **k: SimpleNamespace(funcs=lambda: ([], [])))
-    monkeypatch.setattr(rewards, "stop_ids", lambda *a: set())
+    monkeypatch.setattr(rl_reward, "TRLReward", lambda *a, **k: SimpleNamespace(funcs=lambda: ([], [])))
+    monkeypatch.setattr(policy_models, "stop_ids", lambda *a: set())
     monkeypatch.setattr(serve, "loader", lambda *roots: None)
-    monkeypatch.setattr(fast, "FastGRPO", Trainer)
+    monkeypatch.setattr(rl_trl_adapter, "FastGRPO", Trainer)
 
     def make(**flags):
         build_trainer("qwen3-vl-2b", tmp_path, None, tmp_path, [tmp_path], 3, TrainerFlags(**flags))
@@ -784,7 +791,7 @@ def built(monkeypatch, tmp_path):
 
 
 def test_build_trainer_adds_nvtx_steps_only_with_a_window(built):
-    from objdel.train.callbacks import NvtxSteps, TraceStep
+    from objdel.policy.callbacks import NvtxSteps, TraceStep
 
     assert built() == [] and built(profile_window=None, trace=None) == []
     (cb,) = built(profile_window=[4, 6])
@@ -801,7 +808,7 @@ def test_build_trainer_adds_nvtx_steps_only_with_a_window(built):
 
 
 def test_build_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold(built):
-    from objdel.train.callbacks import OpsmDelta
+    from objdel.policy.callbacks import OpsmDelta
 
     assert built() == []
     (cb,) = built(grpo={"off_policy_mask_threshold": 0.5})
@@ -811,7 +818,8 @@ def test_build_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold
 def test_build_trainer_installs_the_lora_sync_only_under_option_f(built, monkeypatch, tmp_path):
     from types import SimpleNamespace
 
-    from objdel.train import configs, vllm_sync
+    from objdel.rl import config as configs
+    from objdel.rl import vllm_sync
 
     calls = []
     monkeypatch.setattr(vllm_sync, "install",
@@ -839,11 +847,11 @@ def test_train_rl_flags():
         assert e.value.code == 2
 
 
-# S12: objdel.verify.reward never imports objdel.train -----------------------------------------------------------------
+# S12: objdel.verify.reward never imports objdel.policy/rl/sft-------------------------------------------------------
 
 
 def train_imports(folder, package="objdel.verify.reward"):
-    """Imports of objdel.train anywhere in the modules of `package` under `folder` (function bodies too), as
+    """Imports of objdel.policy, rl or sft anywhere in the modules of `package` under `folder` (function bodies too), as
     file:line."""
     import ast
     from pathlib import Path
@@ -860,7 +868,7 @@ def train_imports(folder, package="objdel.verify.reward"):
                 mods = [mod] + [f"{mod}.{n.name}" for n in node.names]
             else:
                 continue
-            if any(m == "objdel.train" or m.startswith("objdel.train.") for m in mods):
+            if any(m.split(".")[:2] in (["objdel", "policy"], ["objdel", "rl"], ["objdel", "sft"]) for m in mods):
                 hits.append(f"{f.name}:{node.lineno}")
     return hits
 
@@ -876,7 +884,7 @@ def test_reward_never_imports_train(tmp_path):
     bad = tmp_path / "reward"
     shutil.copytree(src, bad, ignore=shutil.ignore_patterns("__pycache__"))
     score = bad / "score.py"
-    score.write_text(score.read_text() + "\n\ndef _planted():\n    from objdel.train import nvtx\n    return nvtx\n")
+    score.write_text(score.read_text() + "\n\ndef _planted():\n    from objdel.policy import marks\n    return marks\n")
     assert [h.split(":")[0] for h in train_imports(bad)] == ["score.py"]
-    score.write_text(score.read_text().replace("from objdel.train import nvtx", "from ...train import nvtx"))
+    score.write_text(score.read_text().replace("from objdel.policy import marks", "from ...policy import marks"))
     assert [h.split(":")[0] for h in train_imports(bad)] == ["score.py"]

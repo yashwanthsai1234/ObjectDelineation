@@ -1,4 +1,4 @@
-"""objdel.train.dataset: prepare (frames, targets, caches stored once), SFT and GRPO rows, cache loader.
+"""The old train/dataset.py names: objdel.policy.rows, rl.rows, sft.rows; data.prepare; verify.store.cache_loader.
 
 Unit tests run on a tiny synthetic store; the R1 round trip runs on the prepared train set (data/prepared)."""
 import hashlib
@@ -16,7 +16,10 @@ from objdel.data import prepare as data_prepare  # noqa: E402
 from objdel.data import store  # noqa: E402
 from objdel.data.store import Item  # noqa: E402
 from objdel.geom.text import SCHEMAS  # noqa: E402
-from objdel.train import dataset as D  # noqa: E402
+from objdel.policy import prompt as policy_prompt  # noqa: E402
+from objdel.policy import rows as policy_rows  # noqa: E402
+from objdel.rl import rows as rl_rows  # noqa: E402
+from objdel.sft import rows as sft_rows  # noqa: E402
 from objdel.verify import store as verify_store  # noqa: E402
 from objdel.verify.reward.score import rater_answers, score_completion  # noqa: E402
 
@@ -27,7 +30,8 @@ PREPARED = Path(__file__).resolve().parents[1] / "data" / "prepared"
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep")
     store.write(synthetic_items(), root / "store")
-    manifest = data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
+    manifest = data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1,
+        prompts=policy_prompt.PROMPTS)
     return root, manifest
 
 
@@ -50,7 +54,7 @@ def test_prepare_counts_skips_and_layout(prepared):
 def test_records_and_cache_loader(prepared):
     root, _ = prepared
     out = root / "out"
-    rec = {r["item_id"]: r for r in D.records(out, "lidc", "train")}
+    rec = {r["item_id"]: r for r in policy_rows.records(out, "lidc", "train")}
     assert set(rec) == {"lidc/1.2.1/n000/z001", "lidc/1.2.1/n000/z003"}
     r = rec["lidc/1.2.1/n000/z001"]
     assert r["W"] == r["H"] and 1000 % r["W"] == 0 and r["disagreement"] and r["rl"]
@@ -72,14 +76,15 @@ def test_cache_loader_rejects_a_swapped_cache(prepared, tmp_path):
 
 def test_sft_rows_schema(prepared):
     root, _ = prepared
-    rows = D.sft_rows(root / "out", "lidc", "train")
+    rows = sft_rows.sft_rows(root / "out", "lidc", "train")
     assert set(rows.column_names) == {"messages", "image", "key", "rater"}
     assert len(rows) == 3  # 2 raters of z001 + the single rater of z003
     texts = {(r["key"], r["rater"]): r for r in rows}
     row = texts[("lidc/1.2.1/n000/z001", "2")]
     user, assistant = row["messages"]
     assert user["role"] == "user" and assistant["role"] == "assistant"
-    assert [c["type"] for c in user["content"]] == ["image", "text"] and user["content"][1]["text"] == D.PROMPTS["lidc"]
+    assert [c["type"] for c in user["content"]] == ["image",
+        "text"] and user["content"][1]["text"] == policy_prompt.PROMPTS["lidc"]
     assert assistant["content"] == [{"type": "text", "text": assistant["content"][0]["text"]}]
     assert row["image"].mode == "RGB" and row["image"].size == (512, 512)  # LIDC model image (frame contract)
     assert '"holes":[[' in assistant["content"][0]["text"]  # rater 2 drew the ring
@@ -87,9 +92,10 @@ def test_sft_rows_schema(prepared):
 
 def test_sft_rows_drop_answers_beyond_the_token_budget(prepared):
     root, _ = prepared
-    lengths = sorted(len(r["messages"][1]["content"][0]["text"]) for r in D.sft_rows(root / "out", "riga", "train"))
+    lengths = sorted(len(r["messages"][1]["content"][0]["text"]) for r in sft_rows.sft_rows(root / "out", "riga",
+        "train"))
     tok = lambda text, add_special_tokens=False: {"input_ids": list(text)}  # one token per character
-    kept = D.sft_rows(root / "out", "riga", "train", tokenizer=tok, max_tokens=lengths[1] + 1)  # +1: end of turn
+    kept = sft_rows.sft_rows(root / "out", "riga", "train", tokenizer=tok, max_tokens=lengths[1] + 1)  # +1: end of turn
     assert len(kept) == sum(n <= lengths[1] for n in lengths) < len(lengths)
 
 
@@ -105,24 +111,25 @@ def test_sft_rows_teach_only_voting_raters(tmp_path, disc_mask, synthetic_items)
                 ["1", "2", "3"], {})
     riga = [it for it in synthetic_items() if it.dataset == "riga"]  # prepare reads both datasets
     store.write([item, *riga], tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1, prompts=D.PROMPTS)
-    (rec,) = D.records(tmp_path / "out", "lidc", "train")
+    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1,
+        prompts=policy_prompt.PROMPTS)
+    (rec,) = policy_rows.records(tmp_path / "out", "lidc", "train")
     assert rec["targets"][2] is not None  # certifiable: dropped for abstaining, not for lack of a target
     assert verify_store.cache_loader(tmp_path / "out")(rec["item_id"])["nodule"].voters == (0, 1)
-    assert sorted(D.sft_rows(tmp_path / "out", "lidc", "train")["rater"]) == ["1", "2"]
-    assert D.grpo_rows(tmp_path / "out", "lidc", "train")["key"] == [rec["item_id"]]
+    assert sorted(sft_rows.sft_rows(tmp_path / "out", "lidc", "train")["rater"]) == ["1", "2"]
+    assert rl_rows.grpo_rows(tmp_path / "out", "lidc", "train")["key"] == [rec["item_id"]]
 
 
 def test_grpo_rows_schema_and_oversampling(prepared):
     root, _ = prepared
     out = root / "out"
-    rows = D.grpo_rows(out, "lidc", "train")
+    rows = rl_rows.grpo_rows(out, "lidc", "train")
     assert set(rows.column_names) == {"prompt", "image", "key", "W", "H", "names"}
     assert rows["key"] == ["lidc/1.2.1/n000/z001"]  # the one-rater item is not RL-eligible
     (row,) = rows
     assert [c["type"] for c in row["prompt"][0]["content"]] == ["image", "text"] and row["names"] == ["nodule"]
-    assert D.grpo_rows(out, "lidc", "train", oversample=3)["key"] == ["lidc/1.2.1/n000/z001"] * 3
-    assert D.grpo_rows(out, "riga", "train", oversample=3)["key"] == ["riga/MESSIDOR/image001"]  # no disagreement
+    assert rl_rows.grpo_rows(out, "lidc", "train", oversample=3)["key"] == ["lidc/1.2.1/n000/z001"] * 3
+    assert rl_rows.grpo_rows(out, "riga", "train", oversample=3)["key"] == ["riga/MESSIDOR/image001"]  # no disagreement
 
 
 def rows_hash(rows):
@@ -137,8 +144,8 @@ def test_prepare_takes_the_prompt_table(prepared, tmp_path):
 
     root, m = prepared
     assert inspect.signature(data_prepare.prepare).parameters["prompts"].default is inspect.Parameter.empty
-    assert m["prompts"] == D.PROMPTS
-    table = {ds: f"outline the {ds} structures" for ds in D.PROMPTS}
+    assert m["prompts"] == policy_prompt.PROMPTS
+    table = {ds: f"outline the {ds} structures" for ds in policy_prompt.PROMPTS}
     again = data_prepare.prepare(root / "store", tmp_path, splits=("train",), procs=1, prompts=table)
     assert again["prompts"] == table and again["files"] == m["files"]
 
@@ -146,11 +153,13 @@ def test_prepare_takes_the_prompt_table(prepared, tmp_path):
 def test_prepare_and_rows_are_deterministic(prepared, tmp_path):
     root, m = prepared
     # 1 vs 2 workers
-    again = data_prepare.prepare(root / "store", tmp_path, splits=("train",), procs=2, prompts=D.PROMPTS)
+    again = data_prepare.prepare(root / "store", tmp_path, splits=("train",), procs=2, prompts=policy_prompt.PROMPTS)
     assert again["files"] == m["files"] and again["sets"] == m["sets"]
     for ds in ("riga", "lidc"):
-        assert rows_hash(D.sft_rows(root / "out", ds, "train")) == rows_hash(D.sft_rows(tmp_path, ds, "train"))
-        assert rows_hash(D.grpo_rows(root / "out", ds, "train", 4)) == rows_hash(D.grpo_rows(tmp_path, ds, "train", 4))
+        assert rows_hash(sft_rows.sft_rows(root / "out", ds, "train")) == rows_hash(sft_rows.sft_rows(tmp_path, ds,
+            "train"))
+        assert rows_hash(rl_rows.grpo_rows(root / "out", ds, "train", 4)) == rows_hash(rl_rows.grpo_rows(tmp_path, ds,
+            "train", 4))
 
 
 def test_prepare_workers_survive_a_parent_that_used_cuda(prepared, tmp_path, monkeypatch):
@@ -174,7 +183,8 @@ def test_prepare_workers_survive_a_parent_that_used_cuda(prepared, tmp_path, mon
     start = multiprocessing.get_start_method()
     multiprocessing.set_start_method("fork", force=True)
     try:
-        again = data_prepare.prepare(root / "store", tmp_path, splits=("train",), procs=1, prompts=D.PROMPTS)
+        again = data_prepare.prepare(root / "store", tmp_path, splits=("train",), procs=1,
+            prompts=policy_prompt.PROMPTS)
     finally:
         multiprocessing.set_start_method(start, force=True)
     assert again["files"] == m["files"] and again["sets"] == m["sets"]
@@ -197,7 +207,7 @@ def round_trip(root, dataset, split):
     (scored, abstaining raters' targets, failures)."""
     load = verify_store.cache_loader(root)
     bad, n, abstained = [], 0, 0
-    for r in D.records(root, dataset, split):
+    for r in policy_rows.records(root, dataset, split):
         if not r["rl"]:
             continue
         caches = load(r["item_id"])
@@ -232,5 +242,5 @@ def test_r1_round_trip_on_the_prepared_train_set(dataset):
     assert hashlib.sha256((PREPARED / rel).read_bytes()).hexdigest() == m["files"][rel]["sha256"]
     n, abstained, bad = round_trip(PREPARED, dataset, "train")
     assert n + abstained == m["sets"][f"{dataset}/train"]["rl_targets"] and not bad[:5]
-    rl = {r["item_id"] for r in D.records(PREPARED, dataset, "train") if r["rl"]}
-    assert sum(k in rl for k in D.sft_rows(PREPARED, dataset, "train")["key"]) == n  # SFT teaches exactly these
+    rl = {r["item_id"] for r in policy_rows.records(PREPARED, dataset, "train") if r["rl"]}
+    assert sum(k in rl for k in sft_rows.sft_rows(PREPARED, dataset, "train")["key"]) == n  # SFT teaches exactly these

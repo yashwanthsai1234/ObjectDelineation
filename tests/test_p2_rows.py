@@ -8,18 +8,18 @@ import cv2
 import pytest
 from test_data_quality import PLAN, SHARES, Tok, stub_ceiling, world  # noqa: F401 (world: the module fixture)
 
+from objdel.core.hashing import pixels_sha256
 from objdel.data import quality as Q
 from objdel.data import windows as Wn
-from objdel.hashing import pixels_sha256
 
 
 @pytest.fixture
 def run(world, tmp_path, monkeypatch):  # noqa: F811
-    from experiments.phase2 import audit_data as A
     from experiments.phase2 import build_rl_rows as R
     from objdel.data import splits
+    from objdel.policy import models
     stub_ceiling(monkeypatch, [0.9, 0.8])
-    monkeypatch.setattr(A, "tokenizer", lambda model: (Tok(50), 1536))
+    monkeypatch.setattr(models, "tokenizer", lambda model: (Tok(50), 1536))
     monkeypatch.setattr(splits, "val_half", lambda g: "shape" if int(g[-1]) % 2 else "select")
     ex = tmp_path / "train_exclusions.json"
     ex.write_text("{}")
@@ -80,7 +80,7 @@ def test_each_window_has_its_own_png_and_caches_and_they_load(built):
 
 
 def test_cache_loader_and_grpo_rows_read_the_root_in_schedule_order(built, world):  # noqa: F811
-    from objdel.train import dataset as D
+    from objdel.rl import rows as D
     from objdel.verify import store as verify_store
     rows = D.grpo_rows(built.out, "lidc", "train", oversample=1)
     assert list(rows["key"]) == [w.window_id for w in world.sched]

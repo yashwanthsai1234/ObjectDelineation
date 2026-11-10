@@ -3,7 +3,7 @@ completions/truncated_grad_share logs; grpo_config follows the spec's group. The
 import numpy as np
 from test_train_rewards import CACHES, EOS, NAMES, PAD, W, batch, call_all
 
-from objdel.train import rewards as R
+from objdel.rl import reward as R
 from objdel.verify.reward import advantages as reward_advantages
 from objdel.verify.reward.advantages import advantages_v5, legal_gate, topology_reward
 from objdel.verify.reward.score import score_batch
@@ -42,7 +42,7 @@ def test_v5_logs_kind_loc_and_truncated_grad_share():
 
 
 def test_grpo_config_follows_the_spec_group(tmp_path):
-    from objdel.train import configs
+    from objdel.rl import config as configs
 
     c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), reward=REWARD_V5, use_cpu=True, use_vllm=False)
     assert c.num_generations == REWARD_V5.group and len(c.reward_weights) == len(reward_advantages.LOGGED) + 1

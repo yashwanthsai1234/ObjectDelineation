@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.core.hashing import pixels_sha256
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
@@ -17,7 +18,6 @@ from objdel.data.targets.frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, 
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS, parse
 from objdel.geom.topology import signature
-from objdel.hashing import pixels_sha256
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
@@ -347,7 +347,9 @@ def eval_views(tmp_path_factory, synthetic_items):
 
 
 def test_eval_views_read_through_the_prepared_layout(eval_views):
-    from objdel.train import dataset as D
+    from objdel.policy import rows as policy_rows
+    from objdel.rl import rows as rl_rows
+    from objdel.sft import rows as sft_rows
     from objdel.verify import store as verify_store
     root, manifests = eval_views
     assert not (root / "out" / "riga-val-rotated").exists()  # fundus orientation is physiological (D10)
@@ -356,7 +358,7 @@ def test_eval_views_read_through_the_prepared_layout(eval_views):
         ds = name.split("-")[0]
         m = json.loads((d / "manifest.json").read_text())
         assert m["sets"][f"{ds}/val"]["target_errors"] == [] and m["view"] == name
-        recs = D.records(d, ds, "val")
+        recs = policy_rows.records(d, ds, "val")
         assert recs and all("view" in r for r in recs)
         load = verify_store.cache_loader(d)
         for r in recs:
@@ -365,16 +367,16 @@ def test_eval_views_read_through_the_prepared_layout(eval_views):
             if r["rl"]:
                 assert set(load(r["item_id"])) == set(SCHEMAS[ds])
         if ds == "lidc":
-            assert len(D.grpo_rows(d, ds, "val")) == sum(r["rl"] for r in recs)  # images match image_sha256
-            D.sft_rows(d, ds, "val")
+            assert len(rl_rows.grpo_rows(d, ds, "val")) == sum(r["rl"] for r in recs)  # images match image_sha256
+            sft_rows.sft_rows(d, ds, "val")
 
 
 def test_eval_views_shift_and_rescale(eval_views, synthetic_items):
-    from objdel.train import dataset as D
+    from objdel.policy import rows as policy_rows
     root, _ = eval_views
     its = {i.item_id: i for i in synthetic_items(("train", "val"))}
     for ds in ("lidc", "riga"):
-        sh, rs = (D.records(root / "out" / f"{ds}-val-{k}", ds, "val") for k in ("shifted", "rescaled"))
+        sh, rs = (policy_rows.records(root / "out" / f"{ds}-val-{k}", ds, "val") for k in ("shifted", "rescaled"))
         for a, b in zip(sh, rs, strict=True):
             it = its[a["item_id"]]
             S0 = frame(it).W
@@ -398,10 +400,10 @@ def test_two_eval_builds_are_identical(eval_views, tmp_path):
 def test_rotated_eval_view_is_the_shifted_view_turned_r90(eval_views, synthetic_items):
     """Same items and windows as the shifted view; image and masks rotated by r90 at frame resolution (then the
     upscale), so every target rasterizes to the rotated shifted mask."""
-    from objdel.train import dataset as D
+    from objdel.policy import rows as policy_rows
     root, _ = eval_views
     its = {i.item_id: i for i in synthetic_items(("train", "val"))}
-    sh, rot = (D.records(root / "out" / f"lidc-val-{k}", "lidc", "val") for k in ("shifted", "rotated"))
+    sh, rot = (policy_rows.records(root / "out" / f"lidc-val-{k}", "lidc", "val") for k in ("shifted", "rotated"))
     assert [r["item_id"] for r in sh] == [r["item_id"] for r in rot]
     for a, b in zip(sh, rot, strict=True):
         assert (a["view"]["offset"], a["view"]["side"], b["view"]["op"]) == (b["view"]["offset"], b["view"]["side"],
@@ -507,12 +509,12 @@ def test_edge_falls_back_to_the_policy_frame_when_every_boundary_window_is_crowd
 def test_every_view_record_carries_its_offset_fraction(eval_views, synthetic_items):
     """I06: view.offset_frac = windows.offset_of(union box, window box); view.padded = the window leaves the slice."""
     from objdel.data.windows import offset_of
-    from objdel.train import dataset as D
+    from objdel.policy import rows as policy_rows
     root, manifests = eval_views
     its = {i.item_id: i for i in synthetic_items(("train", "val"))}
     for name, m in manifests.items():
         ds = name.split("-")[0]
-        recs = D.records(root / "out" / name, ds, "val")
+        recs = policy_rows.records(root / "out" / name, ds, "val")
         for r in recs:
             it = its[r["item_id"]]
             H, W = next(iter(it.masks.values())).shape[-2:]
@@ -712,11 +714,11 @@ def val_view(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
     from experiments.phase2 import build_eval_views as BE
     from objdel.data import prepare as data_prepare
-    from objdel.train import dataset as D
+    from objdel.policy import prompt as policy_prompt
 
     root = tmp_path_factory.mktemp("val_view")
     store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
     BE.build(root / "store", root / "views", ("lidc",), "val", seed=0, procs=1)
     return root / "prepared", root / "views" / "lidc-val-shifted"
 

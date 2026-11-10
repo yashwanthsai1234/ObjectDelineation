@@ -8,8 +8,8 @@ import re
 import time
 from pathlib import Path
 
+from objdel.core.io import read_json
 from objdel.core.provenance import repo_root
-from objdel.io import read_json
 
 # G10, USD spent in Phase 2: $16.90 at plan start + the approved $3.00 + $1.50 (2026-11-09)
 ALARM, HARD_STOP = 10.0, 21.4

@@ -106,12 +106,10 @@ convention = "google"
 # Phase scripts are frozen records of what produced the published numbers: lint lightly.
 "experiments/**" = ["E501", "B023", "B905", "D"]
 "tests/**" = ["D"]
-"src/objdel/train/fast.py" = ["TID251"]          # removed in E5 (file split)
-"src/objdel/train/trl_adapter.py" = ["TID251"]   # becomes rl/trl_adapter.py in E5
-"src/objdel/train/sample.py" = ["TID251"]        # removed in E5 (sample -> rl/trl_adapter.py)
-"tests/test_trl_adapter.py" = ["TID251"]         # moves to tests/rl/ in E5
-"tests/test_train_fast.py" = ["TID251"]          # removed in E5
-"src/objdel/train/vllm_sync.py" = ["TID251"]    # moves into rl/ in E5
+"src/objdel/rl/trl_adapter.py" = ["TID251"]   # the one TRL adapter (E5)
+"tests/rl/test_trl_adapter.py" = ["TID251"]
+"tests/rl/test_trl_adapter_equivalence.py" = ["TID251"]
+"src/objdel/rl/vllm_sync.py" = ["TID251"]  # vllm_generation.empty_cache (C5)
 "tests/test_vllm_sync.py" = ["TID251"]
 "tests/test_breakit_r1_rl.py" = ["TID251"]
 "tests/test_c_flags.py" = ["TID251"]
@@ -137,7 +135,7 @@ ignore_decorators = ["@pytest.fixture", "@model_validator", "@app.*"]  # autouse
 ignore_names = [
   "on_*", "should_save", "should_training_stop",  # transformers TrainerCallback hooks and control flags
   "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes
-  "cmd_*",  # vast/policy.py subcommands, dispatched by name
+  "cmd_*",  # objdel.infra.vast subcommands, dispatched by name
   "pytestmark", "pre_tokenizer", "decoder", "projector_hidden_size", "is_main_process",
   "writeable", "atexit",  # numpy flag (topology.py), atexit hook (cache.py)
   "rid", "multimodal_fields", "has_tool_images", "return_tensors",  # fake signatures that callers use by keyword
@@ -158,11 +156,8 @@ id = "layers-interim"  # each move commit sets its own list (Implementation.md E
 name = "objdel layers (current packages)"
 type = "layers"
 containers = ["objdel"]
-layers = ["infra", "train", "eval", "data", "verify", "geom", "core"]
+layers = ["infra", "rl | sft", "policy", "data", "verify", "geom", "core"]
 exhaustive = false
-ignore_imports = [
-    "objdel.eval.vision -> objdel.train.dataset",  # cycle edge; E5 removes it (vision moves to policy)
-]
 broken_contract_guidance = "Move the import down or the code up."
 
 [[tool.importlinter.contracts]]
@@ -171,4 +166,4 @@ name = "the verifier side never imports the ML stack"
 type = "forbidden"
 source_modules = ["objdel.geom", "objdel.verify", "objdel.data"]
 forbidden_modules = ["torch", "trl", "transformers", "peft", "vllm", "datasets", "accelerate"]
-broken_contract_guidance = "torch and friends live in the train/policy layers only."
+broken_contract_guidance = "torch and friends live in objdel.policy / rl / sft only."

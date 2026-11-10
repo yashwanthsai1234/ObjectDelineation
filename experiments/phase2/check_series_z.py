@@ -15,8 +15,8 @@ import datetime
 import json
 from pathlib import Path
 
+from objdel.core.io import read_json
 from objdel.data import lidc, quality
-from objdel.io import read_json
 
 
 def main(argv=None) -> int:

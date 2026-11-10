@@ -12,7 +12,7 @@ from objdel.rl import run as rl_run
 
 def _trace_steps(tmp_path, wait: int, start: int, steps: int) -> list[int]:
     """Run TraceStep over global steps start+1..steps; return the global steps at which it wrote a trace."""
-    from objdel.train.callbacks import TraceStep
+    from objdel.policy.callbacks import TraceStep
 
     cb, state, wrote = TraceStep(str(tmp_path / "trace"), wait=wait), SimpleNamespace(global_step=start), []
     cb.write = lambda prof: wrote.append(state.global_step)
@@ -39,7 +39,7 @@ def test_merge_last_keeps_a_complete_final_without_rl_json(tmp_path, monkeypatch
     from transformers import AutoModelForImageTextToText, AutoProcessor  # noqa: F401
 
     import objdel.rl.run  # noqa: F401
-    import objdel.train.configs  # noqa: F401  (imports the real peft)
+    pass  # noqa: F401  (imports the real peft)
     from experiments.phase2 import train_rl
 
     out = tmp_path / "out"
@@ -70,7 +70,7 @@ def stub(tmp_path, monkeypatch):
 
     from experiments.phase2 import train_rl
     from objdel.rl import build
-    from objdel.train import dataset
+    from objdel.rl import rows as dataset
     from objdel.verify import store as serve
 
     monkeypatch.setattr(serve, "preload", lambda root, ds: None)

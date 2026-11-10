@@ -13,12 +13,13 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLModel  # noqa: E402
 
-from objdel.train import fast  # noqa: E402
-from tests.test_train_fast import (  # noqa: E402
+from objdel.policy import caches as policy_caches  # noqa: E402
+from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
+from tests.policy.test_caches import counted_tower  # noqa: E402
+from tests.rl.test_trl_adapter_equivalence import (  # noqa: E402
     PATCH,
     Fast,
     GRPOTrainer,
-    counted_tower,
     group_batch,
     meta_for,
     tiny_model,
@@ -46,7 +47,7 @@ def base_of(m):
 
 def pixel_trainer(m, kw, **attrs):
     """The pixel_values path with the encoder-once grouping: one tower call on the distinct images fills VisionCache."""
-    vc = fast.VisionCache.install(m)
+    vc = policy_caches.VisionCache.install(m)
     vc.forward(*distinct(kw))
     return trainer(Fast, buckets=BUCKETS, vision=vc, **attrs)
 
@@ -71,13 +72,13 @@ class MetaFast(Fast):
 
 def encoder_trainer(m, kw, meta, **attrs):
     """The encoder-once path; `meta` is the generation batch's RowMeta (its image_id field gives each row's image)."""
-    enc = fast.EncoderCache(fast.VisionCache.install(frozen(m)), base_of(m))
+    enc = policy_caches.EncoderCache(policy_caches.VisionCache.install(frozen(m)), base_of(m))
     enc.encode(*distinct(kw))
     return trainer(MetaFast, buckets=BUCKETS, encoder=enc, meta=meta, **attrs)
 
 
 def shared_attrs(m, on):
-    return {"shared_prefix": True, "rope": fast.RopeCache.install(m)} if on else {}
+    return {"shared_prefix": True, "rope": policy_caches.RopeCache.install(m)} if on else {}
 
 
 def calls(seen):
@@ -107,7 +108,7 @@ def test_encoder_once_logps_and_entropies_equal_the_pixel_path(shared_prefix, at
     assert towers["encoder"] == 1
     m = tiny_model()
     seen = counted_tower(m)
-    fast.VisionCache.install(m)
+    policy_caches.VisionCache.install(m)
     trainer(Fast, buckets=BUCKETS)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=chunk, **kw)
     assert calls(seen) > 1  # control: today's path encodes per chunk
 
@@ -116,7 +117,7 @@ def test_encoder_once_lora_gradients_equal_the_pixel_path():
     """I-EN2: one micro-batch, every LoRA A/B grad torch.equal; the tower has no grad and the features none."""
     from peft import get_peft_model
 
-    from objdel.train import configs
+    from objdel.policy import models as configs
 
     ids, mask, T, kw = four_groups()
     real = mask[:, -T:].float()
@@ -150,7 +151,7 @@ def test_every_forward_gets_encoder_outputs_and_never_pixel_values():
         m.model.visual.forward = lambda pv, grid_thw=None, _o=orig, _r=rows, **k: _r.append(len(pv)) or _o(pv, grid_thw,
                                                                                                         **k)
         t = (encoder_trainer(m, kw, meta_for(mask, T, G)) if on
-             else trainer(Fast, buckets=BUCKETS, vision=fast.VisionCache.install(m)))  # fmt: skip
+             else trainer(Fast, buckets=BUCKETS, vision=policy_caches.VisionCache.install(m)))  # fmt: skip
         got = []
         m.model.register_forward_pre_hook(lambda mod, a, k, _g=got: _g.append((k.get("mm_encoder_outputs"),
                                                                                k.get("pixel_values"))),
@@ -162,7 +163,7 @@ def test_every_forward_gets_encoder_outputs_and_never_pixel_values():
             sub = {"pixel_values": kw["pixel_values"].view(16, -1, PATCH)[perm].reshape(-1, PATCH),
                    "image_grid_thw": kw["image_grid_thw"][perm], "num_images": [1] * 4,
                    "mm_token_type_ids": kw["mm_token_type_ids"][perm]}  # fmt: skip
-            pick = fast.RowMeta(*(a[perm] for a in dataclasses.astuple(meta)))
+            pick = policy_caches.RowMeta(*(a[perm] for a in dataclasses.astuple(meta)))
             t._get_per_token_logps_and_entropies(m, ids[perm], mask[perm], T, host_meta=pick, **sub)
         assert len(got) == 6
         if on:
@@ -184,7 +185,7 @@ def test_image_ids_follow_shuffled_rows_and_a_wrong_permutation_changes_the_logp
            "image_grid_thw": kw["image_grid_thw"][perm], "num_images": [1] * 16,
            "mm_token_type_ids": kw["mm_token_type_ids"][perm]}  # fmt: skip
     meta = meta_for(mask, T, G)
-    pick = fast.RowMeta(*(a[perm] for a in dataclasses.astuple(meta)))
+    pick = policy_caches.RowMeta(*(a[perm] for a in dataclasses.astuple(meta)))
     m0 = tiny_model()
     want, _, _ = pixel_trainer(m0, kw)._get_per_token_logps_and_entropies(
         m0, ids[perm], mask[perm], T, batch_size=4, host_meta=pick, **sub)
@@ -213,7 +214,7 @@ def test_missing_or_bad_image_ids_raise(image_ids, error):
         t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=8, **kw)
     assert calls(seen) == 1 and t.encoder.pending is None
     m = tiny_model()
-    trainer(Fast, buckets=BUCKETS, vision=fast.VisionCache.install(m))._get_per_token_logps_and_entropies(
+    trainer(Fast, buckets=BUCKETS, vision=policy_caches.VisionCache.install(m))._get_per_token_logps_and_entropies(
         m, ids, mask, T, batch_size=8, **kw)
 
 
@@ -240,12 +241,12 @@ def test_text_only_rows_skip_the_encoder_and_a_token_mismatch_is_an_error():
 def test_per_image_follows_the_flag_and_is_cleared_before_each_generation(monkeypatch):
     """U-EN5: the image memo returns one block per distinct image only under --encoder-once; set and cleared before
     every generation, per trainer (two trainers sharing one processor each get their own setting)."""
-    memo = fast.ImageMemo(lambda images, **k: None)
+    memo = policy_caches.ImageMemo(lambda images, **k: None)
     memo.memo["old"] = None
     out = ("pids", [[1]], None, ["a"], None, None, {}, None, [])
     monkeypatch.setattr(GRPOTrainer, "_generate", lambda self, prompts: out)
-    on = trainer(fast.FastGRPO, images=memo, encoder=object(), use_vllm=False, reward_funcs=[])
-    off = trainer(fast.FastGRPO, images=memo, use_vllm=False, reward_funcs=[])
+    on = trainer(rl_trl_adapter.FastGRPO, images=memo, encoder=object(), use_vllm=False, reward_funcs=[])
+    off = trainer(rl_trl_adapter.FastGRPO, images=memo, use_vllm=False, reward_funcs=[])
     on._generate(["p"])
     assert memo.per_image is True and memo.memo == {}
     off._generate(["p"])
@@ -259,7 +260,7 @@ def test_a_trainable_tower_is_refused():
         p.requires_grad_(False)
     next(m.model.visual.parameters()).requires_grad_(True)
     with pytest.raises(ValueError, match="frozen"):
-        fast.EncoderCache(fast.VisionCache.install(m), m.model)
+        policy_caches.EncoderCache(policy_caches.VisionCache.install(m), m.model)
 
 
 def test_shape_guard_raises_on_pixels_cut_by_the_row_grid():
@@ -268,10 +269,10 @@ def test_shape_guard_raises_on_pixels_cut_by_the_row_grid():
     ids, mask, T, kw = four_groups()
     pv, grid = distinct(kw)
     m = tiny_model()
-    vc = fast.VisionCache.install(frozen(m))
+    vc = policy_caches.VisionCache.install(frozen(m))
     assert m.model.visual.forward == vc.forward
-    fast.EncoderCache(vc, m.model)
-    with pytest.raises(fast.EncoderMismatch):
+    policy_caches.EncoderCache(vc, m.model)
+    with pytest.raises(policy_caches.EncoderMismatch):
         m.model.visual(pv, grid_thw=kw["image_grid_thw"])
     assert m.model.visual(pv, grid_thw=grid).pooler_output.shape == (16, 32)
 
@@ -282,11 +283,11 @@ def tiny_vl_trainer(monkeypatch, tmp_path, proc, encoder_once):
     from datasets import Dataset
     from trl import GRPOConfig
 
-    from objdel.train import configs
-    from tests.test_train_fast import FakeVLLM
+    from objdel.policy import models as configs
+    from tests.rl.test_trl_adapter_equivalence import FakeVLLM
 
     monkeypatch.setattr("trl.trainer.grpo_trainer.VLLMGeneration", FakeVLLM)
-    monkeypatch.setattr(fast.FastGRPO, "sync_without_merge", lambda self: False)  # FakeVLLM has no engine
+    monkeypatch.setattr(rl_trl_adapter.FastGRPO, "sync_without_merge", lambda self: False)  # FakeVLLM has no engine
     tok = proc.tokenizer
     ids = [tok.convert_tokens_to_ids(t) for t in ("<|image_pad|>", "<|video_pad|>", "<|vision_start|>",
                                                   "<|vision_end|>")]  # fmt: skip
@@ -296,7 +297,7 @@ def tiny_vl_trainer(monkeypatch, tmp_path, proc, encoder_once):
                       seed=0, remove_unused_columns=False, beta=0.04, loss_type="dr_grpo", use_vllm=True,
                       vllm_mode="colocate", vllm_importance_sampling_correction=False)  # fmt: skip
     rows = Dataset.from_list([{"prompt": [{"role": "user", "content": "x"}]}])
-    t = fast.FastGRPO(model=model, reward_funcs=lambda completions, **kw: [0.0] * len(completions), args=args,
+    t = rl_trl_adapter.FastGRPO(model=model, reward_funcs=lambda completions, **kw: [0.0] * len(completions), args=args,
                       train_dataset=rows, processing_class=proc, peft_config=configs.lora("qwen3-vl-2b"))
     t.host_meta = True
     if encoder_once:
@@ -351,6 +352,6 @@ def test_log_reads_the_peak_memory_on_cuda(monkeypatch):
     monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start_time=None: None)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 3 * 2**30)
-    t = trainer(fast.FastGRPO)
+    t = trainer(rl_trl_adapter.FastGRPO)
     t.log({})
     assert t._metrics["train"]["perf/max_memory_gb"] == [3.0]

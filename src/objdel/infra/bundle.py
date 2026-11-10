@@ -21,12 +21,12 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+from objdel.core.hashing import file_sha256
+from objdel.core.io import read_json
 from objdel.core.provenance import repo_root
-from objdel.hashing import file_sha256
 from objdel.infra.vast.ledger import load
 from objdel.infra.vast.offers import is_raw
 from objdel.infra.vast.remote import die
-from objdel.io import read_json
 
 LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
 SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view would differ (BK1-7)

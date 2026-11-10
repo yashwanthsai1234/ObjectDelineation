@@ -12,7 +12,8 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 from transformers import Qwen2VLImageProcessor  # noqa: E402
 
-from objdel.train import fast  # noqa: E402
+from objdel.policy import caches as policy_caches  # noqa: E402
+from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
 
 
 def image(seed, h=64, w=64):
@@ -38,7 +39,8 @@ def test_memo_gives_the_processors_own_output_for_rows_that_repeat_images(counte
     a, b, c = image(0), image(1), image(2, 96, 64)  # c: another size, so another grid
     rows = [a, a, b, c, a, b, c, a]
     want = Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)(rows, return_tensors="pt")
-    for got in (fast.ImageMemo(ip)(rows, return_tensors="pt"), fast.ImageMemo(ip)([[x] for x in rows])):
+    for got in (policy_caches.ImageMemo(ip)(rows, return_tensors="pt"),
+        policy_caches.ImageMemo(ip)([[x] for x in rows])):
         assert set(got.keys()) == set(want.keys())
         for k in want:
             assert torch.equal(got[k], want[k]), k
@@ -46,7 +48,7 @@ def test_memo_gives_the_processors_own_output_for_rows_that_repeat_images(counte
 
 def test_each_distinct_image_is_prepared_once_until_the_memo_is_cleared(counted):
     ip, seen = counted
-    memo = fast.ImageMemo(ip)
+    memo = policy_caches.ImageMemo(ip)
     a, b = image(0), image(1)
     memo([a] * 8 + [b] * 8)  # pass 1 (prompt ids)
     memo([[a]] * 8 + [[b]] * 8, return_tensors="pt")  # pass 2 (pixel values): other kwargs
@@ -59,22 +61,23 @@ def test_each_distinct_image_is_prepared_once_until_the_memo_is_cleared(counted)
 
 def test_memo_passes_every_other_attribute_through(counted):
     ip, _ = counted
-    memo = fast.ImageMemo(ip)
+    memo = policy_caches.ImageMemo(ip)
     assert (memo.merge_size, memo.patch_size) == (2, 16)
 
 
 def test_fast_grpo_installs_one_memo_and_clears_it_before_each_generation(monkeypatch):
     proc = type("P", (), {"image_processor": Qwen2VLImageProcessor()})()
-    memo = fast.ImageMemo.install(proc)
-    assert proc.image_processor is memo and fast.ImageMemo.install(proc) is memo  # idempotent
-    assert fast.ImageMemo.install(type("T", (), {})()) is None  # a text-only processing class: nothing to memoise
+    memo = policy_caches.ImageMemo.install(proc)
+    assert proc.image_processor is memo and policy_caches.ImageMemo.install(proc) is memo  # idempotent
+    # a text-only processing class: nothing to memoise
+    assert policy_caches.ImageMemo.install(type("T", (), {})()) is None
     memo.memo[("x",)] = "stale"
-    t = object.__new__(fast.FastGRPO)
+    t = object.__new__(rl_trl_adapter.FastGRPO)
     t.images, t.use_vllm = memo, False
-    monkeypatch.setattr(fast.GRPOTrainer, "_generate", lambda self, prompts: (None, [], None, []))
-    monkeypatch.setattr(fast.FastGRPO, "timed", lambda self, phase: __import__("contextlib").nullcontext())
-    monkeypatch.setattr(fast.FastGRPO, "prefetch_rewards", lambda self, *a: None)
-    fast.FastGRPO._generate(t, ["p"])
+    monkeypatch.setattr(rl_trl_adapter.GRPOTrainer, "_generate", lambda self, prompts: (None, [], None, []))
+    monkeypatch.setattr(rl_trl_adapter.FastGRPO, "timed", lambda self, phase: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(rl_trl_adapter.FastGRPO, "prefetch_rewards", lambda self, *a: None)
+    rl_trl_adapter.FastGRPO._generate(t, ["p"])
     assert memo.memo == {}
 
 
@@ -86,14 +89,14 @@ def test_prompt_memo_prefills_the_distinct_images_with_pass_twos_kwargs(counted,
     a, b = image(0), image(1)
     ask = lambda x: [{"role": "user", "content": [{"type": "image", "image": x}, {"type": "text", "text": "q"}]}]  # noqa: E731
     prompts = [ask(a)] * 8 + [ask(b)] * 8
-    monkeypatch.setattr(fast.GRPOTrainer, "_generate", lambda self, prompts: (None, [], None, []))
-    monkeypatch.setattr(fast.FastGRPO, "timed", lambda self, phase: __import__("contextlib").nullcontext())
-    monkeypatch.setattr(fast.FastGRPO, "prefetch_rewards", lambda self, *a: None)
+    monkeypatch.setattr(rl_trl_adapter.GRPOTrainer, "_generate", lambda self, prompts: (None, [], None, []))
+    monkeypatch.setattr(rl_trl_adapter.FastGRPO, "timed", lambda self, phase: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(rl_trl_adapter.FastGRPO, "prefetch_rewards", lambda self, *a: None)
     for on, want in ((False, []), (True, [2])):
-        t = object.__new__(fast.FastGRPO)
-        t.images, t.use_vllm, t.prompt_memo = fast.ImageMemo(ip), False, on
+        t = object.__new__(rl_trl_adapter.FastGRPO)
+        t.images, t.use_vllm, t.prompt_memo = policy_caches.ImageMemo(ip), False, on
         seen.clear()
-        fast.FastGRPO._generate(t, prompts)
+        rl_trl_adapter.FastGRPO._generate(t, prompts)
         assert seen == want
     t.images([[a]] * 8 + [[b]] * 8, return_tensors="pt")  # TRL pass 2
     assert seen == [2] and (t.images.misses, t.images.hits) == (2, 16)
@@ -113,7 +116,7 @@ def test_a_saved_processor_holds_the_plain_image_processor_not_the_memo(tmp_path
     except OSError:
         pytest.skip("Qwen/Qwen3-VL-2B-Instruct processor not in the local HF cache")
     proc.save_pretrained(tmp_path / "plain")
-    memo = fast.ImageMemo.install(proc)
+    memo = policy_caches.ImageMemo.install(proc)
     memo([image(0)])  # something cached
     plain = copy.deepcopy(memo)
     assert type(plain) is type(memo.inner) and plain.to_dict() == memo.inner.to_dict()
@@ -128,7 +131,7 @@ def test_gpu_memo_equals_the_processor_and_counts_one_miss_per_distinct_image(co
     imgs = [image(i) for i in range(32)]
     rows = [x for x in imgs for _ in range(8)]  # 256 rows, 8 per image
     want = Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)(rows, return_tensors="pt")
-    memo = fast.ImageMemo(ip, gpu=("torch", "cpu"))
+    memo = policy_caches.ImageMemo(ip, gpu=("torch", "cpu"))
     got = memo(rows, return_tensors="pt")
     assert all(torch.equal(got[k], want[k]) for k in want) and seen == []  # never the CPU processor
     assert (memo.misses, memo.hits) == (32, 224)
@@ -138,7 +141,7 @@ def test_counters_run_on_across_clear_and_prefill_counts_misses_only(counted):  
     ip, seen = counted
     imgs = [image(i) for i in range(32)]
     rows = [x for x in imgs for _ in range(8)]
-    memo = fast.ImageMemo(ip, gpu=("torch", "cpu"))
+    memo = policy_caches.ImageMemo(ip, gpu=("torch", "cpu"))
     memo(rows, return_tensors="pt")
     assert (memo.misses, memo.hits) == (32, 224)
     memo(rows, return_tensors="pt")  # a second call: 256 hits
@@ -161,7 +164,7 @@ def test_per_image_memo_returns_each_distinct_images_patches_once_with_the_row_g
     imgs = [image(i) for i in range(4)]
     rows = [x for x in imgs for _ in range(8)]
     plain = Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)
-    got = fast.ImageMemo(ip, gpu=("torch", "cpu"), per_image=True)(rows, return_tensors="pt")
+    got = policy_caches.ImageMemo(ip, gpu=("torch", "cpu"), per_image=True)(rows, return_tensors="pt")
     assert torch.equal(got["pixel_values"], plain(imgs, return_tensors="pt")["pixel_values"])
     assert torch.equal(got["image_grid_thw"], plain(rows, return_tensors="pt")["image_grid_thw"])
 
@@ -170,6 +173,6 @@ def test_an_unsupported_image_falls_back_to_the_processor_and_is_counted(counted
     ip, seen = counted
     rows = [image(0, 50, 50)] * 2  # 50 x 50: the processor resizes it
     want = Qwen2VLImageProcessor(patch_size=16, temporal_patch_size=2, merge_size=2)(rows, return_tensors="pt")
-    memo = fast.ImageMemo(ip, gpu=("torch", "cpu"))
+    memo = policy_caches.ImageMemo(ip, gpu=("torch", "cpu"))
     got = memo(rows, return_tensors="pt")
     assert all(torch.equal(got[k], want[k]) for k in want) and memo.fallback_calls == 1 and seen == [1]

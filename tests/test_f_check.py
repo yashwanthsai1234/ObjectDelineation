@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from experiments.phase2 import train_rl
-from objdel.train import f_check as fc
+from objdel.rl import f_check as fc
 
 BASE = ["--model", "qwen3-vl-2b", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "20"]
 
@@ -106,7 +106,8 @@ def test_f_check_flag_is_on_by_default_under_fp16_and_an_argparse_error_under_bf
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")  # before the vllm stubs: trl's import probes vllm's spec
 from objdel.rl import run as rl_run  # noqa: E402
-from objdel.train import fast, vllm_sync  # noqa: E402
+from objdel.rl import trl_adapter as fast  # noqa: E402
+from objdel.rl import vllm_sync  # noqa: E402
 
 IMG, START, END = 100, 102, 103  # tiny_model's image pad and vision start / end ids
 
@@ -168,7 +169,7 @@ class Engine:
 
 
 def comparator_run(tmp_path, monkeypatch, sleep_mode: bool, expand: int = 2, gap=None, skip=None):
-    from test_train_fast import _lora_bf16
+    from tests.rl.test_trl_adapter_equivalence import _lora_bf16
 
     m = _lora_bf16()
     m.save_pretrained(tmp_path / "b1")  # the B1 adapter: this adapter's values
@@ -268,7 +269,7 @@ def vg_with(mods, index_to_id):
 
 
 def test_lora_equal_reads_the_packed_slices_of_the_adapters_slot():
-    from test_train_fast import _lora_bf16
+    from tests.rl.test_trl_adapter_equivalence import _lora_bf16
 
     m = _lora_bf16()
     assert fc.lora_equal(vg_with(served_modules(m, 1), [None, 1]), m)

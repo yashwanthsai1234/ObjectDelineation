@@ -258,15 +258,17 @@ def built(tmp_path_factory, synthetic_items):
     from objdel.data import prepare as data_prepare
     from objdel.data import store
     from objdel.data.targets.build import target_set_hash
-    from objdel.train import dataset as D
+    from objdel.policy import prompt as policy_prompt
+    from objdel.policy import rows as policy_rows
     root = tmp_path_factory.mktemp("hashes")
     items = [it for it in synthetic_items(("train", "val")) if it.image is not None]
     store.write(items, root / "store")
-    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=D.PROMPTS)
+    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
     BE.build(root / "store", root / "views", ("lidc", "riga"), "val", seed=0, procs=1)
     prep = json.loads((root / "prepared" / "manifest.json").read_text())
     every = [(r["item_id"], k, t) for ds, split in (s.split("/") for s in prep["sets"])
-             for r in D.records(root / "prepared", ds, split) for k, t in zip(r["raters"], r["targets"], strict=True)
+             for r in policy_rows.records(root / "prepared", ds, split) for k, t in zip(r["raters"], r["targets"],
+                 strict=True)
              if t]
     (root / "targets").mkdir()
     (root / "targets" / "manifest.json").write_text(json.dumps({

@@ -38,6 +38,6 @@ steps:
      timeout 1200 $S --tool $t --error-exitcode 1 /opt/venv/bin/python -m pytest -q -p no:cacheprovider
      tests/test_cuda_checker_gpu.py tests/test_cuda_checker.py tests/test_checker_host.py
      tests/test_reward_one_checker_call.py tests/test_gpu_scoring.py >> $O 2>&1 || exit 1; done"]
-  # RL: the pre-registered G-probe on e2 (fast.FastGRPO, vLLM colocate, GPU checker rewards): verdict, gain, timing
+  # RL: the pre-registered G-probe on e2 (FastGRPO, vLLM colocate, GPU checker rewards): verdict, gain, timing
   - [-m, experiments.phase2.g_probe, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/prepared",
      --probe, "{data}/eval_views/lidc-val-shifted", --out, "{rd}/g_probe"]

@@ -265,7 +265,7 @@ def test_riga_identity_only_on_the_decrypt_stdin_for_the_whole_session(E):
     V.riga_ready(E)
     outs = [
         E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles, DRY_RUN="0"),
-        E.sh("run.sh", "r1", "experiments.phase2.k3_harness", "--out", "/workspace/runs/r1/k3.json", DRY_RUN="0"),
+        E.sh("run.sh", "r1", "experiments.phase2.final_eval", "--out", "/workspace/runs/r1/k3.json", DRY_RUN="0"),
         E.sh("pull.sh", DRY_RUN="0"),
         E.sh("teardown.sh", "r1", DRY_RUN="0"),
         E.sh("sweep_orphans.sh", DRY_RUN="0"),
@@ -291,7 +291,8 @@ def test_destroy_never_stop(E):
     verbs = {tuple(a[:2]) for a in (c["argv"] for c in E.calls("vastai"))}
     assert not [v for v in verbs if "stop" in v[0] or "stop" in v[1]] and ("destroy", "instance") in verbs
     assert E.instances() == {}
-    src = (V.VAST / "policy.py").read_text() + (V.VAST / "watchdog.sh").read_text()
+    lib = Path(RM.__file__).parent  # objdel.infra.vast: the CLI and its modules
+    src = "".join(f.read_text() for f in sorted(lib.glob("*.py"))) + (V.VAST / "watchdog.sh").read_text()
     assert not re.search(r'vast\(\s*"stop"|/stop|"stop"', src) and "-X DELETE" in src
 
 

@@ -260,63 +260,21 @@
   "boxes_meet"
  ],
  "experiments/phase2/select_ckpt.py": [
-  "PATHS",
-  "dump",
-  "judge",
-  "main",
-  "topology_only",
-  "vision_config"
+  "main"
  ],
  "experiments/phase2/train_sft.py": [
   "main"
  ],
  "experiments/phase2/g_probe.py": [
-  "SEEDS",
-  "candidates",
-  "main",
-  "probe",
-  "save",
-  "score",
-  "train_log",
-  "verdict"
+  "main"
  ],
  "experiments/phase2/train_rl.py": [
   "main",
   "parse"
  ],
  "experiments/phase2/final_eval.py": [
-  "FROZEN_VIEWS",
-  "GATE_A_GAIN",
-  "ROOT",
-  "RUN_KEYS",
-  "SAMPLER_LABEL",
-  "TOPOLOGY_PERIOD_S",
-  "_identity",
-  "_lines",
-  "_paired",
-  "_proc_count",
-  "_sample",
-  "_smi",
-  "_view_records",
-  "check_view",
-  "engine_record",
-  "frozen_entry",
-  "gate_a",
-  "hash_view",
-  "limit_rows",
-  "load_sampler",
   "main",
-  "no_model",
-  "noise_floor",
-  "rescore",
-  "resummarize",
-  "scoring",
-  "topology",
-  "tost",
-  "view_groups",
-  "view_identity",
-  "view_manifest_sha256",
-  "write_scored"
+  "no_model"
  ],
  "experiments/phase2/vast/policy.py": [
   "CLI",
@@ -348,45 +306,7 @@
   "write_tar"
  ],
  "experiments/phase2/preflight.py": [
-  "BUNDLE_DIR",
-  "CACHE_SAMPLE",
-  "CHECKER_TESTS",
-  "CHECKS",
-  "DRY_RUN",
-  "EXAMS",
-  "Inputs",
-  "QUICK_TESTS",
-  "ROOT",
-  "VASTAI_VERSION",
-  "bundle",
-  "checker_tests",
-  "coverage",
-  "ct_window",
-  "data_root",
-  "exam_props",
-  "given_inputs",
-  "hashes",
-  "inputs",
-  "lines",
-  "local",
-  "local_rows_root",
-  "main",
-  "patients",
-  "prompts",
-  "pytest",
-  "refusal",
-  "rl_stages",
-  "rows_revision",
-  "rows_root",
-  "runbooks",
-  "sampled",
-  "spec_inputs",
-  "stamp_path",
-  "targets",
-  "train_rl_argv",
-  "trl_problems",
-  "vastai_problems",
-  "view_integrity"
+  "main"
  ],
  "experiments/phase2/hf_push.py": [
   "main"

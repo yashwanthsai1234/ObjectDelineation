@@ -84,6 +84,27 @@ print(score["legal"], score["iou_tc"], score["topo_any"])  # 1.0 1.0 1.0
 
 [Getting started](docs/getting-started.md) covers the data download, training and evaluation.
 
+## Repository layout
+
+```text
+cuda/            the geometry engine: one C++ source for the CPU build and the nvcc build
+src/objdel/      the library, in layers; each imports only the layers below it
+  infra/         rented GPU boxes, preflight, the data bundle, the private model repo, secrets
+  rl/  sft/      reinforcement learning (GRPO) | supervised fine-tuning and checkpoint selection
+  policy/        models, prompts, rows, caches, the sampler, evaluation
+  data/          datasets, splits, the item store, targets, training windows
+  verify/        reward, metrics, gates, the verifier API (no PyTorch)
+  geom/          output grammar, canonical form, rings, topology, the engine wrapper (no PyTorch)
+  core/          the typed run spec and provenance
+specs/           run specs: what a GPU run does, checked before any rental
+experiments/     thin command-line scripts, by phase
+tests/           the test suite, oracles and goldens
+docs/            documentation site (mkdocs.yml)
+```
+
+The layer rules are in [docs/architecture/layers.md](docs/architecture/layers.md); every module is in the
+[package reference](docs/reference/package.md).
+
 ## Built with
 
 PyTorch, Hugging Face Transformers and TRL, vLLM, and CUDA C++ with a single source for CPU and GPU builds.

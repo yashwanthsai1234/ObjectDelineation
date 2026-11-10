@@ -19,9 +19,9 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core.io import write_json
 from objdel.geom import engine as G
 from objdel.geom.shape import unpack_rows
-from objdel.io import write_json
 from objdel.verify.reward.cache import ExpertCache
 from tests.oracles import cuda_parity as C
 

@@ -14,8 +14,8 @@ import pytest
 
 hub = pytest.importorskip("huggingface_hub")
 from experiments.phase2 import hf_pull as L  # noqa: E402
-from experiments.phase2.vast import policy as P  # noqa: E402
 from objdel.infra import hf as H  # noqa: E402
+from objdel.infra.vast import __main__ as P  # noqa: E402
 from tests.test_p2_hf_push import REPO, token  # noqa: E402
 
 
@@ -64,7 +64,7 @@ def test_fetch_hf_streams_the_token_over_stdin_only(monkeypatch):
 
 
 def test_fetch_hf_has_its_shim():
-    assert (Path(P.__file__).parent / "fetch_hf.sh").resolve().name == "vast.sh"
+    assert (P.repo_root() / "experiments/phase2/vast/fetch_hf.sh").resolve().name == "vast.sh"
 
 
 # --- B1.5: rows root and checkpoint folder names (I40, I40b) ------------------------------------------------------

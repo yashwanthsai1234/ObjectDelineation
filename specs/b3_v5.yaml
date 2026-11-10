@@ -10,7 +10,7 @@ stages:
       as g; assert g.build() == ''cuda''" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_gpu_scoring.py']
 - kind: cmd
   name: smoke
-  argv: [bash, -c, 'OBJDEL_DATA_ROOT={data} /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider -m gpu tests/test_train_fast.py::test_g08b_smoke']
+  argv: [bash, -c, 'OBJDEL_DATA_ROOT={data} /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider -m gpu tests/rl/test_trl_adapter_equivalence.py::test_g08b_smoke']
 - kind: eval
   name: eval_b1
   ckpt: '{rd}/b1/final'

@@ -1,4 +1,4 @@
-"""B1.5 run guards of experiments.phase2.train_rl and objdel.train.callbacks.BudgetStop (U41-U46, U61, I16, I33,
+"""B1.5 run guards of experiments.phase2.train_rl and objdel.policy.callbacks.BudgetStop (U41-U46, U61, I16, I33,
 I34, R04): every refusal happens before a model or a vLLM engine loads, and the budget stop measures session spend
 as LG.accrued does."""
 
@@ -17,7 +17,7 @@ class Ctl:
 
 
 def budget(rate, cap, start=0.0, fixed=0.0):
-    from objdel.train.callbacks import BudgetStop
+    from objdel.policy.callbacks import BudgetStop
 
     now = [start]
     return BudgetStop(rate, cap, start, fixed_usd=fixed, clock=lambda: now[0]), now
@@ -85,7 +85,7 @@ def test_budget_stop_in_a_real_trainer_saves_once_and_stops(tmp_path):
     import torch
     from transformers import Trainer, TrainingArguments
 
-    from objdel.train.callbacks import BudgetStop
+    from objdel.policy.callbacks import BudgetStop
 
     class M(torch.nn.Module):
         def __init__(self):
@@ -149,11 +149,11 @@ def test_rows_flags_take_exact_hex(capsys, monkeypatch):
 
 def test_train_views_is_gone(capsys, monkeypatch):
     """U42 (B1.5 side): the old multi-root path is deleted, the one-root path stays."""
-    from objdel.train import dataset
+    from objdel.rl import rows as rl_rows
     from objdel.verify import store
 
     assert "--train-views" in refused(capsys, *TRAIN, "--train-views", "v", monkeypatch=monkeypatch)
-    assert not hasattr(dataset, "grpo_rows_views") and not hasattr(store, "VIEW_SEP")
+    assert not hasattr(rl_rows, "grpo_rows_views") and not hasattr(store, "VIEW_SEP")
     assert not hasattr(store, "_tagged")
 
 
@@ -241,7 +241,7 @@ def sampler(tmp_path, **over):
     """The sampler fields of the real B1 GRPOConfig, as a plain namespace to mutate."""
     from types import SimpleNamespace
 
-    from objdel.train import configs
+    from objdel.rl import config as configs
 
     cfg = configs.grpo_config("qwen3-vl-2b", str(tmp_path / "trainer"), use_vllm=False)
     keys = ("generation_batch_size", "num_generations", "steps_per_generation", "gradient_accumulation_steps",
@@ -283,11 +283,11 @@ def prepared(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
     from objdel.data import prepare as data_prepare
     from objdel.data import store
-    from objdel.train import dataset
+    from objdel.policy import prompt as policy_prompt
 
     root = tmp_path_factory.mktemp("rows")
     store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=dataset.PROMPTS)
+    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
     return root / "prepared"
 
 
@@ -356,13 +356,13 @@ def test_refusals_come_before_any_load(prepared, tmp_path, no_load, case, match)
 
 def test_window_records_give_kind_and_cell_columns(prepared, tmp_path):
     """U43: rows-root records give kind and cell columns equal to the record; prepared records have none."""
-    from objdel.train import dataset
+    from objdel.rl import rows as rl_rows
 
     root, keys, _ = schedule_root(prepared, tmp_path / "rows")
-    rows = dataset.grpo_rows(root, "lidc", "train")
+    rows = rl_rows.grpo_rows(root, "lidc", "train")
     assert rows["key"] == keys  # file order kept: the schedule
     assert rows["kind"] == ["shifted", "rescaled", "shifted", "rescaled"] and rows["cell"] == ["00", "11", "20", "01"]
-    plain = dataset.grpo_rows(prepared, "lidc", "train")
+    plain = rl_rows.grpo_rows(prepared, "lidc", "train")
     assert not {"kind", "cell"} & set(plain.column_names)
 
 
@@ -399,7 +399,7 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
     E = Env(tmp_path)
     E.launched()
     run = E.active()["r1"]
-    line = E.tmux("experiments.phase2.k3_harness", "--out", "x.json")
+    line = E.tmux("experiments.phase2.final_eval", "--out", "x.json")
     env = dict(re.findall(r"(OBJDEL_SESSION_START|OBJDEL_RATE_USD_PER_H|OBJDEL_FIXED_USD)=([0-9.e+-]+)", line))
     assert float(env["OBJDEL_SESSION_START"]) == run["started"]
     assert float(env["OBJDEL_RATE_USD_PER_H"]) == pytest.approx(run["dph"] + 6 * run["inet_up_cost"])

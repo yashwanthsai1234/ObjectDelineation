@@ -7,8 +7,8 @@
     python -I -m experiments.phase2.train_rl --merge-last --model qwen3-vl-2b --ckpt {rd}/ckpt --out {rd}/b1-rows
 
 The flags are an objdel.core.spec.RlStage (cli_stage: one flag per field, --grpo as JSON, --profile-window S,E with
-1 <= S <= E: `1,STEPS` traces every step, S >= 2 with --trace); parse adds the rules that need objdel.train (the
-numerics preset names, the --grpo keys train_rl owns). The run itself (rows, saves, budget, held-out curve,
+1 <= S <= E: `1,STEPS` traces every step, S >= 2 with --trace); objdel.rl.run.checked adds the rules that need objdel.rl
+(the numerics preset names, the --grpo keys train_rl owns). The run itself (rows, saves, budget, held-out curve,
 rl.json): objdel.rl.run.
 """
 
@@ -16,32 +16,11 @@ import sys
 
 
 def parse(argv=None):
-    """The RlStage of the flags (or of --spec/--stage), and the rules that need objdel.train; exit 2 on a broken one.
-    The returned stage has f_check resolved: --f-check, --no-f-check, else on under the f_check.PRESETS."""
+    """The RlStage of the flags (or of --spec/--stage) through objdel.rl.run.checked; exit 2 on a broken one."""
     from objdel.core.spec import RlStage, cli_stage
-    from objdel.train import configs, f_check
+    from objdel.rl.run import checked
 
-    a = cli_stage(RlStage, sys.argv[1:] if argv is None else argv)
-
-    def error(msg: str):
-        print(f"train_rl: error: {msg}", file=sys.stderr)
-        sys.exit(2)
-
-    numerics = a.numerics or configs.DEFAULT_NUMERICS
-    if numerics not in configs.NUMERICS:
-        error(f"--numerics {a.numerics}: one of {sorted(configs.NUMERICS)}")
-    if a.f_check and numerics not in f_check.PRESETS:
-        error(f"--f-check: only under --numerics {' or '.join(f_check.PRESETS)}, not {numerics}")
-    a = a.model_copy(update={"f_check": a.f_check or (numerics in f_check.PRESETS and not a.no_f_check)})
-    if a.f_check and numerics == "lora-seqmask" and not a.merge_last and a.b1_adapter is None:
-        error("--f-check under --numerics lora-seqmask needs --b1-adapter (the comparator's B1 adapter)")
-    if a.opsm_start_delta is not None and (numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
-        error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
-    if "off_policy_mask_threshold" in a.grpo:
-        error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
-    if a.grpo.get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
-        error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
-    return a
+    return checked(cli_stage(RlStage, sys.argv[1:] if argv is None else argv))
 
 
 def main(argv=None) -> int:

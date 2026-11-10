@@ -14,7 +14,7 @@ branch points and 0-step decays are refused. `branches: []` = stable only, one e
 timing). Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor; LoRA runs (D6) saved merged.
 Rolling checkpoints (optimizer included, limit 3; stable/e<b> hard-links one; rolling/ is deleted once every stable/e<b>
 exists, decay/<b> once branches/<b> does) every `rolling_minutes`, each with the G-vision check
-(objdel.eval.vision, §5.1) on the training device and dtype (the reference is CPU float32, B1): ratio < 0.5 **and**
+(objdel.policy.vision, §5.1) on the training device and dtype (the reference is CPU float32, B1): ratio < 0.5 **and**
 TV < 0.002 aborts with the reason in manifest.json (exit 3), one alone warns.
 
 G-vision is required (D7, D12): `vision: {prepared, reference}`, reference = the base projector distance, a number or
@@ -62,9 +62,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from objdel.core.hashing import file_sha256
+from objdel.core.io import read_json, write_json
 from objdel.core.provenance import code_hashes
-from objdel.hashing import file_sha256
-from objdel.io import read_json, write_json
 
 ABORTED = 3  # exit code of a G-vision abort
 
@@ -84,7 +84,7 @@ TRAINER_FILES = ("optimizer", "scheduler", "rng_state", "trainer_state", "adapte
 def plan(args, steps_per_epoch: int) -> dict:
     """The step plan in optimizer steps: the stable run's length, and per branch its point and decay (as
     configs.sft_config computes them: warmup = 3 % of the stable steps, decay = 15 % of the branch point)."""
-    from objdel.train.configs import DECAY, WARMUP
+    from objdel.sft.config import DECAY, WARMUP
 
     at = {f"e{b:g}": max(1, round(b * steps_per_epoch)) for b in args.branches}
     br = {n: {"at": s, "decay": round(DECAY * s)} for n, s in at.items()}
@@ -144,7 +144,7 @@ def reference(ref, model: str | None, set_sha256: str) -> float:
 
 def load_items(cfg: dict, model: str | None) -> dict:
     """{"prepared", "reference"} -> the fixed set and its checked reference {"items", "set_sha256", "reference"}."""
-    from objdel.eval import vision
+    from objdel.policy import vision
 
     items, sha = vision.fixed_set(cfg["prepared"])
     return {"items": items, "set_sha256": sha, "reference": reference(cfg["reference"], model, sha)}
@@ -155,13 +155,13 @@ def vision_reference(args) -> int:
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
-    from objdel.eval import vision
-    from objdel.train import configs
+    from objdel.policy import models as policy_models
+    from objdel.policy import vision
 
     if not (args.vision and isinstance(args.vision["reference"], str)):
         raise ValueError("--vision-reference-only writes vision.reference: set it to a .json path")
-    src = args.model_path or configs.MODELS[args.model]
-    proc = AutoProcessor.from_pretrained(src, **configs.processor_kwargs(args.model, "lidc"))
+    src = args.model_path or policy_models.MODELS[args.model]
+    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model, "lidc"))
     model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.float32).eval()
     items, sha = vision.fixed_set(args.vision["prepared"])
     d = vision.projector_distance(model, proc, [it["image"] for it in items[: vision.N_IMAGES]])  # inference_mode
@@ -173,9 +173,9 @@ def vision_reference(args) -> int:
 
 
 def vision_check(model, processor, cfg: dict) -> dict:
-    """objdel.eval.vision.check (inference mode, module modes restored) on the fixed set: cfg = load_items' output, or
+    """objdel.policy.vision.check (inference mode, module modes restored) on the fixed set: cfg = load_items' output, or
     {"prepared", "reference", "model"?} (select_ckpt)."""
-    from objdel.eval import vision
+    from objdel.policy import vision
 
     cfg = cfg if "items" in cfg else load_items(cfg, cfg.get("model"))
     images = [it["image"] for it in cfg["items"][: vision.N_IMAGES]]
@@ -219,7 +219,7 @@ class Base:
 def validate(args) -> dict:
     """The refusals before anything loads (profile outside a timing run, vision {}, outputs outside /workspace/runs on
     a Vast box, a view shorter than the deepest decay: S1-8) -> the view's manifest."""
-    from objdel.train import configs
+    from objdel.sft import config as sft_config
 
     if args.profile and args.branches:
         raise ValueError("profile is for timing runs: branches: []")
@@ -229,7 +229,7 @@ def validate(args) -> dict:
     if BOX_RUNS.is_dir() and BOX_RUNS.resolve() not in out.resolve().parents:
         raise ValueError(f"{out}: on a Vast box outputs go under {BOX_RUNS}/<RUN_ID> (pull.sh): set OBJDEL_RUN_DIR")
     view = read_json(Path(args.view, "manifest.json"))
-    deep = max((b * (1 + configs.DECAY) for b in args.branches), default=1.0)
+    deep = max((b * (1 + sft_config.DECAY) for b in args.branches), default=1.0)
     if view["config"]["epochs"] < math.ceil(deep):
         raise ValueError(f"{args.view}: {view['config']['epochs']} view epoch(s), the deepest branch decays to "
                          f"{deep:g} epochs: rebuild it with build_views --epochs {math.ceil(deep)}")
@@ -315,15 +315,17 @@ def trainer(args, base: Base, rows, stable: int, out_dir, rolling: Rolling, bran
     from transformers import AutoModelForImageTextToText
     from trl import SFTTrainer
 
-    from objdel.train import callbacks, configs
+    from objdel.policy import callbacks
+    from objdel.policy import models as policy_models
+    from objdel.sft import config as sft_config
 
     if torch.cuda.is_available():  # this phase's peak (Qwen3-VL LoRA R1: 6.1 GiB)
         torch.cuda.reset_peak_memory_stats()
     model = AutoModelForImageTextToText.from_pretrained(base.src, dtype=base.dtype)
     o = {"seed": args.seed, "data_seed": args.seed, "save_strategy": "no", "save_total_limit": 3}
     o |= {"logging_steps": 10}
-    cfg = configs.sft_config(args.model, str(out_dir), stable, branch_at, **(o | args.sft))
-    kw = {"train_dataset": rows, "processing_class": base.proc, "peft_config": configs.lora(args.model)}
+    cfg = sft_config.sft_config(args.model, str(out_dir), stable, branch_at, **(o | args.sft))
+    kw = {"train_dataset": rows, "processing_class": base.proc, "peft_config": policy_models.lora(args.model)}
     calls = [rolling] + ([callbacks.TraceStep(args.profile, WARM)] if args.profile else [])
     cls = type("Trainer", (Trainer, SFTTrainer), {"epochs": list(rows["epoch"]), "lengths": list(rows["length"])})
     return cls(model=model, args=cfg, callbacks=calls, **kw)
@@ -349,7 +351,8 @@ def train(args) -> int:
     import torch
     from transformers import AutoProcessor, TrainerCallback
 
-    from objdel.train import configs, dataset
+    from objdel.policy import models as policy_models
+    from objdel.sft import rows as dataset
 
     args = resolve(args)
     if args.vision_reference_only:
@@ -364,10 +367,10 @@ def train(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
     man = resume_manifest(args, out, view)
     write_json(out / "manifest.json", man)
-    src = args.model_path or configs.MODELS[args.model]
-    proc = AutoProcessor.from_pretrained(src, **configs.processor_kwargs(args.model, "lidc"))
+    src = args.model_path or policy_models.MODELS[args.model]
+    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model, "lidc"))
     base = Base(src, proc, torch.bfloat16)  # the frozen LoRA base
-    rows = dataset.view_rows(args.view, proc.tokenizer, configs.MAX_COMPLETION[args.model], a0=args.a0)
+    rows = dataset.view_rows(args.view, proc.tokenizer, policy_models.MAX_COMPLETION[args.model], a0=args.a0)
     epochs = list(rows["epoch"])
     gbs = args.sft.get("per_device_train_batch_size", 8) * args.sft.get("gradient_accumulation_steps", 1)  # 1 GPU
     rows0 = epochs.count(min(epochs, default=0))  # rows of one view epoch

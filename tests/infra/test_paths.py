@@ -1,8 +1,6 @@
 """U34 / E-G15 (E8.1): one repo root for every moved file; the Vast state stays in experiments/phase2/vast."""
 
-import shutil
 
-import pytest
 
 from objdel.core.provenance import repo_root
 from objdel.infra import secrets
@@ -36,9 +34,8 @@ def test_vast_state_stays_in_experiments_phase2_vast(monkeypatch, tmp_path):
     assert ledger.home() == tmp_path
 
 
-def test_onstart_reads_the_watchdog_from_the_vast_home(monkeypatch, tmp_path):
+def test_onstart_reads_the_watchdog_from_the_code_tree_not_the_vast_home(monkeypatch, tmp_path):
+    """d050dcc: VAST_HOME holds state only; an empty VAST_HOME still launches the code tree's watchdog.sh."""
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
-    with pytest.raises(FileNotFoundError):
-        remote.onstart_cmd("r1", 600)
-    shutil.copy(repo_root() / "experiments/phase2/vast/watchdog.sh", tmp_path)
+    assert remote.watchdog_script() == repo_root() / "experiments/phase2/vast/watchdog.sh"
     assert "watchdog.sh" in remote.onstart_cmd("r1", 600)

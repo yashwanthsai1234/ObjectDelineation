@@ -1,11 +1,12 @@
-"""objdel.train.rewards.TRLReward without a model: terms, advantages, truncation, group checks, typed logs."""
+"""objdel.rl.reward.TRLReward without a model: terms, advantages, truncation, group checks, typed logs."""
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from objdel.geom.engine import DEFECTS
-from objdel.train import rewards as R
+from objdel.policy import models as policy_models
+from objdel.rl import reward as rl_reward
 from objdel.verify.reward import advantages as reward_advantages
 from objdel.verify.reward.advantages import advantages_v4, legal_gate, topology_reward
 from objdel.verify.reward.cache import ExpertCache
@@ -50,7 +51,7 @@ def batch(seed=0, truncate=()):
 
 
 def reward():
-    return R.TRLReward(CACHES.__getitem__, stop_ids={EOS, PAD})
+    return rl_reward.TRLReward(CACHES.__getitem__, stop_ids={EOS, PAD})
 
 
 def call_all(rw, kw, **extra):
@@ -60,7 +61,7 @@ def call_all(rw, kw, **extra):
 
 def test_funcs_are_weight_zero_loggers_plus_one_aggregator():
     funcs, weights = reward().funcs()
-    assert [f.__name__ for f in funcs] == [*reward_advantages.LOGGED, R.AGGREGATOR]
+    assert [f.__name__ for f in funcs] == [*reward_advantages.LOGGED, rl_reward.AGGREGATOR]
     assert weights == [0.0] * len(reward_advantages.LOGGED) + [1.0]
 
 
@@ -75,14 +76,14 @@ def test_values_equal_score_batch_and_advantages_v4():
     for name in reward_advantages.GATED:  # the geometric terms as advantages_v4 sees them: 0 for an illegal rollout
         assert got[name] == (ref[name] * legal).tolist()
     assert got["r_topo"] == topology_reward(ref).tolist()
-    assert got[R.AGGREGATOR] == advantages_v4(ref).tolist()
-    assert np.ptp(got[R.AGGREGATOR]) > 0  # a non-degenerate batch
+    assert got[rl_reward.AGGREGATOR] == advantages_v4(ref).tolist()
+    assert np.ptp(got[rl_reward.AGGREGATOR]) > 0  # a non-degenerate batch
     assert got["format_ok"][1] == 0.0  # truncated: no EOS at the end
 
 
 def test_one_computation_per_batch(monkeypatch):
     calls = []
-    monkeypatch.setattr(R, "score_batch", lambda jobs: calls.append(1) or score_batch(jobs))
+    monkeypatch.setattr(rl_reward, "score_batch", lambda jobs: calls.append(1) or score_batch(jobs))
     rw = reward()
     kw, _, _ = batch()
     call_all(rw, kw)
@@ -131,16 +132,17 @@ def test_typed_error_logs():
 def test_stop_ids_follow_trl():
     model = SimpleNamespace(generation_config=SimpleNamespace(eos_token_id=[3, 4]))
     proc = SimpleNamespace(tokenizer=SimpleNamespace(eos_token_id=9, pad_token_id=0))
-    assert R.stop_ids(model, proc) == {3, 4, 9, 0}
+    assert policy_models.stop_ids(model, proc) == {3, 4, 9, 0}
     model.generation_config.eos_token_id = 9
-    assert R.stop_ids(model, proc.tokenizer) == {9, 0}
+    assert policy_models.stop_ids(model, proc.tokenizer) == {9, 0}
 
 
 def test_one_truncation_rule():
     """TRL's rule (`ids[-1] not in eos_and_pad`; an empty completion has no end either), shared by the reward and
-    objdel.train.sample (REVIEW #7)."""
+    objdel.policy.sampler (REVIEW #7)."""
     stop = {EOS, PAD}
-    assert [R.truncated(ids, stop) for ids in ([], [5], [5, EOS], [5, PAD], [EOS, 5])] == [True, True, False, False,
+    assert [policy_models.truncated(ids, stop) for ids in ([], [5], [5, EOS], [5, PAD], [EOS, 5])] == [True, True,
+        False, False,
                                                                                             True]
 
 
@@ -166,7 +168,7 @@ def test_an_illegal_high_iou_answer_does_not_raise_the_logged_geometry():
         assert all(hacked[name][i] == 0.0 for i in swap)
         if name != "loc":  # the honest answers are hits: their location term is 0 too
             assert np.mean(hacked[name]) < np.mean(honest[name])
-    assert hacked[R.AGGREGATOR] == advantages_v4(ref).tolist()
+    assert hacked[rl_reward.AGGREGATOR] == advantages_v4(ref).tolist()
 
 
 HIT, MISS = square(200, 200, 600, 600), square(700, 700, 900, 900)  # IoU_tc about 1 and 0 against cache "a"
@@ -223,7 +225,7 @@ def test_values_equal_the_pre_clean_literal_and_nothing_is_recorded():
     rw = reward()
     size = len(vars(rw))
     got = call_all(rw, kw)
-    assert got[R.AGGREGATOR] == ADVANTAGE_PRE_CLEAN and got["iou_tc"] == IOU_PRE_CLEAN  # bit-equal
+    assert got[rl_reward.AGGREGATOR] == ADVANTAGE_PRE_CLEAN and got["iou_tc"] == IOU_PRE_CLEAN  # bit-equal
     assert not hasattr(rw, "recorded")
     for _ in range(1000):  # a new completions list each time: a full reward computation per call
         call_all(rw, kw | {"completions": list(kw["completions"])})
@@ -242,7 +244,7 @@ def test_fastgrpo_prefetch_finds_the_reward_through_the_back_reference():
     """FastGRPO.prefetch_rewards reaches TRLReward.prefetch through f.trl_reward; without it prefetch would be off
     with no error."""
     pytest.importorskip("trl")
-    from objdel.train.fast import FastGRPO
+    from objdel.rl.trl_adapter import FastGRPO
 
     kw, _, _ = batch()
     rw = reward()
@@ -251,7 +253,7 @@ def test_fastgrpo_prefetch_finds_the_reward_through_the_back_reference():
     FastGRPO.prefetch_rewards(SimpleNamespace(reward_funcs=rw.funcs()[0], rows=rows), kw["completions"],
                               kw["completion_ids"])
     assert rw._ahead is not None
-    assert call_all(rw, kw)[R.AGGREGATOR] == call_all(reward(), kw)[R.AGGREGATOR]
+    assert call_all(rw, kw)[rl_reward.AGGREGATOR] == call_all(reward(), kw)[rl_reward.AGGREGATOR]
 
 
 def test_by_prompt_is_the_iou_tc_mean_of_each_group():

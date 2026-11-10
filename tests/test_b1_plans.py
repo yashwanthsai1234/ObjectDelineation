@@ -57,7 +57,7 @@ def test_b1_rows_holds_the_b1_5_steps_in_order():
     assert "--shared-prefix" in train and "--numerics" not in train and "--grpo" not in train
     assert len(after(train, "--rows-revision")) == 40 and len(after(train, "--rows-manifest-sha256")) == 64
     assert float(after(train, "--budget-usd")) == pytest.approx(V1_APPROVED_USD - TAIL_USD)
-    from objdel.train import configs
+    from objdel.rl import config as configs
 
     cfg = configs.grpo_config("qwen3-vl-2b", "o", use_vllm=False)  # no --grpo: beta and masking are the defaults
     assert cfg.beta == 1e-3 and cfg.mask_truncated_completions is True

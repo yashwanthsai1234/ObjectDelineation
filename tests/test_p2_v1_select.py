@@ -16,8 +16,9 @@ pytest.importorskip("trl")
 from experiments.phase2 import g_probe as GP  # noqa: E402
 from experiments.phase2 import select_ckpt as SC  # noqa: E402
 from objdel.policy import evaluate  # noqa: E402
+from objdel.policy import sampler as V  # noqa: E402
+from objdel.rl import probe as P  # noqa: E402
 from objdel.sft import select as sft_select  # noqa: E402
-from objdel.train import sample as V  # noqa: E402
 from objdel.verify import store as serve  # noqa: E402
 
 
@@ -47,20 +48,20 @@ def _selected(tmp_path, **kw) -> list[str]:
 ])
 def test_g_probe_skips_when_the_gates_failed(tmp_path, monkeypatch, kw, why):
     monkeypatch.setattr(serve, "preload", _boom)  # skipped before any cache, pool or model
-    monkeypatch.setattr(GP, "probe", _boom)
+    monkeypatch.setattr(P, "probe", _boom)
     assert GP.main(_selected(tmp_path, **kw)) == 0  # the run chain ends cleanly; the JSON says why
     doc = json.loads((tmp_path / "gp/g_probe.json").read_text())
     assert doc == {"verdict": None, "skipped": why, "probed": [], "gates_branch": kw.get("gates_branch", "e2")}
 
 
 def test_g_probe_with_passing_gates_keeps_the_d12c_repair(tmp_path, monkeypatch):
-    from objdel.train import dataset
+    from objdel.rl import rows as dataset
 
     monkeypatch.setattr(serve, "preload", lambda *a, **k: 0)
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: [])
-    monkeypatch.setattr(GP, "eval_rows", lambda *a, **k: [])
+    monkeypatch.setattr(P, "eval_rows", lambda *a, **k: [])
     verdicts = iter(["INCONCLUSIVE", "PASS"])
-    monkeypatch.setattr(GP, "probe", lambda a, ckpt, *r: {"verdict": next(verdicts), "h0": 0, "gain": 0,
+    monkeypatch.setattr(P, "probe", lambda a, ckpt, *r: {"verdict": next(verdicts), "h0": 0, "gain": 0,
                                                           "ckpt": str(ckpt)})
     assert GP.main(_selected(tmp_path)) == 0
     doc = json.loads((tmp_path / "gp/g_probe.json").read_text())

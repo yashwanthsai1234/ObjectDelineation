@@ -15,7 +15,7 @@ from objdel.verify import stats as signal
 from objdel.verify.reward.advantages import advantages_v4
 from objdel.verify.reward.cache import ExpertCache
 
-M = importlib.import_module("objdel.verify.metrics")  # objdel.eval re-exports the function under the same name
+M = importlib.import_module("objdel.verify.metrics")
 
 
 def _disc(r, cy=16, cx=16, n=32):

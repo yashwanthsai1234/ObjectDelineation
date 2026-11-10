@@ -8,9 +8,11 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 from test_row_meta import EOS, device_masks, generation_trainer, rows  # noqa: E402
-from test_train_fast import group_batch, tiny_model  # noqa: E402
 
-from objdel.train import fast, record  # noqa: E402
+from objdel.policy import caches as policy_caches  # noqa: E402
+from objdel.rl import record  # noqa: E402
+from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
+from tests.rl.test_trl_adapter_equivalence import group_batch, tiny_model  # noqa: E402
 
 BASE = ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "20"]
 
@@ -35,7 +37,7 @@ def test_checks_act_from_step_s_on(monkeypatch, every, S, step, due):
     t, inputs, _ = generation_trainer(monkeypatch, every, step - 1)
     t.check_rope_every, t.checks_from_step = every, S
     calls = []
-    monkeypatch.setattr(fast, "check_meta", lambda batch: calls.append("meta"))
+    monkeypatch.setattr(rl_trl_adapter, "check_meta", lambda batch: calls.append("meta"))
     t._generate_and_score_completions(inputs)
     assert (calls == ["meta"], t.rope_check) == (due, due)
 
@@ -54,7 +56,7 @@ def recording_trainer(monkeypatch, tmp_path, step, S=18, training=True):
                 "image_grid_thw": torch.tensor([[1, 4, 4]] * n), "num_images": [1] * n,
                 "advantages": torch.zeros(n), "pixel_values": torch.zeros(n, 3)}
 
-    monkeypatch.setattr(fast.GRPOTrainer, "_generate_and_score_completions", build)
+    monkeypatch.setattr(rl_trl_adapter.GRPOTrainer, "_generate_and_score_completions", build)
     t.record_dir, t.checks_from_step = record.open_dir(tmp_path / "rec"), S
     t.model.train(training)
     return t, inputs
@@ -112,7 +114,7 @@ def test_positions_are_hf_get_rope_index_on_the_full_rows():
     batch = {"prompt_ids": ids[:, :P], "prompt_mask": mask[:, :P], "completion_ids": ids[:, P:],
              "completion_mask": mask[:, P:], "mm_token_type_ids": kw["mm_token_type_ids"],
              "image_grid_thw": kw["image_grid_thw"], "num_images": kw["num_images"]}
-    rec = record.batch_record(batch, None, fast.RopeCache.install(m).base)
+    rec = record.batch_record(batch, None, policy_caches.RopeCache.install(m).base)
     want, _ = m.model.get_rope_index(ids, mm_token_type_ids=kw["mm_token_type_ids"],
                                      image_grid_thw=kw["image_grid_thw"], attention_mask=mask)
     assert torch.equal(rec["positions"], want) and "meta" not in rec

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from objdel.train.callbacks import OpsmDelta
+from objdel.policy.callbacks import OpsmDelta
 
 ROWS = 256
 

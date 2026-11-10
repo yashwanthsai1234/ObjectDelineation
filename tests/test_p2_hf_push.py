@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from experiments.phase2 import hf_push as HP
-from experiments.phase2.vast import policy as P
 from objdel.infra import hf as H
+from objdel.infra.vast import __main__ as P
 
 REPO = "svenk029/objdel-sft"
 
@@ -82,7 +82,7 @@ def run_dir(tmp: Path, dataset="lidc", selected="e1") -> Path:
 
 @pytest.fixture
 def fake(monkeypatch):
-    pytest.importorskip("trl")  # hf_push.main reads objdel.train.configs (the training stack)
+    pytest.importorskip("trl")  # hf_push.main reads objdel.policy.models (the training stack)
     api = FakeApi()
     monkeypatch.setattr(H, "api", lambda tok: api.calls.append(("token", tok)) or api)
     monkeypatch.setattr(H, "base_card", lambda base: (b"BASE LICENSE", {"license": "apache-2.0"}))
@@ -158,7 +158,7 @@ def test_push_hf_refuses_an_over_broad_token_before_touching_the_box(monkeypatch
 
 
 def test_push_hf_has_its_shim():
-    assert (Path(P.__file__).parent / "push_hf.sh").resolve().name == "vast.sh"
+    assert (P.repo_root() / "experiments/phase2/vast/push_hf.sh").resolve().name == "vast.sh"
 
 
 def test_push_from_the_mac_takes_a_local_copy_of_the_view_with_the_same_hash(tmp_path, monkeypatch, fake):

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from experiments.phase2 import preflight as PF
 from objdel.infra import bundle as BU
+from objdel.infra import preflight as PF
 from objdel.infra.vast import remote as P
 
 ROOT = Path(__file__).resolve().parents[1]

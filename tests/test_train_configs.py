@@ -1,5 +1,6 @@
-"""objdel.train.configs: plan D8 (GRPO), SFT settings, D12 image sizes, the I5 completion budget; CLEAN7 (the 256M
-model retired: CT-05, CT-06, CT-07); CLEAN8 (the 450M model and full fine-tuning retired: CT-62, CT-88)."""
+"""objdel.policy.models, rl.config and sft.config (the old train/configs.py): plan D8 (GRPO), SFT settings, D12 image
+sizes, the I5 completion budget; CLEAN7 (the 256M model retired: CT-05, CT-06, CT-07); CLEAN8 (the 450M model and full
+fine-tuning retired: CT-62, CT-88)."""
 import ast
 import dataclasses
 import re
@@ -11,7 +12,9 @@ import pytest
 
 pytest.importorskip("trl")
 
-from objdel.train import configs  # noqa: E402
+from objdel.policy import models as policy_models  # noqa: E402
+from objdel.rl import config as rl_config  # noqa: E402
+from objdel.sft import config as sft_config  # noqa: E402
 from objdel.verify.reward.advantages import LOGGED  # noqa: E402
 from objdel.verify.reward.spec import REWARD_V4  # noqa: E402
 
@@ -25,21 +28,21 @@ NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="arch
 
 def test_models_and_budgets():
     """CT-05: no exact set (a 4B row may join); every model has a budget, the retired keys are gone."""
-    assert configs.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
+    assert policy_models.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
     for old in (OLD, OLD8):
-        assert old not in configs.MODELS and old not in configs.MAX_COMPLETION
-    assert set(configs.MODELS) == set(configs.MAX_COMPLETION)
+        assert old not in policy_models.MODELS and old not in policy_models.MAX_COMPLETION
+    assert set(policy_models.MODELS) == set(policy_models.MAX_COMPLETION)
 
 
-@pytest.mark.parametrize("model", list(configs.MODELS))
+@pytest.mark.parametrize("model", list(policy_models.MODELS))
 def test_grpo_config_is_plan_d8(model, tmp_path):
-    c = configs.grpo_config(model, str(tmp_path))
+    c = rl_config.grpo_config(model, str(tmp_path))
     assert (c.loss_type, c.epsilon, c.epsilon_high, c.beta) == ("dr_grpo", 0.2, 0.28, 1e-3)
     assert c.mask_truncated_completions and c.lr_scheduler_type == "constant" and c.warmup_steps == 0
     assert c.num_generations == REWARD_V4.group and c.num_generations_eval is None and c.temperature == 1.0
     assert (c.scale_rewards, c.multi_objective_aggregation) == ("none", "sum_then_normalize")
     assert c.reward_weights == [0.0] * len(LOGGED) + [1.0]
-    assert c.max_completion_length == configs.MAX_COMPLETION[model]
+    assert c.max_completion_length == policy_models.MAX_COMPLETION[model]
     assert c.use_vllm is True
     assert not c.remove_unused_columns and c.log_completions
     # whole groups on every process, at any world size (tests/test_train_trl.py simulates 1, 2, 4 processes)
@@ -48,27 +51,27 @@ def test_grpo_config_is_plan_d8(model, tmp_path):
     assert c.generation_batch_size == 256 and c.steps_per_generation == c.gradient_accumulation_steps
 
 
-@pytest.mark.parametrize("model", list(configs.MODELS))
+@pytest.mark.parametrize("model", list(policy_models.MODELS))
 def test_sft_config(model, tmp_path):
-    c = configs.sft_config(model, str(tmp_path))
+    c = sft_config.sft_config(model, str(tmp_path))
     assert c.assistant_only_loss and c.max_length is None and not c.packing
     assert c.learning_rate == 5e-4  # every model is LoRA
 
 
 def test_lora_for_every_model():
-    q = configs.lora("qwen3-vl-2b")
+    q = policy_models.lora("qwen3-vl-2b")
     # Phase 2 (plan D6 / D7, M2): language model only, vision tower and projector excluded
-    assert (q.r, q.lora_alpha, q.target_modules, q.exclude_modules) == (16, 32, "all-linear", configs.VISION)
+    assert (q.r, q.lora_alpha, q.target_modules, q.exclude_modules) == (16, 32, "all-linear", policy_models.VISION)
 
 
 def test_processors_keep_their_default_image_sizes():
     """CT-05 (D12 after CLEAN7): left padding only, for every model and any dataset string (no size key, no
     lookup on the dataset)."""
-    for m in configs.MODELS:
+    for m in policy_models.MODELS:
         for d in ("lidc", "riga", "anything"):
-            assert configs.processor_kwargs(m, d) == {"padding_side": "left"}
+            assert policy_models.processor_kwargs(m, d) == {"padding_side": "left"}
     with pytest.raises(KeyError):
-        configs.sampling(OLD)  # the retired key has no budget
+        policy_models.sampling(OLD)  # the retired key has no budget
 
 
 GRPO_KEYS = ("loss_type", "epsilon", "epsilon_high", "beta", "num_generations", "per_device_train_batch_size",
@@ -85,14 +88,14 @@ GRPO_PRE_CLEAN = {  # captured at 08e6455 (asdict of grpo_config(m, out, use_cpu
 @pytest.mark.parametrize("model", sorted(GRPO_PRE_CLEAN))
 def test_grpo_config_values_and_the_use_vllm_override(model, tmp_path):
     """CT-06: vLLM for every model unless the caller overrides it; the plan values are the pre-CLEAN ones."""
-    c = configs.grpo_config(model, str(tmp_path), use_cpu=True, use_vllm=False)
+    c = rl_config.grpo_config(model, str(tmp_path), use_cpu=True, use_vllm=False)
     assert c.use_vllm is False
     assert {k: v for k, v in asdict(c).items() if k in GRPO_KEYS} == GRPO_PRE_CLEAN[model]
-    assert configs.grpo_config(model, str(tmp_path), use_vllm=True).use_vllm is True
-    assert configs.grpo_config(model, str(tmp_path), use_cpu=True, use_vllm=None).use_vllm is None  # pre-CLEAN
-    assert configs.grpo_config(model, str(tmp_path), use_cpu=True, use_vllm=0).use_vllm == 0  # pre-CLEAN
+    assert rl_config.grpo_config(model, str(tmp_path), use_vllm=True).use_vllm is True
+    assert rl_config.grpo_config(model, str(tmp_path), use_cpu=True, use_vllm=None).use_vllm is None  # pre-CLEAN
+    assert rl_config.grpo_config(model, str(tmp_path), use_cpu=True, use_vllm=0).use_vllm == 0  # pre-CLEAN
     with pytest.raises(ValueError):
-        configs.grpo_config(model, str(tmp_path), num_generations=16)
+        rl_config.grpo_config(model, str(tmp_path), num_generations=16)
 
 
 SMOL = re.compile("smol" + "vlm|hugging" + "facetb", re.I)
@@ -134,10 +137,11 @@ def _defs(path: Path) -> set[str]:
 def test_retired_450m_model_and_full_fine_tuning_gone():
     """CT-62: the model tables are the parent commit's minus the retired key (every other row survives); every model
     is LoRA; the full fine-tuning branches are gone (the pre-registered record: tests/experiments/test_prereg_lr.py)."""
-    assert configs.MODELS == KEPT_MODELS and configs.MAX_COMPLETION == KEPT_MAX
-    assert configs._LORA == frozenset(configs.MODELS) and configs._GRAD_CKPT
-    assert configs.rl_lr("qwen3-vl-2b") == 5e-5
-    assert not {"param_groups", "dtype"} & _defs(ROOT / "src/objdel/train/configs.py")
+    assert policy_models.MODELS == KEPT_MODELS and policy_models.MAX_COMPLETION == KEPT_MAX
+    assert policy_models._LORA == frozenset(policy_models.MODELS) and policy_models._GRAD_CKPT
+    assert rl_config.rl_lr("qwen3-vl-2b") == 5e-5
+    for f in ("policy/models.py", "rl/config.py", "sft/config.py"):
+        assert not {"param_groups", "dtype"} & _defs(ROOT / "src/objdel" / f)
     sft = ROOT / "src/objdel/sft/train.py"
     assert "_load_from_checkpoint" not in _defs(sft) and "param_groups" not in sft.read_text()
     assert not (ROOT / "experiments/phase2/configs" / "r1_l" "fm.yaml").exists()
@@ -170,64 +174,65 @@ def test_phase2_run_scripts_are_archived():
 @pytest.mark.parametrize("supported", [True, False])
 def test_bf16_only_where_the_hardware_supports_it(supported, tmp_path, monkeypatch):
     """CPU-only Linux (CI train job): no bf16, so TrainingArguments does not raise; CUDA Ampere+/MPS: bf16."""
-    monkeypatch.setattr(configs, "is_torch_bf16_gpu_available", lambda: supported)
+    monkeypatch.setattr(policy_models, "is_torch_bf16_gpu_available", lambda: supported)
     # use_cpu: TrainingArguments re-checks the real hardware, and accepts bf16 (CPU autocast) only with use_cpu
-    for c in (configs.grpo_config("qwen3-vl-2b", str(tmp_path), use_cpu=True),
-              configs.sft_config("qwen3-vl-2b", str(tmp_path), use_cpu=True)):
+    for c in (rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), use_cpu=True),
+              sft_config.sft_config("qwen3-vl-2b", str(tmp_path), use_cpu=True)):
         assert c.bf16 is supported and not c.fp16
-    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), bf16=False, max_steps=3)  # overrides win
+    c = rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), bf16=False, max_steps=3)  # overrides win
     assert (c.bf16, c.max_steps) == (False, 3)
-    assert not configs.sft_config("qwen3-vl-2b", str(tmp_path), fp16=True, use_cpu=True).bf16
+    assert not sft_config.sft_config("qwen3-vl-2b", str(tmp_path), fp16=True, use_cpu=True).bf16
 
 
 def test_configs_build_on_this_machine(tmp_path):
     """Without overrides (CPU-only Linux CI included): the real hardware check decides bf16."""
-    for m in configs.MODELS:
-        assert configs.grpo_config(m, str(tmp_path)).bf16 == configs.is_torch_bf16_gpu_available()
-        assert configs.sft_config(m, str(tmp_path)).bf16 == configs.is_torch_bf16_gpu_available()
+    for m in policy_models.MODELS:
+        assert rl_config.grpo_config(m, str(tmp_path)).bf16 == policy_models.is_torch_bf16_gpu_available()
+        assert sft_config.sft_config(m, str(tmp_path)).bf16 == policy_models.is_torch_bf16_gpu_available()
 
 
 # B2.2 numerics presets
 def test_default_preset_is_the_b1_control(tmp_path):
     """No numerics argument: today's TRL values, written out (sequence mask, cap 3, no OPSM, no vllm_lora)."""
-    assert configs.DEFAULT_NUMERICS == "bf16-seqmask"
-    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path))
+    assert rl_config.DEFAULT_NUMERICS == "bf16-seqmask"
+    c = rl_config.grpo_config("qwen3-vl-2b", str(tmp_path))
     assert (c.vllm_importance_sampling_mode, c.vllm_importance_sampling_clip_max) == ("sequence_mask", 3.0)
     assert c.vllm_importance_sampling_clip_min is None and c.off_policy_mask_threshold is None
     assert not c.fp16 and not getattr(c, "vllm_lora", False)
 
 
 def test_numerics_names():
-    assert set(configs.NUMERICS) == {"bf16-seqmask", "bf16-tis", "bf16-tis-opsm", "fp16-seqmask", "lora-seqmask"}
+    assert set(rl_config.NUMERICS) == {"bf16-seqmask", "bf16-tis", "bf16-tis-opsm", "fp16-seqmask", "lora-seqmask"}
 
 
-@pytest.mark.parametrize("name", list(configs.NUMERICS))
+@pytest.mark.parametrize("name", list(rl_config.NUMERICS))
 def test_every_preset_builds_a_grpo_config(name, tmp_path):
-    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics=name)
+    c = rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), numerics=name)
     assert not (c.bf16 and c.fp16)
 
 
 def test_tis_presets_use_token_truncation_at_2(tmp_path):
     for name in ("bf16-tis", "bf16-tis-opsm"):
-        c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics=name)
+        c = rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), numerics=name)
         assert (c.vllm_importance_sampling_mode, c.vllm_importance_sampling_clip_max) == ("token_truncate", 2.0)
-    assert configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-tis").off_policy_mask_threshold is None
-    assert configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-tis-opsm").off_policy_mask_threshold == 0.5
+    assert rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-tis").off_policy_mask_threshold is None
+    assert rl_config.grpo_config("qwen3-vl-2b", str(tmp_path),
+        numerics="bf16-tis-opsm").off_policy_mask_threshold == 0.5
 
 
 def test_opsm_start_delta_override(tmp_path):
-    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-tis-opsm", off_policy_mask_threshold=0.9)
+    c = rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-tis-opsm", off_policy_mask_threshold=0.9)
     assert c.off_policy_mask_threshold == 0.9
 
 
 def test_fp16_preset_is_fp16_never_with_bf16_and_keeps_the_control_is_mode(tmp_path):
-    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="fp16-seqmask")
+    c = rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="fp16-seqmask")
     assert c.fp16 and not c.bf16
     assert (c.vllm_importance_sampling_mode, c.vllm_importance_sampling_clip_max) == ("sequence_mask", 3.0)
 
 
 def test_lora_preset_marks_the_config_and_never_passes_the_key_to_trl(tmp_path):
-    c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="lora-seqmask")
+    c = rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="lora-seqmask")
     assert c.vllm_lora is True
     assert "vllm_lora" not in {f.name for f in dataclasses.fields(c)}  # an attribute of ours, not a TRL field
     assert (c.vllm_importance_sampling_mode, c.vllm_importance_sampling_clip_max) == ("sequence_mask", 3.0)
@@ -235,7 +240,7 @@ def test_lora_preset_marks_the_config_and_never_passes_the_key_to_trl(tmp_path):
 
 def test_unknown_preset_is_refused(tmp_path):
     with pytest.raises(ValueError, match="bf16-fp8"):
-        configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-fp8")
+        rl_config.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-fp8")
 
 
 @pytest.mark.gpu
@@ -246,7 +251,7 @@ def test_g05_f_check_record():
     import os
     from pathlib import Path
 
-    from objdel.train import f_check
+    from objdel.rl import f_check
 
     files = sorted(Path(os.environ.get("OBJDEL_RUN_DIR", "runs")).glob("*/f_check.json"))
     if not files:

@@ -78,7 +78,7 @@ def test_train_lock_is_pyproject_train_for_linux_pinned_to_the_mac():
             assert lock[name] == req.split("==")[1].strip(), name
     assert "torchvision" in project["project"]["optional-dependencies"]["train"][-1]  # transformers/TRL vision path
     assert any(k.startswith("nvidia-") for k in lock)  # the Linux CUDA wheels are pinned too, not resolved at build
-    assert lock.keys() >= {"pandas"}  # objdel.train.sample
+    assert lock.keys() >= {"pandas"}  # objdel.policy.sampler
 
 
 def test_dockerfile_installs_the_locks_and_imports_what_it_keeps():
