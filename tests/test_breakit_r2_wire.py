@@ -1,6 +1,6 @@
 """Break-it round 2, wiring: edge cases across the rows-root contract, preflight stamp, vast policy and final_eval.
 
-Each test states the behaviour the code should have; strict xfail means the bug is still there (BR2-wire-<n>)."""
+Each test states the behaviour the code should have; each guards a fixed BR2-wire finding."""
 
 import hashlib
 import json
@@ -22,13 +22,6 @@ OFFER = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
 # ---------------------------------------------------------------- preflight stamp
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BR2-wire-1: refusal() guards the stamp keys (BR1-wire-9), not their types: "
-    "a stamp that is JSON null / a list, or has hashes: null or a check that is not "
-    "a dict, raises AttributeError / TypeError out of refusal(), so cmd_launch "
-    "crashes with a traceback instead of the 'preflight gate' die",
-)
 @pytest.mark.parametrize(
     "stamp",
     [
@@ -90,12 +83,6 @@ def stub(tmp_path, monkeypatch):
     return seen
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BR2-wire-2: main() tests `if schedule:`, so a manifest whose `schedule` is {} "
-    "(pinned by SHA-256, so rows_schedule returns it) is treated as a root without "
-    "one: DISAGREEMENT_OVERSAMPLE rows, shuffled, no check_rows / check_sampler",
-)
 def test_an_empty_schedule_is_not_an_unscheduled_root(stub):
     raw = json.dumps({"schedule": {}}).encode()
     (stub.root / "manifest.json").write_bytes(raw)
@@ -106,12 +93,6 @@ def test_an_empty_schedule_is_not_an_unscheduled_root(stub):
     assert stub.trainers == [] or stub.trainers[0]["check"] is not None, "trained shuffled with no schedule guards"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BR2-wire-3: --resume does not compare the last checkpoint's step with --steps: "
-    "--resume --steps 60 over checkpoint-100 trains nothing and still merges and "
-    "saves the 100-step adapter as 'final' of a 60-step run",
-)
 def test_resume_past_the_requested_steps_is_refused(stub):
     (stub.root / "manifest.json").write_text("{}")
     (stub.out / "trainer" / "checkpoint-100").mkdir(parents=True)
@@ -123,7 +104,6 @@ def test_resume_past_the_requested_steps_is_refused(stub):
     pytest.fail(f"trained or merged from checkpoint-100 for --steps 60: {stub.trained}")
 
 
-# BR2-wire-4 (fixed by BR1-rl: parse needs --steps, --save-steps, --heldout-every >= 1)
 @pytest.mark.parametrize("extra", [["--save-steps", "0"], ["--save-steps", "-5"]])
 def test_parse_refuses_a_non_positive_save_steps(extra):
     with pytest.raises(SystemExit):
@@ -133,13 +113,6 @@ def test_parse_refuses_a_non_positive_save_steps(extra):
 # ---------------------------------------------------------------- vast policy
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BR2-wire-5: launch_refusal checks only 'committed + worst <= HARD_STOP', so a "
-    "negative price, a negative bandwidth cost or a negative --cap-hours makes the "
-    "worst case negative or ~0 and passes; the box then runs with a negative "
-    "WATCHDOG_CAP_S or books a negative cost in the ledger",
-)
 @pytest.mark.parametrize(
     "offer,cap", [(dict(OFFER, dph_total=-1000.0), 2.4), (dict(OFFER, inet_up_cost=-5.0), 2.4), (OFFER, -50.0)]
 )
@@ -157,13 +130,6 @@ def _repo(tmp_path, monkeypatch, files):
     return set(P.code_files())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BR2-wire-6: code_files lets `keep` win over `drop` (`keep.match(f) or not "
-    "drop.search(f)`), so a riga*.csv/.json table under a kept kernel folder "
-    "docs/implementation2.0/kernels/K1/ (or a K1/data or K1/sub/build file) is "
-    "rsynced to the rented box although drop's riga rule names it",
-)
 def test_code_files_keep_riga_tables_off_the_box_even_under_kept_folders(tmp_path, monkeypatch):
     shipped = _repo(
         tmp_path,
@@ -180,12 +146,6 @@ def _results(k, n=6):
     return [{"item_id": f"lidc/p{i % 3}/n000/z{i}", "samples": {"iou_tc": [0.1 * (i + 1)] * k}} for i in range(n)]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BR2-wire-7: --k is not validated, and noise_floor with K=1 splits the answers "
-    "into an empty half: d is NaN, item_sd / mean_sd are NaN, and final_eval.json "
-    "is written with bare NaN (invalid JSON) after the paid sampling",
-)
 def test_noise_floor_of_one_answer_is_refused_or_finite():
     res = _results(1)
     groups = {r["item_id"]: r["item_id"].split("/")[1] for r in res}
@@ -196,13 +156,6 @@ def test_noise_floor_of_one_answer_is_refused_or_finite():
     json.dumps(nf, allow_nan=False)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BR2-wire-8: with several --view and one --out, outs = out / view.name, and a "
-    "--view path ending in '..' has the name '..': its outputs go to out's PARENT "
-    "folder, outside the folder the caller named (and a '.' view would write into "
-    "out itself)",
-)
 def test_view_path_ending_in_dotdot_stays_inside_out(ev, tmp_path, monkeypatch):  # noqa: F811
     (ev / "sub").mkdir()
     other = Path(f"{ev}/sub/..")
