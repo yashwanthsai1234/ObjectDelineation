@@ -17,15 +17,21 @@ order, and a manifest written only when every hard B data gate passes.
    `objdel.data.quality.audit` run on the root with this plan; the manifest (build_eval_views' fields plus
    `schedule`, with `files_count` and `files_sha256` of the root without manifest.json) is written only when
    `quality.failures` is empty. Exit 1 and no manifest otherwise.
-No upload (B1.4 step 5 is a separate, owner-run step). Reads untrusted data: run with python -I.
+An --out with a manifest, or with anything but a build's folders, is refused; a failed or interrupted build's folders
+are removed first (no stale file reaches the new root). With no passing draws value the last value's failure is
+printed (the schedule names the kind and cell it could not fill).
+Upload (B1.4 step 5, owner-run, before any rental): experiments.phase2.hf_push --rows ROOT. Reads untrusted data: run
+with python -I.
 """
 import argparse
 import hashlib
 import json
 import platform
+import shutil
 import sys
 import time
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
 from importlib.metadata import version
 from itertools import batched
@@ -42,6 +48,7 @@ from objdel.data.coverage import cell_coverage
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "docs" / "reference"
 DRAWS_OPTIONS = (1, 2, 4, 8)
+BUILD_DIRS = ("caches", "images", "lidc")  # what a build writes before its manifest
 
 
 def _sha(data: bytes) -> str:
@@ -88,12 +95,22 @@ def materialize(store_root, out: Path, scheduled, procs: int) -> dict[str, dict]
     by_item: dict[str, list] = {}
     for w in {w.window_id: w for w in scheduled}.values():
         by_item.setdefault(w.item_id, []).append(w)
+    ids = [w.window_id for ws in by_item.values() for w in ws]
+    folded = Counter(i.casefold() for i in ids)
+    if twins := sorted(i for i in ids if folded[i.casefold()] > 1):
+        raise SystemExit(f"window ids that differ only by case would share a file on a case-insensitive disk: {twins}")
     jobs = ((str(out), it, w) for it in store.load("lidc", "train", store_root) if it.item_id in by_item
             for w in by_item[it.item_id])
     recs = {}
-    with get_context("spawn").Pool(procs) as pool:
+    with ProcessPoolExecutor(procs, mp_context=get_context("spawn")) as pool:  # a killed worker raises, never hangs
         for chunk in batched(jobs, 24):  # bounds parent memory
-            recs |= {r["item_id"]: r for r in pool.map(_record, chunk)}
+            for job, fut in [(job, pool.submit(_record, job)) for job in chunk]:
+                try:
+                    r = fut.result()
+                except Exception as e:  # a worker error or BrokenProcessPool: exit naming the window
+                    pool.shutdown(cancel_futures=True)
+                    raise SystemExit(f"window {job[2].window_id}: {type(e).__name__}: {e}") from e
+                recs[r["item_id"]] = r
     return recs
 
 
@@ -114,8 +131,12 @@ def build(a) -> int:
     if a.steps <= 0 or a.steps % a.block_steps:
         raise SystemExit(f"--steps {a.steps} is not a positive multiple of block_steps {a.block_steps}")
     out = Path(a.out)
-    if out.exists() and any(out.iterdir()):
-        raise SystemExit(f"{out} exists and is not empty: remove it first (a root holds one build)")
+    if (out / "manifest.json").exists():
+        raise SystemExit(f"{out}/manifest.json exists: a finished root holds one build (remove it first)")
+    if out.exists() and (foreign := sorted(p.name for p in out.iterdir() if p.name not in BUILD_DIRS)):
+        raise SystemExit(f"{out} holds {foreign}, not only a failed build's {BUILD_DIRS}: remove it first")
+    for d in BUILD_DIRS:  # a failed or interrupted build leaves no stale file
+        shutil.rmtree(out / d, ignore_errors=True)
     t0 = time.time()
     exclude_bytes = Path(a.exclude).read_bytes()
     excluded = frozenset(json.loads(exclude_bytes))
@@ -135,7 +156,10 @@ def build(a) -> int:
     draws = a.draws or rule
     print(f"draws rule choice {rule}, used {draws}")
     if draws is None or not table[draws]["ok"]:
-        print(f"draws {draws}: the schedule raises or fails DG7-DG9 on a block prefix", file=sys.stderr)
+        d = draws or max(table)  # no value passes: the last one's failure
+        r = table[d]
+        why = r["error"] or f"DG7-DG9 fail on a block prefix (worst {r['worst']:.4f}, tv {r['tv']:.4f}, ks {r['ks']:.4f})"
+        print(f"draws {d}: {why}", file=sys.stderr)
         return 1
     pool = windows.pool(store.load("lidc", "train", a.store), draws, a.seed, excluded)  # exact dropped counts
     scheduled = table[draws]["scheduled"]

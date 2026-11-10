@@ -46,3 +46,22 @@ def test_grpo_config_follows_the_spec_group(tmp_path):
 
     c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), reward=REWARD_V5, use_cpu=True, use_vllm=False)
     assert c.num_generations == REWARD_V5.group and len(c.reward_weights) == len(reward_advantages.LOGGED) + 1
+
+
+def test_i26_tilt_stays_removed(tmp_path):
+    """I26 (B3.8): schedule takes no tilt, TRLReward logs no cell/<ij>/group_sd, num_generations is the one group."""
+    import inspect
+
+    import pytest
+
+    from objdel.data import windows
+    from objdel.rl import config as configs
+
+    assert not any("tilt" in p for p in inspect.signature(windows.schedule).parameters)
+    kw, _, _ = batch()
+    logs = {}
+    call_all(reward_v5(), kw, log_metric=logs.__setitem__, cell=["11"] * 8 + ["23"] * 8)
+    assert "cell/11/iou_tc" in logs and not any("group_sd" in k for k in logs)
+    with pytest.raises(ValueError, match="exactly 8"):
+        configs.grpo_config("qwen3-vl-2b", str(tmp_path), reward=REWARD_V5, num_generations=16, use_cpu=True,
+                            use_vllm=False)

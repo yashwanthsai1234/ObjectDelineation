@@ -45,9 +45,19 @@ _PINS = ("numpy", "numba", "opencv-python-headless", "objdel")
 _BATCH = 12  # items framed per pool.map: bounds main-process memory (RIGA: 1.8 GB at 6, 2.4 GB at 32)
 
 
+def _check_id(out, item_id: str) -> None:
+    """ValueError when item_id would write outside out: a NUL, an absolute path or a ".." part (ids of
+    untrusted data name files: images/<id>.png, caches/<id>/)."""
+    images = Path(out, "images").resolve()
+    if "\0" in item_id or Path(item_id).is_absolute() or ".." in Path(item_id).parts or not (
+            images / item_id).resolve().is_relative_to(images):
+        raise ValueError(f"unsafe id {item_id!r}: it would write outside {out}")
+
+
 def _prepare(job) -> dict:
     """One framed item -> its record; writes its image and caches under out."""
     out, item_id, dataset, group_id, raters, f = job
+    _check_id(out, item_id)
     names = SCHEMAS[dataset]
     ma = min_areas(f.masks)  # the reward's size rule
     targets, errors = [], []
