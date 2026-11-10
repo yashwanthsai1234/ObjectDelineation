@@ -1356,12 +1356,11 @@ def test_capped_share_counts_answers_that_reached_their_cap():
 def test_beta_zero_runs_only_the_update_forward(monkeypatch, tmp_path):
     """C8: beta 0 loads no reference adapter and runs no reference pass; with one generation per step the old-logprob
     pass is skipped too (C10): one forward per update micro-batch (8 rows, micro-batch 8: one) and nothing else."""
-    calls = []
-    real = fast.FastGRPO._get_per_token_logps_and_entropies
+    calls, real = [], fast.FastGRPO._get_per_token_logps_and_entropies
     monkeypatch.setattr(fast.FastGRPO, "_get_per_token_logps_and_entropies",
-                        lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
+                        lambda self, *a, **k: calls.append(self.loss_inputs is not None) or real(self, *a, **k))
     t = tiny_loop_vllm_fake(monkeypatch, tmp_path, steps=2)
-    assert t.args.beta == 0.0 and len(calls) == 2
+    assert t.args.beta == 0.0 and calls == [True, True]  # U-CO1: every call is an update forward (loss_inputs set)
 
 
 def test_dr_grpo_loss_scales_by_the_completion_limit_on_a_one_row_example():
