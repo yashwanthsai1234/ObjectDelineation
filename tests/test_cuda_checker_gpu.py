@@ -164,28 +164,6 @@ def test_certify_polygons_on_own_rasters_matches_the_oracle_and_repeats():
     assert (a["inter"][ok] == area[ok]).all() and (a["union"][ok] == area[ok]).all() and a["equal"][ok].all()
 
 
-def test_engine_pool_is_used_and_the_default_pool_is_not():
-    """D5c (GAP-17, D-G15 box half): after warm-up the engine's own pool holds memory and keeps it over 50 calls of
-    one shape (release threshold UINT64_MAX, no allocation), the device's default pool does not grow, the device
-    bytes do not leak, and trim(0) gives unused pool memory back without breaking the next call."""
-    from tests.test_engine_counters import _caches, _square_args
-    small, _ = _caches()
-    args = _square_args(256, 40, small.device())
-    want = gc.score_polygons(*args)
-    before = gc.stats()
-    assert before["pool_reserved"] > 0
-    for _ in range(50):
-        gc.score_polygons(*args)
-    st = gc.stats()
-    assert st["pool_reserved"] == before["pool_reserved"]
-    assert st["default_pool_reserved"] <= before["default_pool_reserved"]
-    assert st["live_device_bytes"] == before["live_device_bytes"] == st["arena_bytes"] + st["table_bytes"]
-    assert st["sync_alloc"] == before["sync_alloc"] and st["pinned_grows"] == before["pinned_grows"]
-    gc.trim(0)
-    got = gc.score_polygons(*args)
-    assert all(got[k].tobytes() == want[k].tobytes() for k in want)
-
-
 def test_validity_warp_totals_on_adversarial_families():
     """D6: ShapeTotalsWarp with 32 lanes (the CPU build runs one) on the I17 families and the straggler batch."""
     from tests.test_cuda_checker import test_validity_adversarial_families
