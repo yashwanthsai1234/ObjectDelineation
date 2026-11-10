@@ -3,6 +3,8 @@ on the frozen val shifted view, plus the 128 held-out item ids that chose R5 (B.
 
     .venv/bin/python -I -m experiments.phase2.val_halves --view data/eval_views/lidc-val-shifted/lidc/val.jsonl \\
         --heldout runs/rl/eval/final/heldout.json --out docs/reference/val_halves.json
+
+Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """
 import argparse
 import json

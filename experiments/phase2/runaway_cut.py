@@ -6,6 +6,8 @@ would remove (4.3 ms per token of the longest answer of a block of 32 images, re
 
 .venv/bin/python -I -m experiments.phase2.runaway_cut --train data/prepared --answers runs/a3/eval_val/answers.jsonl \
     --model qwen3-vl-2b --out runs/c11
+
+Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """
 import argparse
 import json

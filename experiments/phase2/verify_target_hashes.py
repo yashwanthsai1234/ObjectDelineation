@@ -15,6 +15,8 @@ Per rater: objdel.data.targets.build.build_target with the reward's size rule (m
 builders call it; a rater whose build raises ValueError has no target, as there. A store whose manifest SHA-256
 differs from the recorded one is a mismatch (its targets differ for another reason). Prints one line per set; exit 1
 on any mismatch. Writes nothing. Reads untrusted data: run with python -I.
+
+Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """
 import argparse
 import hashlib

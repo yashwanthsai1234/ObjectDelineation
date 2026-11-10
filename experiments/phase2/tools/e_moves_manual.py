@@ -6,6 +6,8 @@ due edit of the same file starts from (that edit carries it on, as E3c's audit i
 with the same stage:
 
     .venv/bin/python -I -m experiments.phase2.tools.e_moves_manual --stage E3a
+
+Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """
 
 from __future__ import annotations

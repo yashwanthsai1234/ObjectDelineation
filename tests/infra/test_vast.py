@@ -272,6 +272,15 @@ def test_real_offer_from_v0_is_admissible():
     assert any("cpu_ram" in r for r in OF.reasons(dict(o, cpu_ram=31999), "RTX_3090", "lidc"))
 
 
+def test_policy_reads_only_offer_fields_the_pinned_cli_returns():
+    """CT-86. Key names only, no offer data: the V0 offer recording (2026-11-01) plus `geolocation`, which the test
+    above adds by hand. Re-record from `uvx vastai==1.11.0 search offers ... --raw` when a Vast key is at hand."""
+    keys = set(json.loads((Path(__file__).parents[1] / "fixtures" / "vast_offer_keys_1_11_0.json").read_text()))
+    read = {t[2] for g in OF.CARDS for d in OF.CPU_RAM for t in OF.terms(g, d) if t[2]}
+    read |= {"id", "geolocation", *OF.offer_cols({})}
+    assert len(read) > 12 and read <= keys, sorted(read - keys)
+
+
 # --- H-GOV on the recorded snapshot (D16) ---------------------------------------------------------------------------
 
 

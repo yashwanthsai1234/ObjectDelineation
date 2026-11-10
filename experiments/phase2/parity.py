@@ -12,6 +12,8 @@ in bfloat16) and (H-A5-1) every item's prompt ids as vLLM echoed them equal the 
 (PLAN D13): bf16 rounding adds up over ~500-token answers (Qwen3-VL-2B R0: token median 4.6e-6, sequence p99 1.79),
 and the question it stood for, whether vLLM's answers score like HF's, is measured directly on the trained model
 (select_ckpt's HF check, D13).
+
+Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """
 import argparse
 import json
