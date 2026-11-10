@@ -32,7 +32,6 @@ import argparse
 import base64
 import csv
 import gzip
-import hashlib
 import json
 import math
 import operator
@@ -46,6 +45,7 @@ import time
 from pathlib import Path
 
 from objdel.core.spec import RunSpec, fill, load_spec, to_argv
+from objdel.io import git_sha
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -415,21 +415,6 @@ def code_files() -> list[str]:
     return files
 
 
-def code_sha_text(root: Path = ROOT) -> str:
-    """The box's CODE_SHA (final_eval.code_sha): git rev-parse HEAD, plus -dirty-<first 12 hex of sha256(D)> when git
-    status --porcelain is not empty; D = git diff HEAD, then the sorted untracked, not-ignored paths, one per line
-    (a new module marks the tree dirty). A git failure raises: never an empty or wrong CODE_SHA."""
-    def git(*args: str) -> bytes:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, check=True).stdout
-
-    head = git("rev-parse", "HEAD").decode().strip()
-    if not git("status", "--porcelain"):
-        return head
-    new = sorted(git("ls-files", "-z", "--others", "--exclude-standard").split(b"\0")[:-1])
-    d = git("diff", "HEAD") + b"".join(p + b"\n" for p in new)
-    return f"{head}-dirty-{hashlib.sha256(d).hexdigest()[:12]}"
-
-
 def cmd_sync_up(a) -> None:
     run = get_run(a.run_id)
     o, allow = json.loads((home() / "offers" / f"{run['offer']}.json").read_text()), load(".vast-allowlist")
@@ -439,7 +424,7 @@ def cmd_sync_up(a) -> None:
     files = [a.bundle_dir / name, a.bundle_dir / f"{name}.sha256"]
     if any(map(is_raw, [a.bundle_dir, *files])):
         die("refusing to send anything under data/raw")
-    lst, sha = home() / "code_files.txt", code_sha_text()
+    lst, sha = home() / "code_files.txt", git_sha(ROOT)
     lst.write_text("\n".join(code_files()) + "\n")
     host = f"root@{run['ip']}:"
     rsync(run, f"{ROOT}/", f"{host}/workspace/src/", opts=(f"--files-from={lst}",))

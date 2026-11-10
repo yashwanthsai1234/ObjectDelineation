@@ -26,8 +26,8 @@ sampling). Write order per view, so a crash in scoring keeps the paid sampling:
 2. after scoring, <out>/metrics.jsonl (the whole metrics() result per item), <out>/items.jsonl (per-item metrics) and
    the full <out>/final_eval.json (summary, schema 2, "partial": false). Every file goes through a temp file.
 Run keys: ckpt, view, split, K, seed, view_manifest_sha256 (manifest.json bytes), view_content_sha256 (B1.6's
-content hash, view_content_sha256), code_sha (<repo>/CODE_SHA, written by vast sync_up on the box; else git HEAD;
-else null), checker_build ("cuda" or "cpu").
+content hash, view_content_sha256), code_sha (objdel.io.code_sha: <repo>/CODE_SHA, written by vast sync_up on the box; else git HEAD plus
+-dirty-<sha12> on an edited tree; else null), checker_build ("cuda" or "cpu").
 Per item the K-sample mean; then the mean over items with three 95 % percentile bootstrap intervals (B = 2,000,
 seed 0): `ci95_patient` resamples patients (`group_id`; the gate CI, named by `gate_ci`), `ci95_nodule` resamples
 nodules, `ci95_item` single items (the schema-1 `ci95`). Illegal samples score 0 on every geometric term (the
@@ -73,7 +73,7 @@ from objdel import _gpucheck
 from objdel.data import quality as Q
 from objdel.eval import device, select, signal
 from objdel.hashing import file_sha256
-from objdel.io import git, read_jsonl
+from objdel.io import code_sha, read_jsonl
 from objdel.io import write_atomic as _write
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -292,14 +292,6 @@ def check_view(view: Path, split: str) -> None:
             sys.exit(f"final_eval: {view.name} {key} {got} differs from frozen_views.json {e[key]}: refusing to score")
 
 
-def code_sha(root: Path = ROOT) -> str | None:
-    """The code identity of a run: <root>/CODE_SHA stripped (written by vast sync_up on the box; empty = absent), else
-    git rev-parse HEAD, else None."""
-    f = Path(root) / "CODE_SHA"
-    text = f.read_text().strip() if f.exists() else ""
-    return text or git("rev-parse", "HEAD", root=root, required=False)
-
-
 def hash_view(view: Path, out: Path) -> None:
     """--hash-view: the view's identity record (the pre-rental record of A3 step 1)."""
     sets = json.loads((view / "manifest.json").read_text())["sets"]
@@ -452,7 +444,7 @@ def score(view: Path, split: str, out: Path, rows: list[dict], answers: list[dic
 
 def _identity(view: Path, split: str) -> dict:
     return {"view": str(view), "split": split, "view_manifest_sha256": view_manifest_sha256(view),
-            "view_content_sha256": Q.view_content_sha256(view), "code_sha": code_sha(),
+            "view_content_sha256": Q.view_content_sha256(view), "code_sha": code_sha(ROOT, required=False),
             "checker_build": _gpucheck.build()}
 
 

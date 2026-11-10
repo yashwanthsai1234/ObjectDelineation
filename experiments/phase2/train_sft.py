@@ -68,7 +68,7 @@ import time
 from pathlib import Path
 
 from objdel.hashing import file_sha256
-from objdel.io import git, write_atomic
+from objdel.io import git_sha, write_atomic
 
 ABORTED = 3  # exit code of a G-vision abort
 WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator and loader warm-up)
@@ -197,7 +197,7 @@ CODE = ("src/objdel/**/*.py", "src/objdel/*.cpp", "cpp/**/*.hpp", "cuda/*.h", "c
 def code_hashes() -> dict:
     files = sorted({p for g in CODE for p in ROOT.glob(g)})
     h = hashlib.sha256(b"".join(p.relative_to(ROOT).as_posix().encode() + bytes.fromhex(file_sha256(p)) for p in files))
-    return {"objdel_and_script_sha256": h.hexdigest(), "git_head": git("rev-parse", "HEAD", root=ROOT, required=False) or None,
+    return {"objdel_and_script_sha256": h.hexdigest(), "git_head": git_sha(ROOT, required=False),
             "files": len(files)}
 
 

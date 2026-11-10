@@ -24,6 +24,7 @@ import pytest
 from experiments.phase2 import preflight as PF
 from experiments.phase2.vast import bundle as B
 from experiments.phase2.vast import policy as P
+from objdel.io import git_sha
 
 ROOT = Path(__file__).resolve().parents[1]
 VAST = ROOT / "experiments" / "phase2" / "vast"
@@ -513,7 +514,7 @@ def test_sync_up_writes_code_sha_also_with_code_only(E):
         out = E.sh("sync_up.sh", "r1", *args).stdout.splitlines()
         code = next(i for i, ln in enumerate(out) if ln.startswith("DRY_RUN: rsync") and "--files-from" in ln)
         sha = next(i for i, ln in enumerate(out) if "/workspace/src/CODE_SHA" in ln)
-        assert code < sha and P.code_sha_text() in out[sha]
+        assert code < sha and git_sha(ROOT) in out[sha]
 
 
 def test_offers_search_and_launch_keep_to_north_america(E):

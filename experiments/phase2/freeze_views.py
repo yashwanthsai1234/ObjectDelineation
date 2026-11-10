@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from objdel.data import quality as Q
-from objdel.io import git
+from objdel.io import code_sha, git, git_sha
 
 ROOT = Path(__file__).resolve().parents[2]
 RENDER_FILES = ("src/objdel/targets/augment.py", "src/objdel/targets/frame.py", "src/objdel/targets/build.py",
@@ -53,12 +53,11 @@ def entry(view_dir, known: list[str]) -> dict:
     m = json.loads((d / "manifest.json").read_text())
     (s,) = m["sets"].values()
     ids = {json.loads(x)["item_id"] for x in next((d / "lidc").glob("*.jsonl")).read_text().splitlines()}
-    sha = ROOT / "runs/r5/CODE_SHA"
     return {"view": m["view"], "items": s["items"], "content_sha256": Q.view_content_sha256(d),
             "target_set_sha256": s["target_set_sha256"], "seed": m["seed"], "kinds": m["kinds"],
             "store_manifest_sha256": m["store_manifest_sha256"], "fallback": s["fallback"], "padded": s["padded"],
-            "generator_commit": _git("rev-parse", "HEAD"), "render_files": render_files(),
-            "r5_code_commit": sha.read_text().strip() if sha.is_file() else None,
+            "generator_commit": git_sha(ROOT), "render_files": render_files(),
+            "r5_code_commit": code_sha(ROOT / "runs/r5", required=False),
             "known_label_issues": [i for i in known if i in ids]} | (
         {"r5_identity": R5_IDENTITY[m["view"]]} if m["view"] in R5_IDENTITY else {})
 

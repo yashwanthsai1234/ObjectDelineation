@@ -10,6 +10,7 @@ import pytest
 from experiments.phase2 import freeze_views as FV
 from objdel.data import quality as Q
 from objdel.data import store
+from objdel.io import code_sha, git_sha
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORD = ROOT / "docs/reference/frozen_views.json"
@@ -43,8 +44,8 @@ def test_entry_holds_the_content_hash_and_the_build_record(view):
     assert (e["seed"], e["kinds"], e["store_manifest_sha256"]) == (0, ["shifted", "edge"], m["store_manifest_sha256"])
     assert e["known_label_issues"] == [ids[0]]  # only the view's own items
     assert set(e["render_files"]) == set(FV.RENDER_FILES)
-    assert e["generator_commit"] == subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True,
-                                                   text=True, check=True).stdout.strip()
+    assert e["generator_commit"] == git_sha(ROOT)  # X2-3: HEAD, -dirty-<sha12> while the worktree holds edits
+    assert e["r5_code_commit"] == code_sha(ROOT / "runs/r5", required=False)
 
 
 def test_render_file_drift_is_reported():
