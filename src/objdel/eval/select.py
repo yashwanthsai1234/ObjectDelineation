@@ -22,6 +22,8 @@ def medoid(sample_iou: np.ndarray, legal: Sequence[bool]) -> int:
     if M.ndim != 2 or M.shape[0] != M.shape[1] or len(M) == 0 or legal.shape != (len(M),):
         raise ValueError(f"medoid: need a K x K matrix (K >= 1) and K legal flags, got {M.shape} and {legal.shape}")
     eligible = np.flatnonzero(legal)
+    if not np.isfinite(M[np.ix_(eligible, eligible)]).all():
+        raise ValueError("medoid: the IoU matrix of the legal answers has a NaN or infinite entry")
     if len(eligible) < 2:
         return int(eligible[0]) if len(eligible) else 0
     scores = [np.mean([M[i, j] for j in eligible if j != i]) for i in eligible]

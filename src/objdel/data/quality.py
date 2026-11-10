@@ -505,6 +505,8 @@ def gates(report: Mapping) -> list[Gate]:
     dg1b += bool(rw["exclusions_stale"])
     worst = min((c["worst_ratio"] for c in pre), default=0.0)
     tv, ks = max((c["tv"] for c in pre), default=1.0), max((c["ks"] for c in pre), default=1.0)
+    if not all(np.isfinite([c[k] for c in pre for k in ("worst_ratio", "tv", "ks")])):
+        worst, tv, ks = 0.0, 1.0, 1.0  # min/max drop a NaN that is not first: a NaN prefix fails DG7-DG9
     val = sc["val"]["val"]["coverage"]
     return [
         _hard("DG1", dg1, "== 0", dg1 == 0),
