@@ -674,7 +674,7 @@ def test_cost_guard_allows_the_owners_extra_7_dollars(E):
 def test_cost_guard_projection_and_alarm(E):
     spent(E, 9.0)
     E.pick()
-    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "30", ok=False)  # 9 + 0.55 * 30 > HARD_STOP
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "23", ok=False)  # 9 + 0.55 * 23 > HARD_STOP (23 <= the spec cap 24)
     assert "hard stop" in p.stderr
     spent(E, 1.5)
     p = E.sh("launch.sh", "111", "r1", "--cap-hours", "1", ok=False)  # 10.5 >= alarm
@@ -1446,7 +1446,7 @@ def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp
     assert P.HARD_STOP == 21.4 and P.ALARM == 10.0
     offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
     assert P.launch_refusal(offer, 2.4) == ""
-    assert "hard stop" in P.launch_refusal(dict(offer, dph_total=1.5), 2.4)
+    assert "hard stop" in P.launch_refusal(dict(offer, dph_total=2.0), 2.4)
 
 
 def test_code_files_ship_the_kernel_drafts_but_no_other_docs(tmp_path, monkeypatch):
