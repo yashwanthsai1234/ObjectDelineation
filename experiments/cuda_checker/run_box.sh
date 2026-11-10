@@ -26,7 +26,7 @@ PY=${PY:-/opt/venv/bin/python}
 D_GPU_TESTS="tests/test_cuda_checker_gpu.py tests/test_cuda_checker.py tests/test_gpu_scoring.py \
 tests/test_gpu_determinism.py tests/test_gpu_sanitize.py tests/test_rings.py tests/test_certify_polygons.py \
 tests/test_topology_device.py tests/test_tables_device.py tests/test_engine_counters.py tests/test_scorer_sums.py"
-SEL="gpu or not (slow or data)"  # the GPU tests and every fast test of the list; data/ tests are the Mac's (-I)
+SEL="gpu or not (slow or data or post_commit)"  # GPU + fast tests; data/ is the Mac's (-I), post_commit needs .git
 SAN_TOOLS="memcheck initcheck synccheck racecheck"  # memcheck without --leak-check full: the engine is never freed
 DRY=; [ "${1:-}" = "--gpu-check" ] && [ "${2:-}" = "--dry" ] && DRY=1
 step() { echo "+ $1"; [ -n "$DRY" ] || eval "$1"; }
