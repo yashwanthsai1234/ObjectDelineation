@@ -1,0 +1,9 @@
+# The V2 launch config (Implementation.md front 6.3 "V2 launch config"; C0): the one file `make preflight CONFIG=`
+# stamps for the V2 speed rental and launch.sh --config reads. Never given to run.sh. rows_plan names the plan whose
+# train_rl stage pins the rows root (preflight ROWS checks): c_speed.yaml, whose nsys-wrapped arms hold the pins.
+# V2 keeps no model, so there is no push_hf.sh line.
+model: qwen3-vl-2b
+view: views/lidc-bundle-v3
+seed: 1
+output_dir: c-speed
+rows_plan: experiments/phase2/configs/c_speed.yaml
