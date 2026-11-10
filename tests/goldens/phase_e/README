@@ -64,3 +64,7 @@ E3a (impl2-emoves2): module_strings_stale re-recorded: the e_moves_manual target
 new; geom/engine.py re-exports count as its names (test_layers.top_level_names), so objdel.geom.engine.<name> resolves.
 old_names: unchanged (record_old_names keeps the recorded names of modules the moves removed; test_move_complete checks
 that each has a home).
+E8.1 (impl2-E8f, infra move): old_names re-recorded: vast/policy.py keeps only the CLI (cmd_*, launch_refusal, rows_pin,
+ROWS_CHECK, FLAG, CLI, main), hf_push.py and hf_pull.py only main; the library names moved to objdel.infra.vast.{offers,
+ledger,remote,chain}, objdel.infra.hf and objdel.infra.bundle (vast/bundle.py, recorded before, keeps its names and
+resolves there). tests_import_experiments: unchanged (tests/infra/test_secrets.py, test_paths.py, test_hf.py import none).

@@ -15,14 +15,15 @@ from hypothesis import strategies as st
 from oracles import score_numpy as host
 
 from experiments.cuda_checker import compare as C
-from experiments.phase2.vast import policy as P
+from objdel.core.provenance import repo_root
 from objdel.eval import metrics
 from objdel.geom import engine as _gpucheck
 from objdel.geom.shape import to_masks
 from objdel.geom.text import parse, serialize
+from objdel.infra.vast import chain as P
 from objdel.reward import ExpertCache, score_batch, score_many, score_mask
 
-ROOT = P.ROOT
+ROOT = repo_root()
 
 
 def disk(n, r, cy, cx):

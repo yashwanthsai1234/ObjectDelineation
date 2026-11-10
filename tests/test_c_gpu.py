@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from experiments.phase2.hf_push import REPO
 from objdel.geom import engine as _gpucheck
+from objdel.infra.hf import REPO
 
 CUDA = pytest.mark.skipif(_gpucheck.build() != "cuda", reason="CPU build: the CUDA build runs on the box")
 REVISION = "rl-full-3ep"

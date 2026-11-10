@@ -16,7 +16,9 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 import pytest
 
-from experiments.phase2.vast import policy as P
+from objdel.infra.vast import ledger as LG
+from objdel.infra.vast import offers as OF
+from objdel.infra.vast import remote as RM
 from tests import test_vast as V
 from tests.test_p2_scripts import stage
 
@@ -197,10 +199,10 @@ def test_launch_validates_run_id(E, run_id):
 
 def test_spend_counts_closed_rows_only_once_and_ignores_blank_costs(E, monkeypatch):
     monkeypatch.setenv("VAST_HOME", str(E.home))
-    P.ledger(event="offer", offer_id=1)
-    P.ledger(event="teardown", run_id="a", cost_usd=1.25)
-    P.ledger(event="orphan", run_id="b", cost_usd=0.5)
-    assert P.spend() == pytest.approx(1.75)
+    LG.ledger(event="offer", offer_id=1)
+    LG.ledger(event="teardown", run_id="a", cost_usd=1.25)
+    LG.ledger(event="orphan", run_id="b", cost_usd=0.5)
+    assert LG.spend() == pytest.approx(1.75)
 
 
 # --- watchdog (G5) ---------------------------------------------------------------------------------------------------
@@ -228,33 +230,33 @@ def test_watchdog_keeps_box_when_outputs_are_newer_than_the_pull(E):
 def test_governance_matrix(granted, evidence, hosting_type):
     o = V.offer(hosting_type=hosting_type)
     allow = {"riga_permission": {"granted": granted, "evidence": evidence}}
-    ok = not P.governance("riga", o, allow)
+    ok = not OF.governance("riga", o, allow)
     assert ok == (granted is True and bool(evidence) and hosting_type == 1)
-    assert P.governance("lidc", o, {}) == [] and P.governance("other", o, allow)
+    assert OF.governance("lidc", o, {}) == [] and OF.governance("other", o, allow)
 
 
-@pytest.mark.parametrize("gpu", sorted(P.CARDS))
+@pytest.mark.parametrize("gpu", sorted(OF.CARDS))
 def test_card_boundaries(gpu):
-    c = P.CARDS[gpu]
+    c = OF.CARDS[gpu]
     lo, hi = c["ram"]
     base = V.offer(gpu=gpu.replace("_", " "), gpu_ram=hi * 1024, dph_total=c["ceiling"], hosting_type=1)
-    assert P.reasons(base, gpu, "lidc") == [] and P.reasons(base, gpu, "riga") == []
-    assert P.reasons(dict(base, dph_total=c["ceiling"] + 0.001), gpu, "lidc") == ["price fails the §4.2 filter"]
-    assert P.reasons(dict(base, gpu_ram=hi * 1024 + 1), gpu, "lidc") == ["gpu_ram fails the §4.2 filter"]
+    assert OF.reasons(base, gpu, "lidc") == [] and OF.reasons(base, gpu, "riga") == []
+    assert OF.reasons(dict(base, dph_total=c["ceiling"] + 0.001), gpu, "lidc") == ["price fails the §4.2 filter"]
+    assert OF.reasons(dict(base, gpu_ram=hi * 1024 + 1), gpu, "lidc") == ["gpu_ram fails the §4.2 filter"]
     if lo:
-        assert P.reasons(dict(base, gpu_ram=lo * 1024 - 1), gpu, "lidc") == ["gpu_ram fails the §4.2 filter"]
+        assert OF.reasons(dict(base, gpu_ram=lo * 1024 - 1), gpu, "lidc") == ["gpu_ram fails the §4.2 filter"]
     need = max(32, c.get("cpu_ram", 0))
-    assert P.reasons(dict(base, cpu_ram=need * 1000 - 1), gpu, "lidc") == ["cpu_ram fails the §4.2 filter"]  # MB, V0
-    assert P.reasons(dict(base, hosting_type=0), gpu, "riga") == ["datacenter fails the §4.2 filter"]
-    q = P.query(gpu, "lidc")
+    assert OF.reasons(dict(base, cpu_ram=need * 1000 - 1), gpu, "lidc") == ["cpu_ram fails the §4.2 filter"]  # MB, V0
+    assert OF.reasons(dict(base, hosting_type=0), gpu, "riga") == ["datacenter fails the §4.2 filter"]
+    q = OF.query(gpu, "lidc")
     assert f"dph<={c['ceiling']}" in q and f"gpu_ram<={hi}" in q and "datacenter" not in q
-    assert "datacenter=True" in P.query(gpu, "riga") and "cpu_ram>=48" in P.query(gpu, "riga")
+    assert "datacenter=True" in OF.query(gpu, "riga") and "cpu_ram>=48" in OF.query(gpu, "riga")
 
 
 @pytest.mark.parametrize("bad", [{"reliability2": 0.5}, {"rentable": False}, {"inet_down": 10},
                                  {"direct_port_count": 0}, {"disk_space": 10}])  # fmt: skip
 def test_offer_recheck_covers_the_whole_query(bad):
-    assert P.reasons(V.offer(**bad), "RTX_4090", "lidc")
+    assert OF.reasons(V.offer(**bad), "RTX_4090", "lidc")
 
 
 # --- secrets (D16, G9), destroy-never-stop (G4) ----------------------------------------------------------------------
@@ -298,8 +300,8 @@ def test_destroy_never_stop(E):
 
 
 def test_code_snapshot_has_no_riga_derived_results():
-    leaks = [f for f in P.code_files() if "riga" in f.lower() and f.endswith((".csv", ".json", ".jsonl"))]
-    leaks += [f for f in P.code_files() if f.startswith("docs/research/records/phase0/results/vlm_")]
+    leaks = [f for f in RM.code_files() if "riga" in f.lower() and f.endswith((".csv", ".json", ".jsonl"))]
+    leaks += [f for f in RM.code_files() if f.startswith("docs/research/records/phase0/results/vlm_")]
     assert not leaks, leaks[:5]
 
 
@@ -374,7 +376,7 @@ def test_goldens_hold_no_masks(tmp_path):
 
 
 def test_bundle_refuses_a_symlinked_view_directory(tmp_path):
-    from experiments.phase2.vast import bundle as B
+    from objdel.infra import bundle as B
 
     d = V.data_tree(tmp_path)
     (d / "views" / "lidc-extra").symlink_to(d / "views" / "riga-train", target_is_directory=True)

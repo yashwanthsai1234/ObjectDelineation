@@ -30,8 +30,8 @@ BUDGET = {
     "approved_usd": 2.20,
     "planning_dph_usd": 0.641,  # front 6: the offer limit, the highest rate the launch accepts
     "planning_gb_usd": 0.0065,  # front 6: bandwidth ceiling per GB, up and down
-    "fixed_gb_down": 15,  # policy.DOWN_GB
-    "gb_up_per_h": 6,  # policy.UP_GB_PER_H
+    "fixed_gb_down": 15,  # LG.DOWN_GB
+    "gb_up_per_h": 6,  # LG.UP_GB_PER_H
     "cap_hours": 3.05,
     "budget_stop_usd": 1.85,
     "ledger_closed_usd": 16.90,  # measured: ledger.csv, 2026-11-08 (hard stop 19.90 = 16.90 + 3.00)
@@ -45,9 +45,9 @@ def raw() -> dict:
 
 
 def steps() -> list[list[str]]:
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as CH
 
-    return policy.chain(CONFIGS / PLAN, "r")
+    return CH.chain(CONFIGS / PLAN, "r")
 
 
 def words(step: list[str]) -> list[str]:
@@ -121,9 +121,9 @@ def test_named_files_exist():
 
 def test_smoke_node_ids_are_the_b1_rows_ones():
     """test_b1_plans collects exactly these two ids; here they must stay the same two."""
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as CH
 
-    b1 = policy.chain(CONFIGS / B1, "r")[2]
+    b1 = CH.chain(CONFIGS / B1, "r")[2]
     ids = [w for w in words(steps()[3]) if "::" in w]
     assert ids == [w for w in b1 if "::" in w] and len(ids) == 2
 
@@ -181,9 +181,9 @@ def test_rl_smoke_is_one_block_with_one_lost_run_recovery():
     pytest.importorskip("trl")
     run1, merge, resume = module_steps("train_rl")
     a, m, r = parse_step(run1), parse_step(merge), parse_step(resume)
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as CH
 
-    b1 = parse_step(policy.chain(CONFIGS / B1, "r")[3])
+    b1 = parse_step(CH.chain(CONFIGS / B1, "r")[3])
     assert a.steps == r.steps == 20 and a.steps % 20 == 0 and a.steps < b1.steps  # whole block, inside the schedule
     assert a.save_steps == r.save_steps == 10 and a.steps % a.save_steps == 0 and a.save_steps < a.steps
     assert a.shared_prefix and r.shared_prefix and a.lr == r.lr == b1.lr and not a.resume and r.resume
@@ -217,9 +217,10 @@ def test_budget_stop_has_the_run_py_clock_inputs():
 
 def test_rows_pins_equal_the_b1_rows_pins_and_resolve_for_fetch_hf():
     from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as CH
 
     def pins(name):
-        s = next(s for s in policy.chain(CONFIGS / name, "r") if "experiments.phase2.train_rl" in s
+        s = next(s for s in CH.chain(CONFIGS / name, "r") if "experiments.phase2.train_rl" in s
                  and "--rows-revision" in s)
         return after(s, "--rows-revision"), after(s, "--rows-manifest-sha256")
 
@@ -248,9 +249,9 @@ def test_the_spec_holds_what_the_launch_config_held_and_the_money_block():
 @pytest.mark.parametrize("name", SPLIT)
 def test_the_two_box_split_runs_the_plan_steps_unchanged(name):
     """Owner, 2026-11-09: box A = steps 0-3 (build, env check, gpu-check, GPU smokes); box B = steps 0, 1, 4-11."""
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as CH
 
-    assert policy.chain(CONFIGS / name, "r") == [steps()[i] for i in SPLIT[name]]
+    assert CH.chain(CONFIGS / name, "r") == [steps()[i] for i in SPLIT[name]]
 
 
 # --- the money --------------------------------------------------------------------------------------------------
@@ -258,6 +259,8 @@ def test_the_two_box_split_runs_the_plan_steps_unchanged(name):
 
 def test_budget_block_gives_a_cap_inside_the_three_dollars(tmp_path, monkeypatch):
     from experiments.phase2.vast import policy
+    from objdel.infra.vast import ledger as LG
+    from objdel.infra.vast import remote as RM
 
     b = raw()["budget"]
     fixed = b["fixed_gb_down"] * b["planning_gb_usd"]
@@ -265,19 +268,19 @@ def test_budget_block_gives_a_cap_inside_the_three_dollars(tmp_path, monkeypatch
     assert (fixed, rate) == (pytest.approx(0.0975), pytest.approx(0.680))
     assert b["cap_hours"] == floor_to((b["approved_usd"] - fixed) / rate)  # front 6: floor_to_0.05((amount - b) / r_s)
     assert b["budget_stop_usd"] == pytest.approx(b["approved_usd"] - SOFT_TAIL_USD)
-    assert (b["fixed_gb_down"], b["gb_up_per_h"]) == (policy.DOWN_GB, policy.UP_GB_PER_H)
+    assert (b["fixed_gb_down"], b["gb_up_per_h"]) == (LG.DOWN_GB, LG.UP_GB_PER_H)
     # the worst case the launch checks: the offer limit, the cap plus the 600 s pull window
     offer = {"dph_total": b["planning_dph_usd"], "inet_up_cost": b["planning_gb_usd"],
              "inet_down_cost": b["planning_gb_usd"]}
     run = {"dph": offer["dph_total"], "inet_up_cost": offer["inet_up_cost"], "inet_down_cost": offer["inet_down_cost"],
            "started": 0.0}
-    worst = policy.accrued(run, b["cap_hours"] * 3600 + policy.PULL_S)
-    assert worst <= b["approved_usd"] + 0.12 and worst + b["ledger_closed_usd"] <= policy.HARD_STOP
-    assert policy.HARD_STOP - b["ledger_closed_usd"] <= HARD_STOP_ROOM_USD + 1e-9 and worst <= HARD_STOP_ROOM_USD
+    worst = LG.accrued(run, b["cap_hours"] * 3600 + RM.PULL_S)
+    assert worst <= b["approved_usd"] + 0.12 and worst + b["ledger_closed_usd"] <= LG.HARD_STOP
+    assert LG.HARD_STOP - b["ledger_closed_usd"] <= HARD_STOP_ROOM_USD + 1e-9 and worst <= HARD_STOP_ROOM_USD
     # launch_refusal on a ledger that holds the closed spend: this cap passes, a cap two hours longer is refused
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     with (tmp_path / "ledger.csv").open("w", newline="") as fh:
-        w = csv.DictWriter(fh, policy.FIELDS)
+        w = csv.DictWriter(fh, LG.FIELDS)
         w.writeheader()
         w.writerow({"ts": "2026-11-08T17:11:15Z", "event": "teardown", "run_id": "r5",
                     "cost_usd": b["ledger_closed_usd"]})

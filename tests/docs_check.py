@@ -17,7 +17,7 @@ FROZEN_GLOBS = [
 ]  # fmt: skip
 # Local-only files (git-ignored: .gitignore) are not public docs; the checks read tracked docs only.
 LOCAL_ONLY_GLOBS = ["ROADMAP.md", "archive/**", "docs/plan/**", "docs/implementation2.0/**"]
-POLICY_MODULE = "experiments.phase2.vast.policy"
+POLICY_MODULE = "objdel.infra.vast.ledger"
 
 
 def glob_re(glob: str) -> re.Pattern:

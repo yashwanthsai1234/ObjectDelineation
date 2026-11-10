@@ -45,7 +45,7 @@ CLAUDE.md
 /experiments/phase2/vast/active_runs.json
 /experiments/phase2/vast/code_files.txt
 
-# Local secrets (objdel.secrets): never committed, never shipped
+# Local secrets (objdel.infra.secrets): never committed, never shipped
 /.secrets
 /experiments/phase2/vast/known_hosts
 /experiments/phase2/vast/*.launchd.log

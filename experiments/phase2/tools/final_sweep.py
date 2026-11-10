@@ -318,9 +318,9 @@ def record(root: Path) -> dict:
     except Exception as e:  # noqa: BLE001 - the record is a report, not a gate on import health
         rec["fingerprint_error"] = repr(e)[:120]
     try:
-        import experiments.phase2.vast.policy as policy
+        from objdel.infra.vast import remote
 
-        files = policy.code_files()
+        files = remote.code_files()
         rec.update(code_files=len(files), claude=sum(x.startswith(".claude/") for x in files),
                    archive=sum(x.startswith("archive/") for x in files))
     except Exception as e:  # noqa: BLE001

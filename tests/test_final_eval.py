@@ -858,7 +858,7 @@ def test_tost():
 def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
     """U49: vast sync_up's CODE_SHA text: HEAD when clean; HEAD-dirty-<sha256(D)[:12]> with D = git diff HEAD plus the
     sorted untracked, not-ignored paths; staged-only changes count; ignored files do not; git failing raises."""
-    from experiments.phase2.vast import policy as P
+    from objdel.infra.vast import remote as RM
 
     git(tmp_path, "init", "-q")
     (tmp_path / ".gitignore").write_text("ignored.txt\n")
@@ -866,29 +866,29 @@ def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-qm", "one")
     head = git(tmp_path, "rev-parse", "HEAD").strip()
-    assert P.code_sha_text(tmp_path) == head and len(head) == 40
+    assert RM.code_sha_text(tmp_path) == head and len(head) == 40
     (tmp_path / "ignored.txt").write_text("x")
-    assert P.code_sha_text(tmp_path) == head
+    assert RM.code_sha_text(tmp_path) == head
 
     def suffix():
         d = subprocess.run(["git", "diff", "HEAD"], cwd=tmp_path, capture_output=True, check=True).stdout
         return hashlib.sha256(d).hexdigest()[:12]
 
     (tmp_path / "a.py").write_text("a = 2\n")
-    first = P.code_sha_text(tmp_path)
-    assert first == f"{head}-dirty-{suffix()}" and P.code_sha_text(tmp_path) == first
+    first = RM.code_sha_text(tmp_path)
+    assert first == f"{head}-dirty-{suffix()}" and RM.code_sha_text(tmp_path) == first
     (tmp_path / "a.py").write_text("a = 2\n#\n")
-    assert P.code_sha_text(tmp_path) not in (first, head)
+    assert RM.code_sha_text(tmp_path) not in (first, head)
     (tmp_path / "a.py").write_text("a = 1\n")
-    assert P.code_sha_text(tmp_path) == head  # modified, then reverted: clean
+    assert RM.code_sha_text(tmp_path) == head  # modified, then reverted: clean
     (tmp_path / "a.py").write_text("a = 3\n")
     git(tmp_path, "add", "a.py")
-    assert P.code_sha_text(tmp_path) == f"{head}-dirty-{suffix()}"  # staged only
+    assert RM.code_sha_text(tmp_path) == f"{head}-dirty-{suffix()}"  # staged only
     git(tmp_path, "reset", "-q", "--hard")
     (tmp_path / "new.py").write_text("b = 1\n")
-    assert P.code_sha_text(tmp_path) == f"{head}-dirty-{hashlib.sha256(b'new.py\n').hexdigest()[:12]}"
+    assert RM.code_sha_text(tmp_path) == f"{head}-dirty-{hashlib.sha256(b'new.py\n').hexdigest()[:12]}"
     with pytest.raises((subprocess.CalledProcessError, OSError)):  # never an empty or garbage CODE_SHA
-        P.code_sha_text(tmp_path / "missing")
+        RM.code_sha_text(tmp_path / "missing")
 
 
 SPECS = ROOT / "specs"
@@ -897,12 +897,13 @@ SPECS = ROOT / "specs"
 def test_a3_specs_are_valid_plans(monkeypatch):
     """I20 (E6.2: the plans are run specs): a3_measure.yaml holds one final_eval stage on lidc-val-edge then
     lidc-val-shifted (each split val and its own out), after the build-if-missing stage; a3_test.yaml one final_eval
-    stage on lidc-test-shifted; no nsys stage; policy.chain fills every placeholder and the runner adds -I to the -m
+    stage on lidc-test-shifted; no nsys stage; CH.chain fills every placeholder and the runner adds -I to the -m
     stages."""
     import time
 
     from experiments.phase2.vast import policy as P
     from objdel.core.spec import load_spec
+    from objdel.infra.vast import chain as CH
 
     sent, evals = [], {}
     run = {"deadline": time.time() + 1e5, "instance": 1, "dph": 0.5, "started": 0.0}
@@ -912,7 +913,7 @@ def test_a3_specs_are_valid_plans(monkeypatch):
     for name in ("a3_measure", "a3_test"):
         spec = load_spec(SPECS / f"{name}.yaml")
         (evals[name],) = [s for s in spec.stages if s.kind == "eval"]
-        chained = P.chain(SPECS / f"{name}.yaml", "r")
+        chained = CH.chain(SPECS / f"{name}.yaml", "r")
         assert not any("{" in x or "}" in x or "nsys_capture.sh" in x for s in chained for x in s), name
         P.cmd_run(SimpleNamespace(run_id="r", module=f"specs/{name}.yaml", args=[], cap_hours=1))
         assert "/opt/venv/bin/python -I -m experiments.phase2.final_eval" in sent[-1]
@@ -1080,10 +1081,10 @@ def test_no_phase_b_script_but_final_eval_scores_the_test_view():
                                                        *(ROOT / "src/objdel/train").glob("*.py")]
             if re.search(r"lidc-test|--split\W+test", p.read_text())]
     assert sorted(hits) == ["experiments/phase2/final_eval.py", "experiments/phase2/freeze_views.py"]
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as C
 
     for y in [*(ROOT / "experiments/phase2/configs").glob("*.yaml"), *(ROOT / "specs").glob("*.yaml")]:
-        for step in policy.chain(y, "r"):
+        for step in C.chain(y, "r"):
             if "lidc-test" in " ".join(step):
                 assert "experiments.phase2.final_eval" in step, (y.name, step)
 

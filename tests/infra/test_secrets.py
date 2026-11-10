@@ -1,11 +1,12 @@
-"""objdel.secrets: <repo>/.secrets first (name=value, mode 600 only), then the macOS keychain."""
+"""objdel.infra.secrets: <repo>/.secrets first (name=value, mode 600 only), then the macOS keychain."""
 from types import SimpleNamespace
 
 import pytest
 
-from objdel import secrets
+from objdel.core.provenance import repo_root
+from objdel.infra import secrets
 
-ROOT = secrets.ROOT
+ROOT = repo_root()
 
 
 def test_secrets_file_first_then_the_keychain(tmp_path, monkeypatch):

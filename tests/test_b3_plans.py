@@ -11,12 +11,12 @@ yaml = pytest.importorskip("yaml")
 
 def test_b3_v5_spec_holds_what_b3_launch_held():
     """E6.6: b3_launch.yaml is archived; the spec has b1's bundle_view and pushes its rl out, revision b3-v5."""
-    from experiments.phase2.vast import policy
     from objdel.core.spec import load_spec
+    from objdel.infra.vast import chain as C
 
     spec = load_spec(CONFIGS / "b3_v5.yaml")
     assert spec.bundle_view == load_spec(CONFIGS / "b1_rows.yaml").bundle_view
-    assert policy.push_target(spec, "x")[1:] == ("b3-v5", True)
+    assert C.push_target(spec, "x")[1:] == ("b3-v5", True)
 
 
 def test_b3_v5_holds_the_b3_9_steps_in_order():

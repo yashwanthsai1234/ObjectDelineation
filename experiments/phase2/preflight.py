@@ -341,8 +341,8 @@ def rows_revision(s: Inputs) -> list[str]:
         return []
     import huggingface_hub as hub
 
-    from experiments.phase2.hf_push import REPO
-    from objdel import secrets
+    from objdel.infra import secrets
+    from objdel.infra.hf import REPO
 
     bad, token = [], secrets.get("objdel-hf-write")
     for st in s.rows:

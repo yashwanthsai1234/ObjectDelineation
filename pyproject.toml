@@ -158,7 +158,7 @@ id = "layers-interim"  # E0 -> E2; each move commit sets its own list (Implement
 name = "objdel layers (current packages)"
 type = "layers"
 containers = ["objdel"]
-layers = ["train", "eval", "reward | targets", "data", "geom"]
+layers = ["infra", "train", "eval", "reward | targets", "data", "geom", "core"]
 exhaustive = false
 ignore_imports = [
     "objdel.eval.vision -> objdel.train.dataset",  # cycle edge; E5 removes it (vision moves to policy)
