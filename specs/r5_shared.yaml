@@ -12,6 +12,6 @@ stages:
   name: env_check
   argv: [bash, experiments/phase2/docker/env_check.sh, '{rd}/ckpt', '{rd}/env_check.json']
 - {kind: rl, name: base, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/prepared', out: '{rd}/base', steps: 15,
-  save_steps: 1000}
+  save_steps: 15}
 - {kind: rl, name: shared, soft: true, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/prepared', out: '{rd}/shared',
-  steps: 15, save_steps: 1000, shared_prefix: true}
+  steps: 15, save_steps: 15, shared_prefix: true}

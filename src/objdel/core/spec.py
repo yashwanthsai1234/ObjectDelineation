@@ -87,6 +87,9 @@ class TrainerFlags(BaseModel, frozen=True, extra="forbid"):
 Money = Annotated[float, Field(allow_inf_nan=False)]
 
 
+SAVE_STEPS = 50  # train_rl CLI default; E2.7 refuses any other save_steps above steps
+
+
 class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
     """A train_rl stage."""
 
@@ -97,7 +100,7 @@ class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
     train: str | None = None
     out: str
     steps: int | None = Field(None, ge=1)  # TRL reads max_steps <= 0 as "train num_train_epochs"
-    save_steps: int = Field(50, ge=1)
+    save_steps: int = Field(SAVE_STEPS, ge=1)  # a short smoke run on the default writes none
     resume: bool = False
     rows_revision: str | None = None
     rows_manifest_sha256: str | None = None
@@ -122,6 +125,8 @@ class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
     def _rules(self):
         if not self.merge_last and (self.train is None or self.steps is None):
             raise ValueError("train and steps are required (except with merge_last)")
+        if self.steps is not None and self.save_steps > self.steps and self.save_steps != SAVE_STEPS:
+            raise ValueError(f"save_steps {self.save_steps} > steps {self.steps} writes no checkpoint (E2.7)")
         if self.f_check and self.no_f_check:
             raise ValueError("f_check and no_f_check exclude each other")
         if self.expect_step1 and not self.encode_check:

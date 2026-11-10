@@ -7,6 +7,7 @@ kernels (goldens 3, 4) are in invariance.<sys.platform>-<machine>.json, and a pl
 import hashlib
 import json
 import platform
+import re
 import sys
 from dataclasses import astuple
 from pathlib import Path
@@ -193,6 +194,13 @@ def later_edits(argvs: list[list[str]]) -> list[list[str]]:
         for flag in next((f for m, f in dropped.items() if m in a), ()):
             while flag in a:
                 del a[a.index(flag):a.index(flag) + 2]
+        # E2.7 (owner, 2026-11-10): a speed arm saves once at its last step, not "never" (--save-steps 1000), and
+        # c0_base got the 30 min nsys limit of the other arms
+        if "--save-steps" in a and "--steps" in a and a[a.index("--save-steps") + 1] == "1000":
+            a[a.index("--save-steps") + 1] = a[a.index("--steps") + 1]
+        a = [re.sub(r"--steps (\d+)(\s+)--save-steps 1000", r"--steps \1\2--save-steps \1", x) for x in a]
+        a = [re.sub(r"^(bash experiments/phase2/docker/nsys_capture\.sh \S+ c0_base )", r"NSYS_TIMEOUT=1800 \1", x)
+             for x in a]
         out.append(a)
     return out
 

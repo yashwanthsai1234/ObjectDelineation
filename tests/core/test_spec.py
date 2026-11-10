@@ -242,3 +242,11 @@ def test_an_rl_stage_without_save_steps_saves_every_50():
     """E2.7: train_rl's CLI default (save_steps 50) is the stage default."""
     st = S.RlStage(model="m", ckpt="c", train="t", out="o", steps=260)
     assert st.save_steps == 50 and "save_steps" not in st.model_fields_set
+
+
+def test_an_rl_stage_refuses_save_steps_past_its_steps():
+    """E2.7: save_steps > steps would write no checkpoint, so the run could not resume; save_steps == steps is one at
+    the end."""
+    with pytest.raises(ValueError, match="save_steps"):
+        S.RlStage(model="m", ckpt="c", train="t", out="o", steps=20, save_steps=1000)
+    assert S.RlStage(model="m", ckpt="c", train="t", out="o", steps=20, save_steps=20).save_steps == 20

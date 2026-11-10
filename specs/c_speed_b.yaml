@@ -9,6 +9,6 @@ stages:
   argv: [bash, -c, 'NSYS_TIMEOUT=1800 bash experiments/phase2/docker/nsys_capture.sh {rd} c_fast_b 16 17 -- /opt/venv/bin/python
       -I -m experiments.phase2.train_rl --model qwen3-vl-2b --ckpt {rd}/ckpt --train {data}/rows/lidc-train-b1 --rows-revision
       34213dceb068128f1a1abf9c67aa65dd59bc1220 --rows-manifest-sha256 472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4
-      --out {rd}/c_fast_b --steps 40 --save-steps 1000 --shared-prefix --gpu-pixels auto --prompt-memo --host-meta --fast-sync
+      --out {rd}/c_fast_b --steps 40 --save-steps 40 --shared-prefix --gpu-pixels auto --prompt-memo --host-meta --fast-sync
       --grpo ''{{"vllm_enable_sleep_mode": true}}'' --checks-from-step 18 --check-rope-every 1 --check-meta-every 1 --record-batches
       {rd}/c_check/arm_batches_b --expect-step1 {rd}/c0_base/rl.json --encode-check {rd}/c_check/encoder.json']
