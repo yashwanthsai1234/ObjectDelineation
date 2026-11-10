@@ -1,4 +1,4 @@
-"""Content tests for the documentation tasks DOC1 and DOC2 (plan section DOC.9: I15, I18, X1, U19, I02).
+"""Content tests for the documentation tasks DOC1, DOC2, DOC8 and A9 (plan section DOC.9: I15, I18, X1, U19, I02, S08).
 
 Bad strings are built at run time so that this file never trips the scans it implements.
 """
@@ -180,3 +180,89 @@ def test_no_banner_in_python_or_dockerfiles():
     for rel in _tracked_or_new("src", "tests", "experiments"):
         if rel != "tests/test_docs_content.py" and (rel.endswith(".py") or Path(rel).name.startswith("Dockerfile")):
             assert BANNER not in _read(rel), rel
+
+
+# ---------------------------------------------------------------- A9 pages (S08) and DOC8
+
+
+def _ticks(rel: str) -> set[str]:
+    """The code spans of a page."""
+    return set(re.findall(r"`([^`\n]+)`", _read(rel)))
+
+
+def _a9_items():
+    """Key sets of the schema-2 files, taken from the code: final_eval.summarize on fake items, one metrics() call."""
+    import numpy as np
+
+    from experiments.phase2 import final_eval as FE
+    from objdel.eval import metrics
+
+    ids = [f"lidc/p{p}/n001/z{s}" for p in range(2) for s in range(2)]
+    items = [{"item_id": i, **{m: 0.5 + k / 10 for m in FE.METRICS}, **{m: 0.5 for m in FE.SELECTION}}
+             for k, i in enumerate(ids)]
+    items[0]["iou_tc"] = 0.05  # one miss, so that iou_found has a subset
+    summary = FE.summarize(items, {i: i.split("/")[1] for i in ids}, draws=20)
+    yy, xx = np.ogrid[:50, :50]
+    raters = {"nodule": np.stack([(yy - 25) ** 2 + (xx - 25) ** 2 <= r * r for r in (12, 14)])}
+    return summary, metrics(['{"nodule":[]}'] * 2, raters, 50, 50)
+
+
+def test_metrics_page_names_every_metric_and_the_ci_rules():
+    page = _read("docs/reference/metrics.md")
+    for word in ("fair ceiling", "`ci95_nodule`", "`ci95_patient`", "`ci95_item`", "`gate_ci`", "D²_GED", "HM-IoU8",
+                 "soft Dice", "NSD", "boundary IoU", "miss rate", "`iou_found`", "`sel_medoid`", "`sel_vote`",
+                 "`noise_floor.item_sd`", "`noise_floor.mean_sd`", "`cluster_t`", "CR1", "no BCa",
+                 "CIs exclude training-seed variance; a gain is a single-run result"):
+        assert word in page, word
+    for path in re.findall(r"`((?:src|experiments)/[\w/]+\.py)`", page):
+        assert (REPO / path).is_file(), path
+    summary, _ = _a9_items()
+    assert {"ged", "hm_iou", "soft_dice", "nsd", "boundary_iou", "miss_rate"} <= set(summary) and "`ged`" in page
+
+
+def test_output_format_page_lists_every_schema_2_key():
+    summary, m = _a9_items()
+    page, ticks = _read("docs/reference/output-format.md"), _ticks("docs/reference/output-format.md")
+    keys = {*summary, *summary["iou_tc"], *summary["miss_rate"], *summary["iou_found"], *summary["paired"],
+            *summary["paired"]["medoid_minus_mean"], *m, *m["samples"], *m["objects"]["nodule"], *m["groups"],
+            "item_id", "dataset", "group_id", "W", "H", "samples", "truncated", "tokens", "partial", "seconds",
+            "noise_floor", "item_sd", "mean_sd", "limit", "rescored_from", "view_manifest_sha256",
+            "view_content_sha256", "code_sha", "checker_build", "ckpt", "view", "split", "K", "seed", "metrics_absent",
+            "resummarized_from", "ci95_item", "ci95_nodule", "ci95_patient", "gate_ci"}
+    assert sorted(k for k in keys if k not in ticks) == []
+    assert "no bare `ci95`" in page and "CODE_SHA" in page
+
+
+def test_profiling_page_lists_the_range_names_and_the_gate_numbers():
+    from objdel.train import nvtx
+
+    page = _read("docs/guides/profiling.md")
+    names = re.search(r"Range names are fixed .*?: (.*?)\.\n", nvtx.__doc__, re.S)[1].replace("\n", " ").split(", ")
+    from test_nvtx import NAMES
+
+    assert set(names) == NAMES and len(names) == len(NAMES)
+    assert sorted(n for n in names if f"`{n}`" not in page) == []
+    for word in ("OBJDEL_NVTX", "OBJDEL_NVTX_SYNC", "nsys_capture.sh", "nsys_baseline", "GRAPH_TABLES", "graph_rows",
+                 "upper bound", "--profile-window", "--trace", "--count-syncs", "`coverage`", "0.90", "fallback"):
+        assert word in page, word
+
+
+def test_glossary_has_the_a9_terms():
+    ticks = {t.strip("*") for t in re.findall(r"^\| \*\*(.+?)\*\* \|", _read("docs/glossary.md"), re.M)}
+    wanted = {"fair ceiling", "medoid", "miss", "missed answer", "found image", "gate CI", "cluster", "doctor",
+              "sample"}
+    assert wanted - ticks == set()
+
+
+def test_the_item_ci_is_labelled_where_the_headline_is_quoted():
+    text = _read("docs/guides/evaluation.md")
+    assert "0.645 [0.633, 0.656]" in text and "item CI" in text
+    assert "[0.625, 0.664]" in text and "[0.628, 0.662]" in text
+
+
+def test_contributing_states_the_archive_rules():
+    text = _read("docs/contributing.md")
+    for part in ("What it was", "What replaced it", "Retiring commit", "How to restore"):  # test_docs.ARCHIVE_PARTS
+        assert part in text, part
+    assert "not built, not imported, not tested, not linted" in text
+    assert re.search(r'extend-exclude = \[.*"archive"', _read("pyproject.toml"))
