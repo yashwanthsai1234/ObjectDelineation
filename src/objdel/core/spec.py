@@ -9,15 +9,18 @@ do not live here.
 argv list (`soft`) when its failure must not stop the chain.
 """
 
+import argparse
 import json
+import math
 import re
 import string
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, BeforeValidator, Field, JsonValue, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, JsonValue, ValidationError, model_validator
 from pydantic_settings import CliApp, CliSettingsSource, CliSuppress
 
 HEX40, HEX64 = re.compile(r"[0-9a-f]{40}"), re.compile(r"[0-9a-f]{64}")
@@ -28,7 +31,7 @@ def _tuple(v):
     return tuple(v) if isinstance(v, list) else v
 
 
-TUPLE_FIELDS = {"view", "split", "out", "argv", "branches"}  # YAML lists; strict mode wants tuples
+TUPLE_FIELDS = {"view", "split", "out", "argv", "branches", "profile_window"}  # YAML lists; strict mode wants tuples
 
 
 class Base(BaseModel, frozen=True, extra="forbid"):
@@ -47,11 +50,38 @@ class StageBase(Base):
         return {k: _tuple(v) if k in TUPLE_FIELDS else v for k, v in d.items()} if isinstance(d, dict) else d
 
 
-class TrainerFlags(BaseModel):
-    """Flags that train_rl and g_probe share."""
+class TrainerFlags(BaseModel, frozen=True, extra="forbid"):
+    """Flags of the trainer that train_rl and g_probe build alike (g_probe.make_trainer reads each one)."""
 
+    lr: float | None = None  # None: configs.rl_lr(model)
     shared_prefix: bool = False
-    grpo: dict[str, JsonValue] | None = None
+    compile: Literal["default", "reduce-overhead"] | None = None
+    plain: bool = False  # TRL's GRPOTrainer as shipped, not FastGRPO (profile arm)
+    trace: str | None = None
+    grpo: dict[str, JsonValue] = {}  # GRPOConfig overrides
+    log_by_prompt: bool = False
+    fast_sync: bool = False
+    lora_sync: str | None = None
+    group_requests: bool = False
+    no_ckpt_layers: int | None = None
+    runaway_cap: float = Field(0, ge=0)
+    profile_window: tuple[int, int] | None = None
+    count_syncs: bool = False
+    host_meta: bool = False
+    check_meta_every: int = Field(50, ge=0)
+    check_rope_every: int = Field(50, ge=0)
+    prompt_memo: bool = False
+    gpu_pixels: Literal["off", "auto"] = "off"
+    allow_cpu_pixels: bool = False
+
+    @model_validator(mode="after")
+    def _window(self):
+        if self.profile_window and not 2 <= self.profile_window[0] <= self.profile_window[1]:
+            raise ValueError(f"profile_window {self.profile_window}: needs 2 <= S <= E")
+        return self
+
+
+Money = Annotated[float, Field(allow_inf_nan=False)]
 
 
 class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
@@ -63,19 +93,21 @@ class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
     ckpt: str
     train: str | None = None
     out: str
-    steps: int | None = None
-    save_steps: int = 50
+    steps: int | None = Field(None, ge=1)  # TRL reads max_steps <= 0 as "train num_train_epochs"
+    save_steps: int = Field(50, ge=1)
     resume: bool = False
-    lr: float | None = None
     rows_revision: str | None = None
     rows_manifest_sha256: str | None = None
-    budget_usd: float | None = None
-    session_start: float | None = None
-    rate_usd_per_h: float | None = None
-    fixed_usd: float | None = None
+    budget_usd: Money | None = Field(None, gt=0)
+    session_start: Money | None = Field(None, ge=0)  # None: OBJDEL_SESSION_START at run time (train_rl)
+    rate_usd_per_h: Money | None = Field(None, gt=0)
+    fixed_usd: Money | None = Field(None, ge=0)
     heldout: str | None = None
     heldout_items: int = 64
-    heldout_every: int = 50
+    heldout_every: int = Field(50, ge=1)
+    reward: Literal["v4", "v5"] = "v4"
+    numerics: str | None = None  # a configs.NUMERICS key; None: the B1 control (train_rl checks the name)
+    opsm_start_delta: float | None = None
 
     @model_validator(mode="after")
     def _rules(self):
@@ -124,7 +156,7 @@ class SftStage(StageBase, frozen=True, extra="forbid"):  # train_sft, minus the 
     def _rules(self):
         if self.vision:  # the check RunArgs makes in __post_init__
             ref = self.vision.get("reference")
-            num = isinstance(ref, int | float) and not isinstance(ref, bool) and ref > 0
+            num = isinstance(ref, int | float) and not isinstance(ref, bool) and math.isfinite(ref) and ref > 0
             if set(self.vision) != {"prepared", "reference"} or not (num or str(ref).endswith(".json")):
                 raise ValueError(f"vision {self.vision!r}: need {{prepared, reference}}, reference = R0's base "
                                  "projector distance (a positive number, or a .json file)")
@@ -143,8 +175,8 @@ class SelectStage(StageBase, frozen=True, extra="forbid"):  # select_ckpt
 
     kind: CliSuppress[Literal["select"]] = "select"
     run: str
-    prepared: str
-    probes: str
+    prepared: str | None = None  # the image-blind prior's training rows (not read under only)
+    probes: str | None = None
     sampler: Literal["vllm", "hf"] | None = None
     shifted: str | None = None
     rescaled: str | None = None
@@ -158,6 +190,7 @@ class SelectStage(StageBase, frozen=True, extra="forbid"):  # select_ckpt
     seed: int = 0
     timeout_s: float | None = None
     out: str | None = None
+    procs: int | None = Field(None, ge=1)  # scoring workers; None: serve.pool_size()
 
     @model_validator(mode="after")
     def _rules(self):
@@ -181,9 +214,7 @@ class ProbeStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # g_pro
     probe: str
     out: str
     items: int | None = None
-    compile: Literal["default", "reduce-overhead"] | None = None
-    plain: bool = False
-    trace: str | None = None
+    procs: int | None = Field(None, ge=1)  # scoring workers; None: serve.pool_size()
 
     @model_validator(mode="after")
     def _rules(self):
@@ -206,6 +237,7 @@ class EvalStage(StageBase, frozen=True, extra="forbid"):  # final_eval
     seed: int = 11
     per_call: int = Field(64, gt=0)
     rescore: str | None = None
+    limit: int | None = Field(None, ge=1)  # smoke runs: at most N items per view
 
     @model_validator(mode="after")
     def _rules(self):
@@ -233,18 +265,23 @@ STAGE_CLASSES = {c.model_fields["kind"].default: c for c in (RlStage, SftStage, 
 MODULE = {"rl": "train_rl", "sft": "train_sft", "select": "select_ckpt", "probe": "g_probe", "eval": "final_eval"}
 
 # The order of the flags in today's plans; `views` stands for the interleaved view, split and out of an eval stage.
+TRAINER_ORDER = ("fast_sync", "lora_sync", "group_requests", "no_ckpt_layers", "runaway_cap", "profile_window",
+                 "trace", "count_syncs", "host_meta", "check_meta_every", "check_rope_every", "prompt_memo",
+                 "gpu_pixels", "allow_cpu_pixels", "compile", "plain")
 FLAG_ORDER = {
-    "rl": ("merge_last", "model", "ckpt", "train", "out", "steps", "save_steps", "resume", "shared_prefix", "lr",
-           "rows_revision", "rows_manifest_sha256", "budget_usd", "session_start", "rate_usd_per_h", "fixed_usd",
-           "heldout", "heldout_items", "heldout_every", "grpo"),
+    "rl": ("merge_last", "model", "ckpt", "train", "out", "steps", "save_steps", "resume", "shared_prefix",
+           "log_by_prompt", "lr", "reward", "numerics", "opsm_start_delta", "grpo", "rows_revision",
+           "rows_manifest_sha256", "budget_usd", "session_start", "rate_usd_per_h", "fixed_usd", "heldout",
+           "heldout_items", "heldout_every", *TRAINER_ORDER),
     "sft": ("model", "view", "output_dir", "data_root", "run_dir", "model_path", "branches", "a0", "freeze_vision",
             "seed", "rolling_minutes", "vision", "vision_reference_only", "resume", "steps_per_epoch", "sft",
             "deterministic", "branches_from", "profile"),
     "select": ("run", "prepared", "probes", "sampler", "shifted", "rescaled", "rotated", "items", "vision",
-               "no_vision", "only", "model", "k", "seed", "timeout_s", "out"),
+               "no_vision", "only", "model", "k", "seed", "timeout_s", "out", "procs"),
     "probe": ("model", "ckpt", "select", "train", "probe", "out", "items", "grpo", "compile", "shared_prefix", "plain",
-              "trace"),
-    "eval": ("ckpt", "train", "views", "model", "k", "seed", "per_call", "rescore"),
+              "trace", "lr", "procs", "log_by_prompt", *(f for f in TRAINER_ORDER if f not in ("compile", "plain",
+                                                                                               "trace"))),
+    "eval": ("ckpt", "train", "views", "model", "k", "seed", "per_call", "rescore", "limit"),
 }
 
 
@@ -372,11 +409,37 @@ def _views(s: EvalStage, rd: str, data: str) -> list[str]:
 
 
 def cli_parse(cls: type[Stage], argv: Sequence[str]) -> Stage:
-    """The stage a CLI reads from its flags, in the one parser form (kebab flags, bare boolean flags)."""
+    """The stage a CLI reads from its flags, in the one parser form (kebab flags, bare boolean flags). "toggle", not
+    True: True gives argparse's BooleanOptionalAction, which reads every --no-* option as False (--no-vision)."""
     return CliApp.run(cls, cli_args=list(argv),
-                      cli_settings_source=CliSettingsSource(cls, cli_kebab_case=True, cli_implicit_flags=True))
+                      cli_settings_source=CliSettingsSource(cls, cli_kebab_case=True, cli_implicit_flags="toggle"))
 
 
 def same_stage(a: Stage, b: Stage) -> bool:
     """Equal but for `name` and `soft`, which belong to the spec only."""
     return a.model_dump(exclude={"name", "soft"}) == b.model_dump(exclude={"name", "soft"})
+
+
+def cli_stage(cls: type[Stage], argv: Sequence[str]) -> Stage:
+    """The stage a CLI runs. `--spec PATH --stage NAME [--rd RD] [--data DATA]` takes the stage NAME of a spec file
+    with {rd} and {data} filled (default runs/<spec name> and data, the Mac folders); any other argv is the CLI's own
+    flags (cli_parse). A broken rule exits 2 with the reason, as an argparse error does."""
+    argv = list(argv)
+    try:
+        if argv[:1] == ["--spec"]:
+            ap = argparse.ArgumentParser(prog=cls.__name__)
+            ap.add_argument("--spec", type=Path, required=True)
+            ap.add_argument("--stage", required=True)
+            ap.add_argument("--rd")
+            ap.add_argument("--data", default="data")
+            a = ap.parse_args(argv)
+            spec = load_spec(a.spec)
+            stage = next((s for s in spec.stages if s.name == a.stage), None)
+            if not isinstance(stage, cls):
+                ap.error(f"{a.spec} has no {cls.model_fields['kind'].default} stage named {a.stage!r}")
+            argv = to_argv(stage.model_copy(update={"soft": False}), a.rd or f"runs/{spec.name}", a.data)[2:]
+        return cli_parse(cls, argv)
+    except ValidationError as e:
+        why = "; ".join(f"{_flag(str(x['loc'][0])) + ': ' if x['loc'] else ''}{x['msg']}" for x in e.errors())
+        print(f"{cls.__name__}: error: {why}", file=sys.stderr)
+        raise SystemExit(2) from e

@@ -1,4 +1,5 @@
 """E6: the run spec (objdel.core.spec): strict loading, one definition of each flag, and a CLI round trip."""
+import json
 from pathlib import Path
 
 import pytest
@@ -167,3 +168,63 @@ def test_same_stage_ignores_only_name_and_soft():
     a = S.RlStage(name="a", soft=True, model="m", ckpt="c", train="t", out="o", steps=1)
     assert S.same_stage(a, a.model_copy(update={"name": "", "soft": False}))
     assert not S.same_stage(a, a.model_copy(update={"steps": 2}))
+
+
+CLI_STAGES = {"train_rl": S.RlStage, "g_probe": S.ProbeStage, "final_eval": S.EvalStage, "select_ckpt": S.SelectStage,
+              "train_sft": S.SftStage}
+
+
+@pytest.mark.parametrize("cli", CLI_STAGES)
+def test_cli_dest_names_equal_stage_fields(cli):
+    """U52: every flag of a CLI before E6.4 is a field of its stage, but the dropped ones; a stage adds only the
+    trainer flags its CLI did not have (the TrainerFlags mixin)."""
+    g = json.loads((ROOT / "tests/goldens/phase_e/cli_dests.json").read_text())[cli]
+    dests, dropped = set(g["dests"]), set(g["dropped"])
+    fields = set(CLI_STAGES[cli].model_fields) - {"kind", "name", "soft"}
+    added = set(S.TrainerFlags.model_fields) - dests if cli in ("train_rl", "g_probe") else set()
+    assert dests - dropped == fields - added and dropped <= dests and not dropped & fields
+
+
+def test_each_cli_gains_the_trainer_flags_it_lacked():
+    rl = S.cli_parse(S.RlStage, ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "2",
+                                 "--plain", "--compile", "default", "--profile-window", "2,3"])
+    assert (rl.plain, rl.compile, rl.profile_window) == (True, "default", (2, 3))
+    probe = S.cli_parse(S.ProbeStage, ["--model", "m", "--ckpt", "c", "--train", "t", "--probe", "p", "--out", "o",
+                                       "--lr", "5e-5"])
+    assert probe.lr == 5e-5
+    with pytest.raises(ValidationError, match="profile_window"):
+        S.RlStage(model="m", ckpt="c", train="t", out="o", steps=2, profile_window=(1, 3))
+
+
+def test_cli_stage_reads_a_spec_stage_with_its_folders(capsys):
+    spec = ROOT / "specs/b1_rows.yaml"
+    st = S.cli_stage(S.RlStage, ["--spec", str(spec), "--stage", "train", "--rd", RD, "--data", DATA])
+    want = next(s for s in S.load_spec(spec).stages if s.name == "train")
+    assert S.same_stage(st, type(want).model_validate(filled(want.model_dump(mode="json"))))
+    assert st.out == f"{RD}/b1-rows" and st.name == "" and not st.soft
+    for argv in (["--spec", str(spec), "--stage", "merge"], ["--spec", str(spec), "--stage", "nope"]):
+        with pytest.raises(SystemExit) as e:
+            S.cli_stage(S.EvalStage, argv)  # merge is an rl stage
+        assert e.value.code == 2
+    with pytest.raises(SystemExit) as e:
+        S.cli_stage(S.EvalStage, ["--ckpt", "c", "--rescore", "r", "--view", "v", "--out", "o"])
+    assert e.value.code == 2 and "exactly one of ckpt and rescore" in capsys.readouterr().err
+
+
+def test_a_flag_value_out_of_range_exits_2():
+    for argv in (["--steps", "0"], ["--budget-usd", "inf"], ["--session-start", "-1"], ["--save-steps", "0"]):
+        with pytest.raises(SystemExit) as e:
+            S.cli_stage(S.RlStage, ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "2",
+                                    *argv])
+        assert e.value.code == 2, argv
+
+
+
+def test_a_bool_field_named_no_x_parses_its_bare_flag_as_true():
+    """argparse's BooleanOptionalAction reads any option that starts with --no- as False, so the one parser form uses
+    store_true flags (cli_implicit_flags="toggle"); that is the old store_true form while every stage bool defaults
+    to False."""
+    sel = S.cli_parse(S.SelectStage, ["--run", "r", "--shifted", "s", "--no-vision"])
+    assert sel.no_vision is True and S.same_stage(S.cli_parse(S.SelectStage, S.to_argv(sel, "R", "D")[2:]), sel)
+    assert all(i.default is False for c in S.STAGE_CLASSES.values() for i in c.model_fields.values()
+               if i.annotation is bool)

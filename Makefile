@@ -25,7 +25,7 @@ test-all: $(EXT_STAMP) ## run every test, including the slow K1/K2 10k-case gate
 cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objdel; fails below 90 % (K13, as CI)
 	$(PY) -m pytest -q -m "not slow" --cov=objdel --cov-report=term-missing:skip-covered --cov-fail-under=90
 
-CONFIG ?= experiments/phase2/configs/r1_qwen3vl2b.yaml
+CONFIG ?= specs/b1_rows.yaml
 MODEL_REF ?= svenk029/objdel-sft@rl-full-3ep
 preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=...); launch needs its stamp
 	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG)

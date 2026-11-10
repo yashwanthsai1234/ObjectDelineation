@@ -25,6 +25,23 @@ CONFIGS = sorted(c for c in (ROOT / "experiments/phase2/configs").glob("*.yaml")
 CPU_SFT = {"per_device_train_batch_size": 1, "gradient_accumulation_steps": 1, "use_cpu": True, "bf16": False,
            "logging_steps": 1, "dataloader_num_workers": 0, "dataloader_persistent_workers": False,
            "dataloader_prefetch_factor": None}  # tiny CPU runs of train_sft
+RUNNER = ("stages", "sampler", "rows_plan")  # launch-config keys of the Vast runner, not SftStage fields
+
+
+def stage(model, view, output_dir, **kw):
+    """train_sft's SftStage in the old RunArgs order (model, view, output_dir)."""
+    from objdel.core.spec import SftStage
+
+    return SftStage(model=model, view=view, output_dir=output_dir, **kw)
+
+
+def stage_of(path: Path):
+    """The SftStage of a launch config (its runner-only keys dropped)."""
+    import yaml
+
+    from objdel.core.spec import SftStage
+
+    return SftStage(**{k: v for k, v in yaml.safe_load(path.read_text()).items() if k not in RUNNER})
 
 
 def _module(*args, env=None, timeout=900):
@@ -41,12 +58,11 @@ def test_help(script):
 
 
 @pytest.mark.parametrize("path", CONFIGS, ids=[p.stem for p in CONFIGS])
-def test_configs_parse_as_run_args(path):
-    yaml = pytest.importorskip("yaml")  # PyYAML comes with the train extra (transformers)
-    cfg = yaml.safe_load(path.read_text())
-    args = TS.RunArgs(**cfg)
+def test_configs_parse_as_sft_stages(path):
+    pytest.importorskip("yaml")  # PyYAML comes with the train extra (transformers)
+    args = stage_of(path)
     assert args.model in ("lfm2.5-vl-450m", "qwen3-vl-2b") and args.view.startswith("views/")
-    assert args.data_root == "data" and all(b > 0 for b in args.branches)
+    assert TS.resolve(args).data_root == "data" and all(b > 0 for b in args.branches)
     assert args.sft.get("gradient_accumulation_steps", 4) * args.sft.get("per_device_train_batch_size", 8) == 32  # D5
 
 
@@ -61,7 +77,7 @@ def test_plan_branches_decay_warmup():
     pytest.importorskip("trl")
     from objdel.train import configs
 
-    p = TS.plan(TS.RunArgs("lfm2.5-vl-450m", "v", "o"), 1000)
+    p = TS.plan(stage("lfm2.5-vl-450m", "v", "o"), 1000)
     assert p["branches"] == {"e0.5": {"at": 500, "decay": 75}, "e1": {"at": 1000, "decay": 150},
                              "e2": {"at": 2000, "decay": 300}}
     assert p["stable"] == 2000 and p["warmup"] == 60  # 3 % of the stable steps
@@ -333,9 +349,8 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
     """train_sft (G-vision at the branch points, WSD branches) then, for the LFM only, select_ckpt and g_probe: a random
     Qwen3-VL never stops, so its 1,536-token samples would take hours on a CPU."""
     pytest.importorskip("trl")
-    import yaml
-
     from experiments.phase2 import build_views as BV
+    from objdel.core.spec import to_argv
     from objdel.data import store
     from objdel.train import dataset
 
@@ -348,11 +363,11 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
            "branches": [0.5, 1.0], "steps_per_epoch": 8, "run_dir": str(tmp_path), "sft": CPU_SFT,
            "rolling_minutes": 1000.0,  # saves (and real G-vision checks) at the branch points only
            "vision": {"prepared": str(tmp_path / "evalview"), "reference": f"vision_ref/{name}.json"}}
-    (tmp_path / "run.yaml").write_text(yaml.safe_dump(cfg))
+    argv = to_argv(stage(**cfg), str(tmp_path), str(tmp_path))[1:]  # E6.4: the flag form the chain writes
     env = os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
     ref = tmp_path / f"vision_ref/{name}.json"
-    for extra in (["--vision_reference_only", "true"], []):  # R0's G-vision base reference, then the run
-        tr = _module("experiments.phase2.train_sft", "--config", str(tmp_path / "run.yaml"), *extra, env=env)
+    for extra in (["--vision-reference-only"], []):  # R0's G-vision base reference, then the run
+        tr = _module(*argv, *extra, env=env)
         assert tr.returncode == 0, tr.stderr[-4000:]
     assert json.loads(ref.read_text())["reference"] > 0
     man = json.loads((run / "manifest.json").read_text())

@@ -1,7 +1,12 @@
 """Phase 2 SFT with WSD decay branches (plan D5, D7, §3.2 ①): one stable run, then one decay continuation per branch.
 
-    python -I -m experiments.phase2.train_sft --config experiments/phase2/configs/r1_lfm.yaml [--resume true]
-    python -I -m experiments.phase2.train_sft --config <same> --vision_reference_only true   # R0: G-vision base ref
+    python -I -m experiments.phase2.train_sft --model qwen3-vl-2b --view views/lidc-bundle-v3 --output-dir r1 \
+        --vision '{"prepared": "prepared", "reference": "vision_ref/qwen3-vl-2b.json"}' [--resume]
+    python -I -m experiments.phase2.train_sft --spec specs/r1_qwen3vl2b.yaml --stage train [--rd RD] [--data DATA]
+    python -I -m experiments.phase2.train_sft <same> --vision-reference-only   # R0: G-vision base ref
+
+The flags are an objdel.core.spec.SftStage (cli_stage: one kebab flag per field, lists and dicts as JSON, a bare flag
+for True); the stage is frozen, so resolve() returns a resolved copy.
 
 Schedule (D5, configs.sft_config): warmup 3 % of the stable steps, constant LR, and per branch point b (epochs,
 default 0.5 / 1 / 2) a linear decay to 0 over 15 % of b. The stable run uses the deepest branch's schedule and stops
@@ -16,7 +21,7 @@ exists, decay/<b> once branches/<b> does) every `rolling_minutes`, each with the
 TV < 0.002 aborts with the reason in manifest.json (exit 3; D7 repair: freeze_vision), one alone warns.
 
 G-vision is required (D7, D12): `vision: {prepared, reference}`, reference = the base projector distance, a number or
-the JSON `--vision_reference_only true` writes in R0 (§4.7 step 8: base model, CPU, float32, vision.fixed_set).
+the JSON `--vision-reference-only` writes in R0 (§4.7 step 8: base model, CPU, float32, vision.fixed_set).
 `vision: off` only for the discarded timing runs; `vision: {}` is refused.
 
 Paths: view and vision.prepared under data_root ($OBJDEL_DATA_ROOT, else /workspace/data/lidc on a Vast box, else
@@ -27,8 +32,8 @@ Data: view_rows in view-epoch order, length-grouped within each epoch (seed data
 b passes over fresh views (D10); the view must hold max(b) + its decay epochs (checked before anything loads). No
 sampling here: select_ckpt starts after exit (D13). manifest.json: config, view hash, code SHA-256, step plan, G-vision
 log, pid, status and `timing` (stable optimizer steps, mean s/step after WARM steps, samples/s, effective batch, peak
-CUDA GiB or null, rows per view epoch: project_r1's inputs; a resumed segment keeps the first) and `peak_memory_gib` per
-phase (stable, e<b>). `--resume true` continues a crashed run (status "running", same config and view): the newest
+CUDA GiB or null, rows per view epoch; a resumed segment keeps the first) and `peak_memory_gib` per
+phase (stable, e<b>). `--resume` continues a crashed run (status "running", same config and view): the newest
 complete rolling checkpoint (refused if it is past a branch point whose stable/e<b> is missing), then each unsaved
 branch (from its own decay checkpoint when there is one). Full-FT checkpoints are loaded through from_pretrained (its
 key conversion; missing or unexpected keys raise). PYTORCH_ALLOC_CONF=expandable_segments:True unless set (D4).
@@ -36,8 +41,7 @@ key conversion; missing or unexpected keys raise). PYTORCH_ALLOC_CONF=expandable
 `deterministic: true` (D24, R0 timing arms): CUBLAS_WORKSPACE_CONFIG=:4096:8 unless set, and
 torch.use_deterministic_algorithms(True, warn_only=True), before anything loads; never `sft: full_determinism` (it
 sets CUDA_LAUNCH_BLOCKING=1). `branches_from: <run_dir-relative g_probe.json>` (C2, R-x8): branches = [depth of the
-checkpoint ("ckpt", e<depth>) with the final G-probe verdict]; none exits before anything is written. `stages` and
-`sampler` belong to the Vast runner (policy.chain) and are only recorded here.
+checkpoint ("ckpt", e<depth>) with the final G-probe verdict]; none exits before anything is written.
 
 `profile: <dir>` (timing runs only): torch.profiler traces optimizer step WARM + 2 (CPU ops, and CUDA
 kernels on a GPU) to <dir>/trace.json.gz (Perfetto / chrome://tracing) and <dir>/ops.txt (top ops by GPU and CPU time).
@@ -46,7 +50,7 @@ References:
 - transformers 5.20 get_wsd_schedule, Trainer resume (optimizer, scheduler, RNG, data skip), LengthGroupedSampler:
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/optimization.py ,
   https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/trainer.py
-- TRL (version pinned in pyproject.toml) SFTTrainer, TrlParser (--config YAML): https://huggingface.co/docs/trl/main/en/sft_trainer
+- TRL (version pinned in pyproject.toml) SFTTrainer: https://huggingface.co/docs/trl/main/en/sft_trainer
 - PEFT merge_and_unload: https://huggingface.co/docs/peft/main/en/package_reference/lora
 - WSD: Hu et al., MiniCPM (2404.06395); Hägele et al. (2405.18392)
 """
@@ -61,7 +65,6 @@ import shutil
 import socket
 import sys
 import time
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from objdel.hashing import file_sha256
@@ -75,47 +78,7 @@ SAME_RUN = ("model", "branches", "a0", "freeze_vision", "seed", "steps_per_epoch
 TRAINER_FILES = ("optimizer", "scheduler", "rng_state", "trainer_state", "adapter_")
 
 
-@dataclass
-class RunArgs:
-    model: str = field(metadata={"help": "objdel.train.configs.MODELS key"})
-    view: str = field(metadata={"help": "training view directory, relative to data_root (views/<view>)"})
-    output_dir: str = field(metadata={"help": "run directory, relative to run_dir"})
-    data_root: str = field(
-        default_factory=lambda: os.environ.get("OBJDEL_DATA_ROOT") or (str(BOX_DATA) if BOX_DATA.is_dir() else "data"),
-        metadata={"help": "$OBJDEL_DATA_ROOT, Vast bundle dir or data"})
-    run_dir: str = field(default_factory=lambda: os.environ.get("OBJDEL_RUN_DIR", "runs"),
-                         metadata={"help": "$OBJDEL_RUN_DIR (Vast: /workspace/runs/<RUN_ID>, set by run.sh) or runs"})
-    model_path: str | None = field(default=None, metadata={"help": "local weights (default MODELS[model])"})
-    branches: list[float] = field(default_factory=lambda: [0.5, 1.0, 2.0], metadata={"help": "epochs ([] = timing)"})
-    a0: bool = field(default=False, metadata={"help": "empty every holes list (A0)"})
-    freeze_vision: bool = field(default=False, metadata={"help": "D7 repair: tower and projector frozen"})
-    seed: int = 1
-    rolling_minutes: float = 10.0
-    vision: dict = field(default_factory=dict, metadata={"help": "{prepared, reference} for G-vision, or off"})
-    vision_reference_only: bool = field(default=False, metadata={"help": "R0: write vision.reference and exit"})
-    resume: bool = field(default=False, metadata={"help": "continue a crashed run in output_dir"})
-    steps_per_epoch: int | None = field(default=None, metadata={"help": "override (smoke tests, timing)"})
-    sft: dict = field(default_factory=dict, metadata={"help": "overrides of configs.sft_config"})
-    deterministic: bool = field(default=False, metadata={"help": "D24: use_deterministic_algorithms (timing arms)"})
-    branches_from: str | None = field(default=None, metadata={"help": "C2: g_probe.json under run_dir -> branches"})
-    profile: str | None = field(default=None, metadata={"help": "torch.profiler output dir (timing runs)"})
-    stages: list[str] = field(default_factory=list, metadata={"help": "Vast runner only (policy.chain)"})
-    sampler: str | None = field(default=None, metadata={"help": "Vast runner only (policy.chain)"})
-    rows_plan: str | None = field(default=None, metadata={
-        "help": "Vast runner only: the steps plan whose train_rl stage names the rows root (preflight ROWS checks)"})
-
-    def __post_init__(self):  # a bad G-vision config fails here, not at the first rolling checkpoint (BK3-5)
-        if self.vision in (False, "off"):
-            self.vision = False
-        elif self.vision:
-            ref = self.vision.get("reference")
-            num = isinstance(ref, (int, float)) and not isinstance(ref, bool) and math.isfinite(ref) and ref > 0
-            if set(self.vision) != {"prepared", "reference"} or not (num or str(ref).endswith(".json")):
-                raise ValueError(f"vision {self.vision!r}: need {{prepared, reference}}, reference = R0's base "
-                                 "projector distance (a positive number, or the .json --vision_reference_only writes)")
-
-
-def plan(args: RunArgs, steps_per_epoch: int) -> dict:
+def plan(args, steps_per_epoch: int) -> dict:
     """The step plan in optimizer steps: the stable run's length, and per branch its point and decay (as
     configs.sft_config computes them: warmup = 3 % of the stable steps, decay = 15 % of the branch point)."""
     from objdel.train.configs import DECAY, WARMUP
@@ -151,14 +114,19 @@ def probed_depth(path: Path) -> float:
     raise SystemExit(f"branches_from {path}: no G-probe verdict on a branch checkpoint ({why}): C2 must not start")
 
 
-def resolve(args: RunArgs) -> RunArgs:
-    """view and vision.prepared under data_root; output_dir and a vision.reference JSON under run_dir."""
-    args.view, args.output_dir = str(Path(args.data_root, args.view)), str(Path(args.run_dir, args.output_dir))
+def resolve(args):
+    """A copy of the SftStage with every path resolved: data_root ($OBJDEL_DATA_ROOT, else the Vast bundle dir, else
+    data) and run_dir ($OBJDEL_RUN_DIR, else runs) when unset; view and vision.prepared under data_root; output_dir and
+    a vision.reference JSON under run_dir. The input stage is unchanged."""
+    data = args.data_root or os.environ.get("OBJDEL_DATA_ROOT") or (str(BOX_DATA) if BOX_DATA.is_dir() else "data")
+    runs = args.run_dir if args.run_dir is not None else os.environ.get("OBJDEL_RUN_DIR", "runs")
+    new = {"data_root": data, "run_dir": runs, "view": str(Path(data, args.view)),
+           "output_dir": str(Path(runs, args.output_dir))}
     if args.vision:
         ref = args.vision["reference"]
-        args.vision = {"prepared": str(Path(args.data_root, args.vision["prepared"])),
-                       "reference": str(Path(args.run_dir, ref)) if isinstance(ref, str) else ref}
-    return args
+        new["vision"] = {"prepared": str(Path(data, args.vision["prepared"])),
+                         "reference": str(Path(runs, ref)) if isinstance(ref, str) else ref}
+    return args.model_copy(update=new)
 
 
 def reference(ref, model: str | None, set_sha256: str) -> float:
@@ -179,7 +147,7 @@ def load_items(cfg: dict, model: str | None) -> dict:
     return {"items": items, "set_sha256": sha, "reference": reference(cfg["reference"], model, sha)}
 
 
-def vision_reference(args: RunArgs) -> int:
+def vision_reference(args) -> int:
     """R0 (§4.7 step 8): projector_distance of the base model on the fixed set, CPU float32 (B1) -> vision.reference."""
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -188,7 +156,7 @@ def vision_reference(args: RunArgs) -> int:
     from objdel.train import configs
 
     if not (args.vision and isinstance(args.vision["reference"], str)):
-        raise ValueError("--vision_reference_only writes vision.reference: set it to a .json path")
+        raise ValueError("--vision-reference-only writes vision.reference: set it to a .json path")
     src = args.model_path or configs.MODELS[args.model]
     proc = AutoProcessor.from_pretrained(src, **configs.processor_kwargs(args.model, "lidc"))
     model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.float32).eval()
@@ -253,12 +221,13 @@ def replace_dir(write, dest: Path) -> None:
 
 
 def main(argv=None) -> int:
-    from trl import TrlParser
+    from objdel.core.spec import SftStage, cli_stage
 
-    return train(TrlParser([RunArgs]).parse_args_and_config(argv)[0])
+    return train(cli_stage(SftStage, sys.argv[1:] if argv is None else argv))
 
 
-def train(args: RunArgs) -> int:
+def train(args) -> int:
+    """One SFT run of an objdel.core.spec.SftStage."""
     os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")  # D4, read at the first CUDA allocation
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor, TrainerCallback
@@ -267,11 +236,11 @@ def train(args: RunArgs) -> int:
 
     from objdel.train import callbacks, configs, dataset
 
-    resolve(args)
+    args = resolve(args)
     if args.vision_reference_only:
         return vision_reference(args)
     if args.branches_from:
-        args.branches = [probed_depth(Path(args.run_dir, args.branches_from))]
+        args = args.model_copy(update={"branches": (probed_depth(Path(args.run_dir, args.branches_from)),)})
     if args.deterministic:  # D24, before CUDA and cuBLAS initialise
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         torch.use_deterministic_algorithms(True, warn_only=True)
@@ -291,8 +260,8 @@ def train(args: RunArgs) -> int:
     out.mkdir(parents=True, exist_ok=True)
     old = json.loads((out / "manifest.json").read_text()) if (out / "manifest.json").exists() else None
     if old and not args.resume:
-        raise ValueError(f"{out} holds a run: --resume true continues it, or pick another output_dir")
-    man = {"config": asdict(args), "code": code_hashes(), "vision": [], "log": {},
+        raise ValueError(f"{out} holds a run: --resume continues it, or pick another output_dir")
+    man = {"config": args.model_dump(mode="json", exclude={"kind", "name", "soft"}), "code": code_hashes(), "vision": [], "log": {},
            "view": {"dir": args.view, "view_hash": view.get("view_hash"),
                     "manifest_sha256": file_sha256(Path(args.view, "manifest.json"))}}
     if args.resume:

@@ -154,11 +154,15 @@ def test_train_views_is_gone(capsys, monkeypatch):
     assert not hasattr(serve, "_tagged")
 
 
-def test_budget_flags_need_a_session_start_and_a_rate(capsys, monkeypatch):
-    assert "session" in refused(capsys, *TRAIN, "--budget-usd", "2.05", "--rate-usd-per-h", "0.68",
-                                monkeypatch=monkeypatch)
-    assert "rate" in refused(capsys, *TRAIN, "--budget-usd", "2.05", "--session-start", "100",
-                             monkeypatch=monkeypatch)
+def test_budget_flags_need_a_session_start_and_a_rate(monkeypatch):
+    """U54: the check lives in session_budget (run time on the box), not in the stage: a spec loads on the Mac."""
+    from experiments.phase2 import train_rl
+
+    for argv, missing in ((["--rate-usd-per-h", "0.68"], "--session-start"),
+                          (["--session-start", "100"], "--rate-usd-per-h")):
+        a = parse(*TRAIN, "--budget-usd", "2.05", *argv, monkeypatch=monkeypatch)
+        with pytest.raises(train_rl.BudgetFlagError, match=missing):
+            train_rl.session_budget(a, {})
     a = parse(*TRAIN, "--budget-usd", "2.05", "--session-start", "100", "--rate-usd-per-h", "0.68",
               "--fixed-usd", "0.0975", monkeypatch=monkeypatch)
     assert (a.budget_usd, a.session_start, a.rate_usd_per_h, a.fixed_usd) == (2.05, 100.0, 0.68, 0.0975)
@@ -166,15 +170,21 @@ def test_budget_flags_need_a_session_start_and_a_rate(capsys, monkeypatch):
 
 
 def test_budget_flags_default_to_the_run_sh_environment(monkeypatch):
-    """I42 (train_rl side): run.sh exports the active run's start, rate and fixed cost; they are the defaults."""
+    """I42 (train_rl side), U54: run.sh exports the active run's start, rate and fixed cost; session_budget reads them
+    when the flag is left out (the stage holds None), and a flag wins."""
     from experiments.phase2 import train_rl
 
     env = {"OBJDEL_SESSION_START": "1700000000", "OBJDEL_RATE_USD_PER_H": "0.68", "OBJDEL_FIXED_USD": "0.0975"}
     a = parse(*TRAIN, "--budget-usd", "2.05", env=env, monkeypatch=monkeypatch)
-    cb = train_rl.budget_stop(a)
+    assert a.session_start is None
+    cb = train_rl.session_budget(a, env)
     assert (cb.rate, cb.cap, cb.start, cb.fixed) == (0.68, 2.05, 1700000000.0, 0.0975)
-    assert parse(*TRAIN, "--budget-usd", "2.05", "--fixed-usd", "0", env=env, monkeypatch=monkeypatch).fixed_usd == 0
-    assert train_rl.budget_stop(parse(*TRAIN, env=env, monkeypatch=monkeypatch)) is None
+    a = parse(*TRAIN, "--budget-usd", "2.05", "--fixed-usd", "0", env=env, monkeypatch=monkeypatch)
+    assert train_rl.session_budget(a, env).fixed == 0
+    assert train_rl.session_budget(parse(*TRAIN, env=env, monkeypatch=monkeypatch), env) is None
+    for bad in ("x", "inf", "-1"):
+        with pytest.raises(train_rl.BudgetFlagError, match="OBJDEL_SESSION_START"):
+            train_rl.session_budget(a, env | {"OBJDEL_SESSION_START": bad})
 
 
 def test_merge_last_needs_neither_steps_nor_train(capsys, monkeypatch):
@@ -341,7 +351,8 @@ def test_refusals_come_before_any_load(prepared, tmp_path, no_load, case, match)
     argv = ["--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "none"), "--train", str(root), "--out",
             str(tmp_path / "out"), "--steps", "3" if case == "block" else "4",
             "--grpo", json.dumps(grpo)]
-    argv += [] if case == "noflag" else ["--rows-manifest-sha256", "0" * 64 if case == "sha" else sha]
+    argv += [] if case == "noflag" else ["--rows-manifest-sha256", "0" * 64 if case == "sha" else sha,
+                                         "--rows-revision", "a" * 40]  # RlStage: both pins or neither
     with pytest.raises(ValueError, match=match):
         train_rl.main(argv)
 
@@ -399,7 +410,7 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
     assert float(env["OBJDEL_RATE_USD_PER_H"]) == pytest.approx(run["dph"] + 6 * run["inet_up_cost"])
     assert float(env["OBJDEL_FIXED_USD"]) == pytest.approx(15 * run["inet_down_cost"])
     a = parse(*TRAIN, "--budget-usd", "2.05", env=env, monkeypatch=monkeypatch)
-    cb = train_rl.budget_stop(a)
+    cb = train_rl.session_budget(a, env)
     t = run["started"] + 1.7 * H
     cb.clock = lambda: t
     monkeypatch.setenv("VAST_HOME", E.env["VAST_HOME"])
@@ -413,8 +424,11 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
 
 
 def test_numerics_defaults_to_the_b1_control(monkeypatch):
-    a = parse(*TRAIN, monkeypatch=monkeypatch)
-    assert a.numerics == "bf16-seqmask" and a.opsm_start_delta is None
+    from experiments.phase2 import train_rl
+
+    a = parse(*TRAIN, monkeypatch=monkeypatch)  # E6.4: an unset field is None, the B1 control resolved at use
+    assert a.numerics is None and a.opsm_start_delta is None
+    assert train_rl.numerics_overrides(a) == {"numerics": "bf16-seqmask"}
 
 
 def test_numerics_takes_the_presets_that_need_only_a_config(monkeypatch):
@@ -446,7 +460,7 @@ def test_the_grpo_json_cannot_set_the_opsm_threshold(capsys, monkeypatch):
     err = refused(capsys, *TRAIN, "--numerics", "bf16-tis-opsm", "--grpo", '{"off_policy_mask_threshold": 0.3}',
                   monkeypatch=monkeypatch)
     assert "--opsm-start-delta" in err
-    assert parse(*TRAIN, "--grpo", '{"beta": 0.01}', monkeypatch=monkeypatch).grpo == '{"beta": 0.01}'
+    assert parse(*TRAIN, "--grpo", '{"beta": 0.01}', monkeypatch=monkeypatch).grpo == {"beta": 0.01}
 
 
 def test_numerics_reach_the_grpo_config(tmp_path, monkeypatch):

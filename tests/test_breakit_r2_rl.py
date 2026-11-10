@@ -151,11 +151,9 @@ def test_seq_gaps_stay_one_block_per_step_with_logging_steps_override(tmp_path):
     assert data.size == 5 * rows * 3 and json.loads((d / "seq_gaps.json").read_text())["steps"] == 5
 
 
-@pytest.mark.xfail(strict=True, reason="BR2-rl-6: argparse runs type=float on the env defaults, so an exported but "
-                                       "empty OBJDEL_FIXED_USD / OBJDEL_SESSION_START / OBJDEL_RATE_USD_PER_H makes "
-                                       "every train_rl call exit 2, even one without --budget-usd")
 @pytest.mark.parametrize("var", ["OBJDEL_FIXED_USD", "OBJDEL_SESSION_START", "OBJDEL_RATE_USD_PER_H"])
 def test_empty_budget_env_does_not_break_a_run_without_budget(monkeypatch, var):
+    """BR2-rl-6, fixed at E6.4: the stage reads no environment; session_budget reads it only under --budget-usd."""
     from experiments.phase2 import train_rl
 
     monkeypatch.setenv(var, "")

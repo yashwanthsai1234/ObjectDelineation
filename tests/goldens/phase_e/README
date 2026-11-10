@@ -29,3 +29,7 @@ tests_import_experiments gains the round-2 break-it files and test_gpu_active.py
 Third lane merge (impl2 0d3acf7, 2026-11-09): host_syncs train/fast.py 25 -> 32 (C4 steps 3-4 host_meta windows and
 the numpy staging copy, C2 steps 2-3 rope routing check) and train/callbacks.py 0 -> 2 (B2.2 OpsmDelta: the masked
 share and the q99.5 delta); tests_import_experiments gains the GPUprep and C lane test files; old_names re-recorded.
+cli_dests.json             U52: per CLI the argparse dest names (train_sft: the RunArgs fields) read on the tree just
+                           before E6.4 replaced the argparse tables with cli_parse, and the dests that leave the stage
+                           (final_eval reads --hash-view, --resummarize and --store before cli_parse; train_sft's
+                           runner-only keys). Recorded once; it cannot be recorded again after E6.4.

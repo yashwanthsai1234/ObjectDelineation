@@ -5,6 +5,10 @@
     python -I -m experiments.phase2.train_rl --model qwen3-vl-2b --ckpt {rd}/ckpt --train {data}/rows/lidc-train-b1
         --rows-revision <hex40> --rows-manifest-sha256 <hex64> --out {rd}/b1-rows --steps 260 --budget-usd 2.05
     python -I -m experiments.phase2.train_rl --merge-last --model qwen3-vl-2b --ckpt {rd}/ckpt --out {rd}/b1-rows
+    python -I -m experiments.phase2.train_rl --spec specs/b1_rows.yaml --stage train [--rd RD] [--data DATA]
+
+The flags are an objdel.core.spec.RlStage (cli_stage: one flag per field, --grpo as JSON, --profile-window S,E);
+train_rl adds the rules that need objdel.train (the numerics preset names, the --grpo keys it owns).
 
 The trainer is the G-probe's (g_probe.make_trainer): FastGRPO with OpenOnce and ImageMemo, vLLM colocate drawing,
 scoring on the GPU next to the CUDA checker, G = 8, 32 LIDC train prompts per step, the probe LR unless --lr.
@@ -24,8 +28,8 @@ model folder (select_ckpt, final_eval and vLLM read it unchanged). --merge-last 
 checkpoint of a run that did not reach its end (rl.json: partial true), and nothing when <out>/final exists.
 
 Budget. --budget-usd stops and saves (callbacks.BudgetStop) when the session spend --fixed-usd + hours since
---session-start x --rate-usd-per-h reaches it; run.sh exports OBJDEL_SESSION_START, OBJDEL_RATE_USD_PER_H and
-OBJDEL_FIXED_USD from the active run, the flags' defaults.
+--session-start x --rate-usd-per-h reaches it; a flag left out is read from OBJDEL_SESSION_START, OBJDEL_RATE_USD_PER_H
+and OBJDEL_FIXED_USD (run.sh exports them from the active run) at run time, by session_budget, not by the stage.
 
 Held-out curve (off by default): --heldout VIEW evaluates --heldout-items val-shape items (splits.val_half) of that
 eval view every --heldout-every steps, 8 answers each; rl.json "eval" holds eval/iou_tc and eval/allmiss_share.
@@ -34,12 +38,11 @@ eval view every --heldout-every steps, 8 answers each; rl.json "eval" holds eval
 c_topo, loc_width, area_gate), rows provenance, timing and TRL's log. --reward v5 trains on reward v5 and adds
 callbacks.LocGuard (stop and save; loc_guard_stopped).
 """
-import argparse
 import gc
 import hashlib
 import json
+import math
 import os
-import re
 import shutil
 import sys
 import time
@@ -49,106 +52,25 @@ from pathlib import Path
 NEEDS_FASTGRPO = ("lora-seqmask",)
 
 
-def _finite(lo_open: bool):
-    def check(s: str) -> float:
-        if not (0 < (x := float(s)) if lo_open else 0 <= (x := float(s))) or x == float("inf"):
-            raise argparse.ArgumentTypeError(f"{s!r}: needs a finite number {'> 0' if lo_open else '>= 0'}")
-        return x
-    return check
-
-
-def _hex(n: int):
-    def check(s: str) -> str:
-        if not re.fullmatch(f"[0-9a-f]{{{n}}}", s):
-            raise argparse.ArgumentTypeError(f"{s!r}: needs exactly {n} lowercase hex digits")
-        return s
-    return check
-
-
-def parse(argv=None) -> argparse.Namespace:
+def parse(argv=None):
+    """The RlStage of the flags (or of --spec/--stage), and the rules that need objdel.train; exit 2 on a broken one."""
+    from objdel.core.spec import RlStage, cli_stage
     from objdel.train import configs
 
-    env = os.environ.get
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
-    ap.add_argument("--model", required=True, help="configs.MODELS key")
-    ap.add_argument("--ckpt", type=Path, required=True, help="the checkpoint to tune (a plain model folder)")
-    ap.add_argument("--train", type=Path, help="prepared or rows root with lidc/train.jsonl and caches")
-    ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--steps", type=int, help="optimizer steps in total (a resumed run included)")
-    ap.add_argument("--save-steps", type=int, default=50, help="checkpoint every N steps (default 50)")
-    ap.add_argument("--log-by-prompt", action="store_true",
-                    help="rl.json logs rewards/iou_tc/by_prompt per step (b2_summary's paired bootstrap reads it)")
-    ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
-    ap.add_argument("--fast-sync", action="store_true",
-                    help="C5: the vLLM weight push in one load_weights call (vllm_sync), not TRL's per-parameter loop")
-    ap.add_argument("--lora-sync", type=Path, metavar="DIR",
-                    help="C5 option F: vLLM serves the adapter, written to DIR (a tmpfs folder) at each sync")
-    ap.add_argument("--group-requests", action="store_true",
-                    help="C6: vLLM gets one request with n = num_generations per prompt, not n = 1 per row")
-    ap.add_argument("--no-ckpt-layers", type=int, metavar="K",
-                    help="C9 arm (a): gradient checkpointing off on the last K text decoder layers")
-    ap.add_argument("--lr", type=float, help="learning rate (default: the G-probe's, LoRA or full FT)")
-    ap.add_argument("--resume", action="store_true", help="continue from the last <out>/trainer/checkpoint-N")
-    ap.add_argument("--merge-last", action="store_true",
-                    help="no training: merge the last checkpoint into --ckpt as <out>/final unless it exists")
-    ap.add_argument("--rows-revision", type=_hex(40), help="HF commit of the rows root (provenance in rl.json)")
-    ap.add_argument("--rows-manifest-sha256", type=_hex(64), help="SHA-256 of the rows root's manifest.json")
-    ap.add_argument("--budget-usd", type=_finite(True), help="stop and save when the session spend reaches this")
-    ap.add_argument("--session-start", type=_finite(False), default=env("OBJDEL_SESSION_START"),
-                    help="unix time the rental started (default: $OBJDEL_SESSION_START)")
-    ap.add_argument("--rate-usd-per-h", type=_finite(True), default=env("OBJDEL_RATE_USD_PER_H"),
-                    help="USD per hour, bandwidth included (default: $OBJDEL_RATE_USD_PER_H)")
-    ap.add_argument("--fixed-usd", type=_finite(False), default=env("OBJDEL_FIXED_USD", "0"),
-                    help="one-off USD of the session (default: $OBJDEL_FIXED_USD, else 0)")
-    ap.add_argument("--heldout", type=Path, help="eval view for the held-out curve (val-shape items only)")
-    ap.add_argument("--heldout-items", type=int, default=64)
-    ap.add_argument("--heldout-every", type=int, default=50)
-    ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config")
-    ap.add_argument("--runaway-cap", type=float, default=0, metavar="FACTOR",
-                    help="C11: cap each answer at min(L, ceil(FACTOR x its doctor outline) + 64) tokens "
-                         "(0 = off); needs mask_truncated_completions false in --grpo")
-    ap.add_argument("--reward", choices=("v4", "v5"), default="v4",
-                    help="reward spec (objdel.reward.REWARDS); v5 adds callbacks.LocGuard (default v4)")
-    ap.add_argument("--numerics", choices=sorted(configs.NUMERICS), default=configs.DEFAULT_NUMERICS,
-                    help="configs.NUMERICS preset (default: the B1 control)")
-    ap.add_argument("--opsm-start-delta", type=float,
-                    help="off_policy_mask_threshold of steps 1-20; only with --numerics bf16-tis-opsm (B2.4 rule 4)")
-    ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
-                    help="NVTX step ranges and a cudaProfilerApi capture of steps S..E (nsys_capture.sh; S >= 2)")
-    ap.add_argument("--trace", help="torch.profiler trace of one step to this dir: step S with --profile-window, "
-                                    "else step 3 (the nsys fallback)")
-    ap.add_argument("--count-syncs", action="store_true", help="C0: log perf/host_syncs/<phase> (torch sync warnings)")
-    ap.add_argument("--host-meta", action="store_true",
-                    help="C4: row lengths, image ids and groups from vLLM's host lists in the batch (host_meta)")
-    ap.add_argument("--check-meta-every", type=int, default=50, metavar="N",
-                    help="with --host-meta: compare host_meta with the device masks on steps 1, N+1, ... (0: never)")
-    ap.add_argument("--check-rope-every", type=int, default=50, metavar="N",
-                    help="C2, with --host-meta: compare the template rope positions with HF on steps 1, N+1, ... "
-                         "(0: never)")
-    ap.add_argument("--prompt-memo", action="store_true",
-                    help="C2: tokenize one prompt per (rendered text, image sizes) before vLLM, not every row")
-    ap.add_argument("--gpu-pixels", choices=("off", "auto"), default="off",
-                    help="C1: prepare pixel values on the GPU after a start-up self-check (default off: the CPU path)")
-    ap.add_argument("--allow-cpu-pixels", action="store_true",
-                    help="with --gpu-pixels auto: keep the CPU processor when no GPU backend passes, instead of failing")
-    a = ap.parse_args(argv)
-    if not a.merge_last and (a.train is None or a.steps is None):
-        ap.error("--train and --steps are required (except with --merge-last)")
-    for k in ("steps", "save_steps", "heldout_every"):  # TRL reads max_steps <= 0 as "train num_train_epochs"
-        if getattr(a, k) is not None and getattr(a, k) < 1:
-            ap.error(f"--{k.replace('_', '-')} {getattr(a, k)}: needs >= 1")
-    if a.budget_usd is not None and a.session_start is None:
-        ap.error("--budget-usd needs a session start: --session-start or OBJDEL_SESSION_START (run.sh exports it)")
-    if a.budget_usd is not None and a.rate_usd_per_h is None:
-        ap.error("--budget-usd needs a rate: --rate-usd-per-h or OBJDEL_RATE_USD_PER_H (run.sh exports it)")
+    a = cli_stage(RlStage, sys.argv[1:] if argv is None else argv)
+
+    def error(msg: str):
+        print(f"train_rl: error: {msg}", file=sys.stderr)
+        sys.exit(2)
+
+    if a.numerics is not None and a.numerics not in configs.NUMERICS:
+        error(f"--numerics {a.numerics}: one of {sorted(configs.NUMERICS)}")
     if a.numerics in NEEDS_FASTGRPO:
-        ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM LoRA serving, B2.2), not built yet")
+        error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM LoRA serving, B2.2), not built yet")
     if a.opsm_start_delta is not None and (a.numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
-        ap.error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
-    if "off_policy_mask_threshold" in json.loads(a.grpo):
-        ap.error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
-    if a.profile_window and not 2 <= a.profile_window[0] <= a.profile_window[1]:
-        ap.error(f"--profile-window {a.profile_window}: needs 2 <= S <= E")
+        error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
+    if "off_policy_mask_threshold" in a.grpo:
+        error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     return a
 
 
@@ -158,7 +80,7 @@ def check_flags(a) -> None:
     more capping)."""
     from objdel.train import configs
 
-    over = json.loads(a.grpo)
+    over = a.grpo
     budget = configs.MAX_COMPLETION[a.model]
     if over.get("max_completion_length", budget) > budget:
         raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
@@ -170,17 +92,40 @@ def check_flags(a) -> None:
 
 def numerics_overrides(a) -> dict:
     """The grpo_config arguments of --numerics and --opsm-start-delta (absent: the preset's own threshold)."""
-    return {"numerics": a.numerics} | ({} if a.opsm_start_delta is None
+    from objdel.train import configs
+
+    return {"numerics": a.numerics or configs.DEFAULT_NUMERICS} | ({} if a.opsm_start_delta is None
                                        else {"off_policy_mask_threshold": a.opsm_start_delta})
 
 
-def budget_stop(a):
-    """callbacks.BudgetStop of the budget flags, or None without --budget-usd."""
+class BudgetFlagError(ValueError):
+    """--budget-usd without a session start or a rate (neither a flag nor its environment variable)."""
+
+
+def session_budget(a, environ=os.environ):
+    """callbacks.BudgetStop of the budget flags, or None without --budget-usd. A session flag left out is read from
+    its environment variable (run.sh exports them; empty counts as unset); the flag wins. Each value is finite and
+    >= 0, the rate > 0."""
     if a.budget_usd is None:
         return None
+    got = {}
+    for field, var in (("session_start", "OBJDEL_SESSION_START"), ("rate_usd_per_h", "OBJDEL_RATE_USD_PER_H"),
+                       ("fixed_usd", "OBJDEL_FIXED_USD")):
+        v = getattr(a, field)
+        if v is None and environ.get(var):
+            try:
+                v = float(environ[var])
+            except ValueError:
+                v = math.nan
+            if not math.isfinite(v) or v < 0 or (v == 0 and field == "rate_usd_per_h"):
+                raise BudgetFlagError(f"{var}={environ[var]!r}: needs a finite number >= 0 (the rate > 0)")
+        got[field] = v
+    for field, var in (("session_start", "OBJDEL_SESSION_START"), ("rate_usd_per_h", "OBJDEL_RATE_USD_PER_H")):
+        if got[field] is None:
+            raise BudgetFlagError(f"--budget-usd needs --{field.replace('_', '-')} or {var} (run.sh exports it)")
     from objdel.train.callbacks import BudgetStop
 
-    return BudgetStop(a.rate_usd_per_h, a.budget_usd, a.session_start, fixed_usd=a.fixed_usd)
+    return BudgetStop(got["rate_usd_per_h"], a.budget_usd, got["session_start"], fixed_usd=got["fixed_usd"] or 0.0)
 
 
 def _sha(b: bytes) -> str:
@@ -276,14 +221,15 @@ def merge_last(a) -> int:
 
     from experiments.phase2.g_probe import save_json
 
-    final = a.out / "final"
-    if (final / "config.json").is_file() and any(final.glob("*.safetensors")) and (a.out / "rl.json").is_file():
+    out = Path(a.out)
+    final = out / "final"
+    if (final / "config.json").is_file() and any(final.glob("*.safetensors")) and (out / "rl.json").is_file():
         print(f"{final} exists: nothing to merge")
         return 0
     shutil.rmtree(final, ignore_errors=True)  # a half-written final (the box died inside save_final)
-    last = get_last_checkpoint(str(a.out / "trainer")) if (a.out / "trainer").is_dir() else None
+    last = get_last_checkpoint(str(out / "trainer")) if (out / "trainer").is_dir() else None
     if last is None:
-        print(f"--merge-last: no checkpoint in {a.out / 'trainer'}", file=sys.stderr)
+        print(f"--merge-last: no checkpoint in {out / 'trainer'}", file=sys.stderr)
         return 1
     from peft import PeftModel
     from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -291,11 +237,11 @@ def merge_last(a) -> int:
     from objdel.train import configs
 
     model = PeftModel.from_pretrained(AutoModelForImageTextToText.from_pretrained(a.ckpt), last)
-    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs(a.model, "lidc")), a.out)
-    return save_json(a.out / "rl.json", {
+    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs(a.model, "lidc")), out)
+    return save_json(out / "rl.json", {
         "model": a.model, "steps": int(Path(last).name.split("-")[1]), "partial": True, "merged_from": last,
         "ckpt": str(a.ckpt),
-        "final": str(a.out / "final"),
+        "final": str(final),
     }, keys=("steps", "partial", "merged_from"))
 
 
@@ -307,7 +253,7 @@ def with_caps(train, a):
 
     tok = AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs(a.model, "lidc")).tokenizer
     caps = runaway.row_caps(train["key"], dataset.records(a.train, "lidc", "train"),
-                            lambda text: dataset.target_tokens(tok, text), json.loads(a.grpo).get("max_completion_length", configs.MAX_COMPLETION[a.model]),
+                            lambda text: dataset.target_tokens(tok, text), a.grpo.get("max_completion_length", configs.MAX_COMPLETION[a.model]),
                             a.runaway_cap, runaway.MARGIN)
     return train.add_column("cap", caps)
 
@@ -323,18 +269,23 @@ def main(argv=None) -> int:
 
     check_flags(a)
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
-    stop = budget_stop(a)
+    try:
+        stop = session_budget(a)
+    except BudgetFlagError as e:
+        print(f"train_rl: error: {e}", file=sys.stderr)
+        return 2
+    out = Path(a.out)
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=1 if schedule else dataset.DISAGREEMENT_OVERSAMPLE)
     if schedule:
         check_rows(train["key"], schedule)
     if a.runaway_cap:
         train = with_caps(train, a)
     heldout = heldout_rows(a.heldout, a.heldout_items) if a.heldout else None
-    last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
+    last = get_last_checkpoint(str(out / "trainer")) if a.resume and (out / "trainer").is_dir() else None
     if a.resume and last is None:
-        print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
+        print(f"--resume: no checkpoint in {out / 'trainer'}; starting at step 0", file=sys.stderr)
     start = int(Path(last).name.split("-")[1]) if last else 0
-    cut_seq_gaps(a.out / "trainer", start)
+    cut_seq_gaps(out / "trainer", start)
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
@@ -347,20 +298,20 @@ def main(argv=None) -> int:
 
     spec = REWARDS[a.reward]
     guard = LocGuard() if a.reward == "v5" else None
-    trainer, proc, lr = make_trainer(a, a.ckpt, train, a.steps, eval_dataset=heldout, check=check,
+    trainer, proc, lr = make_trainer(a, Path(a.ckpt), train, a.steps, eval_dataset=heldout, check=check,
                                      calls=[c for c in (stop, guard) if c], reward=spec, **over)
     t0 = time.time()
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
-    save_final(trainer.accelerator.unwrap_model(trainer.model), proc, a.out)
+    save_final(trainer.accelerator.unwrap_model(trainer.model), proc, out)
     done = trainer.state.global_step
     log, cfg = trainer.state.log_history, trainer.args
     rows = schedule and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
                          "ids_sha256": schedule["ids_sha256"]}
-    return save_json(a.out / "rl.json", {
+    return save_json(out / "rl.json", {
         "model": a.model, "steps": done, "lr": lr, "ckpt": str(a.ckpt), "resumed_from": last,
-        "final": str(a.out / "final"),
-        "numerics": a.numerics,
+        "final": str(out / "final"),
+        "numerics": numerics_overrides(a)["numerics"],
         "opsm_start_delta": a.opsm_start_delta if a.opsm_start_delta is not None else cfg.off_policy_mask_threshold,
         "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
         "max_completion_length": cfg.max_completion_length,

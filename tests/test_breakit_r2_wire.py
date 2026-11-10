@@ -22,13 +22,6 @@ OFFER = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
 # ---------------------------------------------------------------- preflight stamp
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BR2-wire-1: refusal() guards the stamp keys (BR1-wire-9), not their types: "
-    "a stamp that is JSON null / a list, or has hashes: null or a check that is not "
-    "a dict, raises AttributeError / TypeError out of refusal(), so cmd_launch "
-    "crashes with a traceback instead of the 'preflight gate' die",
-)
 @pytest.mark.parametrize(
     "stamp",
     [
@@ -40,11 +33,12 @@ OFFER = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
     ],
 )
 def test_refusal_of_a_wrongly_typed_stamp_is_a_string(tmp_path, monkeypatch, stamp):
+    """BR2-wire-1: a stamp of the wrong shape, for this spec's path, refuses with a reason (no traceback)."""
     c = tmp_path / "cfg.yaml"
     c.write_text("a: 1\n")
     monkeypatch.setattr(PF, "stamp_path", lambda cfg: tmp_path / "s.json")
     monkeypatch.setattr(PF, "hashes", lambda cfg: {"code": "1", "config": "2", "data": "3"})
-    (tmp_path / "s.json").write_text(stamp)
+    (tmp_path / "s.json").write_text(stamp.replace('{"pass"', f'{{"config": {json.dumps(str(c.resolve()))}, "pass"'))
     assert isinstance(PF.refusal(c), str)
 
 
@@ -100,7 +94,7 @@ def test_an_empty_schedule_is_not_an_unscheduled_root(stub):
     raw = json.dumps({"schedule": {}}).encode()
     (stub.root / "manifest.json").write_bytes(raw)
     try:
-        TR.main([*stub.argv, "--rows-manifest-sha256", hashlib.sha256(raw).hexdigest()])
+        TR.main([*stub.argv, "--rows-manifest-sha256", hashlib.sha256(raw).hexdigest(), "--rows-revision", "a" * 40])
     except (ValueError, KeyError, SystemExit):
         return  # refusing the empty schedule is right
     assert stub.trainers == [] or stub.trainers[0]["check"] is not None, "trained shuffled with no schedule guards"

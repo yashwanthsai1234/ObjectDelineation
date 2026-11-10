@@ -3,9 +3,7 @@
 recovery sequence needs them, and the money block gives a cap that fits the $3 hard stop. Like tests/test_b1_plans.py:
 a missing flag fails here and not on the paid box."""
 
-import argparse
 import csv
-import importlib
 import json
 import shlex
 import subprocess
@@ -14,6 +12,7 @@ from pathlib import Path
 import pytest
 
 yaml = pytest.importorskip("yaml")
+from test_b1_plans import parse_step  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "experiments/phase2/configs"
@@ -129,28 +128,6 @@ def test_every_output_lands_under_the_run_folder_and_only_val_is_read():
 # --- every module step parses with its module's own parser ------------------------------------------------------
 
 
-class Parsed(Exception):
-    pass
-
-
-def parse_step(step: list[str]) -> argparse.Namespace:
-    w = words(step)
-    assert w[0] == "-m"
-    mod = importlib.import_module(w[1])
-    real = argparse.ArgumentParser.parse_args
-
-    def stop(self, args=None, namespace=None):
-        raise Parsed(real(self, args, namespace))
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(argparse.ArgumentParser, "parse_args", stop)
-        try:
-            mod.main(w[2:])
-        except Parsed as p:
-            return p.args[0]
-    raise AssertionError(f"{w[1]}.main never parsed its arguments")
-
-
 def test_every_module_step_parses_with_its_module():
     pytest.importorskip("trl")
     found = [s for s in steps() if words(s)[0] == "-m" and words(s)[1].startswith("experiments.phase2.")]
@@ -194,8 +171,8 @@ def test_rl_smoke_is_one_block_with_one_lost_run_recovery():
     assert a.save_steps == r.save_steps == 10 and a.steps % a.save_steps == 0 and a.save_steps < a.steps
     assert a.shared_prefix and r.shared_prefix and a.lr == r.lr == b1.lr and not a.resume and r.resume
     assert m.merge_last and not a.merge_last and not r.merge_last
-    assert a.out == m.out == r.out and a.ckpt == m.ckpt == r.ckpt == Path(f"{RD}/ckpt")
-    assert a.train == r.train == b1.train == Path(f"{DATA}/rows/lidc-train-b1")
+    assert a.out == m.out == r.out and a.ckpt == m.ckpt == r.ckpt == f"{RD}/ckpt"
+    assert a.train == r.train == b1.train == f"{DATA}/rows/lidc-train-b1"
     assert (a.rows_revision, a.rows_manifest_sha256) == (r.rows_revision, r.rows_manifest_sha256) \
         == (b1.rows_revision, b1.rows_manifest_sha256)
     assert a.budget_usd == r.budget_usd == pytest.approx(raw()["budget"]["budget_stop_usd"])
@@ -238,19 +215,12 @@ def test_rows_pins_equal_the_b1_rows_pins_and_resolve_for_fetch_hf():
             assert after(s, "--rows-revision") == rev and after(s, "--rows-manifest-sha256") == sha
 
 
-def test_launch_config_is_the_run_args_file_and_preflight_reads_the_rows_pin():
-    from experiments.phase2 import preflight
-
+def test_launch_config_is_the_run_args_file_of_the_plan():
     r1 = yaml.safe_load((CONFIGS / "r1_qwen3vl2b.yaml").read_text())
     cfg = yaml.safe_load((CONFIGS / LAUNCH).read_text())
     assert {k: cfg[k] for k in ("model", "view", "seed")} == {k: r1[k] for k in ("model", "view", "seed")}
     assert cfg["output_dir"] == "impl2-gpu-test" and "steps" not in cfg and "branches" not in cfg
     assert cfg["rows_plan"] == f"experiments/phase2/configs/{PLAN}"
-    a, _ = preflight.load(CONFIGS / LAUNCH)
-    root, sha, rev = preflight.rows_plan(a)
-    assert root.name == "lidc-train-b1" and root.parent.name == "views" and len(sha) == 64 and len(rev) == 40
-    with pytest.raises(TypeError, match="unexpected keyword"):
-        preflight.load(CONFIGS / PLAN)  # a plan file is never stamped: RunArgs has no `steps` or `budget` field
 
 
 # --- the money --------------------------------------------------------------------------------------------------

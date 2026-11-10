@@ -333,6 +333,11 @@ def cmd_launch(a) -> None:
         die(f"offer {a.offer} was not picked with offers.sh --pick")
     if why := reasons(o, o["_gpu"], o["_dataset"], o["_disk"]):
         die("; ".join(why))
+    compute = load_spec(Path(a.config)).compute  # the spec bounds the flag: one cap source per launch (E6.8b)
+    if a.cap_hours > compute.cap_hours:
+        die(f"--cap-hours {a.cap_hours} is above the spec's compute.cap_hours {compute.cap_hours}")
+    if o["_gpu"] != compute.gpu:
+        die(f"offer {a.offer} is a {o['_gpu']}: {o['_gpu']} is not compute.gpu {compute.gpu}")
     cap_s, now = int(a.cap_hours * 3600) + PULL_S, time.time()
     bw = {k: o[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"instance": None, "offer": a.offer, "dph": o["dph_total"], **bw, "started": now, "deadline": now + cap_s}

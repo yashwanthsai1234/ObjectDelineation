@@ -198,7 +198,9 @@ def test_r5_view_stamp_chain(tmp_path, monkeypatch):
 
     write('{"item_id": "a", "view": {"offset": [3, 4]}}\n')
     cfg = tmp_path / "c.yaml"
-    cfg.write_text(f"model: qwen3-vl-2b\nview: views/v\noutput_dir: x\ndata_root: {data}\n")
+    cfg.write_text("schema_version: 1\nname: c\ncompute: {gpu: RTX_5090, cap_hours: 1.0}\nbundle_view: views/v\n"
+                   "stages:\n- {kind: cmd, name: box, argv: [bash, -c, 'true']}\n")
+    monkeypatch.setenv("OBJDEL_DATA_ROOT", str(data))
     stamp = PF.hashes(cfg)["data"]
     assert PF.hashes(cfg)["data"] == stamp
     write('{"item_id": "a", "view": {"offset": [3, 5]}}\n')

@@ -11,20 +11,20 @@ import json
 import statistics
 import sys
 import time
+from pathlib import Path
 
 MAX_PUSH_S, MAX_LEAK_B, MAX_SPREAD = 0.2, 1 << 20, 2.0  # G-SY2 median; G-SY3 memory; G-SY3 max / median seconds
 PUSHES, LEAK_PUSHES, PERTURBED, TRL_REPEATS = 20, 50, 3, 5
 
 
 def parse(argv=None):
+    """(--sync, the train_rl stage of the other flags)."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     ap.add_argument("--sync", action="store_true", help="C5: G-SY1, G-SY2, G-SY3")
     flag, rest = ap.parse_known_args(argv)
     from experiments.phase2 import train_rl
 
-    a = train_rl.parse(rest)
-    a.sync = flag.sync
-    return a
+    return flag.sync, train_rl.parse(rest)
 
 
 def hash_params(pairs) -> dict[str, str]:
@@ -87,17 +87,17 @@ def run_sync(trainer) -> dict:
 
 
 def main(argv=None) -> int:
-    a = parse(argv)
-    if not a.sync:
+    sync, a = parse(argv)
+    if not sync:
         print("nothing to check: pass --sync", file=sys.stderr)
         return 2
     from experiments.phase2.g_probe import make_trainer, save_json
     from objdel.train import dataset
 
-    a.fast_sync = True
-    trainer, _, _ = make_trainer(a, a.ckpt, dataset.grpo_rows(a.train, "lidc", "train"), 1)
+    a = a.model_copy(update={"fast_sync": True})
+    trainer, _, _ = make_trainer(a, Path(a.ckpt), dataset.grpo_rows(a.train, "lidc", "train"), 1)
     out = run_sync(trainer)
-    save_json(a.out / "c_check" / "sync.json", out)
+    save_json(Path(a.out) / "c_check" / "sync.json", out)
     print(json.dumps(out))
     return 0 if out["passed"] else 1
 

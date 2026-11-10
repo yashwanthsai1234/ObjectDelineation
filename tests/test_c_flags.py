@@ -41,7 +41,7 @@ def test_make_trainer_lora_sync_refuses_a_trainer_without_colocate_vllm(built, m
 
     monkeypatch.setattr(vgen, "LLM", lambda **kw: None, raising=False)  # vLLM is not installed on the Mac
 
-    assert train_rl_lora_dir("--lora-sync", "d") == Path("d")
+    assert train_rl_lora_dir("--lora-sync", "d") == "d"
     with pytest.raises(ValueError, match="--lora-sync"):
         built(lora_sync=Path("d"))
 

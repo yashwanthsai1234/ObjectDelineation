@@ -2,6 +2,10 @@
 
     python -I -m experiments.phase2.g_probe --model lfm2.5-vl-450m (--ckpt runs/r1/branches/e1 | --select runs/r1/select)
         --train data/prepared --probe data/eval_views/lidc-val-shifted --out runs/r1/g_probe
+    python -I -m experiments.phase2.g_probe --spec specs/r1_qwen3vl2b.yaml --stage probe [--rd RD] [--data DATA]
+
+The flags are an objdel.core.spec.ProbeStage (cli_stage), with the trainer flags train_rl has (TrainerFlags: --lr,
+--grpo JSON, --shared-prefix, --compile, --plain, --trace, the C flags).
 
 configs.grpo_config with prereg.G_PROBE: LR 5e-6 (full FT) or 5e-5 (LoRA), constant, 20 steps, G = 8, 32 LIDC train
 prompts per step (disagreement items x4), vLLM colocate generation (owner 2026-11-06, perf F1: HF generate of 256
@@ -21,7 +25,6 @@ R1's §5.1 gates failed (selected.json "gates_pass" not true) nothing is probed:
 gates failed: <gate names>", "probed": [], "gates_branch"}, exit 0, so the chain (train_sft && select_ckpt &&
 g_probe) ends cleanly with the reason on disk.
 """
-import argparse
 import gc
 import json
 import math
@@ -74,7 +77,7 @@ def candidates(sel: dict) -> list[str]:
 def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None, calls=(), reward=None, **over):
     """(trainer, processor, lr): FastGRPO (or, with a.plain, TRL's GRPOTrainer) on ckpt with configs.grpo_config,
     the model's GRPO sampling, the probe LR (LoRA or full FT; a.lr overrides when set), logging every step, then
-    `over` and a.grpo's JSON overrides. check(config) runs before the model loads (train_rl's sampler guards); calls:
+    `over` and a.grpo's overrides. `a` is a stage with the objdel.core.spec.TrainerFlags fields (RlStage, ProbeStage). check(config) runs before the model loads (train_rl's sampler guards); calls:
     more callbacks; reward: the reward spec (objdel.reward.REWARDS; None: reward v4); eval_dataset: rows of the view
     a.heldout (its caches resolve first). Shared by the G-probe and the full run (train_rl)."""
     import torch
@@ -87,9 +90,9 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     peft = configs.lora(a.model)
     lr = getattr(a, "lr", None) or configs.rl_lr(a.model)
     over = {"learning_rate": lr, "max_steps": steps, "save_strategy": "no"} | over
-    over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | json.loads(a.grpo)
+    over |= {"logging_steps": 1, "log_completions": False} | configs.sampling(a.model, "grpo") | dict(a.grpo)
     reward = reward or REWARD_V4
-    cfg = configs.grpo_config(a.model, str(a.out / "trainer"), reward=reward, **over)
+    cfg = configs.grpo_config(a.model, str(Path(a.out) / "trainer"), reward=reward, **over)
     if check:
         check(cfg)
     model = AutoModelForImageTextToText.from_pretrained(ckpt, **({"dtype": torch.float16} if cfg.fp16 else {}))
@@ -97,7 +100,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     roots = [a.train] if eval_dataset is None else [a.heldout, a.train]
     funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc), spec=reward).funcs()
     cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
-    win = getattr(a, "profile_window", None)  # train_rl --profile-window S E: NVTX steps and the nsys capture window
+    win = getattr(a, "profile_window", None)  # --profile-window S,E: NVTX steps and the nsys capture window
     calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])  # raises on S < 2 (TraceStep's wait < 0)
     if getattr(a, "trace", None):  # torch.profiler on step S (the nsys fallback), else on step 3
         calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
@@ -139,11 +142,11 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
     trainer, _, lr = make_trainer(a, ckpt, train, G_PROBE["steps"])
     cfg = trainer.args
     t0 = time.time()
-    s0a, s0b = (score(trainer, rows, a.probe.resolve(), pool, s) for s in SEEDS[:2])
+    s0a, s0b = (score(trainer, rows, Path(a.probe).resolve(), pool, s) for s in SEEDS[:2])
     t1 = time.time()
     trainer.train()
     t2 = time.time()
-    s20 = score(trainer, rows, a.probe.resolve(), pool, SEEDS[2])
+    s20 = score(trainer, rows, Path(a.probe).resolve(), pool, SEEDS[2])
     r0a, r0b, r20 = (s["per_item"]["r_mean"] for s in (s0a, s0b, s20))
     step0 = {k: (s0a["per_item"][k] + s0b["per_item"][k]) / 2 for k in ("sd_geom", "r_std", "mixed")}
     log = trainer.state.log_history
@@ -158,36 +161,22 @@ def probe(a, ckpt: Path, train, rows, pool) -> dict:
 
 
 def main(argv=None) -> int:
+    from objdel.core.spec import ProbeStage, cli_stage
     from objdel.train import serve
 
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--model", required=True, help="configs.MODELS key")
-    ck = ap.add_mutually_exclusive_group(required=True)
-    ck.add_argument("--ckpt", type=Path, help="one model-only checkpoint (no repair)")
-    ck.add_argument("--select", type=Path, help="select_ckpt output dir: selected branch, then the D12(c) repair")
-    ap.add_argument("--train", type=Path, required=True, help="prepared root with lidc/train.jsonl and caches")
-    ap.add_argument("--probe", type=Path, required=True, help="shifted-val eval view")
-    ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--items", type=int, help="probe items (default prereg.G_PROBE['items'])")
-    ap.add_argument("--procs", type=int, default=serve.pool_size(), help="scoring workers (default: usable CPUs - 1)")
-    ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config (smoke tests)")
-    ap.add_argument("--compile", choices=["default", "reduce-overhead"],
-                    help="Stage F arm: torch.compile the text decoder layers (measured; off by default)")
-    ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
-    ap.add_argument("--plain", action="store_true", help="profile arm: TRL's GRPOTrainer as shipped (no fast.FastGRPO)")
-    ap.add_argument("--trace", help="profile arm: torch.profiler trace of optimizer step 3 to this dir")
-    a = ap.parse_args(argv)
-    ckpts = [a.ckpt]
+    a = cli_stage(ProbeStage, sys.argv[1:] if argv is None else argv)
+    out = Path(a.out)
+    ckpts = [Path(a.ckpt)] if a.ckpt else []
     if a.select:
-        sel = json.loads((a.select / "selected.json").read_text())
+        sel = json.loads((Path(a.select) / "selected.json").read_text())
         if not (sel["gates_pass"] and sel["selected"]):  # R1 failed §5.1: a probe would not change the outcome
             why = ", ".join(sel.get("gates_failed") or ["no eligible branch (D12)"])
-            return save(a.out, {"verdict": None, "skipped": f"§5.1 gates failed: {why}", "probed": [],
-                                "gates_branch": sel["gates_branch"]})
+            return save(out, {"verdict": None, "skipped": f"§5.1 gates failed: {why}", "probed": [],
+                            "gates_branch": sel["gates_branch"]})
         ckpts = [Path(sel["run"]) / "branches" / n for n in candidates(sel)]
     for root in (a.train, a.probe):
         serve.preload(root, ["lidc"])
-    pool = serve.fork_pool(a.procs)  # before the model and CUDA (D14)
+    pool = serve.fork_pool(a.procs or serve.pool_size())  # before the model and CUDA (D14)
     from PIL import Image
 
     from objdel.train import dataset
@@ -202,7 +191,7 @@ def main(argv=None) -> int:
         if docs[-1]["verdict"] == "PASS":
             break
     pool.shutdown()
-    return save(a.out, docs[-1] | {"probed": [c.name for c in ckpts[: len(docs)]], "earlier": docs[:-1]})
+    return save(out, docs[-1] | {"probed": [c.name for c in ckpts[: len(docs)]], "earlier": docs[:-1]})
 
 
 def finite(x):

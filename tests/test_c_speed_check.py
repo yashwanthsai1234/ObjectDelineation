@@ -36,5 +36,5 @@ def test_hash_params_sees_one_changed_value():
 
 
 def test_parse_takes_sync_and_the_train_rl_flags():
-    a = C.parse(["--sync", "--model", "qwen3vl2b", "--ckpt", "c", "--out", "o", "--train", "t", "--steps", "1"])
-    assert a.sync and a.fast_sync is False
+    sync, a = C.parse(["--sync", "--model", "qwen3vl2b", "--ckpt", "c", "--out", "o", "--train", "t", "--steps", "1"])
+    assert sync and a.fast_sync is False

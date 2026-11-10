@@ -457,7 +457,7 @@ def run_fe(ev, out, monkeypatch, *extra, scorer=None, K=8, loads=None):
     if scorer:
         monkeypatch.setattr(FE, "score_items", scorer)
     return FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--train", str(ev), "--out", str(out),
-                    "--k", str(K), *extra])
+                    "-k", str(K), *extra])
 
 
 def jsonl(path):
@@ -612,6 +612,17 @@ def test_cli_modes_need_exactly_one_source(capsys):
             FE.main(argv)
         assert e.value.code == 2
     assert "--ckpt" in capsys.readouterr().err
+
+
+def test_hash_view_needs_its_out_and_rescore_parses_without_a_ckpt(tmp_path):
+    """U53: --hash-view without --out exits 2; the A3 rescore form is an EvalStage with ckpt None."""
+    from objdel.core.spec import EvalStage, cli_parse
+
+    with pytest.raises(SystemExit) as e:
+        FE.main(["--hash-view", str(tmp_path)])
+    assert e.value.code == 2
+    st = cli_parse(EvalStage, ["--rescore", "d", "--view", "v", "--split", "val", "--out", "o"])
+    assert (st.ckpt, st.rescore, st.view, st.split, st.out) == (None, "d", ("v",), ("val",), ("o",))
 
 
 def test_k_follows_the_flag(ev, tmp_path, monkeypatch):

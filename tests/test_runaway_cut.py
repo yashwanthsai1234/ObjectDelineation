@@ -38,8 +38,9 @@ def test_per_row_params_order_length_and_no_mutation():
 
 
 def args(**kw):
+    """train_rl's stage of the flags; a value None is a bare flag."""
     return train_rl.parse(["--model", "qwen3-vl-2b", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "1",
-                           *[x for k, v in kw.items() for x in (f"--{k.replace('_', '-')}", v)]])
+                           *[x for k, v in kw.items() for x in (f"--{k.replace('_', '-')}", v) if x is not None]])
 
 
 def test_runaway_cap_is_off_by_default():
@@ -129,6 +130,5 @@ def test_row_caps_follow_each_rows_own_outline():
 def test_runaway_cap_refuses_group_requests():
     """One request of n = G has one max_tokens: it cannot carry a cap per row."""
     with pytest.raises(ValueError, match="group-requests"):
-        a = args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}')
-        a.group_requests = True
-        train_rl.check_flags(a)
+        train_rl.check_flags(args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}',
+                                  group_requests=None))

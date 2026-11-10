@@ -156,7 +156,7 @@ def _c2_run(tmp_path, monkeypatch, names=("e1",)):
     return run, base, calls
 
 
-@pytest.mark.parametrize("extra", [["--sampler", "hf", "--no-vision"], ["--sampler", "hf"], []])
+@pytest.mark.parametrize("extra", [["--sampler", "hf"], []])
 def test_only_topology_samples_and_scores_the_topology_probe_alone(tmp_path, monkeypatch, extra):
     run, base, calls = _c2_run(tmp_path, monkeypatch)
     assert SC.main(base + extra) == 0
@@ -177,6 +177,14 @@ def test_only_topology_needs_a_single_branch_and_probes(tmp_path, monkeypatch):
         SC.main(base)
     with pytest.raises(SystemExit):
         SC.main([a for a in base if a != "--probes" and not a.endswith("eval_views")])
+
+
+def test_only_topology_takes_no_vision_flag(tmp_path, monkeypatch):
+    """SelectStage: with only set, neither vision nor no_vision (G-vision is not measured under --only)."""
+    _, base, _ = _c2_run(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as e:
+        SC.main(base + ["--no-vision"])
+    assert e.value.code == 2
 
 
 def test_full_select_still_needs_shifted(tmp_path, monkeypatch):

@@ -4,11 +4,14 @@
         --vision '{"prepared": root, "reference": R0 base value}' | --no-vision \
         [--sampler vllm|hf] [--items 256] [--rescaled V] [--rotated V] [--prepared P] [--probes DIR]
     python -I -m experiments.phase2.select_ckpt --run runs/c2 --probes DIR --only topology [--sampler hf]
+    python -I -m experiments.phase2.select_ckpt --spec specs/r1_qwen3vl2b.yaml --stage select [--rd RD] [--data DATA]
+
+The flags are an objdel.core.spec.SelectStage (cli_stage): K is -k and the sampler timeout --timeout-s.
 
 Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches
 and fork the reward pool before anything imports CUDA; per branch, export the prompts and run the sampler child
 (`sample_vllm.py` under /opt/vllm, or `hf_sample`; one JSONL bridge) with CUDA asserted untouched here, a timeout
-of 600 s + --timeout_s per item-sample, and a completeness check (every prompt id has its n samples). The
+of 600 s + --timeout-s per item-sample, and a completeness check (every prompt id has its n samples). The
 completions' `.meta.json` stamp (prompts SHA-256, child command) is written before the child starts: a matching
 stamp means the file is reused when complete and resumed otherwise (hf_sample keeps whole finished batches), on a
 retry or a rerun alike; another stamp empties it. An attempt that finishes no new item counts against TRIES.
@@ -28,7 +31,7 @@ branch with HF on HF_CHECK_ITEMS shifted-val items; a vLLM - HF metric differenc
 
 --only topology (C2, PLAN §6.1 R3-R5): the topology probe alone on the run's single branch at K = --k into
 <out>/report.json {"only", "branch", "sampler", "k", "probes": {"topology"}} (c2_analyze reads probes.topology).
-No selection, other views, G-vision, prior or gates; their flags are ignored.
+No selection, other views, G-vision, prior or gates; --vision and --no-vision are refused, the other flags ignored.
 
 References: PLAN D12 (R-B), D13, §5.1, §6.1 R1; https://docs.vllm.ai/en/stable/serving/offline_inference.html
 """
@@ -201,7 +204,7 @@ def stop_ids(path: Path, proc) -> set[int]:
 
 
 def sampler_timeout(a, samples: int) -> float:
-    """600 s (engine start) + the per-sample time (--timeout_s, else TIMEOUT_S of the sampler) for `samples`."""
+    """600 s (engine start) + the per-sample time (--timeout-s, else TIMEOUT_S of the sampler) for `samples`."""
     return 600 + (a.timeout_s or TIMEOUT_S[a.sampler]) * samples
 
 
@@ -335,9 +338,7 @@ def topology_only(a, out: Path) -> int:
 def vision_config(a) -> dict | None:
     if a.no_vision:
         return None
-    if a.vision is None:
-        raise SystemExit("select_ckpt: --vision is required (G-vision decides D12 eligibility); --no-vision opts out")
-    cfg = json.loads(a.vision)
+    cfg = a.vision
     ref = cfg.get("reference")
     ok = Path(ref).is_file() if isinstance(ref, str) else isinstance(ref, int | float) and ref > 0
     if not isinstance(cfg.get("prepared"), str) or not ok:
@@ -357,29 +358,16 @@ def vision_check(branch: Path, cfg: dict | None) -> dict:
     return check(model, AutoProcessor.from_pretrained(branch), cfg)
 
 
+PATHS = ("run", "shifted", "rescaled", "rotated", "prepared", "probes", "out")
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--run", type=Path, required=True, help="train_sft output_dir")
-    ap.add_argument("--shifted", type=Path, help="shifted-val eval view (selection; required unless --only)")
-    ap.add_argument("--rescaled", type=Path, help="rescaled-val eval view (selected branch only)")
-    ap.add_argument("--rotated", type=Path, help="rotated shifted-val eval view (attribution check, report-only)")
-    ap.add_argument("--prepared", type=Path, help="prepared root: the image-blind prior is fitted on lidc/train")
-    ap.add_argument("--probes", type=Path, help="dir with probe-precision/ and probe-topology/ (selected branch)")
-    ap.add_argument("--out", type=Path, help="default <run>/select")
-    ap.add_argument("--sampler", choices=("vllm", "hf"), default="vllm")
-    ap.add_argument("--model", help="configs.MODELS key for export_prompts (default: the run's)")
-    ap.add_argument("--items", type=int, help="seeded subset size for branch selection only (HF path: 256)")
-    ap.add_argument("--k", type=int, default=8)
-    ap.add_argument("--seed", type=int, default=0, help="sampler seed")
-    ap.add_argument("--procs", type=int, default=serve.pool_size(), help="scoring workers (default: usable CPUs - 1)")
-    ap.add_argument("--timeout_s", type=float, help="sampler timeout per sample, plus 600 s (default: TIMEOUT_S)")
-    vis = ap.add_mutually_exclusive_group()
-    vis.add_argument("--vision", help='G-vision JSON {"prepared": root, "reference": R0 value or JSON} (required)')
-    vis.add_argument("--no-vision", action="store_true", help="G-vision not measured: every branch ineligible")
-    ap.add_argument("--only", choices=("topology",), help="C2: only the topology probe of a single-branch run")
-    a = ap.parse_args(argv)
-    if a.shifted is None and not a.only:
-        ap.error("--shifted is required (unless --only topology)")
+    from objdel.core.spec import SelectStage, cli_stage
+
+    st = cli_stage(SelectStage, sys.argv[1:] if argv is None else argv)
+    a = argparse.Namespace(**{k: Path(v) if k in PATHS and v is not None else v
+                              for k, v in st.model_dump(exclude={"kind", "name", "soft"}).items()})
+    a.sampler, a.procs = st.sampler or "vllm", st.procs or serve.pool_size()
     vision_cfg = None if a.only else vision_config(a)
     a.model, out = a.model or exited(a.run)["config"]["model"], a.out or a.run / "select"
     if a.only:

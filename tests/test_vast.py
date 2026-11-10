@@ -98,13 +98,15 @@ def after(argv: list[str], flag: str) -> str:
 
 
 def PF_config(tmp: Path) -> Path:
-    """A run config over a tiny data root (a view manifest and the exam views' manifests): enough to hash."""
+    """A run spec over a tiny data root (tmp/data: a bundle view manifest and the exam views' manifests): enough to
+    hash."""
     data = tmp / "data"
     for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in PF.EXAMS)):
         (data / d).mkdir(parents=True)
         (data / d / "manifest.json").write_text(json.dumps({"view_hash": "h", "dir": d}))
     cfg = tmp / "pf_run.yaml"
-    cfg.write_text(f"model: lfm2.5-vl-450m\nview: views/v\noutput_dir: x\ndata_root: {data}\n")
+    cfg.write_text("schema_version: 1\nname: pf_run\ncompute: {gpu: RTX_4090, cap_hours: 24.0}\nbundle_view: views/v\n"
+                   "stages:\n- {kind: cmd, name: box, argv: [bash, -c, 'true']}\n")
     return cfg
 
 
@@ -128,7 +130,8 @@ class Env:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("VAST", "DRY_RUN"))}
         self.env = dict(env, PATH=f"{bin_}{os.pathsep}{env['PATH']}", PYTHON=sys.executable, FAKE_DIR=str(self.fake),
                         VAST_HOME=str(self.home), VAST_RUNS=str(self.runs), DRY_RUN="1", VAST_POLL_S="0.01",
-                        VAST_LAUNCH_TIMEOUT_S="3", OBJDEL_RUN_DIR=str(tmp / "pf"))
+                        VAST_LAUNCH_TIMEOUT_S="3", OBJDEL_RUN_DIR=str(tmp / "pf"),
+                        OBJDEL_DATA_ROOT=str(tmp / "data"))
         self.config = PF_config(tmp)
         self.stamp()
 
@@ -136,7 +139,10 @@ class Env:
         """The preflight stamp launch.sh checks (the gate): passing and current, or as given."""
         path = PF.ROOT / self.env["OBJDEL_RUN_DIR"] / "preflight" / f"{self.config.stem}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        stamp = {"pass": ok, "checks": {"x": {"pass": ok}}, "hashes": PF.hashes(self.config) | hashes}
+        with mock.patch.dict(os.environ, OBJDEL_DATA_ROOT=self.env["OBJDEL_DATA_ROOT"]):
+            now = PF.hashes(self.config)
+        stamp = {"config": str(self.config.resolve()), "pass": ok, "checks": {"x": {"pass": ok}},
+                 "hashes": now | hashes}
         path.write_text(json.dumps(stamp))
 
     def state(self, statuses=("loading", "running"), instances=None, offers=None, charges=None):
@@ -1363,6 +1369,18 @@ def test_launch_gate_refuses_without_a_passing_current_preflight(E):
     assert E.vast("create instance")
 
 
+def test_launch_is_bounded_by_the_spec_compute(E):
+    """E6.8b: --cap-hours above compute.cap_hours, or an offer whose card is not compute.gpu, dies before any Vast
+    call."""
+    E.pick()
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "24.5", ok=False)
+    assert "compute.cap_hours 24.0" in p.stderr and not E.vast("create instance")
+    E.config.write_text(E.config.read_text().replace("RTX_4090", "RTX_5090"))
+    E.stamp()
+    p = E.sh("launch.sh", "111", "r1", ok=False)
+    assert "RTX_4090 is not compute.gpu RTX_5090" in p.stderr and not E.vast("create instance")
+
+
 # --- vllm_native image: one venv (perf/implementation.md B3, B4, C4) ------------------------------------------------
 
 
@@ -1394,11 +1412,6 @@ def test_image_check_handles_one_and_two_venvs():
     assert "/opt/vllm/bin/python" in text and "/opt/venv/bin/python" in text
     assert re.search(r"if \[ -x /opt/vllm/bin/python \]", text)  # two venvs: vLLM in the second
     assert "else" in text  # one venv: vLLM in /opt/venv
-
-
-def test_preflight_ceiling_follows_the_card():
-    assert PF.ceiling("RTX_5090") == 1.50 and PF.ceiling("RTX_4090") == 1.00
-    assert not hasattr(PF, "DPH_CEILING")
 
 
 ENV_CHECKS = ("nvidia_smi", "capability", "bf16_matmul", "triton_compile", "torch_compile", "vllm_engine", "nvcc")

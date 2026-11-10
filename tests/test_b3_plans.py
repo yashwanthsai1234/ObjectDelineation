@@ -10,15 +10,10 @@ yaml = pytest.importorskip("yaml")
 
 
 def test_b3_launch_is_the_run_args_file_of_v3():
-    from experiments.phase2 import preflight
-
     raw = yaml.safe_load((CONFIGS / "b3_launch.yaml").read_text())
     b1 = yaml.safe_load((CONFIGS / "b1_launch.yaml").read_text())
     assert {k: raw[k] for k in ("model", "view", "seed")} == {k: b1[k] for k in ("model", "view", "seed")}
     assert raw["output_dir"] == "b3-v5" and raw["rows_plan"] == "experiments/phase2/configs/b3_v5.yaml"
-    preflight.load(CONFIGS / "b3_launch.yaml")
-    with pytest.raises(TypeError, match="steps"):
-        preflight.load(CONFIGS / "b3_v5.yaml")
 
 
 def test_b3_v5_holds_the_b3_9_steps_in_order():

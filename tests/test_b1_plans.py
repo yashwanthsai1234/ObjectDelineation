@@ -2,8 +2,6 @@
 every `-m experiments.phase2.<module>` step of a V1 plan parsed with its module's own parser on the Mac, so a missing
 or unknown flag fails here and not on the paid box."""
 
-import argparse
-import importlib
 import subprocess
 import sys
 from pathlib import Path
@@ -36,20 +34,6 @@ def test_b1_launch_is_the_run_args_file_of_v1():
     assert {k: raw[k] for k in ("model", "view", "seed")} == {k: r1[k] for k in ("model", "view", "seed")}
     assert raw["output_dir"] == "b1-rows" and raw["rows_plan"] == "experiments/phase2/configs/b1_rows.yaml"
     assert "branches" not in raw and "steps" not in raw
-
-
-def test_preflight_loads_the_launch_config():
-    from experiments.phase2 import preflight
-
-    preflight.load(CONFIGS / "b1_launch.yaml")
-
-
-def test_preflight_refuses_the_plan_file():
-    """A plan file is never stamped: RunArgs has no `steps` field."""
-    from experiments.phase2 import preflight
-
-    with pytest.raises(TypeError, match="steps"):
-        preflight.load(CONFIGS / "b1_rows.yaml")
 
 
 def test_b1_rows_holds_the_b1_5_steps_in_order():
@@ -107,27 +91,15 @@ def test_rl_shifted_is_archived_with_its_readme_row():
 # --- I47: plan argv parse ----------------------------------------------------------------------------------------
 
 
-class Parsed(Exception):
-    pass
+def parse_step(step: list[str]):
+    """The step's argv as its module's stage: objdel.core.spec.cli_stage, the parser each module's main() runs first
+    (exit 2 on a missing or unknown flag)."""
+    from objdel.core.spec import MODULE, STAGE_CLASSES, cli_stage
 
-
-def parse_step(step: list[str]) -> argparse.Namespace:
-    """The step's argv through its module's own parser: main() runs until parse_args returns, then stops."""
     words = step[1:] if step[0] == "~" else step
     assert words[0] == "-m"
-    mod = importlib.import_module(words[1])
-    real = argparse.ArgumentParser.parse_args
-
-    def stop(self, args=None, namespace=None):
-        raise Parsed(real(self, args, namespace))
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(argparse.ArgumentParser, "parse_args", stop)
-        try:
-            mod.main(words[2:])
-        except Parsed as p:
-            return p.args[0]
-    raise AssertionError(f"{words[1]}.main never parsed its arguments")
+    kind = next(k for k, m in MODULE.items() if words[1] == f"experiments.phase2.{m}")
+    return cli_stage(STAGE_CLASSES[kind], words[2:])
 
 
 def module_steps(name: str) -> list[list[str]]:

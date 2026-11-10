@@ -27,7 +27,7 @@ def test_capture_script_pins_and_flags():
                  "24954cc4d4cb5f051dc91c6a44101d7ccf15c802ab8ea8a32c09dd22542f9031",
                  "e71440978244e3883fc769da91a44a03451129ce21988d0db656a6bf7c1cb56b",
                  "sha256sum -c", "dpkg-deb -x", 'timeout --signal=INT --kill-after=120 "${NSYS_TIMEOUT:-1200}"',
-                 "OBJDEL_NVTX=1", '--profile-window "$S" "$E"', "--capture-range=cudaProfilerApi", "exit 3", "exit 4",
+                 "OBJDEL_NVTX=1", '--profile-window "$S,$E"', "--capture-range=cudaProfilerApi", "exit 3", "exit 4",
                  "nvtx_pushpop_trace,nvtx_gpu_proj_trace,cuda_gpu_trace,cuda_api_trace", "pkill"):  # fmt: skip
         assert text in s, text
     assert "--cuda-memory-usage" not in s and "--cuda-graph-trace=node" not in s
@@ -61,7 +61,7 @@ def test_capture_script_runs_the_command_under_nsys_with_the_window(tmp_path):
     calls = log.read_text().splitlines()
     assert calls[:2] == ["--version", "status -e"]
     profile = next(c for c in calls if c.startswith("profile"))
-    assert profile.endswith("echo hi --profile-window 16 17") and "--capture-range=cudaProfilerApi" in profile
+    assert profile.endswith("echo hi --profile-window 16,17") and "--capture-range=cudaProfilerApi" in profile
     assert any(c.startswith("export --type sqlite") for c in calls) and any(c.startswith("stats") for c in calls)
     assert (tmp_path / "rd/nsys/x_tables.txt").exists()
 

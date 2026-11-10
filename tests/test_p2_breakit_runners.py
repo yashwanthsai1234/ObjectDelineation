@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from test_p2_scripts import CONFIGS, CPU_SFT, ROOT
+from test_p2_scripts import CONFIGS, CPU_SFT, ROOT, stage, stage_of
 
 
 def _yaml(path):
@@ -34,10 +34,10 @@ def _train_sft():
 @pytest.mark.parametrize("path", CONFIGS, ids=[p.stem for p in CONFIGS])
 def test_every_config_builds_its_sft_config(path):
     """train_sft builds SFTConfig as trainer() does (its fixed overrides | the YAML's sft block) before the model."""
-    TS = _train_sft()
+    _train_sft()
     from objdel.train import configs
 
-    a = TS.RunArgs(**_yaml(path))
+    a = stage_of(path)
     o = {"seed": a.seed, "data_seed": a.seed, "save_strategy": "no", "save_total_limit": 3, "logging_steps": 10}
     for b in (None, 100):
         cfg = configs.sft_config(a.model, "o", 200, b, **(o | a.sft))
@@ -48,11 +48,11 @@ def test_every_config_builds_its_sft_config(path):
 def test_configs_carry_the_plan_values(path):
     """PLAN D5 / D6 / D13 / §5.1: LR 5e-5 full FT and 5e-4 LoRA (Qwen3-VL-2B), the model's completion budget, probe
     LRs 5e-6 / 5e-5, WSD."""
-    TS = _train_sft()
+    _train_sft()
     from experiments.phase2.prereg import G_PROBE
     from objdel.train import configs
 
-    a = TS.RunArgs(**_yaml(path))
+    a = stage_of(path)
     cfg = configs.sft_config(a.model, "o", 100, **({"dataloader_prefetch_factor": None} | a.sft))
     assert cfg.learning_rate == (5e-4 if configs.lora(a.model) else 5e-5)
     assert configs.MAX_COMPLETION[a.model] == configs.sampling(a.model)["max_tokens"] == {
@@ -62,20 +62,18 @@ def test_configs_carry_the_plan_values(path):
     assert set(a.sft) <= {f.name for f in dataclasses.fields(type(cfg))}
 
 
-def test_unknown_yaml_keys_are_rejected(tmp_path):
-    TS = _train_sft()
-    from trl import TrlParser
+def test_unknown_keys_are_rejected():
+    from pydantic import ValidationError
 
-    (tmp_path / "c.yaml").write_text("model: lfm2.5-vl-450m\nview: v\noutput_dir: o\nbrnaches: [0.5]\n")
-    with pytest.raises(ValueError, match="brnaches"):
-        TrlParser([TS.RunArgs]).parse_args_and_config(["--config", str(tmp_path / "c.yaml")])
+    with pytest.raises(ValidationError, match="brnaches"):
+        stage("lfm2.5-vl-450m", "v", "o", brnaches=[0.5])
 
 
 @pytest.mark.parametrize("vision", [{"prepared": "prepared"}, {"prepared": "prepared", "reference": "<R0 value>"}])
 def test_vision_config_is_validated_up_front(vision):
-    TS = _train_sft()
+    _train_sft()
     with pytest.raises(ValueError, match="reference"):
-        TS.RunArgs("lfm2.5-vl-450m", "views/v", "o", vision=vision)
+        stage("lfm2.5-vl-450m", "views/v", "o", vision=vision)
 
 
 def test_lora_runs_are_merged():
@@ -84,8 +82,9 @@ def test_lora_runs_are_merged():
 
 
 def test_train_sft_can_resume_a_crashed_run():
-    TS = _train_sft()
-    assert {"resume", "resume_from_checkpoint"} & {f.name for f in dataclasses.fields(TS.RunArgs)}
+    from objdel.core.spec import SftStage
+
+    assert {"resume", "resume_from_checkpoint"} & set(SftStage.model_fields)
 
 
 # ---------------------------------------------------------------- schedule math
@@ -98,7 +97,7 @@ def test_plan_at_odd_epoch_sizes(spe):
     TS = _train_sft()
     from objdel.train import configs
 
-    p = TS.plan(TS.RunArgs("lfm2.5-vl-450m", "v", "o"), spe)
+    p = TS.plan(stage("lfm2.5-vl-450m", "v", "o"), spe)
     at = [b["at"] for b in p["branches"].values()]
     assert len(set(at)) == 3 and p["stable"] == max(at) == 2 * spe
     assert abs(p["warmup"] - 0.03 * p["stable"]) <= 0.5
@@ -113,20 +112,20 @@ def test_plan_at_odd_epoch_sizes(spe):
 def test_plan_refuses_colliding_branch_points():
     TS = _train_sft()
     with pytest.raises(ValueError, match="collide"):  # e0.5 and e1 both at step 1
-        TS.plan(TS.RunArgs("lfm2.5-vl-450m", "v", "o"), 1)
+        TS.plan(stage("lfm2.5-vl-450m", "v", "o"), 1)
     with pytest.raises(ValueError, match="decay is 0"):  # e0.5 at step 2, decay round(0.3) = 0
-        TS.plan(TS.RunArgs("lfm2.5-vl-450m", "v", "o", branches=[0.5, 1.0]), 4)
+        TS.plan(stage("lfm2.5-vl-450m", "v", "o", branches=[0.5, 1.0]), 4)
 
 
 def test_timing_runs_are_stable_only():
     """BK3-14: branches [] = one stable epoch, no branch, no decay; the timing / arm configs use it with vision off."""
     TS = _train_sft()
     want = {"steps_per_epoch": 30, "stable": 30, "warmup": 1, "branches": {}}
-    assert TS.plan(TS.RunArgs("lfm2.5-vl-450m", "v", "o", branches=[]), 30) == want
+    assert TS.plan(stage("lfm2.5-vl-450m", "v", "o", branches=[]), 30) == want
     for p in CONFIGS:
-        a = TS.RunArgs(**_yaml(p))
+        a = stage_of(p)
         timing = p.stem.startswith("r0_")
-        assert (a.branches == [] and a.vision is False) if timing else (a.branches and a.vision), p.stem
+        assert (a.branches == () and a.vision is False) if timing else (a.branches and a.vision), p.stem
 
 
 def test_train_sft_refuses_without_g_vision_and_reads_the_r0_reference(tmp_path):
@@ -136,7 +135,7 @@ def test_train_sft_refuses_without_g_vision_and_reads_the_r0_reference(tmp_path)
     (tmp_path / "v").mkdir()
     (tmp_path / "v/manifest.json").write_text(json.dumps({"config": {"epochs": 3}}))
     with pytest.raises(ValueError, match="G-vision"):
-        TS.train(TS.RunArgs("lfm2.5-vl-450m", str(tmp_path / "v"), str(tmp_path / "o")))
+        TS.train(stage("lfm2.5-vl-450m", str(tmp_path / "v"), str(tmp_path / "o")))
     for p in CONFIGS:
         v = _yaml(p).get("vision")
         assert v is False or v["reference"] == f"vision_ref/{_yaml(p)['model']}.json", p.stem
@@ -153,7 +152,7 @@ def test_train_sft_refuses_a_view_with_too_few_epochs(tmp_path):
     TS = _train_sft()
     (tmp_path / "v").mkdir()
     (tmp_path / "v/manifest.json").write_text(json.dumps({"config": {"epochs": 2}}))
-    a = TS.RunArgs("lfm2.5-vl-450m", str(tmp_path / "v"), str(tmp_path / "o"), vision=False)
+    a = stage("lfm2.5-vl-450m", str(tmp_path / "v"), str(tmp_path / "o"), vision=False)
     with pytest.raises(ValueError, match="--epochs 3"):
         TS.train(a)
     assert not (tmp_path / "o").exists()
@@ -326,10 +325,11 @@ def test_select_with_an_empty_branch_list(tmp_path, monkeypatch):
     assert doc["selected"] is None and doc["gates_branch"] is None and not calls
 
 
-def test_select_refuses_to_judge_eligibility_without_g_vision(tmp_path, monkeypatch):
+def test_select_refuses_to_judge_eligibility_without_g_vision(tmp_path, monkeypatch, capsys):
     SC, base, _ = _fake_select(tmp_path, monkeypatch)
-    with pytest.raises((SystemExit, ValueError, RuntimeError), match="(?i)vision"):
+    with pytest.raises(SystemExit) as e:
         SC.main(base)
+    assert e.value.code == 2 and "vision" in capsys.readouterr().err
 
 
 def test_items_subset_is_for_selection_only(tmp_path, monkeypatch):
@@ -393,7 +393,7 @@ def tiny_run(tmp_path, synthetic_items, monkeypatch):
         base = dict(model="lfm2.5-vl-450m", model_path=str(model), view=str(tmp_path / "view"),
                     output_dir=str(tmp_path / out), branches=[0.5, 1.0], rolling_minutes=0.0, vision=False, sft=CPU_SFT,
                     steps_per_epoch=8)  # e0.5 at 4, e1 at 8, each with a 1-step decay (decay 0 is refused, BK3-10)
-        return TS.RunArgs(**(base | kw))
+        return stage(**(base | kw))
 
     from objdel.eval import vision
 
@@ -521,7 +521,7 @@ def test_lora_branches_are_saved_merged(tiny_run, monkeypatch):
 
 @pytest.mark.slow
 def test_vision_reference_only_writes_the_r0_reference(tiny_run, monkeypatch):
-    """BK3-13: --vision_reference_only computes the base projector distance (CPU float32) into vision.reference,
+    """BK3-13: --vision-reference-only computes the base projector distance (CPU float32) into vision.reference,
     under run_dir; a later run reads it."""
     from objdel.eval import vision
 
@@ -532,7 +532,7 @@ def test_vision_reference_only_writes_the_r0_reference(tiny_run, monkeypatch):
     monkeypatch.setattr(vision, "fixed_set", lambda prepared: ([{"image": im} for im in imgs], "set-sha"))
     monkeypatch.setattr(vision, "projector_distance", lambda m, p, images: 0.25)
     a = args("unused", run_dir=str(tmp / "box"), vision={"prepared": "p", "reference": "vision_ref/lfm.json"})
-    assert TS.train(TS.RunArgs(**(vars(a) | {"vision_reference_only": True}))) == 0
+    assert TS.train(a.model_copy(update={"vision_reference_only": True})) == 0
     doc = json.loads((tmp / "box/vision_ref/lfm.json").read_text())
     assert doc["reference"] == 0.25 and doc["dtype"] == "float32" and doc["model"] == "lfm2.5-vl-450m"
     assert TS.reference(str(tmp / "box/vision_ref/lfm.json"), "lfm2.5-vl-450m", "set-sha") == 0.25
