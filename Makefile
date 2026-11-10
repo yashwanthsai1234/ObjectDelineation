@@ -61,6 +61,12 @@ cuda:             ## rebuild objdel._gpucheck with nvcc (CUDA box; nvcc = $CUDAC
 gpu-check:        ## the GPU check chain on a CUDA box (run_box.sh --gpu-check); DRY=1 prints it and collects its tests
 	PY=$(PY) bash experiments/cuda_checker/run_box.sh --gpu-check $(if $(DRY),--dry)
 
+.PHONY: old-engine-tar
+old-engine-tar:   ## the pre-D2 engine (owner's tag pre-d2) as old_engine.tar + .sha256 in the repo root, for D-G7 on the box
+	@git rev-parse -q --verify 'pre-d2^{commit}' >/dev/null || { echo "owner: git tag pre-d2 <commit>, see D-G7" >&2; exit 1; }
+	git archive -o old_engine.tar pre-d2 cuda src CMakeLists.txt pyproject.toml Makefile README.md
+	sha256sum old_engine.tar > old_engine.tar.sha256
+
 docs:             ## build the docs site into site/ (strict: any warning fails)
 	.venv/bin/zensical build --strict
 
