@@ -49,17 +49,17 @@ COLS = {  # the columns read, spaces removed (nsys has written both "Start (ns)"
 }
 
 
-def read(prefix: str, report: str) -> list[dict]:
-    """PREFIX_<report>.csv as rows keyed by the space-free column names of COLS[report]."""
-    path = Path(f"{prefix}_{report}.csv")
+def read(prefix: str, report: str, cols: tuple = ()) -> list[dict]:
+    """PREFIX_<report>.csv as rows keyed by the space-free column names `cols` (default COLS[report])."""
+    cols, path = cols or COLS[report], Path(f"{prefix}_{report}.csv")
     with open(path, newline="") as f:  # a missing file raises FileNotFoundError naming it
         rows = csv.reader(f)
         head = [h.replace(" ", "") for h in next(rows, [])]
-        miss = [c for c in COLS[report] if c not in head]
+        miss = [c for c in cols if c not in head]
         if miss:
             raise ValueError(f"{path.name}: no column {', '.join(c.replace('(', ' (') for c in miss)} in {head}")
-        idx = [head.index(c) for c in COLS[report]]
-        return [{c: r[i] for c, i in zip(COLS[report], idx, strict=True)} for r in rows if r]
+        idx = [head.index(c) for c in cols]
+        return [{c: r[i] for c, i in zip(cols, idx, strict=True)} for r in rows if r]
 
 
 def api_name(name: str) -> str:
