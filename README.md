@@ -92,6 +92,10 @@ PyTorch, Hugging Face Transformers and TRL, vLLM, and CUDA C++ with a single sou
 [docs/README.md](docs/README.md) is the index: getting started, architecture and design decisions, reference,
 guides and runbooks. Contributing rules are in [docs/contributing.md](docs/contributing.md).
 
+## Citation
+
+If you use this work, cite it as described in [CITATION.cff](CITATION.cff).
+
 ## License and data
 
 The code is released under the [MIT License](LICENSE). Datasets are not included: LIDC-IDRI (TCIA, CC BY 3.0) and
