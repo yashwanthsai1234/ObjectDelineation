@@ -4,6 +4,7 @@
     python -I -m experiments.phase2.headline --test T/final_eval.json --val V/final_eval.json --model-ref REF
 
 --run ID reads runs/ID/eval/eval_{test,val}/final_eval.json. Values are copied at full precision, never typed.
+The run id is ID, or the folder under runs/ of --test (else empty).
 Schema 1 (no `schema` key) holds `ci95` (item bootstrap); schema 2 names its gate CI in `gate_ci` (patient).
 Refuses (exit 1, writes nothing) on a missing file, a wrong split, no view, mixed schemas or a null gate CI.
 """
@@ -58,7 +59,8 @@ def main(argv=None) -> int:
         return 1
     run = test.pop("_run")
     val.pop("_run")
-    doc = {"run": a.run or "", "model_ref": a.model_ref, **run, "ci_unit": unit, "test": test,
+    run_id = a.run or (a.test.parts[1] if a.test.parts[:1] == ("runs",) else "")  # runs/<id>/...
+    doc = {"run": run_id, "model_ref": a.model_ref, **run, "ci_unit": unit, "test": test,
            "val": val}  # fmt: skip
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(doc, indent=1) + "\n")

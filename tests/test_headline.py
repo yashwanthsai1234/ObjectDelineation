@@ -103,3 +103,13 @@ def test_ci_unit_other_than_item_adds_a_string():
 
     assert "patient-level" in headline_strings(h)
     assert "patient-level" not in headline_strings(h | {"ci_unit": "item"})
+
+
+def test_run_is_named_from_the_test_path_under_runs(tmp_path, monkeypatch):
+    t, v = pair(tmp_path, schema=2)
+    assert json.loads(run(tmp_path, t, v)[1].read_text())["run"] == ""  # a path outside runs/ names no run
+    a1 = tmp_path / "runs/r5/eval_a1/eval_test/final_eval.json"
+    a1.parent.mkdir(parents=True)
+    a1.write_text(open(t).read())
+    monkeypatch.chdir(tmp_path)
+    assert json.loads(run(tmp_path, str(a1.relative_to(tmp_path)), v)[1].read_text())["run"] == "r5"
