@@ -1520,3 +1520,28 @@ def test_check_rope_compares_every_row_with_hf_on_check_steps(monkeypatch):
     rope.clear()
     with pytest.raises(AssertionError, match="bad on the device"):
         rope.template_positions(*args, check=True)
+
+
+def test_vllm_engine_kwargs_follow_the_config_and_default_to_none():
+    from types import SimpleNamespace as NS
+
+    assert fast.vllm_engine_kwargs(NS(fp16=False)) == {}  # the B1 control: TRL's engine untouched
+    assert fast.vllm_engine_kwargs(NS(fp16=True)) == {"dtype": "float16"}
+    assert fast.vllm_engine_kwargs(NS(fp16=False, vllm_lora=True)) == {"enable_lora": True, "max_lora_rank": 16}
+
+
+def test_generate_carries_the_lora_request_only_under_option_f(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace as NS
+
+    monkeypatch.setitem(sys.modules, "vllm", NS())
+    monkeypatch.setitem(sys.modules, "vllm.lora", NS())
+    monkeypatch.setitem(sys.modules, "vllm.lora.request", NS(LoRARequest=lambda *a: ("lora", *a)))
+    for lora_dir, want in ((None, {}), (tmp_path, {"lora_request": ("lora", "policy", 1, str(tmp_path))})):
+        t, _ = vllm_trainer(expand=1)
+        t.lora_dir, seen = lora_dir, []
+        gen = t.vllm_generation.llm.generate
+        t.vllm_generation.llm.generate = lambda p, seen=seen, gen=gen, **kw: seen.append(kw) or gen(p, **kw)
+        fast.FastGRPO.patch_vllm_prompts(t)
+        t.vllm_generation.llm.generate([{"prompt_token_ids": [START, END]}], sampling_params=None)
+        assert seen == [{"sampling_params": None, **want}]

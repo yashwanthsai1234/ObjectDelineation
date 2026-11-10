@@ -1108,3 +1108,51 @@ def test_no_phase_b_script_but_final_eval_scores_the_test_view():
         for line in y.read_text().splitlines():
             if "lidc-test" in line and not line.lstrip().startswith("#"):
                 assert "experiments.phase2.final_eval" in line, (y.name, line)
+
+
+def adapter_dir(tmp_path, *, config=True):
+    d = tmp_path / "adapter"
+    d.mkdir()
+    (d / "adapter_model.safetensors").write_bytes(b"weights")
+    if config:
+        (d / "adapter_config.json").write_text("{}")
+    return d
+
+
+def test_adapter_run_records_the_folder_and_its_hash(ev, tmp_path, monkeypatch):
+    """I48: with --adapter final_eval.json holds the folder and the SHA-256 of its weights; without, no such key."""
+    import hashlib
+
+    d = adapter_dir(tmp_path)
+    run_fe(ev, tmp_path / "o", monkeypatch, "--adapter", str(d))
+    doc = json.loads((tmp_path / "o" / "final_eval.json").read_text())
+    assert doc["adapter"] == str(d) and doc["adapter_sha256"] == hashlib.sha256(b"weights").hexdigest()
+    run_fe(ev, tmp_path / "o2", monkeypatch)
+    assert "adapter" not in json.loads((tmp_path / "o2" / "final_eval.json").read_text())
+
+
+def test_adapter_folder_without_its_config_exits_2_naming_the_file(ev, tmp_path, monkeypatch, capsys):
+    with pytest.raises(SystemExit) as e:
+        run_fe(ev, tmp_path / "o", monkeypatch, "--adapter", str(adapter_dir(tmp_path, config=False)))
+    assert e.value.code == 2 and "adapter_config.json" in capsys.readouterr().err
+
+
+def test_load_trainer_serves_the_adapter_under_option_f_and_loads_its_weights(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace as NS
+
+    from experiments.phase2 import g_probe
+    from objdel.train import dataset
+
+    made, loaded = [], []
+    trainer = NS(model="M")
+    monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: None)
+    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: made.append(k) or (trainer,))
+    monkeypatch.setitem(sys.modules, "peft", NS(set_peft_model_state_dict=lambda m, sd: loaded.append((m, sd))))
+    monkeypatch.setitem(sys.modules, "safetensors.torch", NS(load_file=lambda p: {"k": str(p)}))
+    base = dict(model="qwen3-vl-2b", ckpt=Path("c"), train=tmp_path, out=[tmp_path])
+    FE.load_trainer(NS(**base, adapter=None))
+    assert made == [{}] and loaded == []  # the B1 control: merged sync, no adapter
+    FE.load_trainer(NS(**base, adapter=tmp_path))
+    weights = {"k": str(tmp_path / "adapter_model.safetensors")}
+    assert made[1] == {"numerics": "lora-seqmask"} and loaded == [("M", weights)]

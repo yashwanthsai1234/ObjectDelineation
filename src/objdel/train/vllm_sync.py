@@ -10,8 +10,6 @@ True and set it False right after the wake, in TRL's order (empty_cache, wake_up
 discards the weights and the LoRA slots, so every sync after a sleep re-pushes both.
 """
 
-import contextlib
-import functools
 import time
 from typing import NamedTuple
 
@@ -95,36 +93,6 @@ def sync_lora(vg, model, adapter_dir, adapter_name: str = "default", slot: int =
     return PushStats(base.n_tensors + n, base.bytes + size, base.seconds + time.perf_counter() - t0)
 
 
-@contextlib.contextmanager
-def engine_kwargs(**kw):
-    """Inside the block TRL's module-level `LLM` (vllm_generation.py imports it at the top) gets these keyword
-    arguments (option F: enable_lora=True, max_lora_rank=16); no `kw` leaves it alone."""
-    if not kw:
-        yield
-        return
-    import trl.generation.vllm_generation as vg
-
-    orig = vg.LLM
-    vg.LLM = functools.partial(orig, **kw)
-    try:
-        yield
-    finally:
-        vg.LLM = orig
-
-
-def _with_adapter(generate, adapter_dir):
-    """generate with `lora_request=LoRARequest("policy", 1, dir)` (load_inplace=False: sync_lora's load_inplace=True
-    already replaced the weights, so vLLM does not reload the folder per call)."""
-    from vllm.lora.request import LoRARequest
-
-    @functools.wraps(generate)
-    def wrapped(*args, **kwargs):
-        return generate(*args, lora_request=LoRARequest(LORA_NAME, 1, str(adapter_dir)), **kwargs)
-
-    wrapped.with_adapter = True
-    return wrapped
-
-
 def install(trainer, numerics: str = "bf16-seqmask", adapter_dir=None) -> bool:
     """Replaces the trainer's vLLM sync_weights (on the instance) with push_weights (merged presets) or sync_lora
     (lora-seqmask, into adapter_dir); False and nothing changed without a colocate vLLM on one process with PEFT."""
@@ -137,9 +105,7 @@ def install(trainer, numerics: str = "bf16-seqmask", adapter_dir=None) -> bool:
     if numerics == "lora-seqmask":
         if adapter_dir is None:
             raise ValueError("lora-seqmask needs an adapter_dir (a tmpfs folder)")
-        vg.sync_weights = lambda: sync_lora(vg, model, adapter_dir)
-        if not getattr(vg.llm.generate, "with_adapter", False):
-            vg.llm.generate = _with_adapter(vg.llm.generate, adapter_dir)
+        vg.sync_weights = lambda: sync_lora(vg, model, adapter_dir)  # generate's LoRARequest: FastGRPO.lora_dir
     else:
         vg.sync_weights = lambda: push_weights(vg, model)
     return True

@@ -26,6 +26,7 @@ import gc
 import json
 import math
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -103,17 +104,21 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
         calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
     if getattr(a, "no_ckpt_layers", None):  # C9 arm (a)
         calls.append(callbacks.NoCkptLayers(a.no_ckpt_layers))
-    lora_dir = getattr(a, "lora_sync", None)  # option F: vLLM serves the adapter (the engine needs enable_lora)
-    with vllm_sync.engine_kwargs(**({"enable_lora": True, "max_lora_rank": 16} if lora_dir else {})):
-        trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, eval_dataset=eval_dataset,
-                      processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
+    trainer = cls(model=model, reward_funcs=funcs, args=cfg, train_dataset=train, eval_dataset=eval_dataset,
+                  processing_class=proc, peft_config=peft, callbacks=calls)  # fmt: skip
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
+    trainer.log_by_prompt = bool(getattr(a, "log_by_prompt", False))
+    if cfg.off_policy_mask_threshold is not None and cls is fast.FastGRPO:  # bf16-tis-opsm: B2.4 rule 4's live delta
+        trainer.opsm_watch = callbacks.OpsmDelta(trainer, cfg.output_dir)
+        trainer.add_callback(trainer.opsm_watch)
     trainer.group_requests = bool(getattr(a, "group_requests", False))  # C6: one n = G vLLM request per prompt
     trainer.runaway_cap = bool(getattr(a, "runaway_cap", 0))  # C11: each prompt's max_tokens from the rows' `cap`
-    if lora_dir:  # C5, option F: the adapter folder written and loaded each sync
-        if not vllm_sync.install(trainer, "lora-seqmask", lora_dir):
-            raise ValueError("--lora-sync needs a colocate vLLM on one process with a LoRA model")
+    if cfg.vllm_lora and cls is fast.FastGRPO:  # option F: vLLM serves the unmerged adapter from a tmpfs folder
+        shm = "/dev/shm" if Path("/dev/shm").is_dir() else None
+        trainer.lora_dir = Path(tempfile.mkdtemp(prefix="objdel-lora-", dir=shm))
+        if not vllm_sync.install(trainer, "lora-seqmask", trainer.lora_dir):  # C5's sync_lora each sync
+            raise ValueError("--numerics lora-seqmask needs a colocate vLLM on one process with a LoRA model")
     elif getattr(a, "fast_sync", False) and not vllm_sync.install(trainer):  # C5: one load_weights call per sync
         raise ValueError("--fast-sync needs a colocate vLLM on one process with a LoRA model")
     trainer.count_syncs = bool(getattr(a, "count_syncs", False))  # C0
@@ -124,10 +129,6 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     if getattr(a, "gpu_pixels", "off") == "auto":  # C1: 8 training images for the start-up self-check
         imgs = [train[i]["image"] for i in range(min(8, len(train)))]
         print(f"gpu_pixels/backend={trainer.use_gpu_pixels(imgs, getattr(a, 'allow_cpu_pixels', False))}")
-    trainer.log_by_prompt = bool(getattr(a, "log_by_prompt", False))
-    if cfg.off_policy_mask_threshold is not None and cls is fast.FastGRPO:  # bf16-tis-opsm: B2.4 rule 4's live delta
-        trainer.opsm_watch = callbacks.OpsmDelta(trainer, cfg.output_dir)
-        trainer.add_callback(trainer.opsm_watch)
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
         trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers

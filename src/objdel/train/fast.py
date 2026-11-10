@@ -901,6 +901,12 @@ def vllm_kwargs(**kw):
         vg.LLM = orig
 
 
+def vllm_engine_kwargs(args) -> dict:
+    """The LLM(...) keywords TRL leaves out: float16 under fp16, LoRA serving under option F (args.vllm_lora)."""
+    return ({"dtype": "float16"} if getattr(args, "fp16", False) else {}) | (
+        {"enable_lora": True, "max_lora_rank": 16} if getattr(args, "vllm_lora", False) else {})
+
+
 class FastGRPO(FastForward, GRPOTrainer):
     """GRPOTrainer with the per-chunk windows, the vision cache (cleared per generation batch), rewards scored while
     the old and reference logprobs run (C9), phase timers and no FLOP count."""
@@ -925,11 +931,11 @@ class FastGRPO(FastForward, GRPOTrainer):
     opsm_watch = None  # B2.4 rule 4: callbacks.OpsmDelta, fed the train-mode per-sequence (seq_kl, advantage) rows
     log_by_prompt = False  # B2.3: train logs also hold rewards/iou_tc/by_prompt (one mean per prompt of the step)
     runaway_cap = False  # C11, train_rl --runaway-cap: max_tokens per prompt from the rows' `cap` (runaway)
+    lora_dir = None  # option F: the tmpfs folder of the adapter vLLM serves; every generate carries its LoRARequest
 
     def __init__(self, *args, **kwargs):
         trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
-        fp16 = getattr(kwargs.get("args"), "fp16", False)
-        with vllm_kwargs(**({"dtype": "float16"} if fp16 else {})):  # TRL builds its vLLM engine without a dtype
+        with vllm_kwargs(**vllm_engine_kwargs(kwargs.get("args"))):  # TRL builds its vLLM engine without these
             super().__init__(*args, **kwargs)
         self.check_engine_dtype()
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
@@ -1266,6 +1272,12 @@ class FastGRPO(FastForward, GRPOTrainer):
         generate, pad = llm.generate, self.model.config.image_token_id
 
         def one_pad(prompts, *args, **kwargs):
+            if self.lora_dir is not None:
+                from vllm.lora.request import LoRARequest
+
+                from objdel.train.vllm_sync import LORA_NAME
+
+                kwargs["lora_request"] = LoRARequest(LORA_NAME, 1, str(self.lora_dir))
             outputs = generate(one_pad_per_image(prompts, pad), *args, **kwargs)
             for row, o in zip(prompts, outputs, strict=True):
                 if "multi_modal_data" in row and list(o.prompt_token_ids) != list(row["prompt_token_ids"]):
