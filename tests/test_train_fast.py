@@ -1466,6 +1466,29 @@ def test_packed_chunks_stage_their_indices_in_one_fresh_buffer_each(monkeypatch)
     assert not any(isinstance(v, torch.Tensor) for v in vars(t).values())
 
 
+def test_packed_chunks_gather_their_rows_with_index_select(monkeypatch):
+    """C4 step 4: packed_chunk gathers tok, mmt and posp from the row tensors with index_select (host indices, one
+    staging copy) instead of per-row torch.full / torch.cat loops; same logprobs. Per chunk: 3 gathers, the labels'
+    one torch.full, and the 2 image cats (pixel_values, image_grid_thw)."""
+    import sys
+
+    m = tiny_model()
+    ids, mask, T, kw = group_batch(groups=2, G=4, lengths=[3, 7, 1, 5, 2, 6, 4, 10], pads=[2, 0])
+    ref, ent_ref, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4,
+                                                                   compute_entropy=True, **kw)  # fmt: skip
+    calls, real = collections.Counter(), {n: getattr(torch, n) for n in ("full", "cat", "index_select")}
+    for name in real:
+        def spy(*a, _name=name, **k):
+            calls[_name] += sys._getframe(1).f_code.co_name == "packed_chunk"
+            return real[_name](*a, **k)
+
+        monkeypatch.setattr(torch, name, spy)
+    lp, ent, _ = shared(m)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, compute_entropy=True,
+                                                              **kw)  # fmt: skip
+    assert torch.equal(lp, ref) and torch.equal(ent, ent_ref)
+    assert calls == {"index_select": 6, "full": 2, "cat": 4}  # 2 packed chunks
+
+
 def counted_rope(m):
     calls, orig = [], m.model.get_rope_index
 

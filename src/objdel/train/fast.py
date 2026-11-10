@@ -303,41 +303,36 @@ class FastForward:
         rows' real prompt and answer lengths (host lists). Returns (rows, answer width) log-probs and entropies laid
         out as TRL's, 0 off the answers. `image_ids` (--encoder-once): the rows' image ids, each group's features from
         EncoderCache instead of `pix`."""
-        dev, T = ids.device, ids.size(1) - P
-        toks, poss, mms, labs, segs, gi, pi, ri, ci = [], [], [], [], [], [], [], [], []
+        dev, Wr, T = ids.device, ids.size(1), ids.size(1) - P
+        srcs, segs, gi, pi, ri, ci = [], [], [], [], [], []
         for g, (a, b) in enumerate(runs):
             f, lp0 = P - plen[a], plen[a] - 1
-            t, p, m, lab, seg = [ids[a, f:P - 1]], [pos[:, a, f:P - 1]], [mm[a, f:P - 1]], [], [0] * lp0
-            lab.append(torch.full((lp0,), -100, dtype=ids.dtype, device=dev))
+            src, seg = [*range(a * Wr + f, a * Wr + P - 1)], [0] * lp0  # flat (row, column) of each packed token
             off = lp0
             for k, r in enumerate(range(a, b), 1):
                 L = lens[r]
-                t.append(ids[r, P - 1:P + L])
-                p.append(pos[:, r, P - 1:P + L])
-                m.append(mm[r, P - 1:P + L])
-                lab += [torch.full((1,), -100, dtype=ids.dtype, device=dev), ids[r, P:P + L]]
+                src += range(r * Wr + P - 1, r * Wr + P + L)
                 seg += [k] * (L + 1)
                 gi += [g] * L  # the fused head's outputs are shifted: index q - 1 scores token q
                 pi += range(off, off + L)
                 ri += [r] * L
                 ci += range(L)
                 off += L + 1
-            toks.append(torch.cat(t)), poss.append(torch.cat(p, 1))
-            mms.append(torch.cat(m)), labs.append(torch.cat(lab)), segs.append(seg)
+            srcs.append(src), segs.append(seg)
         W, c = max(map(len, segs)), len(runs)
         host = np.concatenate([np.asarray([x + [-1] * (W - len(x)) for x in segs]).ravel(),
+                               np.asarray([x + [0] * (W - len(x)) for x in srcs]).ravel(),
                                np.asarray([gi, pi, ri, ci]).ravel()]).astype(np.int64)  # fmt: skip
         stage = torch.empty(host.size, dtype=torch.int64, pin_memory=dev.type == "cuda")  # fresh per chunk (C4 step 4)
         stage.numpy()[:] = host
         flat = stage.to(dev, non_blocking=True)  # one copy; the caching host allocator keeps `stage` until it ends
-        seg, idx = flat[:c * W].view(c, W), flat[c * W:].view(4, -1)
-        tok = torch.zeros(c, W, dtype=ids.dtype, device=dev)
+        seg, src, idx = flat[:c * W].view(c, W), flat[c * W:2 * c * W], flat[2 * c * W:].view(4, -1)
+        pad = seg < 0
+        tok = torch.index_select(ids.reshape(-1), 0, src).view(c, W).masked_fill(pad, 0)
+        mmt = torch.index_select(mm.reshape(-1), 0, src).view(c, W).masked_fill(pad, 0)
+        posp = torch.index_select(pos.reshape(pos.size(0), -1), 1, src).view(-1, c, W).masked_fill(pad, 0)
         lab = torch.full((c, W), -100, dtype=ids.dtype, device=dev)
-        mmt = torch.zeros(c, W, dtype=mm.dtype, device=dev)
-        posp = torch.zeros(pos.size(0), c, W, dtype=pos.dtype, device=dev)
-        for g in range(c):
-            n_ = len(segs[g])
-            tok[g, :n_], lab[g, :n_], mmt[g, :n_], posp[:, g, :n_] = toks[g], labs[g], mms[g], poss[g]
+        lab[idx[0], idx[1] + 1] = tok[idx[0], idx[1] + 1]  # each answer token labels itself; prompt and heads -100
         q, k_ = seg[:, :, None], seg[:, None, :]
         causal = torch.ones(W, W, dtype=torch.bool, device=dev).tril()
         allow = causal & (k_ >= 0) & (q >= 0) & ((k_ == 0) | (k_ == q))
