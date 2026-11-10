@@ -522,15 +522,22 @@ def test_slot_polygonizer_is_archived():
 
 
 def archived(root: Path, name: str) -> Path:
-    """archive/<name>, which git ignores (never tracked); skip where this checkout has no archive/ (a worktree)."""
+    """archive/<name>, which git ignores (never tracked); skip where this source has no archive/ (a worktree, or the
+    box's synced source, which has no .git either)."""
     import subprocess
 
+    if not (root / "archive").is_dir():
+        pytest.skip("archive/ is local-only (git-ignored, a255988): the owner's checkout reads it")
     rel = f"archive/{name}"
     assert subprocess.run(["git", "check-ignore", "-q", rel], cwd=root).returncode == 0, f"{rel} is not git-ignored"
     assert not subprocess.run(["git", "ls-files", rel], cwd=root, capture_output=True, text=True).stdout
-    if not (root / "archive").is_dir():
-        pytest.skip("archive/ is local-only (git-ignored, a255988): the owner's checkout reads it")
     return root / rel
+
+
+def test_archived_skips_on_a_synced_source_without_archive(tmp_path):
+    """The box's /workspace/src: rsynced source, no archive/ and no .git; the archive tests skip there."""
+    with pytest.raises(pytest.skip.Exception, match="archive/"):
+        archived(tmp_path, "cuda_validity")
 
 
 def test_shape_totals_is_archived():
