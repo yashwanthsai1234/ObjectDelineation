@@ -21,7 +21,7 @@ SPLIT = {"impl2_gpu_test_a.yaml": (0, 1, 2, 3), "impl2_gpu_test_b.yaml": (0, 1, 
 RD, DATA = "/workspace/runs/r", "/workspace/data/lidc"
 HARD = {0, 1, 6}  # build, env_check, the lost-run simulation; every other step is soft ("~")
 SOFT_TAIL_USD = 0.35  # front 6.4 rule 5: BudgetStop = approved - the tail after the RL steps
-HARD_STOP_ROOM_USD = 7.60  # the ledger closed at $16.90; HARD_STOP 19.90 (owner, 2026-11-09), 21.40 (+$1.50), 24.50 (2026-11-10, the RL run)
+HARD_STOP_ROOM_USD = 7.60  # ledger closed at $16.90; HARD_STOP 19.90, 21.40, then 24.50 (owner, 2026-11-10)
 
 
 # The money block of the old plan file (front 6 rules and planning inputs); the spec holds only compute.cap_hours and
