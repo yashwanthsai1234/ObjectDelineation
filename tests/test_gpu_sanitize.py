@@ -1,7 +1,6 @@
 """The sanitizer corpus (Implementation.md D8): small fixed engine calls that `run_box.sh --gpu-check` runs under each
 compute-sanitizer tool (memcheck, initcheck, synccheck, racecheck; `-m "gpu and sanitizer"`), each inside its 300 s cap.
-Synthetic inputs from fixed seeds, no data/. tests/test_gpu_determinism.py runs the same calls 20 times.
-eval_sets and the EDT join with D7 (not on this branch yet)."""
+Synthetic inputs from fixed seeds, no data/. tests/test_gpu_determinism.py runs the same calls 20 times."""
 import numpy as np
 import pytest
 
@@ -63,7 +62,20 @@ def tables() -> dict:  # 8 caches: add_tables_from_raters, then drop_tables
     return dev
 
 
-CORPUS = {f.__name__: f for f in (check_masks, check_polygons, score_polygons, certify_polygons, topology, tables)}
+def eval_sets() -> dict:  # 8 sets of 8 samples against caches of 4 raters
+    from tests.test_eval_device import _call, _sets
+    return _call(_sets(808, 8, 4, n=8), 8)
+
+
+def edt() -> dict:  # 16 maps of mixed sides and densities
+    rng = np.random.default_rng(35)
+    maps = [(rng.random(tuple(rng.integers(1, 90, 2))) < rng.uniform(0.05, 0.95)).astype(np.uint8)
+            for _ in range(16)]
+    return {f"map{i}": gc.edt(m) for i, m in enumerate(maps)}
+
+
+CORPUS = {f.__name__: f for f in (check_masks, check_polygons, score_polygons, certify_polygons, topology, tables,
+                                  eval_sets, edt)}
 
 
 @pytest.mark.parametrize("name", CORPUS)

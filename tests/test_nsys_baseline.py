@@ -1,6 +1,6 @@
 """A6: experiments/phase2/docker/nsys_capture.sh (S04: pins, one capture flag, a stub nsys run) and
 experiments.phase2.nsys_baseline on the hand-made export in tests/goldens/nsys_small (I12-I15; the SQLite file is
-built here from gpu_rows.json, so no binary is committed). G06 reads the pulled V2 capture (marker `data`)."""
+built here from gpu_rows.json, so no binary is committed). G06 (the pulled V2 capture) is in tests/test_a_gpu.py."""
 
 import json
 import os
@@ -240,27 +240,3 @@ def test_cli_runs_isolated(tmp_path):
     out = subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.nsys_baseline", "--help"], cwd=tmp_path,
                          capture_output=True, text=True, env=os.environ | {"PYTHONPATH": str(ROOT)})  # fmt: skip
     assert out.returncode == 0 and "--stats" in out.stdout, out.stderr
-
-
-# G06 (box half, read on the Mac after pull.sh of V2 item 3) ------------------------------------------------------
-
-
-@pytest.mark.data
-def test_g06_nsys_baseline():
-    found = sorted((ROOT / "runs").glob("*/nsys/nsys_baseline.json"))
-    if not found:
-        pytest.skip("missing runs/<V2 run>/nsys/nsys_baseline.json (C0 baseline arm of V2 item 3)")
-    for path in found:
-        doc = json.loads(path.read_text())
-        assert [s["step"] for s in doc["steps"]] == [16, 17]
-        for s in doc["steps"]:
-            assert s["coverage"] >= 0.90 and {"step", "loader", "micro", "optimizer", "log", "generate"} <= set(
-                s["per_range_s"])  # every step generates once (steps_per_generation = GA)
-            assert {"gpu_idle", "graph_rows", "host_syncs", "host_sync_parts"} <= set(s)
-        assert "overhead_affected" in doc["overhead"]
-        assert (path.parent / "c0_base_tables.txt").exists() and (path.parent / "version.txt").exists()
-        rl = path.parents[1] / "c0_base" / "rl.json"
-        if rl.exists():
-            steps = [h for h in json.loads(rl.read_text())["log"] if "time/step_s" in h]
-            keys = [f"sampling/importance_sampling_ratio/{k}_share" for k in ("zero", "hi", "lo")]
-            assert steps and all(k in steps[-1] for k in keys)
