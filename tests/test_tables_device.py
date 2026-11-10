@@ -212,7 +212,8 @@ def _stack():
 def test_construction_and_load_make_no_engine_call(tmp_path, monkeypatch):
     """I06 (C11): constructing and loading make no engine call and leave gc.stats() unchanged; the first device()
     builds the tables (one add_tables_from_raters call), the second makes none; perimeter, rater_sigs, voters and
-    same_sig call device() first; the distance maps come from cache.edt on first host access."""
+    same_sig call device() first; the distance maps come from cache.edt (one engine edt call each) on first host
+    access, equal to scipy's EDT."""
     c0 = ExpertCache.build(_stack())
     path = tmp_path / "c.npz"
     c0.save(path)
@@ -236,8 +237,11 @@ def test_construction_and_load_make_no_engine_call(tmp_path, monkeypatch):
         c2 = ExpertCache(c0.raters, c0.tau, c0.t5)
     assert (c.rater_sigs, c.voters, c.same_sig) == (c0.rater_sigs, c0.voters, c0.same_sig)
     spy.calls.clear()
-    assert np.array_equal(c.dist_out_union, rc.edt(~c.union)) and np.array_equal(c.dist_in_core, rc.edt(c.core))
-    assert spy.calls == []
+    maps = (c.dist_out_union, c.dist_in_core, c.dist_out_union, c.dist_in_core)
+    assert spy.calls == ["edt", "edt"]
+    from scipy import ndimage
+    for got, nz in zip(maps, (~c.union, c.core, ~c.union, c.core), strict=True):
+        assert got.tobytes() == ndimage.distance_transform_edt(nz).astype(np.float32).tobytes()
 
 
 def test_device_many_builds_only_cold_caches_in_one_call(monkeypatch):
@@ -264,9 +268,10 @@ def test_device_many_builds_only_cold_caches_in_one_call(monkeypatch):
     assert spy.calls == ["add_tables_from_raters"] and cold_waits - gc.stats()["waits"] == 1
 
 
-def test_no_cpu_labelling_or_edt_after_load(tmp_path, monkeypatch):
-    """S01 part (D7b): with scipy's EDT and labelling and OpenCV's connected components patched to raise, a loaded
-    cache builds its tables and scores as before (ExpertCache.build keeps the host EDT until D7)."""
+def test_no_cpu_labelling_or_edt_in_build_or_after_load(tmp_path, monkeypatch):
+    """S01 part (D7b, D7): with scipy's EDT and labelling and OpenCV's connected components patched to raise,
+    ExpertCache.build gives the same tau, T5 and distance maps, and a loaded cache builds its tables and scores as
+    before."""
     import cv2
     from scipy import ndimage
     c0 = ExpertCache.build(_stack())
@@ -281,6 +286,9 @@ def test_no_cpu_labelling_or_edt_after_load(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, name, boom)
     c = ExpertCache.load(tmp_path / "c.npz")
     assert rc_score(mask, c) == want and c.rater_sigs == c0.rater_sigs and c.perimeter == c0.perimeter
+    b = ExpertCache.build(_stack())
+    assert (b.tau, b.t5, b.digest) == (c0.tau, c0.t5, c0.digest)
+    assert np.array_equal(b.dist_out_union, c0.dist_out_union) and np.array_equal(b.dist_in_core, c0.dist_in_core)
 
 
 def rc_score(mask, cache):

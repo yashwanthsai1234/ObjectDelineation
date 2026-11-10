@@ -137,17 +137,19 @@ def test_cache_ref_pickles_as_its_key_and_roots_stay_apart(prepared, tmp_path):
     assert serve.loader(prepared)(key)["cup"] is not serve.loader(other)(key)["cup"]
 
 
-def test_forked_workers_score_like_the_parent(prepared):
-    """A worker forked after the preload resolves CacheRefs in its copy of STORE and uploads them to its own device
-    context (ExpertCache.device is per process): the same hashes as the parent."""
+def test_forked_workers_cannot_score(prepared):
+    """D7 (I18): device work runs in one process. A worker forked after the preload resolves CacheRefs in its copy
+    of STORE, but its first device() raises RuntimeError (no second device context); the parent scores."""
     serve.preload(prepared, ("riga", "lidc"))
     batches = _workloads(prepared)
-    serial = {name: digest(score_batch(jobs)) for name, jobs in batches.items()}  # the parent uploads first
+    jobs = next(iter(batches.values()))
     ex = serve.fork_pool(2)
     try:
-        assert dict(zip(batches, ex.map(_digest_of, batches.values()), strict=True)) == serial
+        with pytest.raises(RuntimeError, match="device\\(\\) in a forked child"):
+            ex.submit(_digest_of, jobs).result()
     finally:
         ex.shutdown()
+    assert digest(score_batch(jobs))
 
 
 def _digest_of(jobs):

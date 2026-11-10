@@ -26,6 +26,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
+from objdel import _gpucheck
 from objdel.train import nvtx, trl_adapter
 from objdel.train.dataset import OpenOnce
 
@@ -770,7 +771,8 @@ class FastGRPO(FastForward, GRPOTrainer):
         device in one read (C10, A6, B2.1), time/step_s (the host-clock gap since the previous log: one log per step
         at logging_steps 1) and, with OBJDEL_NVTX_SYNC=0, the phase times of the CUDA event pairs; then TRL's log.
         In train mode the same read takes the step's seq_kl quantiles and its per-sequence rows, appended to
-        <output_dir>/seq_gaps.f32 (write_seq_gaps)."""
+        <output_dir>/seq_gaps.f32 (write_seq_gaps). On a CUDA build, train steps 1-6 add `engine/<key>` for every
+        gc.stats() key and `engine/max_memory_reserved` (host reads of counters, no CUDA sync; D7 step 5)."""
         with nvtx.range("log"):
             train = self.model.training
             m = self._metrics["train" if train else "eval"]
@@ -797,7 +799,19 @@ class FastGRPO(FastForward, GRPOTrainer):
                 end.synchronize()  # long done: TRL's loss read and the stats read above waited for the stream
                 self._metrics[mode][f"time/{phase}_s"].append(start.elapsed_time(end) / 1e3)
             self.cuda_times = None
+            if train and _gpucheck.build() == "cuda" and 1 <= self.state.global_step <= 6:  # D-G14, D-G15 (D7)
+                logs = logs | {f"engine/{k}": v for k, v in _gpucheck.stats().items()} | {
+                    "engine/max_memory_reserved": torch.cuda.max_memory_reserved()}
             return super().log(logs, start_time)
+
+    def train(self, *args, **kwargs):
+        """Trainer.train; on a CUDA build, then one more log_history row with the run's `engine/pinned_grows`
+        (D-G15 reads it over the whole run)."""
+        out = super().train(*args, **kwargs)
+        if _gpucheck.build() == "cuda":
+            self.state.log_history.append({"engine/pinned_grows": _gpucheck.stats()["pinned_grows"],
+                                           "step": self.state.global_step})
+        return out
 
     def _generate(self, prompts):
         if self.images is not None:  # the previous batch's images

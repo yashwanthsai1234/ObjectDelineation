@@ -23,6 +23,7 @@ namespace gpucheck {
 using i32 = std::int32_t;
 using i64 = std::int64_t;
 using u8 = std::uint8_t;
+using u16 = std::uint16_t;
 using u32 = std::uint32_t;
 
 // Input caps. A shape is a list of rings of integer vertices on a G x G grid over a W x H crop; grid point (x, y) is
@@ -198,6 +199,38 @@ struct Topology {
   std::vector<u8> masks;                   // want_masks only: the filtered masks, laid out as the input (0 / 1)
 };
 
+// eval_sets (objdel.eval.device): set s = shapes s K .. s K + K - 1 of the polygons (the K samples of one object of
+// one item; an unparsed sample is a shape with no ring), against the tables tables[s] (frame = the shapes' frame;
+// every set's tables have the same k raters, else std::invalid_argument). M = K + k + 1 masks per set, in order: the K
+// drawn samples (raster AND legal), the k raters, the vote. Inputs checked by the binding (1 <= K <= 256,
+// 1 <= T <= kMaxThresholds, sample cuts in [0, K], rater cuts >= 0, nsd_cut >= 0, 1 <= band_d <= 31,
+// max_scratch_bytes >= 1); here: rater cuts <= k, and a set whose scratch is above the cap raises
+// std::invalid_argument. Results do not depend on the chunk split.
+constexpr i32 kMaxThresholds = 16;
+struct EvalSets {
+  i64 n = 0;                    // sets
+  i32 K = 0, T = 0;             // samples, soft-Dice thresholds
+  const i64* tables = nullptr;  // (n) table handles
+  const u8* legal = nullptr;    // (n K) 0: the sample draws nothing (metrics' `drawn`)
+  const i32* cuts = nullptr;    // (n, T, 2) per threshold: the sample cut, the rater cut
+  const i64* nsd_cut = nullptr; // (n) the largest squared corner distance within the NSD tolerance
+  const i32* band_d = nullptr;  // (n) boundary-IoU band width, px
+  i64 max_scratch_bytes = i64(256) << 20;
+};
+struct EvalCounts {                  // per set, row-major
+  i32 k = 0;                         // raters (of every set's tables)
+  std::vector<i64> inter;            // (n, M, M) popcount(a & b) of the drawn samples, raters and vote
+  std::vector<i64> inter_raw;        // (n, K, K) the same between the raw sample rasters (before the legal gate)
+  std::vector<i64> band_inter;       // (n, M, M) the same between their boundary-IoU bands (metrics.band)
+  std::vector<i64> soft;             // (n, T, 3) |P_t|, |R_t|, |P_t & R_t|: P_t = drawn samples >= cut, R_t = raters >= cut
+  std::vector<i64> surf;             // (n, K + k, 3) surfels of the drawn samples and raters by length class
+                                     // (sqrt(2)/2, 1, sqrt(2)) on the (H + 1) x (W + 1) corner grid
+  std::vector<i64> nsd;              // (n, K, k, 2, 3) per (sample, rater), direction (sample -> rater, rater ->
+                                     // sample), class: surfels whose squared distance to the other surface > nsd_cut
+                                     // (all of them when the other surface is empty)
+  std::vector<double> vote_iou_tc;   // (n) IoU_tc of the pixel vote of the legal drawn samples (2 x count > legal)
+};
+EvalCounts eval_sets(const Polygons& in, const EvalSets& sets);
 // Per-stage device time of one call in milliseconds, stages in the order they first ran (timing=True in the binding).
 // Read after the call's last wait: asking for it adds no host wait.
 using Times = std::vector<std::pair<std::string, double>>;
@@ -211,6 +244,7 @@ struct Stats {
                                       // on the CPU build, the host staging buffers
   i64 pool_allocs = 0, pool_frees = 0;  // stream-ordered pool allocations; on the CPU build, device-kind memory
   i64 pinned_grows = 0;  // growths of a staging buffer after its one sizing in the first call (logged to stderr)
+  i64 eval_scratch_peak = 0;  // the largest scratch block of one eval_sets chunk (bytes)
   // State, kept by reset_stats():
   i64 arena_bytes = 0;        // capacity of the grow-only device arenas of both lanes
   i64 table_bytes = 0;        // bytes of the resident expert tables
@@ -233,6 +267,13 @@ std::vector<i64> add_tables_many(const std::vector<Tables>& ts);  // one host wa
 // Tables built on the device from rater planes (one upload, one host wait per batch; none when empty): the same
 // tables add_tables stores from the host-built arrays, and the scalars the host needs.
 BuiltTables add_tables_from_raters(const std::vector<Raters>& in);
+// The exact Euclidean distance (float32(sqrt(float64(d2))), d2 the integer squared distance) from each pixel of an
+// H x W map (row-major, 0 <= H, W <= kMaxEdtDim; checked by the binding) to its nearest zero pixel, 1e6 everywhere
+// when there is none (objdel.reward.cache.edt, the offline cache build; the only entry that returns pixels).
+// kMaxEdtDim: the largest squared distance 2 x 32766^2 stays below the int32 no-source mark; the cache build pads a
+// cropped 4096 frame by 1 px on each side, so the frame bound kMaxDim is too small here.
+constexpr i32 kMaxEdtDim = 32767;
+std::vector<float> edt(const u8* nonzero, i32 H, i32 W);
 void drop_tables(i64 handle);     // no host wait
 void trim(i64 bytes);             // the engine's pool keeps <= `bytes` unused (cudaMemPoolTrimTo); CPU build: no-op
 i64 resident();                    // tables on the device

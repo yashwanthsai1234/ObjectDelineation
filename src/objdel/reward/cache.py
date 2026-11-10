@@ -26,13 +26,15 @@ rater abstains, all of them vote (the tiny object's unanimous answer is "below t
 Items with one rater are excluded from RL (`rl_eligible`): their band has no width and their topology set is
 a single answer. `build` refuses them.
 
-Bit-for-bit reproducibility across CPUs (M9 F1, F2; impl/M9_x86.md, impl/S2.md). The EDT is scipy's exact Maurer
-transform: integer squared distances, a float64 sqrt, rounded to float32. That is the correctly rounded float32
-sqrt (double rounding is innocuous for sqrt with 53 >= 2 * 24 + 2 bits), equal to OpenCV's own trueDistTrans on
-arm64 (103,311 fixture masks, impl/S2.md). OpenCV's x86 wheel routes DIST_MASK_PRECISE to Intel IPP, which is not
-correctly rounded and varies between runs (opencv#24082), so it is not used. S_m from quad over scipy.stats differs
-by 1 ULP between arm64 and x86 (m = 3, 7), so S_1..S_8 are the reference values (equal to quad to 1e-12, tested); a
-larger rater count falls back to quad.
+Bit-for-bit reproducibility across CPUs (M9 F1, F2; impl/M9_x86.md, impl/S2.md). The EDT runs in the checker
+engine (objdel._gpucheck.edt, the kernels that build the device tables): exact integer squared distances (Felzenszwalb
+and Huttenlocher's lower envelope in integers), a float64 sqrt, rounded to float32. That is the correctly rounded
+float32 sqrt (double rounding is innocuous for sqrt with 53 >= 2 * 24 + 2 bits), bit-identical to scipy's exact
+Maurer transform (the oracle of the tests and of the D7 cache gate, runs/d7) and to OpenCV's own trueDistTrans on arm64
+(103,311 fixture masks, impl/S2.md), and the same on the CPU and CUDA builds (integers only). OpenCV's x86 wheel routes
+DIST_MASK_PRECISE to Intel IPP, which is not correctly rounded and varies between runs (opencv#24082), so it is not
+used. S_m from quad over scipy.stats differs by 1 ULP between arm64 and x86 (m = 3, 7), so S_1..S_8 are the reference
+values (equal to quad to 1e-12, tested); a larger rater count falls back to quad.
 
 Storage: `save` writes the rater masks, tau and T5 (the only costly values) to a compressed .npz together with
 the reward fingerprint (spec.fingerprint: CACHE_SPEC, size rule, numpy / scipy / OpenCV versions) and a SHA-256 of
@@ -48,9 +50,9 @@ References:
   Objects with Indeterminate Boundaries (GISDATA 2), Taylor & Francis, 1996. https://www.researchgate.net/publication/2526626
 - S. K. Warfield, K. H. Zou, W. M. Wells, "Simultaneous truth and performance level estimation (STAPLE)",
   IEEE TMI 23(7), 2004. https://doi.org/10.1109/TMI.2004.828354
-- scipy.ndimage.distance_transform_edt (exact EDT; C. R. Maurer, R. Qi, V. Raghavan, "A linear time algorithm for
-  computing exact Euclidean distance transforms of binary images in arbitrary dimensions", IEEE TPAMI 25(2), 2003;
-  squared distances, then np.sqrt):
+- scipy.ndimage.distance_transform_edt (the tests' oracle of edt; C. R. Maurer, R. Qi, V. Raghavan, "A linear time
+  algorithm for computing exact Euclidean distance transforms of binary images in arbitrary dimensions", IEEE TPAMI
+  25(2), 2003; squared distances, then np.sqrt):
   https://docs.scipy.org/doc/scipy/reference/generated/scipy.ndimage.distance_transform_edt.html ;
   https://github.com/scipy/scipy/blob/main/scipy/ndimage/src/ni_morphology.c ;
   https://github.com/scipy/scipy/blob/main/scipy/ndimage/_morphology.py
@@ -62,7 +64,7 @@ References:
   run-to-run rounding: https://github.com/opencv/opencv/blob/5.x/hal/ipp/src/distancetransform_ipp.cpp ;
   https://github.com/opencv/opencv/issues/24082 ; partial fix https://github.com/opencv/opencv/pull/27432
 - P. F. Felzenszwalb, D. P. Huttenlocher, "Distance transforms of sampled functions", Theory of Computing 8,
-  2012 (OpenCV's own exact DIST_L2 + DIST_MASK_PRECISE path, equal to scipy's output):
+  2012 (the engine's EDT, cuda/gpucheck.cpp EdtRows / EdtCols; OpenCV's own exact DIST_L2 + DIST_MASK_PRECISE path):
   https://theoryofcomputing.org/articles/v008a019/ ;
   https://github.com/opencv/opencv/blob/4.x/modules/imgproc/include/opencv2/imgproc.hpp
 - S. G. Armato III et al., "The Lung Image Database Consortium (LIDC) and Image Database Resource Initiative
@@ -83,7 +85,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from scipy import integrate, ndimage, stats
+from scipy import integrate, stats
 
 from objdel import _gpucheck
 from objdel.checker.topology import min_area
@@ -94,6 +96,7 @@ _CROSS = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
 _BIG = np.float32(1e6)  # distance when no target pixel exists in the crop
 _P95_PAIR_OVER_SIGMA = 1.959963984540054 * np.sqrt(2.0)  # P95 of |X - Y|, X, Y ~ N(0, 1)
 _X_STAR = 1.0 / CACHE_SPEC.expert_score - 1.0
+_PID = os.getpid()  # the process that imported this module; a forked child inherits it (device_many's guard)
 # S_m, m = 1..8 (module docstring): _excursion_quad's values on the reference arm64 Mac (the stored caches' T5)
 S_M = {m: float.fromhex(h) for m, h in enumerate((
     "0x1.0000000000001p+1", "0x1.9062e2bc50596p-1", "0x1.cb7070234b5dap-2", "0x1.35e135a79b622p-2",
@@ -111,17 +114,20 @@ def voters(sigs) -> tuple[int, ...]:
     return tuple(i for i, s in enumerate(sigs) if s) or tuple(range(len(sigs)))
 
 
-def _drop_tables(pid: int, handle: int) -> None:
-    if os.getpid() == pid:  # a forked child never frees its parent's tables
+def _drop_tables(handle: int) -> None:
+    if os.getpid() == _PID:  # a forked child never frees its parent's tables
         _gpucheck.drop_tables(handle)
 
 
 def device_many(caches) -> None:
-    """Builds the device tables of every cache that has none in this process, in one engine call
-    (objdel._gpucheck.add_tables_from_raters: one upload, one host wait), and stores each one's handle and returned
-    scalars. The reward scores a step's answers after one such call for the step's cold caches (score_many)."""
-    pid = os.getpid()
-    cold = list({id(c): c for c in caches if c._device is None or c._device[0] != pid}.values())
+    """Builds the device tables of every cache that has none, in one engine call (objdel._gpucheck.
+    add_tables_from_raters: one upload, one host wait), and stores each one's handle and returned scalars. The reward
+    scores a step's answers after one such call for the step's cold caches (score_many). RuntimeError in a forked
+    child (os.getpid() is not the pid recorded at import): the device work runs in one process (D7), and a child
+    would open its own device context, tables and scratch."""
+    if os.getpid() != _PID:
+        raise RuntimeError("device() in a forked child")
+    cold = list({id(c): c for c in caches if c._device is None}.values())
     if not cold:
         return
     r = _gpucheck.add_tables_from_raters([c.raters.view(np.uint8) for c in cold],
@@ -130,8 +136,8 @@ def device_many(caches) -> None:
     ss, sig, a = r["sig_start"], r["sig"].tolist(), r["rater_area_start"]
     for i, c in enumerate(cold):
         h = int(r["handles"][i])
-        weakref.finalize(c, _drop_tables, pid, h).atexit = False  # the process's exit frees the device
-        c._device = (pid, h)
+        weakref.finalize(c, _drop_tables, h).atexit = False  # the process's exit frees the device
+        c._device = h
         c._built = (int(r["perimeter"][i]), tuple(tuple(sig[ss[j]:ss[j + 1]]) for j in range(a[i], a[i + 1])))
 
 
@@ -147,11 +153,9 @@ def boundary(m: np.ndarray) -> np.ndarray:
 
 
 def edt(nonzero: np.ndarray) -> np.ndarray:
-    """Exact Euclidean distance (float32) from each nonzero pixel to the nearest zero pixel; zero pixels get 0."""
-    src = np.ascontiguousarray(nonzero, dtype=np.uint8)
-    if src.all():  # no zero pixel: scipy's distances would be meaningless (OpenCV returned its 65536 sentinel)
-        return np.full(src.shape, _BIG, np.float32)
-    return ndimage.distance_transform_edt(src).astype(np.float32)  # correctly rounded on every CPU (docstring)
+    """Exact Euclidean distance (float32) from each nonzero pixel to the nearest zero pixel; zero pixels get 0, and
+    every pixel _BIG when there is no zero pixel. One engine call (module docstring)."""
+    return _gpucheck.edt(np.ascontiguousarray(nonzero, dtype=np.uint8))
 
 
 def band_depth(mask, union, core, dist_out_union, dist_in_core) -> float:
@@ -240,7 +244,8 @@ class ExpertCache:
 
     Construction and `load` are host-only (numpy counts, no engine call: a parent must not open a CUDA context before
     it forks). The device tables, and the scalars that come back with them (perimeter, rater signatures, voters), are
-    built by the first `device()` (or `device_many`) in the process; the distance maps on the host only when read."""
+    built by the first `device()` (or `device_many`) in the process that imported this module; in a forked child it
+    raises RuntimeError("device() in a forked child") (D7). The distance maps (edt) are computed only when read."""
 
     def __init__(self, raters: np.ndarray, tau: float, t5: float):
         raters = _rater_stack(raters)
@@ -253,15 +258,15 @@ class ExpertCache:
         x, y, w, h = cv2.boundingRect(self.union.view(np.uint8))
         self.box = (y, y + h, x, x + w)  # union bounding box (empty if the union is empty)
         self.digest = _digest(raters, self.tau, self.t5, fingerprint())
-        self._device = None  # (pid, handle) of the tables on the checker's device
+        self._device = None  # handle of the tables on the checker's device
         self._built = None   # (perimeter, rater_sigs) returned with the tables
 
     def device(self) -> int:
         """Handle of this cache's tables on the checker's device, which the reward scores against: built there from
-        the rater masks at the first call in this process (device_many; a forked child builds its own), resident until
-        the cache is garbage-collected."""
+        the rater masks at the first call (device_many; RuntimeError in a forked child), resident until the cache is
+        garbage-collected."""
         device_many([self])
-        return self._device[1]
+        return self._device
 
     @property
     def perimeter(self) -> int:
