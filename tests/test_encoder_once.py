@@ -57,10 +57,23 @@ def frozen(m):
     return m
 
 
-def encoder_trainer(m, kw, ids, **attrs):
+class MetaFast(Fast):
+    """Fast with FastGRPO's rule: a forward given no host_meta (reference and old passes) takes the generation
+    batch's RowMeta `meta`."""
+
+    meta = None
+
+    def _get_per_token_logps_and_entropies(self, *args, **kw):
+        if self.meta is not None:
+            kw.setdefault("host_meta", self.meta)
+        return super()._get_per_token_logps_and_entropies(*args, **kw)
+
+
+def encoder_trainer(m, kw, meta, **attrs):
+    """The encoder-once path; `meta` is the generation batch's RowMeta (its image_id field gives each row's image)."""
     enc = fast.EncoderCache(fast.VisionCache.install(frozen(m)), base_of(m))
     enc.encode(*distinct(kw))
-    return trainer(Fast, buckets=BUCKETS, encoder=enc, row_image_ids=ids, **attrs)
+    return trainer(MetaFast, buckets=BUCKETS, encoder=enc, meta=meta, **attrs)
 
 
 def shared_attrs(m, on):
@@ -85,7 +98,7 @@ def test_encoder_once_logps_and_entropies_equal_the_pixel_path(shared_prefix, at
         seen = counted_tower(m)
         attrs = shared_attrs(m, shared_prefix)
         t = (pixel_trainer(m, kw, **attrs) if path == "pixel"
-             else encoder_trainer(m, kw, np.arange(16, dtype=np.int32) // G, **attrs))  # fmt: skip
+             else encoder_trainer(m, kw, meta_for(mask, T, G), **attrs))  # fmt: skip
         for _ in range(2):  # reference pass and an update pass of one generation batch
             out[path] = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=chunk, compute_entropy=True,
                                                              **kw)[:2]  # fmt: skip
@@ -115,7 +128,7 @@ def test_encoder_once_lora_gradients_equal_the_pixel_path():
             if "lora_" in n:
                 p.data = torch.randn(p.shape, generator=g) * 0.05
         t = (pixel_trainer(m, kw) if path == "pixel"
-             else encoder_trainer(m, kw, np.arange(16, dtype=np.int32) // G))  # fmt: skip
+             else encoder_trainer(m, kw, meta_for(mask, T, G)))  # fmt: skip
         lp, _, _ = t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=16, **kw)
         (lp * real).sum().backward()
         grads.append({n: p.grad for n, p in m.named_parameters() if p.grad is not None})
@@ -136,7 +149,7 @@ def test_every_forward_gets_encoder_outputs_and_never_pixel_values():
         orig = m.model.visual.forward
         m.model.visual.forward = lambda pv, grid_thw=None, _o=orig, _r=rows, **k: _r.append(len(pv)) or _o(pv, grid_thw,
                                                                                                         **k)
-        t = (encoder_trainer(m, kw, np.arange(16, dtype=np.int32) // G) if on
+        t = (encoder_trainer(m, kw, meta_for(mask, T, G)) if on
              else trainer(Fast, buckets=BUCKETS, vision=fast.VisionCache.install(m)))  # fmt: skip
         got = []
         m.model.register_forward_pre_hook(lambda mod, a, k, _g=got: _g.append((k.get("mm_encoder_outputs"),
@@ -194,7 +207,8 @@ def test_missing_or_bad_image_ids_raise(image_ids, error):
     ids, mask, T, kw = four_groups()
     m = tiny_model()
     seen = counted_tower(m)
-    t = encoder_trainer(m, kw, None if image_ids is None else image_ids.astype(np.int32))
+    meta = None if image_ids is None else dataclasses.replace(meta_for(mask, T, G), image_id=image_ids.astype(np.int32))
+    t = encoder_trainer(m, kw, meta)
     with pytest.raises(error, match="image"):
         t._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=8, **kw)
     assert calls(seen) == 1 and t.encoder.pending is None
@@ -209,7 +223,7 @@ def test_text_only_rows_skip_the_encoder_and_a_token_mismatch_is_an_error():
     ids, mask, T, kw = four_groups()
     m = tiny_model()
     seen = counted_tower(m)
-    t = encoder_trainer(m, kw, np.arange(16, dtype=np.int32) // G)
+    t = encoder_trainer(m, kw, meta_for(mask, T, G))
     text = torch.where(ids == 100, 7, ids)
     want, _, _ = trainer(GRPOTrainer)._get_per_token_logps_and_entropies(m, text, mask, T, batch_size=8)
     got, _, _ = t._get_per_token_logps_and_entropies(m, text, mask, T, batch_size=8)

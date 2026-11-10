@@ -223,7 +223,7 @@ class FastForward:
         pv, grid, nimg = kw.pop("pixel_values", None), kw.pop("image_grid_thw", None), kw.pop("num_images", None)
         enc = getattr(self, "encoder", None) if grid is not None else None
         if enc is not None:  # C3: each row's features from the generation batch's one tower call, never pixels
-            pv, ids = None, enc.check_rows(meta.image_id if meta is not None else self.row_image_ids, nimg, model)
+            pv, ids = None, enc.check_rows(None if meta is None else meta.image_id, nimg, model)
         rows = None if pv is None else meta.pixel_rows.tolist() if meta is not None else grid_rows(grid, nimg)
         P = input_ids.size(1) - logits_to_keep
         rope = getattr(self, "rope", None)
@@ -500,7 +500,7 @@ class RopeCache:
     def template_positions(self, input_ids, attention_mask, mm_token_type_ids, grid, nimg, P: int, meta: RowMeta,
                            check: bool) -> tuple[torch.Tensor, int]:  # fmt: skip
         """C2: (positions (3, rows, width), bad row count). One rope_template per new prompt layout (built from
-        its first row's real prompt), rope_positions for the rows meta marks good, HF's path (positions) for the
+        its first row's real prompt), rope_positions for the rows meta marks good, HF get_rope_index for the
         rest. With `check` (--check-rope-every) every row is compared with HF and the device `bad` with the host."""
         with nvtx.range("rope_template"):
             first = np.cumsum([0, *nimg])
@@ -522,8 +522,10 @@ class RopeCache:
             rows = np.arange(len(nimg)) if check else np.flatnonzero(bad)
             if rows.size:
                 r = torch.as_tensor(rows, device=input_ids.device)
-                g = torch.cat([grid[first[i]:first[i + 1]] for i in rows])
-                hf = self.positions(input_ids[r], attention_mask[r], mm_token_type_ids[r], g, [nimg[i] for i in rows])
+                g = torch.cat([grid[first[i]:first[i + 1]] for i in rows]).cpu()
+                hf = self.base.get_rope_index(input_ids[r].cpu(), mm_token_type_ids=mm_token_type_ids[r].cpu(),
+                                              image_grid_thw=g, attention_mask=attention_mask[r].cpu())[0]
+                hf = hf.to(input_ids.device)  # on host copies, like rope_template: no GPU sync per row
                 if check:
                     real, good = attention_mask.bool(), torch.as_tensor(~bad, device=input_ids.device)
                     if not torch.equal(torch.where(real, out, 0)[:, good], torch.where(real, hf, 0)[:, good]):
@@ -1002,7 +1004,6 @@ class FastGRPO(FastForward, GRPOTrainer):
     seq_gaps = []  # B2.1: the step's per-sequence (seq_kl, advantage, valid tokens) rows (train mode), on the device
     vision = rope = None  # VisionCache, RopeCache (set in __init__ when the model has a Qwen-VL tower and base)
     encoder = None  # C3, train_rl --encoder-once: EncoderCache in place of VisionCache (use_encoder_once)
-    row_image_ids = None  # C3: the generation batch's per-row image ids, for its reference and old passes
     images = None  # ImageMemo on the processing class's image processor (set in __init__ when it has one)
     host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
     check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
@@ -1100,6 +1101,9 @@ class FastGRPO(FastForward, GRPOTrainer):
         skip = self.skip_old_logps()
         if skip:  # TRL then skips the old-logprob pass and its IS ratio; the update's forward sets it (C10)
             self.vllm_importance_sampling_correction = False
+        if self.host_meta:  # C2: steps 1, N + 1, ... check every pass of this generation batch
+            n = self.check_rope_every
+            self.rope_check = bool(n) and self.state.global_step % n == 0
         try:
             with self.timed("batch"):
                 batch = super()._generate_and_score_completions(inputs)
@@ -1110,11 +1114,9 @@ class FastGRPO(FastForward, GRPOTrainer):
                 n = self.check_meta_every
                 if n and self.state.global_step % n == 0:  # steps 1, N + 1, 2N + 1, ...
                     check_meta(batch)
-                n = self.check_rope_every
-                self.rope_check = bool(n) and self.state.global_step % n == 0
             return batch
         finally:
-            self.rows, self.meta, self.row_image_ids = None, None, None
+            self.rows, self.meta = None, None
             if skip:
                 self.vllm_importance_sampling_correction = True
 
@@ -1167,8 +1169,9 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.loss_inputs = self.loss_meta = None
 
     def _get_per_token_logps_and_entropies(self, *args, **kwargs):
-        if self.loss_meta is not None:
-            kwargs["host_meta"] = self.loss_meta
+        meta = self.loss_meta if self.loss_meta is not None else self.meta  # C2: the reference and old passes too
+        if meta is not None:
+            kwargs["host_meta"] = meta
         with nvtx.range("logps"):
             out = super()._get_per_token_logps_and_entropies(*args, **kwargs)
         if self.loss_inputs is not None:
@@ -1286,12 +1289,10 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     def encode_images(self) -> None:
         """C3: the generation batch's distinct images (the memo's pass-2 entries, prepared here when missing) through
-        the tower in one call; row_image_ids then gives the reference and old passes each row's image. Nothing for
-        rows without an image."""
+        the tower in one call, in image id order (RowMeta.image_id). Nothing for rows without an image."""
         imgs = list({id(r.get("image")): r.get("image") for r in self.rows}.values())
         if any(x is None for x in imgs):
             return
-        self.row_image_ids = np.asarray(image_ids(self.rows), dtype=np.int32)
         px = self.images(imgs, return_tensors="pt")
         self.encoder.encode(px["pixel_values"], px["image_grid_thw"])
 

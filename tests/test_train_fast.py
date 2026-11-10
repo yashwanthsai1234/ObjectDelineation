@@ -1452,7 +1452,8 @@ def test_host_meta_forward_never_reads_the_grid(monkeypatch, shared_prefix):
 
 def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch):
     """C4: _compute_loss reads the micro-batch's host_meta rows (moved by TRL's split and shuffle) for its forward;
-    without them under --host-meta it raises; the old and reference passes get none."""
+    without them under --host-meta it raises; the old and reference passes get the generation batch's RowMeta (C2:
+    their rope positions, windows and pixel rows from the host too), none outside a generation batch."""
     seen = []
     monkeypatch.setattr(fast.FastForward, "_get_per_token_logps_and_entropies",
                         lambda self, *a, **k: seen.append(k.get("host_meta")) or (None, None, None))
@@ -1462,7 +1463,10 @@ def test_compute_loss_hands_the_micro_batch_host_meta_to_the_forward(monkeypatch
     rows = [fast.MetaRow(5, 3, 0, 0, 0, 0, 16), fast.MetaRow(4, 0, 1, 1, 1, 0, 16)]
     t._compute_loss(None, {"host_meta": rows})
     t._get_per_token_logps_and_entropies(None, None, None, 1)
-    assert fast.host_rows(seen[0]) == rows and seen[1] is None
+    t.meta = fast.meta_of({"host_meta": rows[::-1]})
+    t._get_per_token_logps_and_entropies(None, None, None, 1)
+    assert fast.host_rows(seen[0]) == rows and seen[1] is None and seen[2] is t.meta
+    t.meta = None
     with pytest.raises(KeyError, match="host_meta"):
         t._compute_loss(None, {})
     t.host_meta = False
@@ -1541,6 +1545,12 @@ def test_host_meta_rope_positions_come_from_one_template_per_layout_bad_rows_fro
     real = mask.bool()
     assert torch.equal(pos[:, real], ref[:, real]) and nbad == 1
     assert calls == [1, 1, 1]  # two layout templates, one bad row
+    rope.clear()
+    with pytest.MonkeyPatch.context() as mp:  # C2: the keyed cache is the no-host_meta path only
+        mp.setattr(fast.RopeCache, "keys", None)
+        assert torch.equal(rope.template_positions(ids, mask, kw["mm_token_type_ids"], kw["image_grid_thw"],
+                                                   kw["num_images"], ids.size(1) - T, meta_for(mask, T, 4, bad=[5]),
+                                                   check=True)[0], pos)  # fmt: skip
     plain = trainer(Plain)._get_per_token_logps_and_entropies(m, ids, mask, T, batch_size=4, **kw)[0]
     t = trainer(Fast, shared_prefix=True, rope=rope)
     rope.clear()
