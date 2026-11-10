@@ -1033,9 +1033,10 @@ class FastGRPO(FastForward, GRPOTrainer):
                 end.synchronize()  # long done: TRL's loss read and the stats read above waited for the stream
                 self._metrics[mode][f"time/{phase}_s"].append(start.elapsed_time(end) / 1e3)
             self.cuda_times = None
-            reward = next((f.trl_reward for f in self.reward_funcs if hasattr(f, "trl_reward")), None)
-            if self.log_by_prompt and train and reward is not None:
-                logs = {**logs, "rewards/iou_tc/by_prompt": reward.by_prompt}
+            if self.log_by_prompt and train:  # B2.3; reward_funcs read only when asked (fake trainers have none)
+                reward = next((f.trl_reward for f in self.reward_funcs if hasattr(f, "trl_reward")), None)
+                if reward is not None:
+                    logs = {**logs, "rewards/iou_tc/by_prompt": reward.by_prompt}
             return super().log(logs, start_time)
 
     def _generate(self, prompts):

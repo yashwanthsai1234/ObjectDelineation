@@ -237,7 +237,8 @@ def stub(tmp_path, monkeypatch):
     trainer = SimpleNamespace(train=lambda resume_from_checkpoint=None: calls.append("train"), model=saver,
                               accelerator=SimpleNamespace(unwrap_model=lambda m: m),
                               state=SimpleNamespace(global_step=2, log_history=[{"step": 1, "reward": 0.5}]),
-                              args=SimpleNamespace(beta=0.0, mask_truncated_completions=True))
+                              args=SimpleNamespace(beta=0.0, mask_truncated_completions=True,
+                                                off_policy_mask_threshold=None, max_completion_length=1536))
     monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: (trainer, saver, 5e-5))
     (tmp_path / "root").mkdir()
     (tmp_path / "root/manifest.json").write_text("{}")
@@ -268,7 +269,9 @@ def test_help_has_no_procs_and_keeps_the_other_options(stub, capsys, monkeypatch
         stub.main(["--help"])
     out = capsys.readouterr().out
     assert e.value.code == 0 and "procs" not in out and "scoring workers" not in out
-    assert [s for act in seen[0]._actions for s in act.option_strings] == [o for o in OPTIONS if o != "--procs"]
+    now = [s for act in seen[0]._actions for s in act.option_strings]
+    assert "--procs" not in now  # every pre-CLEAN option but --procs, in order; later lanes add their own flags
+    assert [o for o in now if o in OPTIONS] == [o for o in OPTIONS if o != "--procs"]
 
 
 def test_no_pool_and_one_freeze_after_the_last_preload(stub):
@@ -281,7 +284,7 @@ def test_no_pool_and_one_freeze_after_the_last_preload(stub):
     assert stub.calls == ["preload", "freeze", "train"]
     with_heldout = stub.calls.clear() or stub.run(*stub.train, "--heldout", str(stub.out.parent / "root"))
     assert with_heldout == 0 and stub.calls == ["preload", "preload", "freeze", "train"]
-    assert sorted(json.loads((stub.out / "rl.json").read_text())) == RL_KEYS
+    assert set(RL_KEYS) <= set(json.loads((stub.out / "rl.json").read_text()))  # lanes add keys (B2, B3, C7)
     stub.calls.clear()
     assert stub.run(*stub.train) == 0 and stub.calls.count("freeze") == 1  # each main call freezes once
     assert gc.get_freeze_count() == frozen

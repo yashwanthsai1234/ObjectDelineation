@@ -10,6 +10,7 @@ from test_data_quality import PLAN, SHARES, Tok, stub_ceiling, world  # noqa: F4
 
 from objdel.data import quality as Q
 from objdel.data import windows as Wn
+from objdel.hashing import pixels_sha256
 
 
 @pytest.fixture
@@ -71,7 +72,7 @@ def test_each_window_has_its_own_png_and_caches_and_they_load(built):
     assert len(pngs) == len(uniq) and all(p.is_file() for p in pngs)
     for i, r in uniq.items():
         im = cv2.imread(str(built.out / "images" / f"{i}.png"), cv2.IMREAD_COLOR)
-        assert Q.image_sha256(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) == r["image_sha256"]
+        assert pixels_sha256(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) == r["image_sha256"]
         assert r["view"]["kind"] in Wn.KINDS and r["view"]["op"] == "id" and "~" in i
         for name, digest in r["caches"].items():
             ExpertCache.load(built.out / "caches" / i / f"{name}.npz", digest)
