@@ -36,7 +36,8 @@
     "src/objdel/train/vllm_requests.py": "src/objdel/rl/vllm_requests.py",
     "src/objdel/train/runaway.py": "src/objdel/rl/runaway.py",
     "src/objdel/train/f_check.py": "src/objdel/rl/f_check.py",
-    "src/objdel/train/record.py": "src/objdel/rl/record.py"
+    "src/objdel/train/record.py": "src/objdel/rl/record.py",
+    "src/objdel/train/evaluate.py": "src/objdel/policy/evaluate.py"
   },
   "splits": {
     "src/objdel/train/serve.py": {

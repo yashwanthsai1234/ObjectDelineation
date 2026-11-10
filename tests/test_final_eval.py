@@ -16,6 +16,7 @@ import pytest
 
 from experiments.phase2 import final_eval as FE
 from objdel.eval import signal as S
+from objdel.train import evaluate as EV
 
 ROOT = Path(__file__).resolve().parents[1]
 CI_KEYS = {"mean", "ci95_nodule", "ci95_patient", "ci95_item", "higher_is_better"}
@@ -30,7 +31,7 @@ def result(item, legal, iou, f5, p, r, d, sample_iou=None):
 
 
 def items_of(ids, values):
-    return [{"item_id": i, **{m: float(v) for m in FE.METRICS}} for i, v in zip(ids, values, strict=True)]
+    return [{"item_id": i, **{m: float(v) for m in EV.METRICS}} for i, v in zip(ids, values, strict=True)]
 
 
 def layout(patients, nodules, slices):
@@ -59,18 +60,18 @@ def test_per_item_selection_keys():
     """U07: K = 4; medoid scores .45, .5, .15 over the legal answers 0-2 -> answer 1; the illegal answer 3 is never
     the medoid although its row has IoU 1 with itself."""
     M = [[1, .8, .1, 0], [.8, 1, .2, 0], [.1, .2, 1, 0], [0, 0, 0, 1]]
-    it = FE.per_item(result("lidc/a", [1, 1, 1, 0], [.9, .8, .1, 0], [0] * 4, [0] * 4, [0] * 4, [0] * 4, M))
-    assert {k: it[k] for k in FE.SELECTION if k != "sel_vote"} == pytest.approx({
+    it = EV.per_item(result("lidc/a", [1, 1, 1, 0], [.9, .8, .1, 0], [0] * 4, [0] * 4, [0] * 4, [0] * 4, M))
+    assert {k: it[k] for k in EV.SELECTION if k != "sel_vote"} == pytest.approx({
         "sel_mean_of_k": .45, "sel_legal_mean": 0.6, "sel_medoid": .8, "sel_medoid_legal": 1.0, "sel_oracle": .9},
         rel=0, abs=1e-15)
     assert (it["sel_medoid"], it["sel_medoid_legal"], it["sel_oracle"]) == (.8, 1.0, .9)
     assert "sel_vote" not in it  # absent, not None, without its input (9.8 rule 2)
-    it = FE.per_item(result("lidc/a", [0] * 4, [0] * 4, [0] * 4, [0] * 4, [0] * 4, [0] * 4, M))
+    it = EV.per_item(result("lidc/a", [0] * 4, [0] * 4, [0] * 4, [0] * 4, [0] * 4, [0] * 4, M))
     assert (it["sel_legal_mean"], it["sel_medoid_legal"], it["sel_medoid"]) == (0.0, 0.0, 0.0)
     r = result("lidc/a", [1, 1, 1, 0], [.9, .8, .1, 0], [0] * 4, [0] * 4, [0] * 4, [0] * 4, M)
     r["objects"]["nodule"]["pixel_vote_iou_tc"] = 0.7
-    assert FE.per_item(r)["sel_vote"] == 0.7
-    assert all(type(v) is float for k, v in FE.per_item(r).items() if k != "item_id")
+    assert EV.per_item(r)["sel_vote"] == 0.7
+    assert all(type(v) is float for k, v in EV.per_item(r).items() if k != "item_id")
 
 
 def test_summary_schema_2():
@@ -78,18 +79,18 @@ def test_summary_schema_2():
     ids = [f"lidc/s{i % 8}/n{i % 3:03d}/z{i}" for i in range(20)]
     groups = {i: f"P{i.split('/')[1]}" for i in ids}
     v = np.random.default_rng(0).random(20)
-    s = FE.summarize(items_of(ids, v), groups)
+    s = EV.summarize(items_of(ids, v), groups)
     assert (s["schema"], s["boot"], s["ci_level"], s["gate_ci"]) == (2, 2000, 0.95, "ci95_patient")
     assert (s["items"], s["nodules"], s["patients"]) == (20, len({S.cluster(i) for i in ids}), 8)
-    for m, (_, higher) in FE.METRICS.items():
+    for m, (_, higher) in EV.METRICS.items():
         assert set(s[m]) == CI_KEYS | ({"median"} if m == "iou_tc" else set()), m
         assert s[m]["higher_is_better"] is higher
     assert s["iou_tc"]["median"] == float(np.median(v))
     assert set(s["miss_rate"]) == CI_KEYS - {"higher_is_better"}
     assert "ci95" not in {k for k, _ in walk(s)}
     json.dumps(s, allow_nan=False)
-    s = FE.summarize(items_of(ids, v))
-    assert s["patients"] is None and all(s[m]["ci95_patient"] is None for m in [*FE.METRICS, "miss_rate"])
+    s = EV.summarize(items_of(ids, v))
+    assert s["patients"] is None and all(s[m]["ci95_patient"] is None for m in [*EV.METRICS, "miss_rate"])
 
 
 def test_summary_cis_recomputed_independently():
@@ -97,7 +98,7 @@ def test_summary_cis_recomputed_independently():
     ids = [f"lidc/p{n % 4}/n{n:03d}/z{s}" for n in range(10) for s in range(3)]
     groups = {i: i.split("/")[1] for i in ids}
     v = np.random.default_rng(3).random(30)
-    s = FE.summarize(items_of(ids, v), groups, draws=300, seed=0)["f5"]
+    s = EV.summarize(items_of(ids, v), groups, draws=300, seed=0)["f5"]
     idx = np.random.default_rng(0).integers(0, 30, (300, 30))
     assert s["mean"] == v.mean()
     assert s["ci95_item"] == np.percentile(v[idx].mean(1), [2.5, 97.5]).tolist()
@@ -106,21 +107,21 @@ def test_summary_cis_recomputed_independently():
         means = np.array([v[d].mean() for d in D])
         assert s[key] == [float(np.quantile(means, 0.025)), float(np.quantile(means, 0.975))], key
     # one item per cluster: the nodule and item CIs are equal, exactly, for every metric
-    s = FE.summarize(items_of([f"riga/x/{i}" for i in range(60)], np.random.default_rng(4).random(60)))
-    for m in FE.METRICS:
+    s = EV.summarize(items_of([f"riga/x/{i}" for i in range(60)], np.random.default_rng(4).random(60)))
+    for m in EV.METRICS:
         assert s[m]["ci95_nodule"] == s[m]["ci95_item"], m
         assert s[m]["ci95_item"][0] <= s[m]["mean"] <= s[m]["ci95_item"][1], m
-    s = FE.summarize(items_of(ids, [0.5] * 30), groups)
+    s = EV.summarize(items_of(ids, [0.5] * 30), groups)
     assert all(s["iou_tc"][k] == [0.5, 0.5] for k in ("ci95_item", "ci95_nodule", "ci95_patient"))
 
 
 def test_summary_of_one_item_has_a_point_interval():
-    s = FE.summarize(items_of(["lidc/s/n000/z1"], [0.7]), {"lidc/s/n000/z1": "P"})
+    s = EV.summarize(items_of(["lidc/s/n000/z1"], [0.7]), {"lidc/s/n000/z1": "P"})
     assert s["iou_tc"]["ci95_item"] == s["iou_tc"]["ci95_nodule"] == s["iou_tc"]["ci95_patient"] == [0.7, 0.7]
 
 
 def test_miss_rate_is_the_share_of_items_below_0_1():
-    s = FE.summarize(items_of([f"x{i}" for i in range(4)], [0.05, 0.5, 0.0999999, 0.1]))
+    s = EV.summarize(items_of([f"x{i}" for i in range(4)], [0.05, 0.5, 0.0999999, 0.1]))
     assert s["miss_rate"]["mean"] == 0.5
 
 
@@ -131,18 +132,18 @@ def test_bad_input_raises_and_names_it():
     items = items_of(ids, [0.2, 0.4, 0.6, 0.8])
     items[2]["f5"] = float("nan")
     with pytest.raises(ValueError, match="x2.*f5"):
-        FE.summarize(items)
+        EV.summarize(items)
     with pytest.raises(KeyError, match="x3"):
-        FE.summarize(items_of(ids, [0.2] * 4), {"x0": "a", "x1": "a", "x2": "b", "extra": "c"})
+        EV.summarize(items_of(ids, [0.2] * 4), {"x0": "a", "x1": "a", "x2": "b", "extra": "c"})
     items = items_of(ids, [0.2] * 4)
     del items[1]["dice_vote"]
     with pytest.raises(ValueError, match="x1.*dice_vote"):
-        FE.summarize(items)
+        EV.summarize(items)
 
 
 def test_summary_metrics_absent_from_every_item_are_left_out():
     items = [{k: v for k, v in it.items() if k != "dice_vote"} for it in items_of(["a", "b"], [0.3, 0.6])]
-    assert "dice_vote" not in FE.summarize(items)
+    assert "dice_vote" not in EV.summarize(items)
 
 
 def test_summary_reruns_and_item_order():
@@ -150,10 +151,10 @@ def test_summary_reruns_and_item_order():
     ids, groups = layout(6, 3, 4)
     v = np.random.default_rng(5).random(len(ids))
     items = items_of(ids, v)
-    a, b = FE.summarize(items, groups), FE.summarize(items, groups)
+    a, b = EV.summarize(items, groups), EV.summarize(items, groups)
     assert a == b
     perm = np.random.default_rng(1).permutation(len(ids))
-    c = FE.summarize([items[j] for j in perm], groups)
+    c = EV.summarize([items[j] for j in perm], groups)
     assert abs(c["iou_tc"]["mean"] - a["iou_tc"]["mean"]) < 1e-12
     assert c["iou_tc"]["ci95_nodule"] != a["iou_tc"]["ci95_nodule"]
 
@@ -161,8 +162,8 @@ def test_summary_reruns_and_item_order():
 def test_outputs_are_json_native():
     """I24 (A1 part): only float, int, bool, str, list, dict and None."""
     ids, groups = layout(3, 2, 2)
-    s = FE.summarize(items_of(ids, np.linspace(0, 1, len(ids))), groups)
-    it = FE.per_item(result("lidc/a", [1, 0], [0.8, 0.0], [0.9, 0.0], [0.6, 0.0], [1.0, 0.0], [0.75, 0.0]))
+    s = EV.summarize(items_of(ids, np.linspace(0, 1, len(ids))), groups)
+    it = EV.per_item(result("lidc/a", [1, 0], [0.8, 0.0], [0.9, 0.0], [0.6, 0.0], [1.0, 0.0], [0.75, 0.0]))
     for doc in (s, it):
         json.dumps(doc, allow_nan=False)
         assert all(type(v) in (float, int, bool, str, list, dict, type(None)) for _, v in walk(doc))
@@ -224,7 +225,7 @@ def test_resummarize_writes_schema_2_beside_the_run(tmp_path, monkeypatch):
     assert {k: doc[k] for k in ("ckpt", "view", "split", "K", "seed")} == {
         "ckpt": "/workspace/runs/r5/final_model", "view": "/w/v", "split": "test", "K": 8, "seed": 11}
     groups = {i: f"LIDC-IDRI-{i.split('/')[1][1:]:>04}" for i in (it["item_id"] for it in items)}
-    assert doc["iou_tc"] == FE.summarize(items, groups)["iou_tc"]
+    assert doc["iou_tc"] == EV.summarize(items, groups)["iou_tc"]
 
 
 def test_resummarize_exits_2_on_an_item_without_a_group(tmp_path, capsys):
@@ -259,33 +260,33 @@ def sel_items(ids, mean, medoid, vote=None):
 
 def test_paired_differences():
     """U11: mean and both CIs of the per-item differences under the summary's draws; the unit is not swapped."""
-    s = FE.summarize(sel_items([f"x{i}" for i in range(4)], [.5, .5, .5, .5], [.6, .6, .45, .5]))
+    s = EV.summarize(sel_items([f"x{i}" for i in range(4)], [.5, .5, .5, .5], [.6, .6, .45, .5]))
     p = s["paired"]["medoid_minus_mean"]
     assert set(p) == {"mean", "ci95_patient", "ci95_nodule"} and abs(p["mean"] - 0.0375) < 1e-12
     assert s["paired"]["vote_minus_mean"] is None
     ids, groups = layout(3, 2, 2)
     diff = np.array([.1, .1, 0, 0, .05, .05, -.05, -.05, .2, .2, .1, .1])
-    s = FE.summarize(sel_items(ids, [.5] * 12, .5 + diff), groups)["paired"]["medoid_minus_mean"]
+    s = EV.summarize(sel_items(ids, [.5] * 12, .5 + diff), groups)["paired"]["medoid_minus_mean"]
     want = {k: S.ci(.5 + diff - .5, D)[1:] for k, D in (
         ("ci95_patient", S.draws(ids, 2000, 0, key=groups.__getitem__)), ("ci95_nodule", S.draws(ids, 2000, 0)))}
     for k, w in want.items():
         assert np.allclose(s[k], w, rtol=0, atol=1e-12) and s[k][0] <= s["mean"] <= s[k][1], k
     assert abs(s["ci95_nodule"][1] - 0.1333) < 1e-4 and abs(s["ci95_patient"][1] - 0.15) < 1e-12
     v = np.random.default_rng(0).random(12)
-    s = FE.summarize(sel_items(ids, v, v + 0.05, v), groups)["paired"]
+    s = EV.summarize(sel_items(ids, v, v + 0.05, v), groups)["paired"]
     assert abs(s["medoid_minus_mean"]["mean"] - 0.05) < 1e-12
     assert all(abs(x - 0.05) < 1e-12 for k in ("ci95_patient", "ci95_nodule") for x in s["medoid_minus_mean"][k])
     assert set(s["vote_minus_mean"]) == {"mean", "ci95_patient", "ci95_nodule"}
     items = sel_items(ids, v, v, v)
     del items[3]["sel_vote"]
     with pytest.raises(ValueError, match=ids[3]):
-        FE.summarize(items, groups)
+        EV.summarize(items, groups)
 
 
 def test_paired_ci_is_narrower_than_the_unpaired_one_on_correlated_arms():
     ids, groups = layout(6, 3, 2)
     base = np.random.default_rng(1).random(len(ids))
-    s = FE.summarize(sel_items(ids, base, base + 0.02), groups)
+    s = EV.summarize(sel_items(ids, base, base + 0.02), groups)
     paired = np.diff(s["paired"]["medoid_minus_mean"]["ci95_patient"])[0]
     unpaired = np.diff(s["sel_medoid"]["ci95_patient"])[0] + np.diff(s["sel_mean_of_k"]["ci95_patient"])[0]
     assert paired < unpaired
@@ -323,10 +324,10 @@ def test_selection_key_invariants():
         iou = (rng.random(8) * legal).tolist()
         a = rng.random((8, 8))
         M = (np.triu(a) + np.triu(a, 1).T).tolist()
-        it = FE.per_item(result("lidc/a", legal.tolist(), iou, iou, iou, iou, iou, M))
+        it = EV.per_item(result("lidc/a", legal.tolist(), iou, iou, iou, iou, iou, M))
         assert it["sel_oracle"] >= it["sel_medoid"] >= 0 and it["sel_oracle"] >= it["sel_legal_mean"]
         assert it["sel_oracle"] >= it["sel_mean_of_k"] and it["sel_legal_mean"] >= it["sel_mean_of_k"]
-        assert it["sel_medoid_legal"] in (0.0, 1.0) and all(0 <= it[k] <= 1 for k in FE.SELECTION if k in it)
+        assert it["sel_medoid_legal"] in (0.0, 1.0) and all(0 <= it[k] <= 1 for k in EV.SELECTION if k in it)
 
 
 TWELVE = ["legal", "iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote", "nsd", "boundary_iou",
@@ -335,9 +336,9 @@ TWELVE = ["legal", "iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote",
 
 def test_metrics_table():
     """U05."""
-    assert list(FE.METRICS) == TWELVE and not hasattr(FE, "TERMS")
-    assert {m for m, (_, h) in FE.METRICS.items() if not h} == {"ged"}
-    assert {s for s, _ in FE.METRICS.values()} == {"samples", "objects", "item"}
+    assert list(EV.METRICS) == TWELVE and not hasattr(EV, "TERMS")
+    assert {m for m, (_, h) in EV.METRICS.items() if not h} == {"ged"}
+    assert {s for s, _ in EV.METRICS.values()} == {"samples", "objects", "item"}
 
 
 def k4_result(legal=(1, 1, 0, 1), iou=(.8, .6, 0, .4), obj="nodule"):
@@ -352,32 +353,32 @@ def k4_result(legal=(1, 1, 0, 1), iou=(.8, .6, 0, .4), obj="nodule"):
 
 def test_per_item_sources_averages_and_miss():
     """U06."""
-    it = FE.per_item(k4_result())
+    it = EV.per_item(k4_result())
     want = {"legal": .75, "iou_tc": .45, "f5": .525, "precision_vote": .5, "recall_vote": .5, "dice_vote": .45,
             "nsd": .2, "boundary_iou": .375, "boundary_iou_vote": .15, "soft_dice": .33, "hm_iou": .44, "ged": .55}
-    assert {m: it[m] for m in FE.METRICS} == pytest.approx(want, rel=0, abs=1e-15)
+    assert {m: it[m] for m in EV.METRICS} == pytest.approx(want, rel=0, abs=1e-15)
     assert (it["soft_dice"], it["hm_iou"], it["ged"]) == (.33, .44, .55)
-    assert all(type(it[m]) is float for m in FE.METRICS) and it["miss"] == 0.0
+    assert all(type(it[m]) is float for m in EV.METRICS) and it["miss"] == 0.0
     for x, miss in ((0.0999999, 1.0), (0.1, 0.0), (0.1000001, 0.0)):
-        assert FE.per_item(k4_result(iou=(x,) * 4))["miss"] == miss
+        assert EV.per_item(k4_result(iou=(x,) * 4))["miss"] == miss
     # literal pin: numpy's mean of eight 0.1 is 0.1 exactly (pairwise sum), so K = 8 answers at 0.1 are found
-    assert np.mean([0.1] * 8) == 0.1 and FE.per_item(k4_result(iou=(0.1,) * 8, legal=(1,) * 8))["miss"] == 0.0
-    assert FE.per_item(k4_result(obj="cup"), "cup")["ged"] == .55
+    assert np.mean([0.1] * 8) == 0.1 and EV.per_item(k4_result(iou=(0.1,) * 8, legal=(1,) * 8))["miss"] == 0.0
+    assert EV.per_item(k4_result(obj="cup"), "cup")["ged"] == .55
     with pytest.raises(KeyError):
-        FE.per_item(k4_result(obj="cup"))
+        EV.per_item(k4_result(obj="cup"))
     for K in (1, 8):
-        it = FE.per_item(k4_result(legal=(0,) * K, iou=(0,) * K))
+        it = EV.per_item(k4_result(legal=(0,) * K, iou=(0,) * K))
         assert (it["legal"], it["sel_legal_mean"], it["miss"]) == (0.0, 0.0, 1.0)
 
 
 def test_miss_rate_and_iou_found():
     """U10: iou_found is the mean over found items, its CIs drawn over the found subset's ids."""
-    s = FE.summarize(items_of([f"x{i}" for i in range(4)], [0.05, 0.5, 0.7, 0.0]))
+    s = EV.summarize(items_of([f"x{i}" for i in range(4)], [0.05, 0.5, 0.7, 0.0]))
     assert s["miss_rate"]["mean"] == .5 and abs(s["iou_found"]["mean"] - .6) < 1e-12
     ids = [f"lidc/p{p}/n{n}/s{z}" for p in range(3) for n in range(2) for z in range(2)]
     groups = {i: i.split("/")[1] for i in ids}
     v = np.array([.05, .5, .7, 0, .3, .6, .8, .4, .9, .2, .65, .55])
-    f = FE.summarize(items_of(ids, v), groups)["iou_found"]
+    f = EV.summarize(items_of(ids, v), groups)["iou_found"]
     found = [i for i, x in zip(ids, v, strict=True) if x >= 0.1]
     x = v[v >= 0.1]
     want_p = S.ci(x, S.draws(found, 2000, 0, key=groups.__getitem__))[1:]
@@ -385,8 +386,8 @@ def test_miss_rate_and_iou_found():
     assert np.allclose(f["ci95_patient"], want_p, rtol=0, atol=1e-12)
     assert np.allclose(f["ci95_nodule"], want_n, rtol=0, atol=1e-12) and f["ci95_patient"] != f["ci95_nodule"]
     assert np.allclose(f["ci95_nodule"], [0.5, 0.62], atol=1e-12) and np.allclose(f["ci95_patient"], [0.525, 0.6])
-    assert FE.summarize(items_of(ids, v + 0.1))["miss_rate"]["mean"] == 0.0
-    s = FE.summarize(items_of(ids, v * 0), groups)
+    assert EV.summarize(items_of(ids, v + 0.1))["miss_rate"]["mean"] == 0.0
+    s = EV.summarize(items_of(ids, v * 0), groups)
     assert s["iou_found"] is None
     json.dumps(s, allow_nan=False)
 
@@ -396,9 +397,9 @@ def test_summary_has_every_metric_and_selection_key():
     ids = [f"lidc/s{i % 8}/n{i % 3:03d}/z{i}" for i in range(20)]
     groups = {i: f"P{i.split('/')[1]}" for i in ids}
     rng = np.random.default_rng(0)
-    items = [FE.per_item(k4_result(iou=tuple(rng.random(4)))) | {"item_id": i} for i in ids]
-    s = FE.summarize(items, groups)
-    for m in [*FE.METRICS, *FE.SELECTION[:-1]]:
+    items = [EV.per_item(k4_result(iou=tuple(rng.random(4)))) | {"item_id": i} for i in ids]
+    s = EV.summarize(items, groups)
+    for m in [*EV.METRICS, *EV.SELECTION[:-1]]:
         assert set(s[m]) == CI_KEYS | ({"median"} if m == "iou_tc" else set()), m
         assert s[m]["higher_is_better"] is (m != "ged"), m
     assert {"miss_rate", "iou_found", "paired"} <= set(s) and "sel_vote" not in s
@@ -524,7 +525,7 @@ def test_full_run_replaces_the_partial(ev, tmp_path, monkeypatch):
     ans, met, items = jsonl(out / "answers.jsonl"), jsonl(out / "metrics.jsonl"), jsonl(out / "items.jsonl")
     ids = [r["item_id"] for r in D.records(ev, "lidc", "val") if r["rl"]]
     assert [r["item_id"] for r in ans] == [r["item_id"] for r in met] == [r["item_id"] for r in items] == ids
-    assert items == [FE.per_item(m) for m in met]
+    assert items == [EV.per_item(m) for m in met]
     for r, m in zip(ans, met, strict=True):
         assert all(type(t) is int for t in r["tokens"]) and all(type(t) is bool for t in r["truncated"])
         assert type(r["W"]) is int and type(r["H"]) is int and all(type(s) is str for s in r["samples"])

@@ -496,7 +496,7 @@ def test_gate_a_g1_exact_numbers_on_r5_test_items():
     numpy version and machine that computed them, 1e-12 elsewhere."""
     import platform
 
-    from experiments.phase2 import final_eval as FE
+    from objdel.train import evaluate as FE
 
     rows = gold_rows()
     assert len(rows) == 2200 and len({r["item_id"] for r in rows}) == 2200
@@ -526,7 +526,7 @@ def test_summary_speed_memory_and_two_draw_calls(monkeypatch):
     import time
     import tracemalloc
 
-    from experiments.phase2 import final_eval as FE
+    from objdel.train import evaluate as FE
 
     rows = gold_rows()
     items = [{"item_id": r["item_id"], **{m: r["iou_tc"] for m in (*FE.METRICS, *FE.SELECTION)}} for r in rows]

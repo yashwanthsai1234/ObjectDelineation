@@ -68,3 +68,6 @@ E4 step 1 (impl2-E4f, on 2db0bcb, before E3b/E3c/E5): host_syncs gains train/sam
 .tolist(), moved from experiments/phase2/hf_sample.py); old_names re-recorded: train/sample.py gains the sampler
 interface (params_for, Sample, Sampler, VllmSampler, HfSampler, build_prompt, main and sample_vllm / hf_sample's
 helpers) and the checkpoint stop_ids, which select_ckpt loses (e_moves.json sends them all to objdel.policy.sampler).
+E4 step 2 move (impl2-E4f): old_names re-recorded: select_ckpt loses SUBSET_SEED, _score, score_items and view_rows,
+final_eval loses METRICS, SELECTION, per_item and summarize (all to objdel.train.evaluate; e_moves.json moves the
+file to objdel.policy.evaluate).

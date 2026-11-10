@@ -51,13 +51,13 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.eval import gates, metrics
+from objdel.eval import gates
 from objdel.geom import engine as _gpucheck
 from objdel.train import serve
+from objdel.train.evaluate import score_items, view_rows
 
 ROOT = Path(__file__).resolve().parents[2]
 VLLM_VENV = Path("/opt/vllm")  # the phase2 image's second venv; the vllm_native image has vLLM in the running venv
-SUBSET_SEED = 0  # --items: one fixed subset for every branch and rung
 TRIES = 2  # sampler child attempts that finish no new item
 # sampler child timeout per item-sample, plus 600 s: 3x the measured time (EV-5), so a hung engine is killed in
 # minutes, not hours. HF (~1 s per answer) resumes from its whole batches. vLLM writes once at the end, so a retry
@@ -173,21 +173,6 @@ def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: flo
             raise RuntimeError(f"sampler failed {TRIES} times on {prompts}: {err}")
 
 
-def _score(job) -> dict:
-    """One item's metrics on the preloaded caches."""
-    item_id, texts, truncated, tokens, W, H, names, root = job
-    m = metrics(texts, {}, W, H, names, truncated, caches=serve.CacheRef(item_id, root), tokens=tokens)
-    return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
-
-
-def view_rows(view: Path, items: int | None = None, rl_only: bool = True) -> list[dict]:
-    """Prompt rows of an eval view's lidc/val records (images checked against their records): the scored items (rl,
-    with caches) or, with rl_only=False, every record (probe records are rl: false); `items` = a seeded subset."""
-    from objdel.train import dataset as D
-
-    return D.prompts(view, "lidc", "val", rl_only, subset=items and (items, SUBSET_SEED))
-
-
 def sampler_timeout(a, samples: int) -> float:
     """600 s (engine start) + the per-sample time (--timeout-s, else TIMEOUT_S of the sampler) for `samples`."""
     return 600 + (a.timeout_s or TIMEOUT_S[a.sampler]) * samples
@@ -206,17 +191,6 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     sample.export_prompts(rows, prompts, a.model, "lidc", k, processor=proc, stop_ids=stop, seed=a.seed)
     run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), extra)
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
-
-
-def score_items(rows: list[dict], done: dict, root: Path) -> tuple[list[dict], list[dict]]:
-    """_score in this process for every row (done: {key: completions row with samples, truncated and tokens}) ->
-    (per-item metrics, signal groups); two CUDA checker calls per item (score_many, eval_sets), no forked worker."""
-    from objdel.eval import signal
-
-    jobs = [(r["key"], *(done[r["key"]][k] for k in ("samples", "truncated", "tokens")), r["W"], r["H"], r["names"],
-             str(root)) for r in rows]  # fmt: skip
-    results = [_score(j) for j in jobs]
-    return results, [signal.group(r["item_id"], done[r["item_id"]]["samples"], r) for r in results]
 
 
 def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:

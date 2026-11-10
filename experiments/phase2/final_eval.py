@@ -19,7 +19,7 @@ The model forms read their flags as an objdel.core.spec.EvalStage (cli_stage: ke
 Every RL-eligible item of the view's <split> records (the G-probe uses a 128-item subset of the val view; this uses
 all of them, and runs on the test split's view built by build_eval_views --split test). Samples with vLLM through
 g_probe.make_trainer and objdel.train.sample (T = 1, as the G-probe; torch seeded before each view; vLLM's engine seed
-is set once, at build), scores with select_ckpt.score_items in this process (D7: one CUDA context, after
+is set once, at build), scores with objdel.train.evaluate.score_items in this process (D7: one CUDA context, after
 sampling). Write order per view, so a crash in scoring keeps the paid sampling:
 1. <out>/answers.jsonl (item_id, group_id, W, H, samples, truncated, tokens per item) and a partial
    <out>/final_eval.json ("partial": true, the run keys, seconds.load_and_sample);
@@ -68,100 +68,20 @@ from pathlib import Path
 import numpy as np
 
 from experiments.phase2.freeze_views import render_files
-from experiments.phase2.select_ckpt import score_items
 from objdel.data import quality as Q
-from objdel.eval import device, select, signal
+from objdel.eval import device, signal
 from objdel.geom import engine as _gpucheck
 from objdel.hashing import file_sha256
 from objdel.io import git, read_jsonl
 from objdel.io import write_atomic as _write
+from objdel.train.evaluate import METRICS, per_item, score_items, summarize
 
 ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VIEWS = ROOT / "docs/reference/frozen_views.json"  # /workspace/src on the box
 
-# name -> (source, higher_is_better): "samples" and "objects" lists are averaged over the K answers, "item" scalars
-# (one per object and item) are copied
-METRICS = {"legal": ("samples", True), "iou_tc": ("samples", True), "f5": ("samples", True),
-           "precision_vote": ("objects", True), "recall_vote": ("objects", True), "dice_vote": ("objects", True),
-           "nsd": ("objects", True), "boundary_iou": ("objects", True), "boundary_iou_vote": ("objects", True),
-           "soft_dice": ("item", True), "hm_iou": ("item", True), "ged": ("item", False)}
-SELECTION = ("sel_mean_of_k", "sel_legal_mean", "sel_medoid", "sel_medoid_legal", "sel_oracle", "sel_vote")
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 TOPOLOGY_PERIOD_S = 5.0  # D-G17 (a): the sampler thread's period during scoring
 GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
-
-
-def per_item(result: dict, obj: str = "nodule") -> dict:
-    """K-sample means of one item's scores (metrics' output; METRICS), `miss` (the K-mean IoU_tc below signal.MISS),
-    and the answer choices (A4): the mean of the K IoU_tc,
-    the mean over legal answers (0 if none), the medoid's (with its legality), the best one (it reads the labels: an
-    upper bound, never deployed) and the pixel vote's (analysis only: a mask is not an answer; absent when the
-    result has no `pixel_vote_iou_tc`)."""
-    o = result["objects"][obj]
-    src = {"samples": result["samples"], "objects": o, "item": o}
-    iou, legal = np.array(result["samples"]["iou_tc"], float), np.array(result["samples"]["legal"]) > 0
-    i = select.medoid(select.sample_iou(result["objects"]), legal)
-    vote = o.get("pixel_vote_iou_tc")
-    means = {m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()}
-    return {"item_id": result["item_id"], **means, "miss": float(means["iou_tc"] < signal.MISS),
-            "sel_mean_of_k": float(iou.mean()), "sel_legal_mean": float(iou[legal].mean()) if legal.any() else 0.0,
-            "sel_medoid": float(iou[i]), "sel_medoid_legal": float(legal[i]), "sel_oracle": float(iou.max()),
-            **({} if vote is None else {"sel_vote": float(vote)})}
-
-
-def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: int = 2000, seed: int = 0) -> dict:
-    """Schema 2: per METRICS key the items hold, the mean and its item, nodule and patient (with `groups`,
-    {item_id: group_id}) 95 % bootstrap intervals; the median of iou_tc; the miss rate. One draw set per unit."""
-    ids = [it["item_id"] for it in items]
-    if not ids:
-        raise ValueError("summarize: no items")
-    if len(set(ids)) != len(ids):
-        raise ValueError("summarize: duplicate item_id")
-    def unit_draws(sub, key=signal.cluster):
-        return signal.point_or_draws(sub, draws, seed, key)
-
-    D = {"ci95_nodule": unit_draws(ids), "ci95_patient": None if groups is None else unit_draws(ids,
-        groups.__getitem__)}
-    idx = np.random.default_rng(seed).integers(0, len(items), (draws, len(items)))
-
-    def cis(v: np.ndarray) -> dict:
-        lo, hi = np.percentile(v[idx].mean(1), [2.5, 97.5])
-        return {"mean": float(v.mean()), **{k: None if d is None else signal.ci(v, d)[1:] for k, d in D.items()},
-                "ci95_item": [float(lo), float(hi)]}
-
-    out = {"schema": 2, "items": len(items), "nodules": len(set(map(signal.cluster, ids))),
-           "patients": None if groups is None else len({groups[i] for i in ids}), "ci_level": 0.95, "boot": draws,
-           "gate_ci": "ci95_patient"}
-    for m, higher in [(m, h) for m, (_, h) in METRICS.items()] + [(m, True) for m in SELECTION]:
-        held = [m in it for it in items]
-        if not any(held):
-            continue
-        if not all(held):
-            raise ValueError(f"summarize: item {ids[held.index(False)]} has no {m}")
-        v = np.array([it[m] for it in items], float)
-        bad = ~np.isfinite(v)
-        if bad.any():
-            raise ValueError(f"summarize: item {ids[bad.argmax()]} has {m} = {v[bad.argmax()]}")
-        out[m] = cis(v) | {"higher_is_better": higher}
-    iou = np.array([it["iou_tc"] for it in items], float)
-    out["iou_tc"]["median"] = float(np.median(iou))
-    out["miss_rate"] = cis((iou < signal.MISS).astype(float))
-    found = iou >= signal.MISS
-    fids = [i for i, f in zip(ids, found, strict=True) if f]
-    out["iou_found"] = None if not fids else {
-        "mean": float(iou[found].mean()), "items": len(fids),
-        "ci95_patient": None if groups is None else signal.ci(iou[found], unit_draws(fids, groups.__getitem__))[1:],
-        "ci95_nodule": signal.ci(iou[found], unit_draws(fids))[1:]}
-
-    def paired(arm: str) -> dict | None:  # the per-item difference arm - sel_mean_of_k under the same draws
-        if arm not in out:
-            return None
-        d = np.array([it[arm] - it["sel_mean_of_k"] for it in items])
-        return {"mean": float(d.mean()), "ci95_patient": None if D["ci95_patient"] is None
-                else signal.ci(d, D["ci95_patient"])[1:], "ci95_nodule": signal.ci(d, D["ci95_nodule"])[1:]}
-
-    out["paired"] = {"medoid_minus_mean": paired("sel_medoid"), "vote_minus_mean": paired("sel_vote")}
-    return out
 
 
 def gate_a(val: dict, test: dict | None) -> dict:

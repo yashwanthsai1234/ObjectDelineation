@@ -36,8 +36,8 @@ from pathlib import Path
 import numpy as np
 
 from experiments.phase2.prereg import G_PROBE, g_probe
-from experiments.phase2.select_ckpt import score_items, view_rows
 from objdel.eval import signal
+from objdel.train.evaluate import score_items, view_rows
 
 SEEDS = (11, 12, 13)  # step-0 draw a, step-0 draw b, step 20
 
