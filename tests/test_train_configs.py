@@ -190,3 +190,20 @@ def test_lora_preset_marks_the_config_and_never_passes_the_key_to_trl(tmp_path):
 def test_unknown_preset_is_refused(tmp_path):
     with pytest.raises(ValueError, match="bf16-fp8"):
         configs.grpo_config("qwen3-vl-2b", str(tmp_path), numerics="bf16-fp8")
+
+
+@pytest.mark.gpu
+def test_g05_f_check_record():
+    """G05 box part: the F check record that `train_rl --f-check` wrote (`<run>/*/f_check.json`, $OBJDEL_RUN_DIR):
+    `passed` and every check flag hold. The run itself already raised on a failure at step 15 or earlier."""
+    import json
+    import os
+    from pathlib import Path
+
+    from objdel.train import f_check
+
+    files = sorted(Path(os.environ.get("OBJDEL_RUN_DIR", "runs")).glob("*/f_check.json"))
+    if not files:
+        pytest.skip("no f_check.json: no run used lora-seqmask or fp16-seqmask yet")
+    for f in files:
+        f_check.check_record(json.loads(f.read_text()))

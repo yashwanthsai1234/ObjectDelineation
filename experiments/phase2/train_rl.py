@@ -69,7 +69,7 @@ def _hex(n: int):
 
 
 def parse(argv=None) -> argparse.Namespace:
-    from objdel.train import configs
+    from objdel.train import configs, f_check
 
     env = os.environ.get
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
@@ -114,6 +114,9 @@ def parse(argv=None) -> argparse.Namespace:
                     help="reward spec (objdel.reward.REWARDS); v5 adds callbacks.LocGuard (default v4)")
     ap.add_argument("--numerics", choices=sorted(configs.NUMERICS), default=configs.DEFAULT_NUMERICS,
                     help="configs.NUMERICS preset (default: the B1 control)")
+    ap.add_argument("--f-check", action=argparse.BooleanOptionalAction, default=None,
+                    help="B2.2 F step 5: NaN/inf, engine dtype and the other checks over steps 1-15, written to "
+                         "<out>/f_check.json (default on under --numerics fp16-seqmask; an error under another preset)")
     ap.add_argument("--opsm-start-delta", type=float,
                     help="off_policy_mask_threshold of steps 1-20; only with --numerics bf16-tis-opsm (B2.4 rule 4)")
     ap.add_argument("--profile-window", type=int, nargs=2, metavar=("S", "E"),
@@ -147,6 +150,9 @@ def parse(argv=None) -> argparse.Namespace:
         ap.error("--budget-usd needs a session start: --session-start or OBJDEL_SESSION_START (run.sh exports it)")
     if a.budget_usd is not None and a.rate_usd_per_h is None:
         ap.error("--budget-usd needs a rate: --rate-usd-per-h or OBJDEL_RATE_USD_PER_H (run.sh exports it)")
+    if a.f_check and a.numerics not in f_check.PRESETS:
+        ap.error(f"--f-check: only under --numerics {' or '.join(f_check.PRESETS)}, not {a.numerics}")
+    a.f_check = a.numerics in f_check.PRESETS if a.f_check is None else a.f_check
     if a.numerics in NEEDS_FASTGRPO:
         ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM LoRA serving, B2.2), not built yet")
     if a.opsm_start_delta is not None and (a.numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
@@ -354,7 +360,7 @@ def main(argv=None) -> int:
     from transformers.trainer_utils import get_last_checkpoint
 
     from experiments.phase2.g_probe import make_trainer, save_json
-    from objdel.train import configs, dataset, serve
+    from objdel.train import configs, dataset, f_check, serve
 
     check_flags(a)
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
@@ -388,6 +394,12 @@ def main(argv=None) -> int:
     guard = LocGuard() if a.reward == "v5" else None
     trainer, proc, lr = make_trainer(a, a.ckpt, train, a.steps, eval_dataset=heldout, check=check,
                                      calls=[c for c in (stop, guard) if c], reward=spec, **over)
+    if a.f_check:  # fp16-seqmask: NaN/inf over steps 1-15 and the engine dtype (lora-seqmask is refused above)
+        import torch
+
+        engine = trainer.vllm_generation.llm.llm_engine
+        trainer.add_callback(f_check.FCheck(a.out, a.numerics,
+                                            {"engine_dtype_ok": lambda: engine.model_config.dtype == torch.float16}))
     t0 = time.time()
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
