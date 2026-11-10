@@ -28,9 +28,12 @@ from objdel.train import nvtx
 class TraceStep(TrainerCallback):
     """torch.profiler on global step wait + 2, after one profiler warm-up step (CPU ops, and CUDA kernels on a GPU),
     once: <out>/trace.json.gz and ops.txt (top ops by device and CPU time). A resumed run counts from global_step;
-    no trace when the step is already done. train_sft `profile:`, g_probe --trace."""
+    no trace when the step is already done. train_sft `profile:`, g_probe --trace (wait = S - 2: needs S >= 2)."""
 
     def __init__(self, out: str, wait: int):
+        if wait < 0:
+            raise ValueError(f"TraceStep: wait {wait} < 0: torch.profiler warms up one step before the traced step, "
+                             "so --trace needs a profile window with S >= 2 (the nsys capture alone allows S = 1)")
         self.out, self.wait = Path(out), wait
 
     def on_train_begin(self, args, state, control, **kw):
@@ -68,25 +71,40 @@ class TraceStep(TrainerCallback):
 class NvtxSteps(TrainerCallback):
     """NVTX range `step` over each step period (one on_step_end to the next: the previous step's log, this step's
     loader, micro-batches, grad clip and optimizer) and `optimizer` from on_pre_optimizer_step to on_optimizer_step
-    (objdel.train.nvtx: no-ops unless OBJDEL_NVTX=1 and CUDA). With window = (s, e) and CUDA, the cudaProfilerApi
-    capture (nsys --capture-range=cudaProfilerApi, nsys_capture.sh) holds exactly the step ranges of steps s..e: it
-    starts at the end of step s - 1, between the pop and the next push, and stops at the end of step e after the pop
-    (or at on_train_end, when the run ends inside the window). train_rl --profile-window S E."""
+    (objdel.train.nvtx: no-ops unless OBJDEL_NVTX=1 and CUDA). With window = (s, e), 1 <= s <= e, and CUDA, the
+    cudaProfilerApi capture (nsys --capture-range=cudaProfilerApi, nsys_capture.sh) holds exactly the step ranges of
+    steps s..e: it starts at the end of step s - 1 (at on_train_begin for s = 1, so (1, steps) traces the whole run),
+    between the pop and the next push, and stops at the end of step e after the pop (or at on_train_end, when the
+    run ends inside the window). A run resumed at global step g with s <= g < e starts the capture at on_train_begin
+    and holds steps g + 1..e, labeled partial (owner decision 2026-11-09); resumed at g >= e it captures nothing.
+    When the capture starts (or is skipped) <args.output_dir>/profile_window.json = {"asked": [s, e], "captured":
+    [first, e] or null, "partial": bool (+ "why" when skipped)} and one log line. train_rl --profile-window S,E."""
 
     def __init__(self, window: tuple[int, int] | None):
-        if window is not None and not 2 <= window[0] <= window[1]:
-            raise ValueError(f"profile window {window}: needs 2 <= start <= end (the capture starts at the end of "
-                             "step start - 1, and TraceStep's wait is start - 2)")
+        if window is not None and not 1 <= window[0] <= window[1]:
+            raise ValueError(f"profile window {window}: needs 1 <= start <= end")
         self.window, self.open, self.opt_open, self.capturing, self.done = window, False, False, False, False
 
-    def _starts_at(self, step: int) -> bool:  # also checked at on_train_begin: a run resumed at s - 1 still captures
-        return bool(self.window) and not self.done and not self.capturing and step == self.window[0] - 1
+    def _begin(self, args, done_step: int):
+        """Start the capture after global step done_step (s - 1 or later), or skip it at or past e; label it."""
+        s, e = self.window
+        doc = {"asked": [s, e], "captured": [done_step + 1, e] if done_step < e else None, "partial": done_step >= s}
+        if doc["captured"]:
+            msg = f"capture of steps {done_step + 1}..{e}" + " (partial)" * doc["partial"]
+        else:
+            doc["why"] = msg = f"resumed at step {done_step}, at or past the window end {e}: no capture"
+        out = Path(args.output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "profile_window.json").write_text(json.dumps(doc))  # before the start: no file I/O in the capture
+        print(f"NvtxSteps: profile window {s}..{e}: {msg}")
+        if doc["captured"]:
+            torch.cuda.profiler.start()
+        self.capturing, self.done = bool(doc["captured"]), not doc["captured"]
 
     def on_train_begin(self, args, state, control, **kw):
-        """Open the `step` range."""
-        if self._starts_at(state.global_step) and torch.cuda.is_available():
-            torch.cuda.profiler.start()
-            self.capturing = True
+        """Start the capture when the run starts at s - 1 or later (a resume), and open the `step` range."""
+        if self.window and torch.cuda.is_available() and state.global_step >= self.window[0] - 1:
+            self._begin(args, state.global_step)
         nvtx.push("step")
         self.open = True
 
@@ -106,9 +124,8 @@ class NvtxSteps(TrainerCallback):
         if self.open:
             nvtx.pop()
         if self.window and not self.done and torch.cuda.is_available():
-            if self._starts_at(state.global_step):
-                torch.cuda.profiler.start()
-                self.capturing = True
+            if not self.capturing and state.global_step == self.window[0] - 1:
+                self._begin(args, state.global_step)
             elif state.global_step == self.window[1] and self.capturing:
                 self._stop()
         nvtx.push("step")

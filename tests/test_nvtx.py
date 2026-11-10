@@ -3,6 +3,7 @@ callbacks.NvtxSteps (step ranges and the capture window), the make_trainer / tra
 the reward path, and S12 (`reward` never imports `train`). CUDA and NVTX are fakes (monkeypatch); no GPU."""
 
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -210,20 +211,26 @@ def test_nvtx_is_free_when_off(fresh):
 # U27, U28: NvtxSteps ---------------------------------------------------------------------------------------------
 
 
-def drive(cb, n, first=0, train_begin=True):
-    """The Trainer's callback order for n optimizer steps after `first` (a resume starts later)."""
+def drive(cb, n, first=0, train_begin=True, out=None):
+    """The Trainer's callback order for n optimizer steps after `first` (a resume starts later); `out` is
+    args.output_dir (profile_window.json)."""
     import types
 
-    st = types.SimpleNamespace(global_step=first)
+    st, args = types.SimpleNamespace(global_step=first), types.SimpleNamespace(output_dir=str(out))
     if train_begin:
-        cb.on_train_begin(None, st, None)
+        cb.on_train_begin(args, st, None)
     for i in range(first + 1, first + n + 1):
-        cb.on_pre_optimizer_step(None, st, None)
-        cb.on_optimizer_step(None, st, None)
+        cb.on_pre_optimizer_step(args, st, None)
+        cb.on_optimizer_step(args, st, None)
         st.global_step = i
-        cb.on_step_end(None, st, None)
-    cb.on_train_end(None, st, None)
+        cb.on_step_end(args, st, None)
+    cb.on_train_end(args, st, None)
     return st
+
+
+def label(out):
+    """<out>/profile_window.json."""
+    return json.loads((out / "profile_window.json").read_text())
 
 
 @pytest.mark.parametrize("n", [0, 1, 2, 10, 30])
@@ -255,10 +262,11 @@ def test_unpaired_hooks_pop_nothing(rec):
     assert rec.ev == []
 
 
-def test_profiler_window_starts_after_pop_before_push_and_stops_once(rec):
+def test_profiler_window_starts_after_pop_before_push_and_stops_once(rec, tmp_path):
     from objdel.train.callbacks import NvtxSteps
 
-    drive(NvtxSteps((4, 6)), 8)
+    drive(NvtxSteps((4, 6)), 8, out=tmp_path)
+    assert label(tmp_path) == {"asked": [4, 6], "captured": [4, 6], "partial": False}
     names = [e[0] for e in rec.ev]
     assert names.count("start") == 1 and names.count("stop") == 1
     i, j = names.index("start"), names.index("stop")
@@ -270,27 +278,78 @@ def test_profiler_window_starts_after_pop_before_push_and_stops_once(rec):
     assert len([e for e in rec.ev[i:j] if e == ("push", "step")]) == 3
 
 
-def test_profiler_window_edges(rec, monkeypatch):
+def test_profiler_window_edges(rec, tmp_path):
     import types
 
     from objdel.train.callbacks import NvtxSteps
 
     cb, st = NvtxSteps((4, 6)), types.SimpleNamespace(global_step=0)
-    cb.on_train_begin(None, st, None)
+    args = types.SimpleNamespace(output_dir=str(tmp_path))
+    cb.on_train_begin(args, st, None)
     for _ in range(2):  # the same global_step twice: one start
         st.global_step = 3
-        cb.on_step_end(None, st, None)
+        cb.on_step_end(args, st, None)
     assert [e for e in rec.ev if e[0] == "start"] == [("start",)]
     rec.ev.clear()
-    drive(NvtxSteps((4, 6)), 2, first=5)  # resumed past s: no start, no stop
-    assert not any(e[0] in ("start", "stop") for e in rec.ev)
-    rec.ev.clear()
-    drive(NvtxSteps((4, 6)), 4)  # the run ends at step 4, inside the window: on_train_end stops the capture
+    drive(NvtxSteps((4, 6)), 4, out=tmp_path)  # the run ends at step 4, inside the window: on_train_end stops it
     names = [e[0] for e in rec.ev]
     assert names.count("start") == 1 and names[-2:] == ["pop", "stop"]
-    for bad in ((1, 3), (0, 2), (5, 4)):
+    for bad in ((0, 2), (0, 0), (5, 4)):
         with pytest.raises(ValueError):
             NvtxSteps(bad)
+
+
+@pytest.mark.parametrize("first", [4, 5])
+def test_resume_inside_the_window_captures_the_steps_left_labeled_partial(rec, tmp_path, capsys, first):
+    """owner decision 2026-11-09 (BR1-rl-6, choice 1): resumed at step s or later and before e, the capture starts
+    at on_train_begin and holds steps first + 1 .. e."""
+    from objdel.train.callbacks import NvtxSteps
+
+    drive(NvtxSteps((4, 6)), 8 - first, first=first, out=tmp_path)
+    names = [e[0] for e in rec.ev]
+    assert names[:2] == ["start", "push"] and names.count("start") == 1 and names.count("stop") == 1
+    j = names.index("stop")
+    assert len([e for e in rec.ev[:j] if e == ("push", "step")]) == 6 - first and names[j + 1] == "push"
+    assert label(tmp_path) == {"asked": [4, 6], "captured": [first + 1, 6], "partial": True}
+    assert f"steps {first + 1}..6 (partial)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("first", [6, 9])
+def test_resume_at_or_past_the_window_end_captures_nothing_and_says_why(rec, tmp_path, capsys, first):
+    from objdel.train.callbacks import NvtxSteps
+
+    drive(NvtxSteps((4, 6)), 2, first=first, out=tmp_path)
+    assert not any(e[0] in ("start", "stop") for e in rec.ev)
+    got = label(tmp_path)
+    assert got["asked"] == [4, 6] and got["captured"] is None and f"resumed at step {first}" in got["why"]
+    assert f"resumed at step {first}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("first", [0, 3])
+def test_a_start_before_the_window_is_not_partial(rec, tmp_path, first):
+    from objdel.train.callbacks import NvtxSteps
+
+    drive(NvtxSteps((4, 6)), 8 - first, first=first, out=tmp_path)
+    assert label(tmp_path) == {"asked": [4, 6], "captured": [4, 6], "partial": False}
+
+
+def test_a_window_from_step_1_covers_every_step(rec, tmp_path):
+    """owner decision 2026-11-09: the tracer covers all steps; S = 1 starts the capture at on_train_begin."""
+    from objdel.train.callbacks import NvtxSteps
+
+    drive(NvtxSteps((1, 5)), 5, out=tmp_path)
+    names = [e[0] for e in rec.ev]
+    assert names[:2] == ["start", "push"] and names[-4:] == ["pop", "stop", "push", "pop"]  # stop at the end of 5
+    assert names.count("start") == names.count("stop") == 1 and rec.ev.count(("push", "step")) == 6
+    assert label(tmp_path) == {"asked": [1, 5], "captured": [1, 5], "partial": False}
+
+
+def test_trace_step_needs_one_warm_up_step(tmp_path):
+    """torch.profiler's schedule warms up one step before the traced step: --trace needs S >= 2."""
+    from objdel.train.callbacks import TraceStep
+
+    with pytest.raises(ValueError, match="S >= 2"):
+        TraceStep(str(tmp_path), wait=-1)
 
 
 def test_no_cuda_no_profiler_and_no_ranges(monkeypatch, no_nvtx_calls):
@@ -725,7 +784,9 @@ def test_make_trainer_adds_nvtx_steps_only_with_a_window(built):
     (cb,) = built(trace="T")
     assert isinstance(cb, TraceStep) and cb.wait == 1
     assert built(profile_window=[2, 5], trace="T")[1].wait == 0
-    with pytest.raises(ValueError):
+    (cb,) = built(profile_window=[1, 3])
+    assert cb.window == (1, 3)
+    with pytest.raises(ValueError, match="S >= 2"):
         built(profile_window=[1, 3], trace="T")
 
 
@@ -761,7 +822,8 @@ def test_train_rl_flags():
     assert a.profile_window is None and a.trace is None
     a = train_rl.parse([*base, "--profile-window", "4,6", "--trace", "D"])
     assert a.profile_window == (4, 6) and a.trace == "D"
-    for bad in (["1,2"], ["6,4"]):
+    assert train_rl.parse([*base, "--profile-window", "1,20"]).profile_window == (1, 20)  # every step
+    for bad in (["0,2"], ["6,4"], ["1,2", "--trace", "D"]):
         with pytest.raises(SystemExit) as e:
             train_rl.parse([*base, "--profile-window", *bad])
         assert e.value.code == 2

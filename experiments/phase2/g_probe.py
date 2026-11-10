@@ -102,8 +102,8 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc), spec=reward).funcs()
     cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO
     win = getattr(a, "profile_window", None)  # --profile-window S,E: NVTX steps and the nsys capture window
-    calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])  # raises on S < 2 (TraceStep's wait < 0)
-    if getattr(a, "trace", None):  # torch.profiler on step S (the nsys fallback), else on step 3
+    calls = [*calls] + ([callbacks.NvtxSteps(tuple(win))] if win else [])
+    if getattr(a, "trace", None):  # torch.profiler on step S (the nsys fallback; raises on S < 2), else on step 3
         calls.append(callbacks.TraceStep(a.trace, wait=win[0] - 2 if win else 1))
     if getattr(a, "no_ckpt_layers", None):  # C9 arm (a)
         calls.append(callbacks.NoCkptLayers(a.no_ckpt_layers))

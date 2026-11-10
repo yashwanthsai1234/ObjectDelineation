@@ -193,8 +193,10 @@ def test_each_cli_gains_the_trainer_flags_it_lacked():
     probe = S.cli_parse(S.ProbeStage, ["--model", "m", "--ckpt", "c", "--train", "t", "--probe", "p", "--out", "o",
                                        "--lr", "5e-5"])
     assert probe.lr == 5e-5
-    with pytest.raises(ValidationError, match="profile_window"):
-        S.RlStage(model="m", ckpt="c", train="t", out="o", steps=2, profile_window=(1, 3))
+    assert S.RlStage(model="m", ckpt="c", train="t", out="o", steps=2, profile_window=(1, 3)).profile_window == (1, 3)
+    for bad in ({"profile_window": (0, 3)}, {"profile_window": (3, 2)}, {"profile_window": (1, 3), "trace": "T"}):
+        with pytest.raises(ValidationError, match="profile_window"):
+            S.RlStage(model="m", ckpt="c", train="t", out="o", steps=2, **bad)
 
 
 def test_cli_stage_reads_a_spec_stage_with_its_folders(capsys):
