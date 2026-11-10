@@ -190,3 +190,27 @@ def test_the_trl_contract_is_the_first_code_check(monkeypatch):
     monkeypatch.setattr(T, "check", missing)
     with pytest.raises(ImportError):  # any other error propagates: main() records it as a crashed (failed) check
         fn(None, None)
+
+
+@pytest.mark.parametrize("out, code, ok", [("1.11.0\n", 0, True), ("vastai 1.11.0\n", 0, True), ("1.10.0", 0, False),
+                                           ("1.11.1", 0, False), ("1.11.01", 0, False), ("11.11.0", 0, False),
+                                           ("1.11", 0, False), ("", 0, False), ("1.11.0", 3, False)])
+def test_vastai_version_check_wants_the_pinned_token(tmp_path, monkeypatch, out, code, ok):
+    """CT-46: the check passes on exactly 1.11.0 and fails with a message naming both versions (no traceback)."""
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    fake = bin_ / "vastai"
+    fake.write_text(f"#!/bin/sh\nprintf '%s' '{out}'\nexit {code}\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_))
+    bad = PF.vastai_problems()
+    assert PF.VASTAI_VERSION == "1.11.0"
+    assert (bad == []) is ok
+    assert ok or ("1.11.0" in bad[0] and "vastai" in bad[0])
+
+
+def test_vastai_version_check_fails_without_the_binary(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    bad = PF.vastai_problems()
+    assert len(bad) == 1 and "1.11.0" in bad[0] and "uv tool install vastai==1.11.0" in bad[0]
+    assert any(n == "CODE vastai version" for n, _ in PF.CHECKS)
