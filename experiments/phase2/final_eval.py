@@ -269,7 +269,7 @@ def view_manifest_sha256(view: Path) -> str:
 
 
 def _view_records(view: Path) -> list[dict]:
-    return [json.loads(line) for f in sorted(Path(view, "lidc").glob("*.jsonl")) for line in f.read_text().splitlines()]
+    return [r for f in sorted(Path(view, "lidc").glob("*.jsonl")) for r in read_jsonl(f)]
 
 
 def frozen_entry(view_name: str) -> dict | None:
