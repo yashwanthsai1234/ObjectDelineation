@@ -477,6 +477,7 @@ def test_coverage_and_width_order_of_the_three_cis():
 
 
 def test_draws_speed_on_the_golden_ids():
+    import os
     import time
 
     ids = [r["item_id"] for r in gold_rows()]
