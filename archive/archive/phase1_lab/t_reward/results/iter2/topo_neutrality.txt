@@ -1,0 +1,23 @@
+items: 14 (LIDC; RIGA has no topology disagreement); G=8, 400 batches of one group per item
+
+[exact rater masks] mean advantage per class (items equally weighted), 95% CI over items
+  scheme                       mode class           minority class            minority - mode
+  v1             +0.117 [-0.157,+0.350]   -0.395 [-0.976,+0.226]   -0.512 [-1.314,+0.395]  (items with minority < mode: 10/14)
+  v2 c_topo=1    -0.011 [-0.014,-0.008]   +0.030 [+0.023,+0.037]   +0.041 [+0.031,+0.051]  (items with minority < mode: 0/14)
+  v2 c_topo=2    -0.022 [-0.027,-0.017]   +0.060 [+0.046,+0.075]   +0.082 [+0.063,+0.103]  (items with minority < mode: 0/14)
+  v2 c_topo=3    -0.033 [-0.041,-0.025]   +0.090 [+0.068,+0.113]   +0.123 [+0.094,+0.154]  (items with minority < mode: 0/14)
+  v2 geo only    +0.000 [+0.000,+0.000]   +0.000 [+0.000,+0.000]   +0.000 [+0.000,+0.000]  (items with minority < mode: 0/14)
+  v2 IoU_tc only +0.000 [+0.000,+0.000]   +0.000 [+0.000,+0.000]   +0.000 [+0.000,+0.000]  (items with minority < mode: 0/14)
+  v2 band only   +0.000 [+0.000,+0.000]   +0.000 [+0.000,+0.000]   +0.000 [+0.000,+0.000]  (items with minority < mode: 0/14)
+  v2 vote-IoU    +0.139 [-0.132,+0.373]   -0.441 [-1.050,+0.192]   -0.579 [-1.392,+0.317]  (items with minority < mode: 9/14)
+
+[jitter rater masks] mean advantage per class (items equally weighted), 95% CI over items
+  scheme                       mode class           minority class            minority - mode
+  v1             +0.141 [-0.032,+0.307]   -0.456 [-0.881,-0.016]   -0.597 [-1.195,+0.032]  (items with minority < mode: 10/14)
+  v2 c_topo=1    +0.051 [-0.028,+0.146]   -0.112 [-0.340,+0.092]   -0.163 [-0.462,+0.108]  (items with minority < mode: 7/14)
+  v2 c_topo=2    +0.049 [-0.041,+0.155]   -0.095 [-0.349,+0.122]   -0.144 [-0.504,+0.167]  (items with minority < mode: 7/14)
+  v2 c_topo=3    +0.046 [-0.051,+0.172]   -0.078 [-0.357,+0.155]   -0.125 [-0.528,+0.207]  (items with minority < mode: 6/14)
+  v2 geo only    +0.053 [-0.015,+0.132]   -0.128 [-0.336,+0.054]   -0.182 [-0.458,+0.074]  (items with minority < mode: 8/14)
+  v2 IoU_tc only +0.055 [-0.015,+0.133]   -0.124 [-0.306,+0.047]   -0.179 [-0.450,+0.063]  (items with minority < mode: 8/14)
+  v2 band only   +0.028 [-0.035,+0.125]   -0.095 [-0.392,+0.098]   -0.123 [-0.515,+0.131]  (items with minority < mode: 7/14)
+  v2 vote-IoU    +0.155 [-0.020,+0.321]   -0.497 [-0.932,-0.036]   -0.653 [-1.255,-0.004]  (items with minority < mode: 10/14)

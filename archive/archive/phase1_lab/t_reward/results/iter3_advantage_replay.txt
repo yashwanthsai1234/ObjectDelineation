@@ -1,0 +1,47 @@
+groups: 256 x 8 outputs; mean terms per output type:
+  g1   iou=1.000 band=1.000 topo=1.000 legal=1.000 iou_tc=0.935
+  g2   iou=0.989 band=0.997 topo=1.000 legal=1.000 iou_tc=0.928
+  o1   iou=0.743 band=0.889 topo=1.000 legal=1.000 iou_tc=0.752
+  o2   iou=0.733 band=0.872 topo=1.000 legal=1.000 iou_tc=0.792
+  b1   iou=0.963 band=0.861 topo=0.000 legal=1.000 iou_tc=0.963
+  b2   iou=0.949 band=0.876 topo=0.000 legal=1.000 iou_tc=0.949
+  inf  iou=0.343 band=0.165 topo=1.000 legal=1.000 iou_tc=0.417
+  far  iou=0.243 band=0.321 topo=1.000 legal=1.000 iou_tc=0.288
+
+(i) known-better > known-worse ordering (share of pairs); per pair type: g1>o1 g2>o2 g1>b1 g2>b2 g1>inf g2>inf g1>far o1>far
+  grpo        100.0%   100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  drgrpo      100.0%   100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  gdpo        100.0%   100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  gdpo_batch  100.0%   100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  gdpo_floor  100.0%   100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  gdpo_mean   100.0%   100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  gated       100.0%   100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  gdpo_floor_gated 100.0%   100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  v2 (c_topo=2)  98.4%    96.5%  91.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+  v3 frozen (c_topo=2)  98.4%    96.5%  91.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0%
+
+(ii) dark room: max |change of an advantage| caused by a near-constant term (median over groups / max over batch), and ordering accuracy under it
+  scheme                     D1 legal noise 1e-3           D2 one output legal=0.99              D3 topo near-constant
+  grpo               0.000 /  0.000 (ord 100.0%)        0.004 /  0.006 (ord 100.0%)        0.001 /  0.001 (ord 100.0%)
+  drgrpo             0.000 /  0.000 (ord 100.0%)        0.001 /  0.001 (ord 100.0%)        0.000 /  0.000 (ord 100.0%)
+  gdpo                0.282 /  0.444 (ord 96.3%)         0.433 /  0.498 (ord 98.1%)         0.763 /  1.241 (ord 81.9%)
+  gdpo_batch          0.296 /  0.422 (ord 96.3%)         0.468 /  0.473 (ord 98.1%)         0.778 /  1.256 (ord 81.9%)
+  gdpo_floor         0.000 /  0.001 (ord 100.0%)        0.006 /  0.007 (ord 100.0%)        0.001 /  0.001 (ord 100.0%)
+  gdpo_mean          0.000 /  0.000 (ord 100.0%)        0.005 /  0.006 (ord 100.0%)        0.001 /  0.001 (ord 100.0%)
+  gated              0.000 /  0.000 (ord 100.0%)        0.000 /  0.000 (ord 100.0%)        0.000 /  0.000 (ord 100.0%)
+  gdpo_floor_gated        0.000 /  0.000 (ord 100.0%)        0.004 /  0.005 (ord 100.0%)        0.000 /  0.001 (ord 100.0%)
+  v2 (c_topo=2)         0.000 /  0.000 (ord 98.4%)         0.006 /  0.006 (ord 98.6%)         0.001 /  0.001 (ord 98.4%)
+  v3 frozen (c_topo=2)         0.000 /  0.000 (ord 98.4%)         0.004 /  0.004 (ord 98.6%)         0.001 /  0.001 (ord 98.3%)
+
+  D4 converged groups (8 near-identical outputs) mixed 50/50 into a normal batch:
+    raw total reward of converged groups: median within-group std 1.46e-03, max range 2.22e-01
+    grpo        converged groups: median max|A| 1.916, max 2.646 | normal groups: median max|A| 1.546
+    drgrpo      converged groups: median max|A| 0.003, max 0.183 | normal groups: median max|A| 0.289
+    gdpo        converged groups: median max|A| 1.999, max 2.646 | normal groups: median max|A| 1.700
+    gdpo_batch  converged groups: median max|A| 1.953, max 2.981 | normal groups: median max|A| 1.804
+    gdpo_floor  converged groups: median max|A| 0.136, max 3.663 | normal groups: median max|A| 2.217
+    gdpo_mean   converged groups: median max|A| 1.806, max 2.756 | normal groups: median max|A| 1.613
+    gated       converged groups: median max|A| 0.098, max 2.646 | normal groups: median max|A| 1.621
+    gdpo_floor_gated converged groups: median max|A| 0.102, max 3.827 | normal groups: median max|A| 2.448
+    v2 (c_topo=2) converged groups: median max|A| 0.115, max 4.439 | normal groups: median max|A| 3.852
+    v3 frozen (c_topo=2) converged groups: median max|A| 0.051, max 2.946 | normal groups: median max|A| 2.413

@@ -1,0 +1,270 @@
+{
+ "args": {
+  "model": "lfm2.5-vl-450m",
+  "tag": "lora_gdpo_ctrl",
+  "steps": 3,
+  "G": 4,
+  "max_completion": 64,
+  "agg": "normalize_then_sum",
+  "loss_type": "dr_grpo",
+  "scale_rewards": "none",
+  "beta": 0.001,
+  "epsilon_high": 0.28,
+  "ctrl_step": 1,
+  "beta_to": 0.1,
+  "weights_to": "2,0,0,3",
+  "peft": true,
+  "cpu": false,
+  "side": 448,
+  "grad_ckpt": 1,
+  "lr": 0.0001,
+  "init": null
+ },
+ "status": "pass",
+ "error": null,
+ "device": "mps",
+ "ref_model_loaded": false,
+ "init_s": 7.4,
+ "train_s": 60.6,
+ "s_per_step": 20.2,
+ "peak_rss_gb": 1.71,
+ "mps_driver_gb": 4.83,
+ "reward_log_keys": [
+  "rewards/format_reward/mean",
+  "rewards/format_reward/std",
+  "rewards/iou_reward/mean",
+  "rewards/iou_reward/std",
+  "rewards/legality_const/mean",
+  "rewards/legality_const/std",
+  "rewards/topo_reward/mean",
+  "rewards/topo_reward/std"
+ ],
+ "any_nan_in_logs": false,
+ "weight_checks": [
+  {
+   "step": 1,
+   "weights": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "beta": 0.001,
+   "logged_reward": 1.0,
+   "sum_w_mean": 1.0,
+   "kl": -8.311404897654029e-09,
+   "loss": -8.149073429941645e-12
+  },
+  {
+   "step": 2,
+   "weights": [
+    2.0,
+    0.0,
+    0.0,
+    3.0
+   ],
+   "beta": 0.1,
+   "logged_reward": 3.25,
+   "sum_w_mean": 3.25,
+   "kl": 2.4835269396561444e-09,
+   "loss": 0.17186641693115234
+  },
+  {
+   "step": 3,
+   "weights": [
+    2.0,
+    0.0,
+    0.0,
+    3.0
+   ],
+   "beta": 0.1,
+   "logged_reward": 3.25,
+   "sum_w_mean": 3.25,
+   "kl": 0.008102413266897202,
+   "loss": -0.028532594442367554
+  }
+ ],
+ "advantages_logged": [
+  -0.5,
+  -0.5,
+  -0.5,
+  1.4999
+ ],
+ "controller_trace": [
+  {
+   "step_begin": 0,
+   "beta": 0.001,
+   "weights": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "step_begin": 1,
+   "beta": 0.1,
+   "weights": [
+    2.0,
+    0.0,
+    0.0,
+    3.0
+   ]
+  },
+  {
+   "step_begin": 2,
+   "beta": 0.1,
+   "weights": [
+    2.0,
+    0.0,
+    0.0,
+    3.0
+   ]
+  }
+ ],
+ "logs": [
+  {
+   "step": 1,
+   "loss": -8.149073429941645e-12,
+   "grad_norm": 8.553159958069045e-09,
+   "learning_rate": 0.0001,
+   "num_tokens": 1295.0,
+   "completions/mean_length": 62.75,
+   "completions/min_length": 59.0,
+   "completions/max_length": 64.0,
+   "completions/clipped_ratio": 0.75,
+   "completions/mean_terminated_length": 59.0,
+   "completions/min_terminated_length": 59.0,
+   "completions/max_terminated_length": 59.0,
+   "rewards/format_reward/mean": 0.0,
+   "rewards/format_reward/std": 0.0,
+   "rewards/iou_reward/mean": 0.0,
+   "rewards/iou_reward/std": 0.0,
+   "rewards/topo_reward/mean": 0.0,
+   "rewards/topo_reward/std": 0.0,
+   "rewards/legality_const/mean": 1.0,
+   "rewards/legality_const/std": 0.0,
+   "reward": 1.0,
+   "reward_std": 0.0,
+   "frac_reward_zero_std": 1.0,
+   "kl": -8.311404897654029e-09,
+   "entropy": 0.4102870225906372,
+   "clip_ratio/low_mean": 0.0,
+   "clip_ratio/high_mean": 0.0,
+   "clip_ratio/region_mean": 0.0,
+   "clip_ratio/low_min": 0.0,
+   "clip_ratio/high_max": 0.0,
+   "step_time": 19.414942709030584,
+   "epoch": 0.25
+  },
+  {
+   "step": 2,
+   "loss": 0.17186641693115234,
+   "grad_norm": 0.6818317770957947,
+   "learning_rate": 0.0001,
+   "num_tokens": 2531.0,
+   "completions/mean_length": 48.0,
+   "completions/min_length": 26.0,
+   "completions/max_length": 56.0,
+   "completions/clipped_ratio": 0.0,
+   "completions/mean_terminated_length": 48.0,
+   "completions/min_terminated_length": 26.0,
+   "completions/max_terminated_length": 56.0,
+   "rewards/format_reward/mean": 0.125,
+   "rewards/format_reward/std": 0.25,
+   "rewards/iou_reward/mean": 0.0,
+   "rewards/iou_reward/std": 0.0,
+   "rewards/topo_reward/mean": 0.0,
+   "rewards/topo_reward/std": 0.0,
+   "rewards/legality_const/mean": 1.0,
+   "rewards/legality_const/std": 0.0,
+   "reward": 3.25,
+   "reward_std": 0.5,
+   "frac_reward_zero_std": 0.0,
+   "kl": 2.4835269396561444e-09,
+   "entropy": 0.7286989092826843,
+   "clip_ratio/low_mean": 0.0,
+   "clip_ratio/high_mean": 0.0,
+   "clip_ratio/region_mean": 0.0,
+   "clip_ratio/low_min": 0.0,
+   "clip_ratio/high_max": 0.0,
+   "step_time": 17.366629583993927,
+   "epoch": 0.5
+  },
+  {
+   "step": 3,
+   "loss": -0.028532594442367554,
+   "grad_norm": 1.0967620611190796,
+   "learning_rate": 0.0001,
+   "num_tokens": 3816.0,
+   "completions/mean_length": 60.25,
+   "completions/min_length": 49.0,
+   "completions/max_length": 64.0,
+   "completions/clipped_ratio": 0.75,
+   "completions/mean_terminated_length": 49.0,
+   "completions/min_terminated_length": 49.0,
+   "completions/max_terminated_length": 49.0,
+   "rewards/format_reward/mean": 0.125,
+   "rewards/format_reward/std": 0.25,
+   "rewards/iou_reward/mean": 0.0,
+   "rewards/iou_reward/std": 0.0,
+   "rewards/topo_reward/mean": 0.0,
+   "rewards/topo_reward/std": 0.0,
+   "rewards/legality_const/mean": 1.0,
+   "rewards/legality_const/std": 0.0,
+   "reward": 3.25,
+   "reward_std": 0.5,
+   "frac_reward_zero_std": 0.0,
+   "kl": 0.008102413266897202,
+   "entropy": 0.45893749594688416,
+   "clip_ratio/low_mean": 0.0,
+   "clip_ratio/high_mean": 0.0,
+   "clip_ratio/region_mean": 0.0,
+   "clip_ratio/low_min": 0.0,
+   "clip_ratio/high_max": 0.0,
+   "step_time": 18.601400874904357,
+   "epoch": 0.75
+  },
+  {
+   "step": 3,
+   "train_runtime": 59.9353,
+   "train_samples_per_second": 0.2,
+   "train_steps_per_second": 0.05,
+   "total_flos": 0.0,
+   "train_loss": 0.04777794082687858,
+   "epoch": 0.75
+  }
+ ],
+ "rewards_logged": {
+  "format_reward": [
+   0.0,
+   0.0,
+   0.0,
+   0.5
+  ],
+  "iou_reward": [
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "topo_reward": [
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "legality_const": [
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ]
+ },
+ "sample_completions": [
+  "[{'role': 'assistant', 'content': '{\\n  \"disc\": [\\n    [0,0,0,0],\\n    [0,0,949,0],\\n    [0,1,949,0],\\n    [0,2,949,0],\\n    [0,3,949,0],\\n    [0,4,949,'}]",
+  "[{'role': 'assistant', 'content': '{\\n  \"disc\": [\\n    [0, 0],\\n    [0.07, 0.06],\\n    [0.07, 0.22],\\n    [0.17, 0.12],\\n    [0.17, 0.37],\\n    [0.14, '}]",
+  "[{'role': 'assistant', 'content': '```json\\n{\\n  \"disc\": [\\n    [0, 200],\\n    [300, 200],\\n    [500, 200],\\n    [700, 200],\\n    [900, 200]\\n  ]\\n}\\n```'}]",
+  "[{'role': 'assistant', 'content': 'Here\\'s the JSON representation of the optic disc in the retinal fundus image:\\n\\n{\"disc\": [{\"outer\": [[0, 120], [100, 120]], \"holes\": []}]}\\n\\nThis JSON object describes the location of the optic disc (coordinated 140x150)'}]"
+ ]
+}

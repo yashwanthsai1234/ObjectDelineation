@@ -1,0 +1,18 @@
+# Optional fp16 arm (Implementation.md B2.3; paid, only if experiments/phase2/fp16_check.py passed and the owner funds
+# it): a plan file run.sh runs, never stamped. The B1 recipe (start rl-full-3ep, the B1 rows root, seed 0, LR 5e-5,
+# reward v4, the control IS mode) with fp16 numerics, 60 steps (the mismatch shows only after about 20), no eval.
+#   0  the CUDA build of b1_rows.yaml step 0 (else every reward scores on the CPU build)
+#   1  G08b's fp16 part: the vLLM engine dtype is float16 (its model is {rd}/ckpt; a missing folder fails)
+#   2  train_rl --numerics fp16-seqmask (fp16 weights and vLLM dtype; the engine dtype is asserted in FastGRPO.__init__)
+# Read the result with: python -I -m experiments.phase2.b2_summary summary --fp16 {rd}/b2-fp16 --b1 {rd}/b1-rows
+#   fetch_hf.sh <run> rl-full-3ep && fetch_hf.sh <run> --rows <rows_revision> lidc-train-b1
+#   run.sh <run> experiments/phase2/configs/b2_fp16.yaml
+# --rows-revision and --rows-manifest-sha256 are the zero placeholders of b1_rows.yaml until B1.4 writes the real ones.
+steps:
+  - [bash, -c, "bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c \"import objdel._gpucheck as g; assert g.build() == 'cuda'\" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_gpu_scoring.py"]
+  - [-m, pytest, -q, -p, "no:cacheprovider", -m, gpu, "tests/test_train_fast.py::test_g08b_fp16_dtype"]
+  - [-m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/rows/lidc-train-b1",
+     --out, "{rd}/b2-fp16", --steps, "60", --save-steps, "60", --shared-prefix, --log-by-prompt, --lr, "5e-5",
+     --numerics, fp16-seqmask,
+     --rows-revision, "34213dceb068128f1a1abf9c67aa65dd59bc1220",
+     --rows-manifest-sha256, "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4"]

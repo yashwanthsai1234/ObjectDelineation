@@ -1,0 +1,30 @@
+items with rater topology disagreement: {'riga': '0/400', 'lidc': '14/602'}
+rater-samples: 53; vote topology matched by 32; samples with another rater of the same topology: 39
+
+per-item gap = mean IoU(matches vote topology) - mean IoU(does not)
+reference                                            n items  mean gap  median       [min, max]   mean IoU match / other
+(c) vote, all raters (iteration-1 IoU)                    14    +0.154  +0.137 [-0.074, +0.684]       0.830 / 0.664   95% CI of mean gap [+0.066, +0.262]
+(c') vote, other raters                                   14    +0.055  +0.029 [-0.094, +0.250]       0.707 / 0.597   95% CI of mean gap [+0.007, +0.107]
+(a) consensus of same-topology others (fb: vote)          14    +0.079  +0.091 [-0.128, +0.285]       0.696 / 0.541   95% CI of mean gap [+0.020, +0.137]
+(b) max over same-topology others (fb: vote)              14    +0.067  +0.083 [-0.104, +0.285]       0.728 / 0.614   95% CI of mean gap [+0.015, +0.121]
+
+per item (k, rater topologies, gap c_all / a / b):
+  0013275227_0_2__nodule       k=4 sigs=[(0,), (0,), (2,), (0,)] gap -0.074 / -0.128 / -0.025
+  2690781600_2_42__nodule      k=4 sigs=[(0,), (0,), (0,), (1,)] gap +0.252 / +0.156 / +0.186
+  2690781600_2_44__nodule      k=4 sigs=[(0,), (0,), (0,), (1,)] gap +0.001 / -0.100 / -0.025
+  3354433437_0_16__nodule      k=4 sigs=[(0,), (0,), (2,), (0,)] gap +0.350 / +0.208 / +0.285
+  3354433437_0_3__nodule       k=4 sigs=[(0,), (0, 0), (0,), (0,)] gap -0.066 / +0.169 / -0.051
+  3354433437_0_4__nodule       k=4 sigs=[(0,), (0,), (0,), (0, 0)] gap +0.112 / +0.154 / +0.182
+  3354433437_1_62__nodule      k=3 sigs=[(0,), (0,), (1,)] gap +0.047 / +0.079 / +0.079
+  3676284739_0_20__nodule      k=4 sigs=[(0,), (0,), (0, 0), (0,)] gap +0.150 / +0.285 / +0.093
+  3757419144_0_96__nodule      k=3 sigs=[(0,), (0, 0), (0,)] gap +0.684 / +0.000 / +0.000
+  3920119813_1_48__nodule      k=4 sigs=[(0,), (0,), (0,), (1,)] gap +0.124 / +0.008 / +0.006
+  6016826588_0_1__nodule       k=3 sigs=[(1,), (0,), (0,)] gap +0.235 / +0.087 / +0.087
+  6016826588_0_7__nodule       k=4 sigs=[(0,), (0,), (0,), (4,)] gap +0.158 / +0.095 / +0.107
+  6016826588_0_9__nodule       k=4 sigs=[(0,), (0,), (0,), (1,)] gap +0.167 / +0.104 / +0.115
+  7626507402_0_8__nodule       k=4 sigs=[(0,), (0,), (0, 0), (0,)] gap +0.021 / -0.008 / -0.104
+
+production emulation: 530 jittered samples (1 px smooth jitter, topology kept)
+  (c) vote, all raters                     items 14  mean gap +0.127 [+0.057, +0.209]  median +0.110  |gap| median 0.110  range [-0.069, +0.500]
+  (a) consensus of same-topology raters    items 14  mean gap +0.018 [-0.085, +0.164]  median -0.067  |gap| median 0.082  range [-0.181, +0.798]
+  (b) max over same-topology raters        items 14  mean gap +0.007 [-0.014, +0.026]  median +0.003  |gap| median 0.023  range [-0.054, +0.069]

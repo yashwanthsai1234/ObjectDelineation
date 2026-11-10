@@ -1,0 +1,64 @@
+{
+ "env": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 19.77880859375,
+  "time": "2026-10-19 17:15:39"
+ },
+ "riga": {
+  "objects": 512,
+  "completions": 256,
+  "mismatches": 0,
+  "median_us_per_object": {
+   "lib": 573.1875,
+   "roi_kernel": 171.062,
+   "signature": 180.6875,
+   "to_mask": 114.813
+  },
+  "mean_us_per_object": {
+   "lib": 889.518947265625,
+   "roi_kernel": 229.771498828125,
+   "signature": 255.661821875,
+   "to_mask": 176.06072617187502
+  },
+  "parse_median_us": 49.375,
+  "batch_estimate_ms": {
+   "lib score_mask": 455.433701,
+   "kernel+signature": 248.5418602,
+   "to_mask": 90.14309180000001,
+   "parse": 20.510496600000003
+  }
+ },
+ "lidc": {
+  "objects": 256,
+  "completions": 256,
+  "mismatches": 0,
+  "median_us_per_object": {
+   "lib": 91.9585,
+   "roi_kernel": 12.9375,
+   "signature": 29.208,
+   "to_mask": 47.5625
+  },
+  "mean_us_per_object": {
+   "lib": 128.2461109375,
+   "roi_kernel": 19.528536718749997,
+   "signature": 46.0367921875,
+   "to_mask": 70.88713046875
+  },
+  "parse_median_us": 9.458,
+  "batch_estimate_ms": {
+   "lib score_mask": 32.8310044,
+   "kernel+signature": 16.784724199999996,
+   "to_mask": 18.1471054,
+   "parse": 3.3121253999999998
+  }
+ },
+ "env_end": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 18.63232421875,
+  "time": "2026-10-19 17:15:59"
+ }
+}

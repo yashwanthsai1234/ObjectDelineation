@@ -1,0 +1,23 @@
+{
+ "env": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 19.80419921875,
+  "time": "2026-10-19 17:17:17"
+ },
+ "numba_cache_dir": "<scratch>//phase2/A6/nb_cold",
+ "import_targets_s": 2.4989957499783486,
+ "first_call_s": 20.22194466693327,
+ "second_call_s": 0.09259479097090662,
+ "edt_32x500_serial_s": 0.39873833302408457,
+ "edt_32x500_2threads_s": 0.2448478750884533,
+ "edt_thread_speedup": 1.6285145741209193,
+ "env_end": {
+  "python": "3.12.11",
+  "machine": "arm64",
+  "cpu": "arm",
+  "loadavg_1m": 19.38427734375,
+  "time": "2026-10-19 17:17:41"
+ }
+}

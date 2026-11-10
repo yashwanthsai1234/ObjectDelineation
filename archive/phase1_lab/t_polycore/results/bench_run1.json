@@ -1,0 +1,205 @@
+{
+ "machine": {
+  "platform": "macOS-26.3-arm64-arm-64bit",
+  "processor": "arm",
+  "cpus": 8,
+  "python": "3.12.11"
+ },
+ "load_before": [
+  50.1,
+  57.4,
+  54.1
+ ],
+ "workload": {
+  "rollouts": 256,
+  "vertices_total": 56793,
+  "S_min": 67,
+  "S_max": 512,
+  "rings_hist": {
+   "1": 83,
+   "2": 88,
+   "3": 85
+  }
+ },
+ "polycore_latency_single_thread": {
+  "wall": {
+   "p50_ms": 0.3674,
+   "p99_ms": 2.4047,
+   "max_ms": 2.636,
+   "mean_ms": 0.508
+  },
+  "thread_cpu": {
+   "p50_ms": 0.3294,
+   "p99_ms": 1.5448,
+   "max_ms": 1.7836,
+   "mean_ms": 0.3855
+  }
+ },
+ "polycore_raster_only": {
+  "wall": {
+   "p50_ms": 0.0932,
+   "p99_ms": 0.4321,
+   "max_ms": 0.4686,
+   "mean_ms": 0.1193
+  },
+  "thread_cpu": {
+   "p50_ms": 0.0915,
+   "p99_ms": 0.429,
+   "max_ms": 0.4483,
+   "mean_ms": 0.1174
+  }
+ },
+ "polycore_validate_only": {
+  "wall": {
+   "p50_ms": 0.0894,
+   "p99_ms": 0.9805,
+   "max_ms": 1.278,
+   "mean_ms": 0.1809
+  },
+  "thread_cpu": {
+   "p50_ms": 0.0894,
+   "p99_ms": 0.9786,
+   "max_ms": 1.2688,
+   "mean_ms": 0.1798
+  }
+ },
+ "polycore_validate_only_brute": {
+  "wall": {
+   "p50_ms": 0.1561,
+   "p99_ms": 2.3135,
+   "max_ms": 3.5441,
+   "mean_ms": 0.336
+  },
+  "thread_cpu": {
+   "p50_ms": 0.1292,
+   "p99_ms": 1.2236,
+   "max_ms": 1.6157,
+   "mean_ms": 0.2505
+  }
+ },
+ "polycore_batch": {
+  "internal_pool_1": {
+   "median_ms": 228.787,
+   "best_ms": 124.045,
+   "p90_ms": 600.687
+  },
+  "internal_pool_2": {
+   "median_ms": 121.689,
+   "best_ms": 54.368,
+   "p90_ms": 270.678
+  },
+  "internal_pool_4": {
+   "median_ms": 78.826,
+   "best_ms": 33.226,
+   "p90_ms": 229.836
+  },
+  "internal_pool_8": {
+   "median_ms": 30.444,
+   "best_ms": 19.648,
+   "p90_ms": 71.104
+  },
+  "py_threadpool_1": {
+   "median_ms": 194.763,
+   "best_ms": 157.457,
+   "p90_ms": 456.746
+  },
+  "py_threadpool_8": {
+   "median_ms": 75.293,
+   "best_ms": 26.526,
+   "p90_ms": 191.464
+  }
+ },
+ "polycore_worst_3x200_S512": {
+  "wall": {
+   "p50_ms": 1.6958,
+   "p99_ms": 3.4113,
+   "max_ms": 3.4782,
+   "mean_ms": 1.8871
+  },
+  "thread_cpu": {
+   "p50_ms": 1.4192,
+   "p99_ms": 2.5084,
+   "max_ms": 2.5509,
+   "mean_ms": 1.602
+  }
+ },
+ "validate_scaling_us": {
+  "16": {
+   "sweep": 4.04,
+   "brute": 4.0
+  },
+  "64": {
+   "sweep": 5.29,
+   "brute": 7.13
+  },
+  "200": {
+   "sweep": 9.67,
+   "brute": 31.37
+  },
+  "500": {
+   "sweep": 19.96,
+   "brute": 148.08
+  },
+  "1000": {
+   "sweep": 39.87,
+   "brute": 690.46
+  },
+  "2000": {
+   "sweep": 136.88,
+   "brute": 3088.92
+  }
+ },
+ "numba_jit_warmup_s": 4.76,
+ "numba_latency_single_thread": {
+  "wall": {
+   "p50_ms": 0.3406,
+   "p99_ms": 1.1337,
+   "max_ms": 3.3646,
+   "mean_ms": 0.3942
+  },
+  "thread_cpu": {
+   "p50_ms": 0.312,
+   "p99_ms": 0.8336,
+   "max_ms": 1.0954,
+   "mean_ms": 0.336
+  }
+ },
+ "numba_batch": {
+  "py_threadpool_1": {
+   "median_ms": 331.851,
+   "best_ms": 255.951,
+   "p90_ms": 485.597
+  },
+  "py_threadpool_8": {
+   "median_ms": 49.547,
+   "best_ms": 20.531,
+   "p90_ms": 97.471
+  }
+ },
+ "repo_latency_single_thread": {
+  "wall": {
+   "p50_ms": 374.6459,
+   "p99_ms": 3104.7548,
+   "max_ms": 6595.3974,
+   "mean_ms": 557.9465
+  },
+  "thread_cpu": {
+   "p50_ms": 76.0821,
+   "p99_ms": 242.6766,
+   "max_ms": 285.7067,
+   "mean_ms": 80.6519
+  }
+ },
+ "repo_batch": {
+  "serial": {
+   "median_ms": 159304.047,
+   "best_ms": 159304.047,
+   "p90_ms": 159304.047
+  }
+ },
+ "load_after": [
+  67.2,
+  66.9,
+  60.2
+ ]
+}

@@ -1,0 +1,14 @@
+# R1 screening, rung 1 (PLAN §6.1), TRAINED 2026-11-02 and failed (RESULTS §1); kept as the record. Not to be rerun.
+model: lfm2.5-vl-450m
+view: views/lidc-bundle   # build_views --epochs 3 (the 2-epoch branch decays into epoch 3)
+output_dir: r1-lfm
+seed: 1
+sampler: hf   # D13 fallback: R0 parity (2026-11-02, RTX 4090) failed H-A5-2 seq_p99 for LFM 1.11 (> 0.5)
+branches: [0.5, 1.0, 2.0]
+vision: {prepared: prepared, reference: vision_ref/lfm2.5-vl-450m.json}   # reference: written in R0 by --vision_reference_only true (under run_dir)
+sft:
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 4   # effective batch 32 (D5)
+  dataloader_num_workers: 6
+  dataloader_persistent_workers: true
+  gradient_checkpointing: false    # R0 peak memory decides (§6.0)

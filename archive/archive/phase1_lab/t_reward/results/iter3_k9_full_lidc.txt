@@ -1,0 +1,12 @@
+item set: full-LIDC train disagreement items
+pairs: 789 from 229 items; high-IoU 697; groups with extra wrong fillers 74%
+IoU (vote) alone correct: 57.7% [53.9%, 61.3%]
+  v3 c_topo=1.0          all 98.86% [97.93%, 99.62%] | IoU>=0.5 99.57% [98.99%, 100.00%] | IoU<0.5 93.5% (n=92) | pinhole 99.0% speck 98.8% bridge nan%
+  v1 gdpo_floor_gated    all 95.56% [93.73%, 97.34%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 62.0% (n=92) | pinhole 90.6% speck 98.8% bridge nan%
+    per subset (v3): lidc-full/train-disagree 98.9%
+  v3 c_topo=1.5          all 98.86% [97.96%, 99.61%] | IoU>=0.5 99.57% [98.99%, 100.00%] | IoU<0.5 93.5% (n=92) | pinhole 99.0% speck 98.8% bridge nan%
+    per subset (v3): lidc-full/train-disagree 98.9%
+  v3 c_topo=2.0          all 98.86% [98.03%, 99.60%] | IoU>=0.5 99.57% [98.98%, 100.00%] | IoU<0.5 93.5% (n=92) | pinhole 99.0% speck 98.8% bridge nan%
+    per subset (v3): lidc-full/train-disagree 98.9%
+  v3 c_topo=3.0          all 98.86% [97.99%, 99.52%] | IoU>=0.5 99.57% [98.97%, 100.00%] | IoU<0.5 93.5% (n=92) | pinhole 99.0% speck 98.8% bridge nan%
+    per subset (v3): lidc-full/train-disagree 98.9%

@@ -1,0 +1,68 @@
+{
+ "images": 145,
+ "rater_files": 870,
+ "masks": 870,
+ "images_with_6": 145,
+ "masks_hist": {
+  "6": 145
+ },
+ "status": {
+  "clean": 854,
+  "touching_split": 2,
+  "extra_strokes": 14
+ },
+ "stage": {
+  "A": 827,
+  "B:maxrg6/b0": 40,
+  "C:maxrg6/b0": 2,
+  "B:maxrg6/b1": 1
+ },
+ "nested_ok": 870,
+ "strict_nesting": 870,
+ "by_subset": {
+  "BinRushed/BinRushed2": {
+   "images": 47,
+   "masks": 282,
+   "images_lt6": [],
+   "stage": {
+    "A": 267,
+    "B:maxrg6/b0": 13,
+    "C:maxrg6/b0": 2
+   },
+   "not_recovered": []
+  },
+  "BinRushed/BinRushed3": {
+   "images": 47,
+   "masks": 282,
+   "images_lt6": [],
+   "stage": {
+    "A": 269,
+    "B:maxrg6/b0": 13
+   },
+   "not_recovered": []
+  },
+  "BinRushed/BinRushed4": {
+   "images": 51,
+   "masks": 306,
+   "images_lt6": [],
+   "stage": {
+    "A": 291,
+    "B:maxrg6/b0": 14,
+    "B:maxrg6/b1": 1
+   },
+   "not_recovered": []
+  }
+ },
+ "hull_iou_disc": {
+  "n": 846,
+  "min": 0.9454921803127875,
+  "p1": 0.9608276028808671,
+  "median": 0.9952889340718508
+ },
+ "hull_iou_cup": {
+  "n": 846,
+  "min": 0.8762367133767333,
+  "p1": 0.9404997821768021,
+  "median": 0.9906257277308856
+ }
+}

@@ -1,0 +1,11 @@
+# V2 item 3d, run.sh's own call after c_speed.yaml (Implementation.md front 6.3, C0), only if the owner approves it;
+# never stamped. No build step: c_speed.yaml step 0 built the CUDA checker in /opt/venv.
+#   0  G-GR1 by node id on the start checkpoint {rd}/ckpt (OBJDEL_RUN_DIR is exported by run.sh): the 8 answers of one
+#      n = 8 request are independent. A failure ends the plan before the arm.
+#   1  the C6 arm: the baseline arm plus --group-requests (one n = G request per prompt), 17 steps read, whole block
+steps:
+  - [-m, pytest, -q, -p, "no:cacheprovider", -m, gpu, "tests/test_c_gpu.py::test_g_gr1_requests_independent"]
+  - [-m, experiments.phase2.train_rl, --model, qwen3-vl-2b, --ckpt, "{rd}/ckpt", --train, "{data}/rows/lidc-train-b1",
+     --rows-revision, "34213dceb068128f1a1abf9c67aa65dd59bc1220",
+     --rows-manifest-sha256, "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4",
+     --out, "{rd}/c_c6", --steps, "20", --save-steps, "1000", --shared-prefix, --group-requests]

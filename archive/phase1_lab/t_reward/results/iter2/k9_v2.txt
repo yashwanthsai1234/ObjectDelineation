@@ -1,0 +1,14 @@
+IoU_tc(correct) - IoU_tc(wrong) on vote-IoU-matched pairs: median -0.002, p5 -0.189, share |d| <= 0.01: 58.7%
+c_topo=1.0: v2 all 93.72% | IoU>=0.5 94.62% | matched on IoU_tc (n=7087) 99.99%, high-IoU 100.00% | v1 on IoU_tc-matched 99.90%
+c_topo=2.0: v2 all 98.93% | IoU>=0.5 99.36% | matched on IoU_tc (n=7087) 100.00%, high-IoU 100.00% | v1 on IoU_tc-matched 99.90%
+c_topo=3.0: v2 all 99.64% | IoU>=0.5 99.91% | matched on IoU_tc (n=7087) 100.00%, high-IoU 100.00% | v1 on IoU_tc-matched 99.90%
+
+detail at c_topo = 1 (vote-IoU-matched pairs):
+groups (pairs): 12077; high-IoU (both >= 0.5): 11796; IoU-vote alone correct 54.7%
+  v1 gdpo_floor_gated          all 98.72% | IoU>=0.5 99.97% | IoU<0.5 46.3% (n=281) | hard (IoU favours wrong, high-IoU) 99.94% | pinhole 98.1% speck 99.3% bridge 99.1%
+  v2 (IoU_tc + F5 + DM-loo)    all 93.72% | IoU>=0.5 94.62% | IoU<0.5 56.2% (n=281) | hard (IoU favours wrong, high-IoU) 93.67% | pinhole 92.6% speck 95.4% bridge 91.0%
+    lidc/nodule          v1 97.6%  v2 91.0%  (n=3168)
+    lidc/nodule+2part    v1 99.0%  v2 91.2%  (n=2620)
+    riga/cup             v1 98.0%  v2 93.7%  (n=2353)
+    riga/cup+2part       v1 99.6%  v2 95.2%  (n=1581)
+    riga/disc            v1 100.0%  v2 99.2%  (n=2355)

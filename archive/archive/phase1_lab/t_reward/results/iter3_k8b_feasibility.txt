@@ -1,0 +1,14 @@
+items 1002; held-out rater worse than the 2-tau-dilated vote (x_r >= x_d): 2.1%
+  h = 1/(1+x)    best share 52.8% at c = 0.556 (c = 1 is F5 as calibrated)  per subset lidc/nodule 45.2%, riga/cup 55.0%, riga/disc 73.5%
+  h = 1/(1+x^2)  best share 71.6% at c = 0.979 (c = 1 is F5 as calibrated)  per subset lidc/nodule 69.6%, riga/cup 66.5%, riga/disc 82.5%
+  h = 1/(1+x^3)  best share 77.4% at c = 0.979 (c = 1 is F5 as calibrated)  per subset lidc/nodule 74.1%, riga/cup 76.0%, riga/disc 89.0%
+  h = exp(-x)    best share 59.0% at c = 0.385 (c = 1 is F5 as calibrated)  per subset lidc/nodule 48.8%, riga/cup 66.0%, riga/disc 82.5%
+  F5 as calibrated (c = 1, h = 1/(1+x)): 39.9%
+
+per-item optimal tolerance (upper bound on K8b share): need x_d / x_r >= threshold
+  1/(1+x)    threshold  5.67: 84.4% of items
+  exp(-x)    threshold  4.27: 88.9% of items
+  1/(1+x^2)  threshold  2.38: 94.8% of items
+  1/(1+x^3)  threshold  1.78: 96.4% of items
+  ratio quantiles p5/p25/p50: [2.32, 8.12, 16.64]
+S_m m=5 exact median: 0.9799638886669381

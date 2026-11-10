@@ -1,0 +1,12 @@
+item set: fixtures + 2-part composites
+pairs: 7963 from 1328 items; high-IoU 7762; groups with extra wrong fillers 75%
+IoU (vote) alone correct: 52.0% [50.8%, 53.2%]
+  v3 c_topo=1.0          all 99.94% [99.87%, 99.99%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 97.5% (n=201) | pinhole 99.9% speck 100.0% bridge 100.0%
+  v1 gdpo_floor_gated    all 98.91% [98.56%, 99.23%] | IoU>=0.5 99.97% [99.93%, 100.00%] | IoU<0.5 57.7% (n=201) | pinhole 98.0% speck 99.8% bridge 99.2%
+    per subset (v3): lidc/nodule 99.7%, lidc/nodule+2part 100.0%, riga/cup 100.0%, riga/cup+2part 100.0%, riga/disc 100.0%
+  v3 c_topo=1.5          all 99.94% [99.88%, 99.99%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 97.5% (n=201) | pinhole 99.9% speck 100.0% bridge 100.0%
+    per subset (v3): lidc/nodule 99.7%, lidc/nodule+2part 100.0%, riga/cup 100.0%, riga/cup+2part 100.0%, riga/disc 100.0%
+  v3 c_topo=2.0          all 99.94% [99.87%, 99.99%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 97.5% (n=201) | pinhole 99.9% speck 100.0% bridge 100.0%
+    per subset (v3): lidc/nodule 99.7%, lidc/nodule+2part 100.0%, riga/cup 100.0%, riga/cup+2part 100.0%, riga/disc 100.0%
+  v3 c_topo=3.0          all 99.94% [99.88%, 99.99%] | IoU>=0.5 100.00% [100.00%, 100.00%] | IoU<0.5 97.5% (n=201) | pinhole 99.9% speck 100.0% bridge 100.0%
+    per subset (v3): lidc/nodule 99.7%, lidc/nodule+2part 100.0%, riga/cup 100.0%, riga/cup+2part 100.0%, riga/disc 100.0%

@@ -1,0 +1,15 @@
+torch 2.14.1+cu130 cuda build 13.0 cudnn 92400
+arch flags sm_75 sm_80 sm_86 sm_90 sm_100 sm_120
+cuda available False
+transformers 5.20.1 /opt/venv/lib/python3.12/site-packages/transformers/__init__.py
+trl 1.16.0 /opt/venv/lib/python3.12/site-packages/trl/__init__.py
+peft 0.21.2 /opt/venv/lib/python3.12/site-packages/peft/__init__.py
+accelerate 1.15.0 /opt/venv/lib/python3.12/site-packages/accelerate/__init__.py
+datasets 5.1.0 /opt/venv/lib/python3.12/site-packages/datasets/__init__.py
+numpy 2.5.4 /opt/venv/lib/python3.12/site-packages/numpy/__init__.py
+scipy 1.18.1 /opt/venv/lib/python3.12/site-packages/scipy/__init__.py
+cv2 5.0.0 /opt/venv/lib/python3.12/site-packages/cv2/__init__.py
+numba 0.68.0 /opt/venv/lib/python3.12/site-packages/numba/__init__.py
+objdel 0.1.0 /work/src/objdel/__init__.py
+objdel._polycore  /opt/venv/lib/python3.12/site-packages/objdel/_polycore.abi3.so
+imports 120.4 s

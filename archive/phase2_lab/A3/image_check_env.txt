@@ -1,0 +1,6 @@
+uname: x86_64  nproc: 8  cgroup cpu.max: 200000 100000  mem.max: 4294967296
+model name	: VirtualApple @ 2.50GHz
+image size of /opt/venv: 6.4G
+editable build rc=0 in 197 s
+stack rc=0
+hashes rc=0 in 109 s
