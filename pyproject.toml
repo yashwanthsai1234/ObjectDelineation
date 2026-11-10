@@ -108,6 +108,7 @@ convention = "google"
 "tests/**" = ["D"]
 "src/objdel/rl/trl_adapter.py" = ["TID251"]   # the one TRL adapter (E5)
 "tests/rl/test_trl_adapter.py" = ["TID251"]
+"tests/rl/test_prepare_inputs.py" = ["TID251"]  # asserts TRL's shuffle_sequence_dict is never swapped (E5)
 "tests/experiments/test_trl_adapter_equivalence.py" = ["TID251"]
 "src/objdel/rl/vllm_sync.py" = ["TID251"]  # vllm_generation.empty_cache (C5)
 "tests/rl/test_vllm_sync.py" = ["TID251"]

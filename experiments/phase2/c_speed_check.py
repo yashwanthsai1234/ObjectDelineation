@@ -400,7 +400,7 @@ def main(argv=None) -> int:
     if flag.sync:
         outs["sync"] = run_sync(trainer, trainer.lora_dir is not None)  # option F: build_trainer set the adapter dir
     for name, res in outs.items():
-        save_json(out / "c_check" / f"{name}.json", res)
+        save_json(out / "c_check" / f"{name}.json", res, ())
         print(json.dumps({name: res}))
     return 0 if all(o["passed"] for o in outs.values()) else 1
 

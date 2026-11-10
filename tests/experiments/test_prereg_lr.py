@@ -17,3 +17,12 @@ def test_full_fine_tuning_rate_stays_a_frozen_record():
 def test_grpo_config_defaults_to_rl_lr():
     for m in policy_models.MODELS:
         assert rl_config.grpo_config(m, "out").learning_rate == rl_config.rl_lr(m), m
+
+
+def test_rl_lr_refuses_an_unknown_model_and_an_override_wins():
+    """U13: no silent 5e-6 for a typo; grpo_config's explicit learning_rate wins over rl_lr."""
+    import pytest
+
+    with pytest.raises(ValueError, match="qwen3-vl-2"):
+        rl_config.rl_lr("qwen3-vl-2")
+    assert rl_config.grpo_config("qwen3-vl-2b", "out", learning_rate=1e-3).learning_rate == 1e-3
