@@ -94,6 +94,32 @@ def test_polygon_and_its_raster_agree_and_holes_are_excluded():
     assert not ms[0][20, 20] and ms[0][5, 5]  # the hole is empty, the ring full
 
 
+def test_g01_polygon_inputs_do_not_depend_on_the_platform_libm(monkeypatch):
+    """The box (glibc) found `polygons_1000: input differs`: the K1 "holes" generator rounds math.cos/sin, whose last
+    bit differs between platforms. Every G01 polygon input is the same under correctly rounded math.cos/sin
+    (mpmath; glibc's result on every case the box met) as under this platform's."""
+    import math
+
+    from experiments.cuda_checker import compare as C
+    from experiments.phase2.perf.make_b_goldens import polygon_cases
+
+    mpmath = pytest.importorskip("mpmath")
+
+    def packed():
+        cases = polygon_cases()
+        out = {}
+        for g in sorted({c[5] for c in cases}):
+            p = C.pack_polygons([(r, rl, W, H) for _, r, rl, W, H, gg in cases if gg == g])
+            out[g] = hashlib.sha256(b"".join(np.ascontiguousarray(p[k]).tobytes() for k in sorted(p))).hexdigest()
+        return out
+
+    here = packed()
+    with mpmath.workdps(60):
+        monkeypatch.setattr(math, "cos", lambda a: float(mpmath.cos(a)))
+        monkeypatch.setattr(math, "sin", lambda a: float(mpmath.sin(a)))
+        assert packed() == here
+
+
 @pytest.mark.gpu
 @pytest.mark.sanitizer
 @on_gpu

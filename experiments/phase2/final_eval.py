@@ -28,8 +28,8 @@ before each view, each request seeded request_seed(seed, item_id)) and scores th
 2. after scoring, <out>/metrics.jsonl (the whole metrics() result per item), <out>/items.jsonl (per-item metrics) and
    the full <out>/final_eval.json (summary, schema 2, "partial": false). Every file goes through a temp file.
 Run keys: ckpt, view, split, K, seed, sampler, view_manifest_sha256 (manifest.json bytes), view_content_sha256 (B1.6's
-content hash, view_content_sha256), code_sha (<repo>/CODE_SHA, written by vast sync_up on the box; else git HEAD;
-else null), checker_build ("cuda" or "cpu").
+content hash, view_content_sha256), code_sha (objdel.io.code_sha: <repo>/CODE_SHA, written by vast sync_up on the box;
+else git HEAD plus -dirty-<sha12> on an edited tree; else null), checker_build ("cuda" or "cpu").
 Per item the K-sample mean; then the mean over items with three 95 % percentile bootstrap intervals (B = 2,000,
 seed 0): `ci95_patient` resamples patients (`group_id`; the gate CI, named by `gate_ci`), `ci95_nodule` resamples
 nodules, `ci95_item` single items (the schema-1 `ci95`). Illegal samples score 0 on every geometric term (the
@@ -74,7 +74,7 @@ from objdel.data import quality as Q
 from objdel.eval import device, signal
 from objdel.geom import engine as _gpucheck
 from objdel.hashing import file_sha256
-from objdel.io import git, read_jsonl
+from objdel.io import code_sha, read_json, read_jsonl
 from objdel.io import write_atomic as _write
 from objdel.policy.evaluate import METRICS, evaluate, per_item, score_items, summarize
 
@@ -195,17 +195,17 @@ def view_manifest_sha256(view: Path) -> str:
 
 def _view_records(view: Path) -> list[dict]:
     """Every LIDC record of the view, file by file in name order."""
-    return [json.loads(line) for f in sorted(Path(view, "lidc").glob("*.jsonl")) for line in f.read_text().splitlines()]
+    return [r for f in sorted(Path(view, "lidc").glob("*.jsonl")) for r in read_jsonl(f)]
 
 
 def frozen_entry(view_name: str) -> dict | None:
     """The view's frozen_views.json entry, or None (no entry, or no file)."""
-    return json.loads(FROZEN_VIEWS.read_text()).get(view_name) if FROZEN_VIEWS.is_file() else None
+    return read_json(FROZEN_VIEWS).get(view_name) if FROZEN_VIEWS.is_file() else None
 
 
 def check_view(view: Path, split: str) -> None:
     """Exit unless `split` is a set of the view and a frozen view's hashes equal its frozen_views.json entry."""
-    sets = json.loads((view / "manifest.json").read_text())["sets"]
+    sets = read_json(view / "manifest.json")["sets"]
     if f"lidc/{split}" not in sets:
         sys.exit(f"final_eval: {view} holds {sorted(sets)}, not lidc/{split} (the test view needs --split test)")
     name = view.resolve().name  # an alias (symlink) of a frozen view is that view
@@ -218,17 +218,9 @@ def check_view(view: Path, split: str) -> None:
             sys.exit(f"final_eval: {view.name} {key} {got} differs from frozen_views.json {e[key]}: refusing to score")
 
 
-def code_sha(root: Path = ROOT) -> str | None:
-    """The code identity of a run: <root>/CODE_SHA stripped (written by vast sync_up on the box; empty = absent), else
-    git rev-parse HEAD, else None."""
-    f = Path(root) / "CODE_SHA"
-    text = f.read_text().strip() if f.exists() else ""
-    return text or git("rev-parse", "HEAD", root=root, required=False)
-
-
 def hash_view(view: Path, out: Path) -> None:
     """--hash-view: the view's identity record (the pre-rental record of A3 step 1)."""
-    sets = json.loads((view / "manifest.json").read_text())["sets"]
+    sets = read_json(view / "manifest.json")["sets"]
     (target_set,) = [s["target_set_sha256"] for k, s in sets.items() if k.startswith("lidc/")]
     commits = render_files()
     _write(out, json.dumps({
@@ -250,7 +242,7 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
     """Schema-2 final_eval.json of a finished run (module docstring); exit 2 when an item has no group_id."""
     import pyarrow.parquet as pq
 
-    doc = json.loads((run / "final_eval.json").read_text())
+    doc = read_json(run / "final_eval.json")
     items = read_jsonl(run / "items.jsonl")
     table = pq.read_table(store / "lidc" / f"{doc['split']}.parquet", columns=["item_id", "group_id"])
     found = {i: g for i, g in zip(*table.to_pydict().values(), strict=True) if g}
@@ -323,7 +315,7 @@ def topology(name: str):
         thread.join()
     seen.append(_sample(method))
     path = Path(run_dir) / "d" / "topology.json"
-    doc = json.loads(path.read_text()) if path.exists() else {}
+    doc = read_json(path) if path.exists() else {}
     doc[name] = {"method": method, "before": seen[0][0], "max_during": max(c for c, _ in seen[1:]),
                  "peak_memory_used_mib": max(u for _, u in seen)}
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -364,7 +356,7 @@ def write_scored(view: Path, split: str, out: Path, results: list[dict], run: di
 def _identity(view: Path, split: str) -> dict:
     """The run keys that name the view and the code (module docstring, Run keys)."""
     return {"view": str(view), "split": split, "view_manifest_sha256": view_manifest_sha256(view),
-            "view_content_sha256": Q.view_content_sha256(view), "code_sha": code_sha(),
+            "view_content_sha256": Q.view_content_sha256(view), "code_sha": code_sha(ROOT, required=False),
             "checker_build": _gpucheck.build()}
 
 
@@ -374,7 +366,7 @@ def rescore(src: Path, view: Path, split: str, out: Path) -> None:
     from objdel.train import dataset, serve
 
     f = src / "final_eval.json"
-    old = json.loads(f.read_text()) if f.exists() else {}
+    old = read_json(f) if f.exists() else {}
     if "view_manifest_sha256" not in old:
         sys.exit(f"rescore: {f} is missing or has no view_manifest_sha256")
     if old["view_manifest_sha256"] != view_manifest_sha256(view):

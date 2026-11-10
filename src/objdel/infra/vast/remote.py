@@ -3,7 +3,6 @@ code snapshot that sync_up sends with its CODE_SHA, and the secrets those calls 
 
 import base64
 import gzip
-import hashlib
 import json
 import os
 import re
@@ -11,7 +10,6 @@ import shlex
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 from objdel.core.provenance import repo_root
 from objdel.infra.vast.ledger import accrued, active, home, ledger
@@ -148,21 +146,6 @@ def code_files() -> list[str]:
     if "tests/test_gpu_scoring.py" not in files:  # the chain runs it on the box before any scoring stage
         die("tests/test_gpu_scoring.py missing from the code snapshot")
     return files
-
-
-def code_sha_text(root: Path | None = None) -> str:
-    """The box's CODE_SHA (final_eval.code_sha): git rev-parse HEAD, plus -dirty-<first 12 hex of sha256(D)> when git
-    status --porcelain is not empty; D = git diff HEAD, then the sorted untracked, not-ignored paths, one per line
-    (a new module marks the tree dirty). A git failure raises: never an empty or wrong CODE_SHA."""
-    def git(*args: str) -> bytes:
-        return subprocess.run(["git", *args], cwd=root or repo_root(), capture_output=True, check=True).stdout
-
-    head = git("rev-parse", "HEAD").decode().strip()
-    if not git("status", "--porcelain"):
-        return head
-    new = sorted(git("ls-files", "-z", "--others", "--exclude-standard").split(b"\0")[:-1])
-    d = git("diff", "HEAD") + b"".join(p + b"\n" for p in new)
-    return f"{head}-dirty-{hashlib.sha256(d).hexdigest()[:12]}"
 
 
 def alert(msg: str) -> None:

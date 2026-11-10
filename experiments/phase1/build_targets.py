@@ -25,7 +25,7 @@ import platform
 import time
 from collections import Counter
 from importlib.metadata import version
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import numpy as np
@@ -134,7 +134,7 @@ def main():
                 "files": {}}
     summary, all_rows = {}, []
     t0 = time.time()
-    with Pool(a.procs) as pool:
+    with get_context("spawn").Pool(a.procs) as pool:
         for ds in ("riga", "lidc"):
             for split in ("train", "val"):
                 frames, rows = [], []

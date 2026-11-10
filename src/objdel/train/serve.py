@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 
+from objdel.io import read_json
 from objdel.reward import ExpertCache
 
 STORE: dict[str, dict[str, dict[str, ExpertCache]]] = {}  # {resolved root: {item key: {object: ExpertCache}}}
@@ -30,7 +31,7 @@ def preload(root, datasets: Iterable[str], threads: int = 4) -> int:
     """Loads the RL caches of every `<dataset>/*.jsonl` under root into STORE; returns the number of items.
     ValueError when a dataset has no records, a records file is not the manifest's or a cache not its record's."""
     root = Path(root).resolve()
-    files = json.loads((root / "manifest.json").read_text())["files"]
+    files = read_json(root / "manifest.json")["files"]
     digests = {}
     for ds in datasets:
         paths = sorted(root.glob(f"{ds}/*.jsonl"))

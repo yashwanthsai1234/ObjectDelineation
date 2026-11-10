@@ -48,6 +48,7 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.io import read_json
 from objdel.policy import evaluate
 
 TRIES = 2  # sampler child attempts that finish no new item
@@ -68,7 +69,7 @@ HF_CHECK_KEYS = ("format_ok", "legal", "iou_tc", "f5", "g_area")
 def exited(run: Path) -> dict:
     """train_sft's manifest, after checking that it finished and its process is gone. A pid recorded on another host
     (manifest "host") cannot be checked here; PermissionError means the pid exists (another user's process)."""
-    man, host = json.loads((run / "manifest.json").read_text()), socket.gethostname()
+    man, host = read_json(run / "manifest.json"), socket.gethostname()
     alive = man.get("host", host) == host and man["pid"] != os.getpid()
     try:
         alive and os.kill(man["pid"], 0)
@@ -146,7 +147,7 @@ def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: flo
     want = Counter({p["id"]: p["n"] for p in map(json.loads, prompts.read_text().splitlines())})
     cmd, meta = sampler_cmd(kind, prompts, model, comps, extra), comps.with_suffix(".meta.json")
     stamp = {"prompts_sha256": hashlib.sha256(prompts.read_bytes()).hexdigest(), "cmd": cmd}
-    if not (meta.is_file() and json.loads(meta.read_text()) == stamp):
+    if not (meta.is_file() and read_json(meta) == stamp):
         comps.unlink(missing_ok=True)  # another sampling's completions: never resumed
         meta.write_text(json.dumps(stamp) + "\n")
     stalled = 0

@@ -28,6 +28,8 @@ from pathlib import Path
 import numpy as np
 from transformers import TrainerCallback
 
+from objdel.io import read_json
+
 STEPS = 15  # the check covers optimizer steps 1-15
 PRESETS = ("fp16-seqmask", "lora-seqmask")
 HALF = 0.5  # comparator: the LoRA gap above the floor is at most this share of the merged gap
@@ -91,7 +93,7 @@ def comparator_skip(ckpt) -> str | None:
     marker = Path(ckpt) / "hf_revision.json"
     if not marker.is_file():
         return f"{marker} missing: --ckpt is not a fetch_hf pull of {COMPARATOR_CKPT}"
-    rev = json.loads(marker.read_text()).get("revision")
+    rev = read_json(marker).get("revision")
     return None if rev == COMPARATOR_CKPT else f"--ckpt is HF revision {rev!r}, not {COMPARATOR_CKPT}"
 
 

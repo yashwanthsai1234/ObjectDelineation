@@ -34,8 +34,7 @@ Definitions and choices:
 - Pass criterion: the reward's own validity gate (objdel.reward.topology_valid: legal, a rater drew the topology,
   IoU_tc >= REWARD_V4.iou_gate for every object, score_completion's iou_min), so a RIGA answer with a good disc and a
   missed cup fails. The Phase 2 geometry gate (summarize's iou_tc_pass) is its geometric part, legal and IoU_tc >= 0.5
-  for every object; topology is gated by the synthetic topology probe (objdel.eval.probes; plan D20), and
-  topo_any_unanimous is reported only (val has 0 unanimous non-simple items).
+  for every object; topology is gated by the synthetic topology probe (objdel.eval.probes; plan D20).
 - Duplicates (GRPO groups) are outputs the reward cannot tell apart: equal format and legality flags and equal
   raw rasters of every object (device.duplicate_keys: intersection == both areas), so re-spelled texts of one mask
   (sub-pixel vertex nudges, whitespace) count as duplicates, as the reward's low-spread drop treats them (B2-6).
@@ -329,7 +328,6 @@ def summarize(items: Sequence[dict]) -> dict:
              for key in ("format_ok", "legal", "topo_any", "passed", "truncated")}
         tokens = [it["samples"].get("tokens") for it in its]
         tokens = np.concatenate(tokens) if all(t is not None for t in tokens) else None
-        unanimous = [x for it in its if it["modes"] == 1 for x in it["samples"]["topo_any"]]
         dis = [it for it in its if it["modes"] > 1]
         names = list(its[0]["objects"])
         objs = {n: {key: np.concatenate([it["objects"][n][key] for it in its]) for key in (*_ZEROED, "nsd")}
@@ -340,7 +338,7 @@ def summarize(items: Sequence[dict]) -> dict:
             "items": len(its), "samples": int(S["format_ok"].size),
             "format": float(S["format_ok"].mean()), "legal": float(S["legal"].mean()),
             "errors": dict(Counter(e for it in its for e in it["samples"]["error"] if e)),
-            "topo_any": float(S["topo_any"].mean()), "topo_any_unanimous": _mean(unanimous),
+            "topo_any": float(S["topo_any"].mean()),
             "pass_rate": float(S["passed"].mean()), "truncated": float(S["truncated"].mean()),
             "tokens": None if tokens is None else {"mean": float(tokens.mean()),
                                                    "p95": float(np.percentile(tokens, 95))},

@@ -22,6 +22,7 @@ import numpy as np
 import torch
 from transformers import TrainerCallback
 
+from objdel.io import read_json
 from objdel.train import nvtx
 
 
@@ -217,9 +218,9 @@ class ExpectStep1(TrainerCallback):
     def from_files(cls, expect_step1, encode_check, out):
         """The callback from the other arm's rl.json and the encoder.json; an unreadable file, a missing step 1 key or
         a missing or non-boolean bits_equal raises (at start-up, before any model loads)."""
-        base = step1_values(json.loads(Path(expect_step1).read_text()).get("log", []), expect_step1)
+        base = step1_values(read_json(expect_step1).get("log", []), expect_step1)
         try:
-            bits = json.loads(Path(encode_check).read_text())["bits_equal"]
+            bits = read_json(encode_check)["bits_equal"]
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             raise ValueError(f"{encode_check}: unreadable, or no bits_equal ({e!r})") from e
         if not isinstance(bits, bool):
@@ -259,7 +260,7 @@ class OpsmDelta(TrainerCallback):
     def on_train_begin(self, args, state, control, **kw):
         """On a resume past the window, take the delta saved in opsm_delta.json (final: no guard)."""
         if state.global_step >= self.WINDOW and self.path.is_file():
-            saved = json.loads(self.path.read_text())
+            saved = read_json(self.path)
             self.trainer.off_policy_mask_threshold, self.final = saved["delta"], True  # the ring is lost: no guard
 
     def on_step_end(self, args, state, control, **kw):

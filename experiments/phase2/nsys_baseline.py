@@ -35,6 +35,7 @@ from collections import Counter
 from pathlib import Path
 
 from experiments.phase2.profile import covered
+from objdel.io import read_json
 
 GPU_TABLES = ("CUPTI_ACTIVITY_KIND_KERNEL", "CUPTI_ACTIVITY_KIND_MEMCPY", "CUPTI_ACTIVITY_KIND_MEMSET")
 GRAPH_TABLES = ("CUPTI_ACTIVITY_KIND_GRAPH_TRACE",)  # the CUPTI record name; the nsys table name is unverified
@@ -160,7 +161,7 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     try:
-        doc = baseline(a.stats, a.sqlite, json.loads(a.log.read_text())["log"], tuple(a.window))
+        doc = baseline(a.stats, a.sqlite, read_json(a.log)["log"], tuple(a.window))
     except (OSError, ValueError, KeyError) as e:
         sys.exit(f"nsys_baseline: {e}")
     a.out.parent.mkdir(parents=True, exist_ok=True)

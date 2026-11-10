@@ -158,6 +158,37 @@ def test_train_sft_refuses_a_view_with_too_few_epochs(tmp_path):
     assert not (tmp_path / "o").exists()
 
 
+def test_validate_and_resume_manifest(tmp_path):
+    """S3: validate refuses before anything loads and gives the view manifest; resume_manifest refuses a run in
+    output_dir without --resume, and a resume of a finished run or of another config; a crashed run's logs, timing and
+    start carry over."""
+    TS = _train_sft()
+    (tmp_path / "v").mkdir()
+    view = {"config": {"epochs": 3}, "view_hash": "h"}
+    (tmp_path / "v/manifest.json").write_text(json.dumps(view))
+    a = stage("qwen3-vl-2b", str(tmp_path / "v"), str(tmp_path / "o"), vision=False)
+    assert TS.validate(a) == view
+    for kw, match in (({"vision": {}}, "G-vision"), ({"profile": "p"}, "timing runs")):
+        with pytest.raises(ValueError, match=match):
+            TS.validate(a.model_copy(update=kw))
+    out = tmp_path / "o"
+    out.mkdir()
+    man = TS.resume_manifest(a, out, view)
+    assert (man["status"], man["view"]["view_hash"], man["vision"], man["log"]) == ("running", "h", [], {})
+    assert "resumed" not in man and man["config"]["model"] == "qwen3-vl-2b"
+    (out / "manifest.json").write_text(json.dumps(man | {"log": {"stable": [1]}, "timing": {"steps": 2}}))
+    with pytest.raises(ValueError, match="holds a run"):
+        TS.resume_manifest(a, out, view)
+    r = a.model_copy(update={"resume": True})
+    new = TS.resume_manifest(r, out, view)
+    assert (new["log"], new["timing"], new["started"]) == ({"stable": [1]}, {"steps": 2}, man["started"])
+    assert len(new["resumed"]) == 1
+    for bad, doc in ((r.model_copy(update={"seed": 2}), man), (r, man | {"status": "done"})):
+        (out / "manifest.json").write_text(json.dumps(doc))
+        with pytest.raises(ValueError, match="not a crashed run"):
+            TS.resume_manifest(bad, out, view)
+
+
 # ---------------------------------------------------------------- sampling
 
 

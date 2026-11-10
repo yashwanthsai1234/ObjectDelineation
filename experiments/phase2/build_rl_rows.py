@@ -12,7 +12,7 @@ order, and a manifest written only when every hard B data gate passes.
    the schedule does not raise and DG7-DG9 hold on every block prefix; the rule takes the smallest passing value
    that reuses no disagreement window, else the smallest passing value. `--draws N` uses N instead (it must pass).
 3. Each scheduled window is materialized once by `objdel.train.dataset.window_record` (item id = window_id: its own
-   PNG and cache folder) in a `multiprocessing.Pool(procs)`.
+   PNG and cache folder) in a spawn `multiprocessing.Pool(procs)`.
 4. `lidc/train.jsonl` in schedule order (a reused disagreement window repeats its record); the gates of
    `experiments.phase2.audit_data.audit` run on the root with this plan; the manifest (build_eval_views' fields plus
    `schedule`, with `files_count` and `files_sha256` of the root without manifest.json) is written only when
@@ -29,7 +29,7 @@ from collections import Counter
 from dataclasses import asdict
 from importlib.metadata import version
 from itertools import batched
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +37,7 @@ import numpy as np
 from objdel.data import quality as Q
 from objdel.data import store, windows
 from objdel.data.coverage import cell_coverage
+from objdel.io import write_json
 
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "docs" / "reference"
@@ -90,7 +91,7 @@ def materialize(store_root, out: Path, scheduled, procs: int) -> dict[str, dict]
     jobs = ((str(out), it, w) for it in store.load("lidc", "train", store_root) if it.item_id in by_item
             for w in by_item[it.item_id])
     recs = {}
-    with Pool(procs) as pool:
+    with get_context("spawn").Pool(procs) as pool:
         for chunk in batched(jobs, 24):  # bounds parent memory
             recs |= {r["item_id"]: r for r in pool.map(_record, chunk)}
     return recs
@@ -184,10 +185,9 @@ def build(a) -> int:
              "kinds": dict(Counter(r["view"]["kind"] for r in rows)),
              "side": {str(s): n for s, n in sorted(Counter(r["view"]["side"] for r in rows).items())}}},
          "schedule": plan | {"gates": [asdict(g) for g in gs], "files_count": count, "files_sha256": digest}}
-    doc = json.dumps(m, indent=1, sort_keys=True) + "\n"
-    (out / "manifest.json").write_text(doc)
+    write_json(out / "manifest.json", m)
     print(json.dumps({"root": str(out), "rows": len(rows), "windows": len(uniq), "files_count": count,
-                      "files_sha256": digest, "manifest_sha256": _sha(doc.encode()), "draws": draws,
+                      "files_sha256": digest, "manifest_sha256": _sha((out / "manifest.json").read_bytes()), "draws": draws,
                       "materialize_s": round(t_mat), "total_s": round(time.time() - t0)}, indent=1))
     return 0
 

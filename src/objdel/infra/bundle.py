@@ -26,6 +26,7 @@ from objdel.hashing import file_sha256
 from objdel.infra.vast.ledger import load
 from objdel.infra.vast.offers import is_raw
 from objdel.infra.vast.remote import die
+from objdel.io import read_json
 
 LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
 SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view would differ (BK1-7)
@@ -43,7 +44,7 @@ def walk(data: Path, top: Path, prefix: str) -> list[tuple[str, Path]]:
 
 def manifest(ds: str, prep: Path) -> bytes:
     """prepared/manifest.json with only `ds`'s files and sets: the box has no other dataset's records (BK1-2)."""
-    m = json.loads((prep / "manifest.json").read_text())
+    m = read_json(prep / "manifest.json")
     m["files"], m["sets"] = ({k: v for k, v in m[s].items() if k.startswith(f"{ds}/")} for s in ("files", "sets"))
     if missing := [k for k in m["files"] if not (prep / k).is_file()]:
         die(f"prepared/manifest.json lists missing files: {missing}")

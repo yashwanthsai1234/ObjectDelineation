@@ -49,11 +49,14 @@ class _Accel:
 
 
 def trainer(cls, **attrs):
-    """A GRPOTrainer subclass instance with only what the forward needs (no model load, no vLLM)."""
+    """A GRPOTrainer subclass instance with only what the forward and log need (no model load, no vLLM); its state
+    is a Trainer's at step 1 (Trainer.__init__ sets one), so log on a CUDA build takes the D7 engine/* keys."""
     from collections import defaultdict
+    from types import SimpleNamespace
 
     t = object.__new__(cls)
     t.accelerator, t._metrics = _Accel(), {"train": defaultdict(list), "eval": defaultdict(list)}
+    t.state = SimpleNamespace(global_step=1, log_history=[])
     t.model = type("M", (), {"training": True})()
     for k, v in attrs.items():
         setattr(t, k, v)
@@ -1199,6 +1202,22 @@ def test_g02_is_summary_no_sync(monkeypatch):
     monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: None)
     t.log({})
     assert t.is_stats is None and t.seq_gaps == []
+
+
+def test_g02_log_on_a_cuda_build_takes_the_engine_keys(monkeypatch, tmp_path):
+    """The G02 trainer (trainer()) logged on a CUDA build at step 1 (faked on the Mac): the D7 engine/* keys come in;
+    the box found the helper had no Trainer state there."""
+    from objdel.geom import engine
+
+    got = []
+    monkeypatch.setattr(engine, "build", lambda: "cuda")
+    monkeypatch.setattr(engine, "stats", lambda: {"sync_alloc": 2})
+    monkeypatch.setattr(fast.torch.cuda, "max_memory_reserved", lambda *a, **k: 7)
+    monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start=None: got.append(logs))
+    t = is_trainer("sequence_mask", None, 3.0, tmp_path)
+    t.set_is_ratio(*rows([0.1, 0.1]))
+    t.log({})
+    assert got == [{"engine/sync_alloc": 2, "engine/max_memory_reserved": 7}]
 
 
 @pytest.mark.gpu

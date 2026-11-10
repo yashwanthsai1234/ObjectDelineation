@@ -34,7 +34,7 @@ import time
 from collections import Counter
 from dataclasses import replace
 from itertools import islice
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +43,7 @@ from objdel.data import store
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS
 from objdel.geom.topology import signature
+from objdel.io import write_json
 from objdel.reward import voters
 from objdel.targets import BuildConfig, augment, build_target, frame, min_areas
 
@@ -100,7 +101,7 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
     rows, stats, contexts, skipped = [], Counter(), {}, 0
     its = islice(store.load(dataset, split, store_root), limit)
     jobs = ((it, str(out), epochs, seed, nonsimple_repeat) for it in its)
-    with Pool(procs) as pool:
+    with get_context("spawn").Pool(procs) as pool:
         for got in pool.imap(_item, jobs, chunksize=8):
             if got is None:
                 skipped += 1
@@ -129,7 +130,7 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
                    "fallback_windows": stats["fallback"], "per_op": per_op,
                    "side": {k.split("/")[1]: v for k, v in sorted(stats.items()) if k.startswith("side/")}},
         "view_hash": hashlib.sha256(text.encode()).hexdigest(), "contexts": contexts}
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+    write_json(out / "manifest.json", manifest)
     ctx = [Path(out, "context", i + ".npz") for i in contexts]
     report = {"view": out.name, "wall_s": round(time.time() - t0, 1),
               "parent_cpu_s": round(time.process_time() - cpu0, 1), "procs": procs, "context_files": len(ctx),

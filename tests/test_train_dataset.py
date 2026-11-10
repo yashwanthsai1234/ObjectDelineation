@@ -136,6 +136,45 @@ def test_prepare_and_rows_are_deterministic(prepared, tmp_path):
         assert rows_hash(D.grpo_rows(root / "out", ds, "train", 4)) == rows_hash(D.grpo_rows(tmp_path, ds, "train", 4))
 
 
+def test_prepare_workers_survive_a_parent_that_used_cuda(prepared, tmp_path, monkeypatch):
+    """GPU run (box_a): a worker forked from a parent that has used CUDA fails in the engine ("CUDA: initialization
+    error"). Simulated on the Mac: Linux's fork start method, and an engine that fails in every process forked from
+    this one. prepare's workers are fresh processes (spawn), so they build the same manifest."""
+    import multiprocessing
+    import os
+
+    from objdel.geom import engine
+
+    root, m = prepared
+    parent, real = os.getpid(), engine.check_masks
+
+    def check_masks(*a):
+        if os.getpid() != parent:
+            raise RuntimeError("CUDA: initialization error")
+        return real(*a)
+
+    monkeypatch.setattr(engine, "check_masks", check_masks)
+    start = multiprocessing.get_start_method()
+    multiprocessing.set_start_method("fork", force=True)
+    try:
+        again = D.prepare(root / "store", tmp_path, splits=("train",), procs=1)
+    finally:
+        multiprocessing.set_start_method(start, force=True)
+    assert again["files"] == m["files"] and again["sets"] == m["sets"]
+
+
+def test_every_process_pool_spawns():
+    """The same rule in every builder: a process pool is made by get_context("spawn") (build_rl_rows, for one, runs the
+    engine in its parent before it starts the pool); never the platform default (fork on Linux)."""
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    files = sorted([*(root / "src").rglob("*.py"), *(root / "experiments").rglob("*.py")])
+    bad = [f"{p.relative_to(root)}:{n}" for p in files for n, line in enumerate(p.read_text().splitlines(), 1)
+           if re.search(r"\bPool\(", line) and 'get_context("spawn").Pool(' not in line and "`" not in line]
+    assert bad == []
+
+
 def round_trip(root, dataset, split):
     """Every SFT target of every RL item (voting raters, B2-4), scored against its own item's caches (R1); returns
     (scored, abstaining raters' targets, failures)."""

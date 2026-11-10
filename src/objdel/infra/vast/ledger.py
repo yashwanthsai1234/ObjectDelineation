@@ -9,8 +9,10 @@ import time
 from pathlib import Path
 
 from objdel.core.provenance import repo_root
+from objdel.io import read_json
 
-ALARM, HARD_STOP = 10.0, 19.9  # G10, USD spent in Phase 2: $16.90 at plan start + the approved $3.00 (2026-11-09)
+# G10, USD spent in Phase 2: $16.90 at plan start + the approved $3.00 + $1.50 (2026-11-09)
+ALARM, HARD_STOP = 10.0, 21.4
 # BK4-18: $/GB ceiling, up and down (> 2x the A3 snapshot medians of the five cards, $4-13.65/TB; unit UNVERIFIED until
 # V0). Estimate: image 7.5 GB + bundle 2 GB + model downloads once; checkpoint pulls of 3-5 GB per 20 min (§4.4).
 INET_CEIL, DOWN_GB, UP_GB_PER_H = 0.03, 15, 6
@@ -45,7 +47,7 @@ def ledger(**row) -> None:
 def load(name: str) -> dict:
     """A JSON state file under VAST_HOME ({} when absent): active_runs.json, .vast-allowlist, offers/<id>.json."""
     f = home() / name
-    return json.loads(f.read_text()) if f.exists() else {}
+    return read_json(f) if f.exists() else {}
 
 
 def active(update: dict | None = None) -> dict:

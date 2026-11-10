@@ -58,7 +58,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from importlib.metadata import version
 from itertools import batched
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import cv2
@@ -70,7 +70,7 @@ from objdel.data import store
 from objdel.geom.shape import canonicalize
 from objdel.geom.text import SCHEMAS, parse, serialize
 from objdel.hashing import pixels_sha256
-from objdel.io import read_jsonl
+from objdel.io import read_json, read_jsonl, write_json
 from objdel.reward import ExpertCache, fingerprint, rater_answers, rl_eligible
 from objdel.targets import build_target, frame, min_areas, target_set_hash
 
@@ -147,7 +147,7 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
                 "reward_fingerprint": fingerprint(), "prompts": PROMPTS,
                 "versions": {"python": platform.python_version(), **{p: version(p) for p in _PINS}},
                 "files": {}, "sets": {}}
-    with Pool(procs) as pool:
+    with get_context("spawn").Pool(procs) as pool:  # a fork of a parent that used CUDA fails in the engine
         for dataset in SCHEMAS:
             for split in splits:
                 skipped, recs = [], []
@@ -167,9 +167,8 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
                     "rl_items": sum(r["rl"] for r in recs),
                     "rl_targets": sum(t is not None for r in recs if r["rl"] for t in r["targets"]),
                     "disagreement_items": sum(r["disagreement"] for r in recs)}
-    doc = json.dumps(manifest, indent=1, sort_keys=True) + "\n"
-    (out / "manifest.json").write_text(doc)
-    return json.loads(doc)  # the manifest as written (JSON types)
+    write_json(out / "manifest.json", manifest)
+    return read_json(out / "manifest.json")  # the manifest as written (JSON types)
 
 
 def records(root, dataset: str, split: str) -> list[dict]:
@@ -301,7 +300,7 @@ def cache_loader(root, maxsize: int | None = 64) -> Callable[[str], dict[str, Ex
     caches hold ~9 MB), loaded on first use; None loads every cache now (preload: the LIDC train set is ~0.33 GB)."""
     root = Path(root)
     digests = {}
-    for rel, entry in json.loads((root / "manifest.json").read_text())["files"].items():
+    for rel, entry in read_json(root / "manifest.json")["files"].items():
         text = (root / rel).read_bytes()
         if hashlib.sha256(text).hexdigest() != entry["sha256"]:
             raise ValueError(f"{root / rel}: not the file the manifest records")
@@ -380,7 +379,7 @@ def view_rows(view_dir, tokenizer=None, max_tokens: int | None = None, a0: bool 
         raise ValueError("max_tokens is a token budget: pass the tokenizer")
     view_dir = Path(view_dir)
     text = (view_dir / "rows.jsonl").read_bytes()
-    manifest = json.loads((view_dir / "manifest.json").read_text())
+    manifest = read_json(view_dir / "manifest.json")
     if hashlib.sha256(text).hexdigest() != manifest["view_hash"]:
         raise ValueError(f"{view_dir}: rows.jsonl does not hash to the manifest's view_hash")
     rows = []

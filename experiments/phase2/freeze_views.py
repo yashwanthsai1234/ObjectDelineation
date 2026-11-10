@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from objdel.data import quality as Q
-from objdel.io import git
+from objdel.io import code_sha, git, git_sha, read_json, write_json
 
 ROOT = Path(__file__).resolve().parents[2]
 RENDER_FILES = ("src/objdel/targets/augment.py", "src/objdel/targets/frame.py", "src/objdel/targets/build.py",
@@ -50,15 +50,14 @@ def drift(entry: dict, root=ROOT) -> list[str]:
 
 def entry(view_dir, known: list[str]) -> dict:
     d = Path(view_dir)
-    m = json.loads((d / "manifest.json").read_text())
+    m = read_json(d / "manifest.json")
     (s,) = m["sets"].values()
     ids = {json.loads(x)["item_id"] for x in next((d / "lidc").glob("*.jsonl")).read_text().splitlines()}
-    sha = ROOT / "runs/r5/CODE_SHA"
     return {"view": m["view"], "items": s["items"], "content_sha256": Q.view_content_sha256(d),
             "target_set_sha256": s["target_set_sha256"], "seed": m["seed"], "kinds": m["kinds"],
             "store_manifest_sha256": m["store_manifest_sha256"], "fallback": s["fallback"], "padded": s["padded"],
-            "generator_commit": _git("rev-parse", "HEAD"), "render_files": render_files(),
-            "r5_code_commit": sha.read_text().strip() if sha.is_file() else None,
+            "generator_commit": git_sha(ROOT), "render_files": render_files(),
+            "r5_code_commit": code_sha(ROOT / "runs/r5", required=False),
             "known_label_issues": [i for i in known if i in ids]} | (
         {"r5_identity": R5_IDENTITY[m["view"]]} if m["view"] in R5_IDENTITY else {})
 
@@ -71,17 +70,17 @@ def main(argv=None) -> None:
                     help="check_series_z report; its known_label_issues (val and test ids)")
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args(argv)
-    old = json.loads(a.out.read_text()) if a.out.is_file() else {}
+    old = read_json(a.out) if a.out.is_file() else {}
     if a.check:
         for v, e in old.items():
             print(v, "render files moved:", drift(e) or "none")
         return
     if bad := dirty():
         sys.exit(f"freeze_views: commit the render files first: {bad}")
-    report = json.loads(a.known.read_text()) if a.known.is_file() else {}
+    report = read_json(a.known) if a.known.is_file() else {}
     known = [i for ids in report.get("known_label_issues", {}).values() for i in ids]
     new = {(e := entry(d, known))["view"]: e for d in a.views}
-    a.out.write_text(json.dumps(old | new, indent=1, sort_keys=True) + "\n")
+    write_json(a.out, old | new)
     print(json.dumps({v: e["content_sha256"] for v, e in new.items()}, indent=1))
 
 

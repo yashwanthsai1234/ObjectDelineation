@@ -21,7 +21,7 @@ SPLIT = {"impl2_gpu_test_a.yaml": (0, 1, 2, 3), "impl2_gpu_test_b.yaml": (0, 1, 
 RD, DATA = "/workspace/runs/r", "/workspace/data/lidc"
 HARD = {0, 1, 6}  # build, env_check, the lost-run simulation; every other step is soft ("~")
 SOFT_TAIL_USD = 0.35  # front 6.4 rule 5: BudgetStop = approved - the tail after the RL steps
-HARD_STOP_ROOM_USD = 3.00  # the ledger closed at $16.90, HARD_STOP 19.90 (owner, 2026-11-09)
+HARD_STOP_ROOM_USD = 4.50  # the ledger closed at $16.90; HARD_STOP 19.90 (owner, 2026-11-09), then 21.40 (+$1.50)
 
 
 # The money block of the old plan file (front 6 rules and planning inputs); the spec holds only compute.cap_hours and
@@ -285,7 +285,7 @@ def test_budget_block_gives_a_cap_inside_the_three_dollars(tmp_path, monkeypatch
         w.writerow({"ts": "2026-11-08T17:11:15Z", "event": "teardown", "run_id": "r5",
                     "cost_usd": b["ledger_closed_usd"]})
     assert policy.launch_refusal(offer, b["cap_hours"]) == ""
-    assert "hard stop" in policy.launch_refusal(offer, b["cap_hours"] + 2)
+    assert "hard stop" in policy.launch_refusal(offer, b["cap_hours"] + 5)  # past the $4.50 room
 
 
 def test_minutes_fit_the_cap_with_room_and_the_expected_spend_is_under_the_approved_amount():

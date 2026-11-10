@@ -42,6 +42,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from objdel.hashing import file_sha256
+from objdel.io import read_json, write_json
 
 DATASETS = ("riga", "lidc")
 SPLITS = ("train", "val", "test")
@@ -162,7 +163,7 @@ def write(items: Iterable[Item], root) -> dict:
     manifest = {"format": 1, "versions": {"numpy": np.__version__, "pyarrow": pa.__version__},
                 "files": {rel: {"sha256": file_sha256(root / rel), "rows": rows[rel],
                                 "bytes": (root / rel).stat().st_size} for rel in sorted(rows)}}
-    (root / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+    write_json(root / "manifest.json", manifest)
     return manifest
 
 
@@ -174,7 +175,7 @@ def _verified(root: Path, rel: str, entry: dict) -> None:
 def verify(root) -> dict:
     """Check every file against the manifest (SHA-256, rows); returns the manifest, ValueError on mismatch."""
     root = Path(root)
-    manifest = json.loads((root / "manifest.json").read_text())
+    manifest = read_json(root / "manifest.json")
     for rel, entry in manifest["files"].items():
         _verified(root, rel, entry)
     return manifest
@@ -184,7 +185,7 @@ def load(dataset: str, split: str, root) -> Iterator[Item]:
     """Stream one dataset/split in item_id order, after checking the file against the manifest."""
     root = Path(root)
     rel = f"{dataset}/{split}.parquet"
-    _verified(root, rel, json.loads((root / "manifest.json").read_text())["files"][rel])
+    _verified(root, rel, read_json(root / "manifest.json")["files"][rel])
     for batch in pq.ParquetFile(root / rel, pre_buffer=False).iter_batches(batch_size=BATCH_ROWS):
         for r in batch.to_pylist():
             it = Item(item_id=r["item_id"], dataset=r["dataset"], group_id=r["group_id"], split=r["split"],

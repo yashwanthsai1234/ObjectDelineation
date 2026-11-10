@@ -50,6 +50,7 @@ import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
 from objdel.hashing import file_sha256, pixels_sha256
+from objdel.io import read_json
 from objdel.targets import frame
 from objdel.targets.frame import CLEARANCE, crowded, hu_window, union_box
 
@@ -64,7 +65,7 @@ KNOWN_0396 = ("LIDC-IDRI-0396", 1420.0)  # TCIA known issue 6: patient, contour 
 def _sidecar_hit(path: Path) -> dict | None:
     if not path.exists():
         return None
-    j = json.loads(path.read_text())
+    j = read_json(path)
     s = {"slices": j["slices"], "annotated_sops": j["annotated_sops"], "matched_by_z": j.get("matched_by_z", 0)}
     return s if s["slices"] != s["annotated_sops"] or s["matched_by_z"] > 0 else None
 
@@ -101,7 +102,7 @@ def z_report(store_root, xml_root, sidecars, scans=None, previous=None) -> dict:
     old = [s for s in (previous or {}).get("step2", []) if previous["series"][s]["split"] == "train"]
     patient, z0396 = KNOWN_0396
     c = next((s for s, sc in scans.items() if sc.patient == patient), None)
-    side = json.loads((sidecars / f"{c}.json").read_text()) if c else {}
+    side = read_json(sidecars / f"{c}.json") if c else {}
     return {"train_sha256": file_sha256(store_root / "lidc" / "train.parquet"), "series": series, "step2": hits,
             "mapped": sorted(s for s in old if s not in hits),
             "known_label_issues": {sp: sorted(i for s in hits if series[s]["split"] == sp for i in item_ids[s])
@@ -330,7 +331,7 @@ def window_checks(rows_root, store_root) -> dict:
 def view_windows(view_dir, store_root) -> list[Window]:
     """The windows of a shifted eval view as Window objects (geometry only; DG16): kind "shifted", draw 0."""
     view_dir = Path(view_dir)
-    split = json.loads((view_dir / "manifest.json").read_text())["view"].split("-")[1]
+    split = read_json(view_dir / "manifest.json")["view"].split("-")[1]
     recs = {r["item_id"]: r for r in map(json.loads, (view_dir / "lidc" / f"{split}.jsonl").read_text().splitlines())}
     out = []
     for it in store.load("lidc", split, store_root):
@@ -466,7 +467,7 @@ def view_content_sha256(view_dir) -> str:
 
 def target_set_sha256(view_dir) -> str:
     """The `target_set_sha256` of the one set listed in the view directory's `manifest.json`."""
-    (s,) = json.loads(Path(view_dir, "manifest.json").read_text())["sets"].values()
+    (s,) = read_json(Path(view_dir, "manifest.json"))["sets"].values()
     return s["target_set_sha256"]
 
 

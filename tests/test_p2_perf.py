@@ -51,7 +51,7 @@ def test_trainers_skip_flop_counting():
     """SFT: sft.train's Trainer subclass; GRPO: rl.build.build_trainer builds fast.FastGRPO (tests/test_train_fast.py),
     for the G-probe and for the full run (rl.run)."""
     src = (ROOT / "src/objdel/sft/train.py").read_text()
-    assert "def floating_point_ops(self, inputs):" in src and "            return 0" in src
+    assert "def floating_point_ops(self, inputs):" in src and "        return 0" in src
     assert "cls = GRPOTrainer if flags.plain else fast.FastGRPO" in (ROOT / "src/objdel/rl/build.py").read_text()
     assert "build.build_trainer(a.model, Path(a.ckpt), train" in (ROOT / "src/objdel/rl/run.py").read_text()
 

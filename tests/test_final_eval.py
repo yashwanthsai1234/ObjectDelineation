@@ -703,30 +703,50 @@ def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
 
 
 def test_code_sha_precedence(tmp_path, monkeypatch):
-    """U47: CODE_SHA (stripped) wins; an empty one counts as absent; then git rev-parse HEAD with a .git; else None,
-    also when git is missing."""
+    """U47: CODE_SHA (stripped) wins; an empty one counts as absent; then objdel.io.git_sha with a .git (a clean tree:
+    HEAD); else None, also when git is missing."""
     (tmp_path / ".git").mkdir()
     (tmp_path / "CODE_SHA").write_text("abc123-dirty-0123456789ab\n")
-    assert FE.code_sha(tmp_path) == "abc123-dirty-0123456789ab"
+    assert FE.code_sha(tmp_path, required=False) == "abc123-dirty-0123456789ab"
     seen = []
 
     def git(cmd, **k):
         seen.append(cmd)
-        return SimpleNamespace(stdout="f" * 40 + "\n", returncode=0)
+        return SimpleNamespace(stdout=b"f" * 40 + b"\n" if cmd[1] == "rev-parse" else b"", returncode=0)
 
     monkeypatch.setattr("objdel.io.subprocess.run", git)  # code_sha calls git through objdel.io
     (tmp_path / "CODE_SHA").write_text("")
-    assert FE.code_sha(tmp_path) == "f" * 40 and seen == [["git", "rev-parse", "HEAD"]]
+    assert FE.code_sha(tmp_path, required=False) == "f" * 40
+    assert seen == [["git", "rev-parse", "HEAD"], ["git", "status", "--porcelain"]]
     (tmp_path / "CODE_SHA").unlink()
-    assert FE.code_sha(tmp_path) == "f" * 40
+    assert FE.code_sha(tmp_path, required=False) == "f" * 40
 
     def missing(cmd, **k):
         raise FileNotFoundError("git")
 
     monkeypatch.setattr("objdel.io.subprocess.run", missing)
-    assert FE.code_sha(tmp_path) is None
+    assert FE.code_sha(tmp_path, required=False) is None
     (tmp_path / ".git").rmdir()
-    assert FE.code_sha(tmp_path) is None and json.dumps(FE.code_sha(tmp_path)) == "null"
+    assert FE.code_sha(tmp_path, required=False) is None and json.dumps(FE.code_sha(tmp_path, required=False)) == "null"
+
+
+def test_code_sha_of_a_dirty_tree_is_the_same_locally_and_on_the_box(tmp_path):
+    """X2-3: final_eval's code_sha of a dirty tree on the Mac (git, no CODE_SHA) carries the -dirty-<sha12> suffix and
+    equals the CODE_SHA sync_up writes for the box (git_sha), which the box (no .git) reads back."""
+    from objdel.io import git_sha
+
+    repo, box = tmp_path / "repo", tmp_path / "box"
+    repo.mkdir()
+    box.mkdir()
+    git(repo, "init", "-q")
+    (repo / "a.py").write_text("a = 1\n")
+    git(repo, "add", "a.py")
+    git(repo, "commit", "-qm", "one")
+    (repo / "a.py").write_text("a = 2\n")
+    local = FE.code_sha(repo, required=False)
+    assert local.startswith(git(repo, "rev-parse", "HEAD").strip() + "-dirty-") and len(local) == 40 + 7 + 12
+    (box / "CODE_SHA").write_text(git_sha(repo) + "\n")
+    assert FE.code_sha(box, required=False) == local
 
 
 def test_code_sha_of_a_real_repo(tmp_path):
@@ -735,7 +755,7 @@ def test_code_sha_of_a_real_repo(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     git(tmp_path, "add", "a.txt")
     git(tmp_path, "commit", "-qm", "one")
-    assert FE.code_sha(tmp_path) == git(tmp_path, "rev-parse", "HEAD").strip()
+    assert FE.code_sha(tmp_path, required=False) == git(tmp_path, "rev-parse", "HEAD").strip()
 
 
 def test_view_manifest_sha_is_over_the_raw_bytes(tmp_path):
@@ -863,9 +883,10 @@ def test_tost():
 
 
 def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
-    """U49: vast sync_up's CODE_SHA text: HEAD when clean; HEAD-dirty-<sha256(D)[:12]> with D = git diff HEAD plus the
-    sorted untracked, not-ignored paths; staged-only changes count; ignored files do not; git failing raises."""
-    from objdel.infra.vast import remote as RM
+    """U49: vast sync_up's CODE_SHA text (objdel.io.git_sha): HEAD when clean; HEAD-dirty-<sha256(D)[:12]> with D =
+    git diff HEAD plus the sorted untracked, not-ignored paths; staged-only changes count; ignored files do not; git
+    failing raises."""
+    from objdel.io import git_sha
 
     git(tmp_path, "init", "-q")
     (tmp_path / ".gitignore").write_text("ignored.txt\n")
@@ -873,29 +894,29 @@ def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-qm", "one")
     head = git(tmp_path, "rev-parse", "HEAD").strip()
-    assert RM.code_sha_text(tmp_path) == head and len(head) == 40
+    assert git_sha(tmp_path) == head and len(head) == 40
     (tmp_path / "ignored.txt").write_text("x")
-    assert RM.code_sha_text(tmp_path) == head
+    assert git_sha(tmp_path) == head
 
     def suffix():
         d = subprocess.run(["git", "diff", "HEAD"], cwd=tmp_path, capture_output=True, check=True).stdout
         return hashlib.sha256(d).hexdigest()[:12]
 
     (tmp_path / "a.py").write_text("a = 2\n")
-    first = RM.code_sha_text(tmp_path)
-    assert first == f"{head}-dirty-{suffix()}" and RM.code_sha_text(tmp_path) == first
+    first = git_sha(tmp_path)
+    assert first == f"{head}-dirty-{suffix()}" and git_sha(tmp_path) == first
     (tmp_path / "a.py").write_text("a = 2\n#\n")
-    assert RM.code_sha_text(tmp_path) not in (first, head)
+    assert git_sha(tmp_path) not in (first, head)
     (tmp_path / "a.py").write_text("a = 1\n")
-    assert RM.code_sha_text(tmp_path) == head  # modified, then reverted: clean
+    assert git_sha(tmp_path) == head  # modified, then reverted: clean
     (tmp_path / "a.py").write_text("a = 3\n")
     git(tmp_path, "add", "a.py")
-    assert RM.code_sha_text(tmp_path) == f"{head}-dirty-{suffix()}"  # staged only
+    assert git_sha(tmp_path) == f"{head}-dirty-{suffix()}"  # staged only
     git(tmp_path, "reset", "-q", "--hard")
     (tmp_path / "new.py").write_text("b = 1\n")
-    assert RM.code_sha_text(tmp_path) == f"{head}-dirty-{hashlib.sha256(b'new.py\n').hexdigest()[:12]}"
+    assert git_sha(tmp_path) == f"{head}-dirty-{hashlib.sha256(b'new.py\n').hexdigest()[:12]}"
     with pytest.raises((subprocess.CalledProcessError, OSError)):  # never an empty or garbage CODE_SHA
-        RM.code_sha_text(tmp_path / "missing")
+        git_sha(tmp_path / "missing")
 
 
 SPECS = ROOT / "specs"

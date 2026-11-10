@@ -67,7 +67,6 @@ from objdel.infra.vast.remote import (
     RUN_ID_RE,
     alert,
     code_files,
-    code_sha_text,
     destroy,
     die,
     get_run,
@@ -77,6 +76,7 @@ from objdel.infra.vast.remote import (
     secret,
     vast,
 )
+from objdel.io import code_sha, git_sha, read_json
 
 
 def cmd_offers(a) -> None:
@@ -194,14 +194,14 @@ def cmd_launch(a) -> None:
 def cmd_sync_up(a) -> None:
     """sync_up.sh: send and install the code snapshot (H-GOV first), check the GPU, then send and unpack the bundle."""
     run = get_run(a.run_id)
-    o, allow = json.loads((home() / "offers" / f"{run['offer']}.json").read_text()), load(".vast-allowlist")
+    o, allow = read_json(home() / "offers" / f"{run['offer']}.json"), load(".vast-allowlist")
     if why := governance(a.bundle, o, allow):
         die("H-GOV refuses: " + "; ".join(why))
     name = "bundle-riga.tar.age" if a.bundle == "riga" else f"bundle-{a.bundle}.tar"
     files = [a.bundle_dir / name, a.bundle_dir / f"{name}.sha256"]
     if any(map(is_raw, [a.bundle_dir, *files])):
         die("refusing to send anything under data/raw")
-    lst, sha = home() / "code_files.txt", code_sha_text()
+    lst, sha = home() / "code_files.txt", git_sha(repo_root())
     lst.write_text("\n".join(code_files()) + "\n")
     host = f"root@{run['ip']}:"
     rsync(run, f"{repo_root()}/", f"{host}/workspace/src/", opts=(f"--files-from={lst}",))
@@ -276,19 +276,19 @@ def cmd_run(a) -> None:
 
 
 def cmd_run_spec(a) -> None:
-    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (CODE_SHA, written by sync_up;
-    else "unknown"), the trl, torch and transformers versions and the reward fingerprint, as strict JSON. A different
-    spec already in OUT stops the chain: a second run with the same id never overwrites it silently."""
+    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (objdel.io.code_sha: CODE_SHA,
+    written by sync_up, else git; else "unknown"), the trl, torch and transformers versions and the reward fingerprint,
+    as strict JSON. A different spec already in OUT stops the chain: a second run with the same id never overwrites it
+    silently."""
     from importlib.metadata import version
 
     from objdel.reward.spec import fingerprint
 
-    sha = repo_root() / "CODE_SHA"
     rec = {"spec": load_spec(repo_root() / a.spec).model_dump(mode="json"),
-           "git_sha": sha.read_text().strip() if sha.is_file() else "unknown",
+           "git_sha": code_sha(repo_root(), required=False) or "unknown",
            **{p: version(p) for p in ("trl", "torch", "transformers")}, "reward_fingerprint": fingerprint()}
     out = Path(a.out)
-    if out.is_file() and json.loads(out.read_text())["spec"] != rec["spec"]:
+    if out.is_file() and read_json(out)["spec"] != rec["spec"]:
         die(f"{out} holds a different spec: use a new run id")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rec, indent=1, allow_nan=False))

@@ -35,10 +35,11 @@ import platform
 from dataclasses import replace
 from importlib.metadata import version
 from itertools import batched
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.data import store
+from objdel.io import write_json
 from objdel.targets import FRAMES, augment, frame, target_set_hash
 from objdel.targets.frame import rgb, union_box
 
@@ -82,7 +83,7 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
     from objdel.reward import fingerprint
     from objdel.train import dataset as D  # lazy: needs the train extra (BK4-2)
     manifests = {}
-    with Pool(procs) as pool:
+    with get_context("spawn").Pool(procs) as pool:
         for ds in datasets:
             for kind in (k for k in kinds if k != "rotated" or ds in ROTATION):
                 name = f"{ds}-{split}-{kind}"
@@ -115,7 +116,7 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
                          "padded": sum(r["view"]["padded"] for r in recs),
                          "side": {str(s): sum(r["view"]["side"] == s for r in recs)
                                   for s in sorted({r["view"]["side"] for r in recs})}}}}
-                (out / "manifest.json").write_text(json.dumps(m, indent=1, sort_keys=True) + "\n")
+                write_json(out / "manifest.json", m)
                 manifests[name] = m
     return manifests
 

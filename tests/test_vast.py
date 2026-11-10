@@ -28,6 +28,7 @@ from objdel.infra.vast import chain as CH
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
+from objdel.io import git_sha
 
 ROOT = Path(__file__).resolve().parents[1]
 VAST = ROOT / "experiments" / "phase2" / "vast"
@@ -519,7 +520,7 @@ def test_sync_up_writes_code_sha_also_with_code_only(E):
         out = E.sh("sync_up.sh", "r1", *args).stdout.splitlines()
         code = next(i for i, ln in enumerate(out) if ln.startswith("DRY_RUN: rsync") and "--files-from" in ln)
         sha = next(i for i, ln in enumerate(out) if "/workspace/src/CODE_SHA" in ln)
-        assert code < sha and RM.code_sha_text() in out[sha]
+        assert code < sha and git_sha(ROOT) in out[sha]
 
 
 def test_offers_search_and_launch_keep_to_north_america(E):
@@ -682,7 +683,7 @@ def test_cost_guard_allows_the_owners_extra_7_dollars(E):
 def test_cost_guard_projection_and_alarm(E):
     spent(E, 9.0)
     E.pick()
-    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "20", ok=False)  # 9 + 0.55 * 20 > HARD_STOP
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "23", ok=False)  # 9 + 0.55 * 23 > HARD_STOP (spec cap 24)
     assert "hard stop" in p.stderr
     spent(E, 1.5)
     p = E.sh("launch.sh", "111", "r1", "--cap-hours", "1", ok=False)  # 10.5 >= alarm
@@ -1408,10 +1409,10 @@ def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp
     """6.1 step 0: with $16.90 closed spend, a $0.90/h offer and a 2.4 h cap (plus PULL_S) is within HARD_STOP."""
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     (tmp_path / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n" + "," * 13 + "16.90,\n")
-    assert LG.HARD_STOP == 19.9 and LG.ALARM == 10.0
+    assert LG.HARD_STOP == 21.4 and LG.ALARM == 10.0
     offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
     assert P.launch_refusal(offer, 2.4) == ""
-    assert "hard stop" in P.launch_refusal(dict(offer, dph_total=1.5), 2.4)
+    assert "hard stop" in P.launch_refusal(dict(offer, dph_total=2.0), 2.4)
 
 
 def test_launch_refuses_without_a_ledger(E):

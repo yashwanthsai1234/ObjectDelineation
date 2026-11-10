@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from objdel.data.splits import val_half_table
+from objdel.io import read_json
 
 
 def main(argv=None) -> None:
@@ -18,7 +19,7 @@ def main(argv=None) -> None:
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     records = [json.loads(x) for x in a.view.read_text().splitlines()]
-    chose = sorted(json.loads(a.heldout.read_text())["per_item_iou"])
+    chose = sorted(read_json(a.heldout)["per_item_iou"])
     if missing := set(chose) - {r["item_id"] for r in records}:
         raise SystemExit(f"{len(missing)} held-out items are not in the val view, e.g. {min(missing)}")
     table = val_half_table(records) | {"r5_selection_items": chose}

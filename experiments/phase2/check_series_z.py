@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 from objdel.data import lidc, quality
+from objdel.io import read_json
 
 
 def main(argv=None) -> int:
@@ -29,13 +30,13 @@ def main(argv=None) -> int:
     ap.add_argument("--dicom", type=Path, help="step 2: folder of <series>/*.dcm headers")
     ap.add_argument("--drop-train-hits", action="store_true")
     a = ap.parse_args(argv)
-    previous = json.loads(a.previous.read_text()) if a.previous else None
+    previous = read_json(a.previous) if a.previous else None
     scans = lidc.scans()
     r = quality.z_report(a.store, a.xml, a.slices, scans, previous)
     r["store_sha256"] = {sp: quality.file_sha256(a.store / "lidc" / f"{sp}.parquet") for sp in ("val", "test")}
     if previous and previous["store_sha256"] != r["store_sha256"]:
         raise SystemExit("the val or test store changed since --previous: the frozen views pair on those items")
-    exclusions = json.loads(a.exclusions.read_text()) if a.exclusions.exists() else {}
+    exclusions = read_json(a.exclusions) if a.exclusions.exists() else {}
     if a.drop_train_hits:
         today = datetime.date.today().isoformat()
         for s in quality.train_hits_not_excluded(r, exclusions):
