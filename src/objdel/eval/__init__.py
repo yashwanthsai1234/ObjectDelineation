@@ -5,10 +5,5 @@ sampled completions per item.
     view = {"summary": summarize(items), "audit": hack_audit(items, baseline)}       # one view (eval_run)
     gates.phase2_entry({"views": {"shifted": view, "rescaled": ...}, "prior": ..., "probes": ...,
                         "vision": vision.check(model, processor, images, items, reference=base)}, datasets)
-    # plan §5.1, schema in objdel.eval.gates; datasets=("riga",) for a model dropped from LIDC
+    # plan §5.1, schema in objdel.verify.gates; datasets=("riga",) for a model dropped from LIDC
 """
-from . import gates, vision
-from .audit import hack_audit
-from .metrics import metrics, summarize
-
-__all__ = ["gates", "hack_audit", "metrics", "summarize", "vision"]

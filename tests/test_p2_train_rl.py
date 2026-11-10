@@ -224,7 +224,8 @@ def stub(tmp_path, monkeypatch):
 
     from experiments.phase2 import train_rl
     from objdel.rl import build
-    from objdel.train import dataset, serve
+    from objdel.train import dataset
+    from objdel.verify import store as serve
 
     calls = []
 
@@ -292,7 +293,7 @@ def test_no_pool_and_one_freeze_after_the_last_preload(stub):
 
 def test_no_freeze_on_a_failed_start(stub, monkeypatch):
     """CT-35 failure paths: a parse error or a failed preload freezes nothing."""
-    from objdel.train import serve
+    from objdel.verify import store as serve
 
     with pytest.raises(SystemExit):
         stub.run("--train", "t")  # no --steps

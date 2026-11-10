@@ -11,9 +11,9 @@ import pytest
 
 pytest.importorskip("trl")
 
-from objdel.reward import REWARD_V4  # noqa: E402
 from objdel.train import configs  # noqa: E402
-from objdel.train.rewards import LOGGED  # noqa: E402
+from objdel.verify.reward.advantages import LOGGED  # noqa: E402
+from objdel.verify.reward.spec import REWARD_V4  # noqa: E402
 
 OLD = "smol" + "vlm-256m"  # the retired key, built so this file never holds the word
 OLD8 = "l" + "fm2.5-vl-450m"  # CLEAN8's retired key, built the same way

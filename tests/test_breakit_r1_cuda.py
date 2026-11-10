@@ -10,7 +10,7 @@ import pytest
 
 from objdel.geom import engine as gc
 from objdel.geom.rings import trace
-from objdel.reward.cache import ExpertCache
+from objdel.verify.reward.cache import ExpertCache
 
 
 def _cache(fill) -> ExpertCache:

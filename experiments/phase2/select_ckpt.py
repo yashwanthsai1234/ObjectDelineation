@@ -17,16 +17,16 @@ import json
 import sys
 from pathlib import Path
 
-from objdel.eval import gates
 from objdel.geom import engine as _gpucheck
 from objdel.sft import select
-from objdel.train import serve
+from objdel.verify import gates
+from objdel.verify import store as serve
 
 
 def judge(a, sel: dict, out: Path) -> dict:
     """The §5.1 report of the selected (or gated) branch, on the full views (--items never applies here, D13)."""
     from experiments.phase2 import baselines
-    from objdel.eval import signal
+    from objdel.verify import stats as signal
 
     best, whole = a.run / "branches" / sel["name"], argparse.Namespace(**vars(a) | {"items": None})
 

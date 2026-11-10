@@ -29,8 +29,16 @@ from pathlib import Path
 import numpy as np
 from scipy.stats import rankdata
 
-from objdel.reward import REWARD_V5, advantages_v4, advantages_v5, score_many
-from objdel.reward.advantages import _groups, _topology, reward_parts_v5, topology_valid
+from objdel.verify.reward.advantages import (
+    _groups,
+    _topology,
+    advantages_v4,
+    advantages_v5,
+    reward_parts_v5,
+    topology_valid,
+)
+from objdel.verify.reward.score import score_many
+from objdel.verify.reward.spec import REWARD_V5
 
 
 def spearman(a, b) -> float:
@@ -140,7 +148,8 @@ def main(argv=None) -> None:
     ap.add_argument("--out", type=Path, required=True, help="report JSON")
     a = ap.parse_args(argv)
     from objdel.data.splits import val_half
-    from objdel.train import dataset, serve
+    from objdel.train import dataset
+    from objdel.verify import store as serve
 
     rows = {r["key"]: r for r in dataset.prompts(a.view, "lidc", "val")}
     serve.preload(a.view, ["lidc"])

@@ -25,8 +25,8 @@ go into the JSON so two engines can be compared.
 
 --engine old reruns this script by path with the pre-D2 engine's Python (--old-python, default /opt/old/bin/python,
 built by run_box.sh --gpu-check from old_engine.tar; Implementation.md D-G7) and this environment, so both engines
-read the same root. That venv has no objdel.geom, objdel.reward, cv2 or scipy: the module-level imports below are the
-standard library, numpy and objdel._gpucheck only; --dump-replay and --rungs import the rest inside their functions.
+read the same root. That venv has no objdel.geom, objdel.verify.reward, cv2 or scipy: the module-level imports below are
+the standard library, numpy and objdel._gpucheck only; --dump-replay and --rungs import the rest inside their functions.
 
 --rungs (D1 step 3, input to the D6 grid decision): the vertex count of every certified rung (the target texts of
 the first 500 rows of data/targets/{lidc,riga}/train.jsonl under ROOT) and its validity time on this build.
@@ -151,7 +151,7 @@ def digest(res: dict) -> str:
 
 def synthetic_replay(n: int) -> list:
     """n (completion, cache) pairs: two-rater disc caches on 24-48 px frames and square answers; fixed seed."""
-    from objdel.reward import ExpertCache
+    from objdel.verify.reward.cache import ExpertCache
 
     rng = np.random.default_rng(SEED)
     out = []
@@ -170,7 +170,7 @@ def synthetic_replay(n: int) -> list:
 def dump_replay(path: Path, synthetic: int | None) -> None:
     from objdel.geom.shape import pack_objects
     from objdel.geom.text import GRID, parse
-    from objdel.reward import ExpertCache
+    from objdel.verify.reward.cache import ExpertCache
 
     root, meta = data_root(), {}
     if synthetic:

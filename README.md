@@ -70,8 +70,9 @@ make test      # test suite
 
 ```python
 import numpy as np
-from objdel.reward import ExpertCache, score_completion
 from objdel.targets import build_target, min_areas
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_completion
 
 y, x = np.ogrid[:100, :100]
 experts = np.stack([(y - 50) ** 2 + (x - 50) ** 2 <= r * r for r in (20, 22, 24)])  # three expert outlines

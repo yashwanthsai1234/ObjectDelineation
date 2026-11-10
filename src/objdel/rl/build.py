@@ -31,14 +31,15 @@ def build_trainer(model: str, ckpt: Path, rows, out: Path, roots: Sequence[Path]
     and the probe LR (configs.rl_lr; flags.lr overrides when set). rows: the training rows; out: the run folder
     (the trainer writes out/trainer); roots: the prepared roots whose caches the reward reads (the held-out view
     first when eval_dataset is given). check(config) runs before the model loads (train_rl's sampler guards); calls:
-    more callbacks; reward: the reward spec (objdel.reward.REWARDS; None: reward v4); record_dir: C0's batch folder
-    (train_rl opens it, checked empty, before the load)."""
+    more callbacks; reward: the reward spec (objdel.verify.reward.spec.REWARDS; None: reward v4); record_dir: C0's batch
+    folder (train_rl opens it, checked empty, before the load)."""
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
-    from objdel.reward import REWARD_V4
-    from objdel.train import callbacks, configs, fast, rewards, serve, vllm_sync
+    from objdel.train import callbacks, configs, fast, rewards, vllm_sync
+    from objdel.verify import store as serve
+    from objdel.verify.reward.spec import REWARD_V4
 
     peft = configs.lora(model)
     lr = flags.lr or configs.rl_lr(model)

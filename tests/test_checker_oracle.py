@@ -11,8 +11,8 @@ import pytest
 from oracles import raster_oracle as RO
 from oracles import validity_oracle as VO
 
-from experiments.cuda_checker import compare as C
 from objdel.geom import engine as _gpucheck
+from tests.oracles import cuda_parity as C
 
 
 def check(cases, G=1000) -> list[dict]:

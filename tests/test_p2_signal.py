@@ -11,7 +11,7 @@ import pytest
 from scipy import stats
 
 from experiments.phase2 import prereg as P
-from objdel.eval import signal as S
+from objdel.verify import stats as S
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = json.loads((Path(__file__).parent / "p2_signal_fixture.json").read_text())  # B2 shifted, retired 450M, 10 items
@@ -91,8 +91,8 @@ def test_paired_equals_b2():
 def test_live_b2_functions_and_group_scoring():
     """Live per_item and group against the lab B2 outputs recorded in tests/goldens/p2_lab_refs.json
     (record_p2_lab_refs.py in archive/phase2_lab); group is checked on synthetic items scored through metrics."""
-    from objdel.reward import ExpertCache
     from objdel.targets import build_target
+    from objdel.verify.reward.cache import ExpertCache
 
     g = rand_groups(np.random.default_rng(3))
     got = S.per_item(g)
@@ -107,7 +107,7 @@ def test_live_b2_functions_and_group_scoring():
     samples = texts + ["garbage", texts[0], "{"]
     caches = {"nodule": ExpertCache.build(raters["nodule"])}
     item = {"item_id": "lidc/x/n000/z001", "caches": caches, "W": 50, "H": 50, "names": ("nodule",)}
-    from objdel.eval import metrics
+    from objdel.verify.metrics import metrics
 
     m = metrics(samples, {"nodule": raters["nodule"]}, 50, 50, ("nodule",), [False] * 8, caches)
     mine = S.group(item["item_id"], samples, m)

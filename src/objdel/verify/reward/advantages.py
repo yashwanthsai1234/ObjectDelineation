@@ -22,7 +22,7 @@
 Reward v5 (advantages_v5; Implementation.md B3.4) sums the terms into one reward and takes RLOO advantages:
     R = legal (IoU_tc + alpha_loc loc + w_f5 F5 + w_area g_area) + c_topo r_topo,
     A_i = R_i - mean_{j != i} R_j   (= G/(G-1) (R_i - mean_g R): group mean exactly 0, linear in R, no std).
-loc is the scorer's gated location term (objdel.reward.score.gated_loc). The drop rule tests each unweighted term
+loc is the scorer's gated location term (objdel.verify.reward.score.gated_loc). The drop rule tests each unweighted term
 (legal, IoU_tc, F5, g_area, loc, r_topo) and one topology answer: a test on the weighted R would drop the far-miss
 groups the location term is for.
 
@@ -49,7 +49,7 @@ from math import comb, log
 
 import numpy as np
 
-from .spec import REWARD_V4, REWARD_V5, TERMS
+from objdel.verify.reward.spec import REWARD_V4, REWARD_V5, TERMS
 
 _INPUTS = (*TERMS, "topo_any", "topo_freq", "sig_id")
 
@@ -73,7 +73,8 @@ def loo_bias(f: float, group: int) -> float:
 
 def legal_gate(T: dict) -> np.ndarray:
     """Elementwise hard legality gate (module docstring): True for a legal rollout. The one rule by which
-    advantages_v4, r_topo's validity and eval (objdel.eval.metrics: an illegal answer scores 0) treat illegal output."""
+    advantages_v4, r_topo's validity and eval (objdel.verify.metrics: an illegal answer scores 0) treat illegal
+    output."""
     return np.asarray(T["legal"]) >= 0.5
 
 
@@ -84,7 +85,7 @@ def topology_valid(T: dict, spec=REWARD_V4) -> np.ndarray:
 
 
 def _answers(T: dict) -> np.ndarray:
-    """Topology answers with every illegal rollout mapped to one shared FAIL answer (as objdel.eval.metrics), so an
+    """Topology answers with every illegal rollout mapped to one shared FAIL answer (as objdel.verify.metrics), so an
     illegal rollout's signature never moves the legal rollouts' r_topo or the flat-group check."""
     return np.where(legal_gate(T), T["sig_id"], -1.0)  # sig_ids are CRC32 values >= 0
 
@@ -143,3 +144,14 @@ def advantages_v5(terms: dict, group: int = REWARD_V5.group, spec=REWARD_V5) -> 
     flat = (np.ptp(raw, axis=1).max(-1) < spec.drop_spread) & (T["sig_id"] == T["sig_id"][:, :1]).all(1)
     a[flat] = 0.0
     return a.reshape(-1)
+
+
+LOGGED = ("format_ok", "legal", "iou_tc", "f5", "g_area", "topo_any", "loc", "r_topo")
+
+GATED = ("iou_tc", "f5", "g_area", "loc")  # times legal_gate: 0 for an illegal rollout, as the advantages see them
+
+
+def logged_terms(T: dict) -> dict[str, np.ndarray]:
+    """The LOGGED terms of score_batch's T but r_topo (which needs whole groups): the GATED ones times legal_gate."""
+    legal = legal_gate(T)
+    return {n: T[n] * legal if n in GATED else T[n] for n in LOGGED[:-1]}

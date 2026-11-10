@@ -142,7 +142,7 @@ OK = {"pass": True}  # a measured, passing G-vision
 
 def _eligible(lidc: dict, vision: dict) -> bool:
     """select_ckpt's D12 eligibility call: gates.eligible on the shifted view's summarize() output."""
-    from objdel.eval import gates
+    from objdel.verify import gates
 
     return gates.eligible({"datasets": {"lidc": lidc}}, vision)
 
@@ -158,7 +158,7 @@ def test_rb_on_fixture_branch_panels():
     """R-B over the B2 fixture panels (shifted val of the retired 450M model, 36 vs 150 steps) with the eligibility
     floors applied."""
     from experiments.phase2 import prereg
-    from objdel.eval import signal
+    from objdel.verify import stats as signal
 
     fix = json.loads((ROOT / "tests/p2_signal_fixture.json").read_text())["runs"]
     shallow, deep = (signal.panel(signal.rows(fix[r])) for r in sorted(fix, key=len))  # <model>_s0, <model>_s0_n150

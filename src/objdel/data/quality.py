@@ -431,12 +431,12 @@ def tokens(rows_root, tokenizer, limit: int) -> dict:
 
 
 def agreement(rows_root, low_contrast) -> dict:
-    """DG14b (report): per RL row, the mean doctor leave-one-out IoU_tc (objdel.eval.ceiling.loo_caches, each left-out
+    """DG14b (report): per RL row, the mean doctor leave-one-out IoU_tc (objdel.verify.ceiling.loo_caches, each left-out
     doctor scored with score_mask against the other doctors); per cell, overall, the share below 0.3 and that share
     jointly with low contrast (window ids in `low_contrast`)."""
-    from objdel.eval.ceiling import loo_caches  # A2
-    from objdel.reward import score
-    from objdel.reward.cache import ExpertCache
+    from objdel.verify.ceiling import loo_caches  # A2
+    from objdel.verify.reward import score
+    from objdel.verify.reward.cache import ExpertCache
 
     vals, low = {}, set(low_contrast)
     for r in records(rows_root):

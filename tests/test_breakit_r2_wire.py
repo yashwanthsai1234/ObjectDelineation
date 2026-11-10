@@ -53,7 +53,8 @@ def stub(tmp_path, monkeypatch):
     import gc
 
     from objdel.rl import build
-    from objdel.train import dataset, serve
+    from objdel.train import dataset
+    from objdel.verify import store as serve
 
     seen = SimpleNamespace(rows_calls=[], trainers=[], trained=[])
     monkeypatch.setattr(serve, "preload", lambda root, ds: None)

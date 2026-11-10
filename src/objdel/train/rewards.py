@@ -5,18 +5,18 @@ TRL calls every reward function once per generation batch with the same argument
 completion_ids, every dataset column, trainer_state, log_metric, log_extra) and gathers their outputs into
 rewards_per_func. With multi_objective_aggregation="sum_then_normalize" and scale_rewards="none" its advantage is
     A = sum_k w_k r_k - group_mean(sum_k w_k r_k).
-The aggregator (weight 1) returns objdel.reward.advantages_v4, whose group means are already 0, and the loggers
-(weight 0) return one term each, so A = advantages_v4 to float32 precision (R2, tests/test_train_trl.py) and every
-term is logged as rewards/<term>/mean. The geometric loggers (GATED: iou_tc, f5, g_area) return the term times
-objdel.reward.legal_gate, as advantages_v4 sees it: an illegal rollout logs 0, so neither the curves nor the
-held-out eval_rewards/iou_tc/mean credit illegal output (R2 follow-up). A weight-0 logger adds 0 * value = 0 to
+The aggregator (weight 1) returns objdel.verify.reward.advantages.advantages_v4, whose group means are already 0, and
+the loggers (weight 0) return one term each, so A = advantages_v4 to float32 precision (R2, tests/test_train_trl.py) and
+every term is logged as rewards/<term>/mean. The geometric loggers (GATED: iou_tc, f5, g_area) return the term times
+objdel.verify.reward.advantages.legal_gate, as advantages_v4 sees it: an illegal rollout logs 0, so neither the curves
+nor the held-out eval_rewards/iou_tc/mean credit illegal output (R2 follow-up). A weight-0 logger adds 0 * value = 0 to
 TRL's sum, so the advantages do not depend on what the loggers return. A logger given weight w (GRPOConfig
-reward_weights) adds w (term - group mean), with the gated term. TRL's own
-`reward` metric is then the mean advantage, about 0: dashboards use the per-term logs.
+reward_weights) adds w (term - group mean), with the gated term. TRL's own `reward` metric is then the mean advantage,
+about 0: dashboards use the per-term logs.
 
-All functions share one computation per batch: the first call scores the batch (objdel.reward.score_batch: one CUDA
-checker call checks and scores all its answers against the item caches resident on the device), the others reuse it
-(the same `completions` list object is passed to each function).
+All functions share one computation per batch: the first call scores the batch (objdel.verify.reward.score.score_batch:
+one CUDA checker call checks and scores all its answers against the item caches resident on the device), the others
+reuse it (the same `completions` list object is passed to each function).
 
 Groups: advantages_v4 needs each prompt's G completions contiguous within one call. TRL computes rewards on each
 process's local slice before gathering; TRL's RepeatSampler yields each prompt G times in a row and accelerate
@@ -38,8 +38,8 @@ cell/<ij>/iou_tc and cell/<ij>/allmiss_groups. log_extra adds the columns key (i
 objdel.train.sample.export can turn it into eval_run JSONL (break-it B4-3), and error (the parser code).
 
 Reward v5 (Implementation.md B3.5; train_rl --reward v5): TRLReward(..., spec=REWARD_V5) aggregates with
-objdel.reward.advantages_v5 (RLOO, group mean 0, so TRL leaves it unchanged as above) under the name advantage_v5,
-and logs kind/<k>/loc, the mean of the gated location term before alpha_loc (callbacks.LocGuard reads it).
+objdel.verify.reward.advantages.advantages_v5 (RLOO, group mean 0, so TRL leaves it unchanged as above) under the name
+advantage_v5, and logs kind/<k>/loc, the mean of the gated location term before alpha_loc (callbacks.LocGuard reads it).
 completions/truncated_grad_share is the share of |A| x tokens on truncated rows (dr_grpo weights a row by its token
 count), for the run report. The default spec is REWARD_V4.
 
@@ -67,20 +67,18 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from objdel.geom.engine import DEFECTS
-from objdel.reward import (
-    REWARD_V4,
-    ExpertCache,
+from objdel.train import nvtx
+from objdel.verify.reward.advantages import (
+    LOGGED,
     advantages_v4,
     advantages_v5,
     legal_gate,
-    score_batch,
+    logged_terms,
     topology_reward,
 )
-from objdel.reward.spec import RewardV5
-from objdel.train import nvtx
-
-LOGGED = ("format_ok", "legal", "iou_tc", "f5", "g_area", "topo_any", "loc", "r_topo")
-GATED = ("iou_tc", "f5", "g_area", "loc")  # times legal_gate: 0 for an illegal rollout, as the advantages see them
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_batch
+from objdel.verify.reward.spec import REWARD_V4, RewardV5
 
 
 def aggregator(spec) -> str:
@@ -106,16 +104,10 @@ def truncated(ids, stop) -> bool:
 
 def score_jobs(jobs) -> dict:
     """score_batch inside the NVTX range `checker`, on whichever thread scores (the prefetch thread or the reward
-    call). The range lives here, not in objdel.reward, which never imports objdel.train (S12). The one scoring
-    function of the trainer and of the verifier service (objdel.verify)."""
+    call). The range lives here, not in objdel.verify.reward, which never imports objdel.train (S12); the verifier
+    service (objdel.verify.api) calls score_batch itself."""
     with nvtx.range("checker"):
         return score_batch(jobs)
-
-
-def logged_terms(T: dict) -> dict[str, np.ndarray]:
-    """The LOGGED terms of score_batch's T but r_topo (which needs whole groups): the GATED ones times legal_gate."""
-    legal = legal_gate(T)
-    return {n: T[n] * legal if n in GATED else T[n] for n in LOGGED[:-1]}
 
 
 def _text(completion) -> str:
@@ -127,7 +119,7 @@ def _text(completion) -> str:
 
 
 class TRLReward:
-    """caches(key) -> {object name: ExpertCache} for one prompt (objdel.train.dataset.cache_loader, or
+    """caches(key) -> {object name: ExpertCache} for one prompt (objdel.verify.store.cache_loader, or
     serve.loader(root) on preloaded caches); stop_ids: the ids TRL treats as the end of a completion
     (`stop_ids(model, processor)`). Each reward call (256 answers) is one CUDA checker call that checks and scores
     them all; each cache's tables are uploaded to the device the first time it is scored (score_batch)."""

@@ -347,6 +347,7 @@ def eval_views(tmp_path_factory, synthetic_items):
 
 def test_eval_views_read_through_the_prepared_layout(eval_views):
     from objdel.train import dataset as D
+    from objdel.verify import store as verify_store
     root, manifests = eval_views
     assert not (root / "out" / "riga-val-rotated").exists()  # fundus orientation is physiological (D10)
     for name in ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "riga-val-shifted", "riga-val-rescaled"):
@@ -356,7 +357,7 @@ def test_eval_views_read_through_the_prepared_layout(eval_views):
         assert m["sets"][f"{ds}/val"]["target_errors"] == [] and m["view"] == name
         recs = D.records(d, ds, "val")
         assert recs and all("view" in r for r in recs)
-        load = D.cache_loader(d)
+        load = verify_store.cache_loader(d)
         for r in recs:
             S = r["view"]["side"]
             assert r["W"] == S and r["scale"] == 1
@@ -722,7 +723,7 @@ def val_view(tmp_path_factory, synthetic_items):
 def test_loader_resolves_a_key_in_the_first_root_that_holds_it(val_view):
     """train_rl --heldout: loader(view, train root) scores a val item on the view's rater masks, although the
     prepared root holds the same item id (centred), and a train item on the prepared root; one root as before."""
-    from objdel.train import serve
+    from objdel.verify import store as serve
 
     prepared, view = val_view
     for r in (prepared, view):

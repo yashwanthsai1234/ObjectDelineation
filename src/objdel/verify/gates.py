@@ -22,7 +22,7 @@ G-format, G-signal and G-vision of phase2_entry on one shifted-view summary, so 
 The report (C-EVAL; agents G, P, R fill it; every part optional, missing parts fail their gates):
 
     {"views": {"centred" | "shifted" | "rescaled":           # eval_run's report.json on that view
-                   {"summary": objdel.eval.summarize(items), ...}},
+                   {"summary": objdel.verify.metrics.summarize(items), ...}},
      "prior": {"shifted" | "rescaled":                        # G-prior (b), per item IoU_tc = K-sample mean
                    {dataset: {structure: {"diff": mean, "ci": [lo, hi], ...}}},   # paired, nodule-cluster bootstrap
                "centred": {dataset: {structure: {"win_share": share, ...}}}},       # G-prior (a), report-only
@@ -38,17 +38,17 @@ The report (C-EVAL; agents G, P, R fill it; every part optional, missing parts f
 "G-geometry", "G-prior-b", "G-precision", "G-topology-a", "G-signal", "G-vision"); report-only names its REPORT_ONLY
 ("G-prior-a", "G-topology-b", "G-probe"). Value keys are "<metric>/<view>/<dataset>[/<structure>]".
 
-The geometry gates read objdel.eval.summarize, where an illegal rollout scores IoU_tc = 0 (objdel.reward.legal_gate;
-REVIEW #2).
+The geometry gates read objdel.verify.metrics.summarize, where an illegal rollout scores IoU_tc = 0
+(objdel.verify.reward.advantages.legal_gate; REVIEW #2).
 
 References:
 - Gate table and thresholds: experiments/phase2/PLAN.md §5.1, D17-D20; per-dataset decision: B4-5.
 - Duplicate and sigma gates on groups of G = 8 at temperature 1: a group with equal rewards has zero advantage (DAPO
-  dynamic sampling, https://arxiv.org/abs/2503.14476); sigma floors as in objdel.reward.advantages_v4.
+  dynamic sampling, https://arxiv.org/abs/2503.14476); sigma floors as in objdel.verify.reward.advantages.advantages_v4.
 """
 from collections.abc import Sequence
 
-from objdel.reward import REWARD_V4
+from objdel.verify.reward.spec import REWARD_V4
 
 FORMAT, LEGAL = 0.98, 0.90
 MEDIAN_IOU_TC = {("riga", "disc"): 0.85, ("riga", "cup"): 0.75, ("lidc", "nodule"): 0.60}
@@ -161,7 +161,7 @@ def phase2_entry(report: dict, datasets: Sequence[str] | None = None, prior_a_th
 
 def eligible(summary: dict, vision: dict | None, dataset: str = PROBE_DATASET) -> bool:
     """D12 R-B eligibility of one branch: G-format, G-signal (groups of G) and G-vision of phase2_entry on its
-    shifted-view `summary` (objdel.eval.summarize output) and `vision` (vision.check output; None or {} = unmeasured,
-    not eligible)."""
+    shifted-view `summary` (objdel.verify.metrics.summarize output) and `vision` (vision.check output; None or {} =
+    unmeasured, not eligible)."""
     passed = phase2_entry({"views": {"shifted": {"summary": summary}}, "vision": vision}, [dataset])["passed"]
     return all(passed[g] for g in ELIGIBILITY)

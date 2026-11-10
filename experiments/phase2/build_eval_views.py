@@ -5,7 +5,7 @@
 
 Per dataset and named kind (default the first three) the directory <out>/<dataset>-<split>-<kind>, in the
 data/prepared layout (images/, caches/, <dataset>/<split>.jsonl, manifest.json with each jsonl's SHA-256 and the target-set hash), so
-objdel.train.dataset.records / cache_loader / grpo_rows, objdel.train.serve.preload and eval_run read them
+objdel.train.dataset.records / cache_loader / grpo_rows, objdel.verify.store.preload and eval_run read them
 unchanged. Each record is objdel.train.dataset._prepare's (frame image as PNG, one certified target per rater,
 ExpertCache.build of the view's rater stack) plus "view": {"offset": [dx, dy], "side": S, "kept_side", "fallback",
 "op", "offset_frac" (windows.offset_of of the union and window boxes), "padded" (the window leaves the slice)}.
@@ -55,7 +55,7 @@ def _rotated(it, offset, side, op):
 
 
 def _record(job):
-    from objdel.data.windows import offset_of  # lazy: objdel.reward -> scipy fails in the [dev]-only job
+    from objdel.data.windows import offset_of  # lazy: objdel.verify.reward -> scipy fails in the [dev]-only job
     from objdel.train import dataset as D  # lazy: needs the train extra (BK4-2)
     out, it, kind, seed = job
     bare = replace(it, image=None)
@@ -80,8 +80,8 @@ def _record(job):
 
 def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2, limit=None,
           kinds=KINDS[:3]) -> dict:
-    from objdel.reward import fingerprint
     from objdel.train import dataset as D  # lazy: needs the train extra (BK4-2)
+    from objdel.verify.reward.spec import fingerprint
     manifests = {}
     with get_context("spawn").Pool(procs) as pool:
         for ds in datasets:

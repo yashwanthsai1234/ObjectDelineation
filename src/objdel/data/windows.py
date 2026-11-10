@@ -36,9 +36,10 @@ from operator import attrgetter
 import numpy as np
 
 from objdel.geom.text import SCHEMAS
-from objdel.reward import ExpertCache, rater_answers, rl_eligible
 from objdel.targets import augment, frame
 from objdel.targets.frame import CLEARANCE, centred, crowded, union_box
+from objdel.verify.reward.cache import ExpertCache, rl_eligible
+from objdel.verify.reward.score import rater_answers
 
 SIZE_EDGES = (10, 20, 40)
 OFFSET_EDGES = (0.15, 0.2, 0.3)

@@ -14,8 +14,9 @@ pytest.importorskip("datasets")
 
 from objdel.data import Item, store  # noqa: E402
 from objdel.geom.text import SCHEMAS  # noqa: E402
-from objdel.reward import rater_answers, score_completion  # noqa: E402
 from objdel.train import dataset as D  # noqa: E402
+from objdel.verify import store as verify_store  # noqa: E402
+from objdel.verify.reward.score import rater_answers, score_completion  # noqa: E402
 
 PREPARED = Path(__file__).resolve().parents[1] / "data" / "prepared"
 
@@ -51,7 +52,7 @@ def test_records_and_cache_loader(prepared):
     assert set(rec) == {"lidc/1.2.1/n000/z001", "lidc/1.2.1/n000/z003"}
     r = rec["lidc/1.2.1/n000/z001"]
     assert r["W"] == r["H"] and 1000 % r["W"] == 0 and r["disagreement"] and r["rl"]
-    caches = D.cache_loader(out)("lidc/1.2.1/n000/z001")
+    caches = verify_store.cache_loader(out)("lidc/1.2.1/n000/z001")
     assert set(caches) == {"nodule"} and caches["nodule"].k == 2
     assert caches["nodule"].digest == r["caches"]["nodule"]
     assert caches["nodule"].raters.shape == (2, r["H"], r["W"])
@@ -64,7 +65,7 @@ def test_cache_loader_rejects_a_swapped_cache(prepared, tmp_path):
     c = out / "caches" / "riga/MESSIDOR/image001"
     (c / "disc.npz").write_bytes((c / "cup.npz").read_bytes())  # a valid cache file, but the wrong one
     with pytest.raises(ValueError, match="riga/MESSIDOR/image001"):
-        D.cache_loader(out)("riga/MESSIDOR/image001")
+        verify_store.cache_loader(out)("riga/MESSIDOR/image001")
 
 
 def test_sft_rows_schema(prepared):
@@ -105,7 +106,7 @@ def test_sft_rows_teach_only_voting_raters(tmp_path, disc_mask, synthetic_items)
     D.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1)
     (rec,) = D.records(tmp_path / "out", "lidc", "train")
     assert rec["targets"][2] is not None  # certifiable: dropped for abstaining, not for lack of a target
-    assert D.cache_loader(tmp_path / "out")(rec["item_id"])["nodule"].voters == (0, 1)
+    assert verify_store.cache_loader(tmp_path / "out")(rec["item_id"])["nodule"].voters == (0, 1)
     assert sorted(D.sft_rows(tmp_path / "out", "lidc", "train")["rater"]) == ["1", "2"]
     assert D.grpo_rows(tmp_path / "out", "lidc", "train")["key"] == [rec["item_id"]]
 
@@ -178,7 +179,7 @@ def test_every_process_pool_spawns():
 def round_trip(root, dataset, split):
     """Every SFT target of every RL item (voting raters, B2-4), scored against its own item's caches (R1); returns
     (scored, abstaining raters' targets, failures)."""
-    load = D.cache_loader(root)
+    load = verify_store.cache_loader(root)
     bad, n, abstained = [], 0, 0
     for r in D.records(root, dataset, split):
         if not r["rl"]:

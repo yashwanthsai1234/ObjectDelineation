@@ -12,19 +12,22 @@ from hypothesis import strategies as st
 from oracles import reward_harness as H
 from oracles.eval_oracle import band, boundary_iou, pairwise_iou
 
-from objdel.eval import gates, hack_audit, metrics, select, summarize
-from objdel.eval.metrics import (
+from objdel.eval.audit import hack_audit
+from objdel.targets import BuildConfig, build_target, min_areas
+from objdel.verify import gates, select
+from objdel.verify.metrics import (
     _ZEROED,
     BIOU_D,
     _ged,
     _iou,
+    metrics,
     min_mode_retention,
     pass_at_k,
     soft_dice,
+    summarize,
     tv_js,
 )
-from objdel.reward import ExpertCache
-from objdel.targets import BuildConfig, build_target, min_areas
+from objdel.verify.reward.cache import ExpertCache
 
 S = 50  # frame side (divides 1000)
 

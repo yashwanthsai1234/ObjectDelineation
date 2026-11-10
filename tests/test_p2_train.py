@@ -20,6 +20,7 @@ from objdel.geom.text import SCHEMAS, parse, serialize  # noqa: E402
 from objdel.targets import build_target, min_areas  # noqa: E402
 from objdel.train import configs  # noqa: E402
 from objdel.train import dataset as D  # noqa: E402
+from objdel.verify import store as verify_store  # noqa: E402
 
 # ------------------------------------------------------------------ a tiny training view directory (C-VIEW)
 
@@ -378,20 +379,20 @@ def test_cache_loader_reads_only_the_manifests_files(prepared, tmp_path):
     out = tmp_path / "out"
     shutil.copytree(prepared, out)
     (out / "lidc" / "stray.jsonl").write_text('{"item_id": "x", "rl": true, "caches": {"nodule": "0"}}\n')
-    load = D.cache_loader(out)
+    load = verify_store.cache_loader(out)
     with pytest.raises(KeyError):
         load("x")  # not in the manifest: never read
     assert load("lidc/1.2.1/n000/z001")["nodule"].k == 2
     with open(out / "lidc" / "train.jsonl", "a") as f:
         f.write("\n")
     with pytest.raises(ValueError, match="manifest"):
-        D.cache_loader(out)
+        verify_store.cache_loader(out)
 
 
 def test_cache_loader_unbounded_preload(prepared, tmp_path):
     out = tmp_path / "out"
     shutil.copytree(prepared, out)
-    load = D.cache_loader(out, maxsize=None)
+    load = verify_store.cache_loader(out, maxsize=None)
     shutil.rmtree(out / "caches")  # everything was loaded up front
     assert load("lidc/1.2.1/n000/z001")["nodule"].k == 2 and set(load("riga/MESSIDOR/image001")) == {"disc", "cup"}
 

@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from experiments.phase2 import gate_power as GP
-from objdel.eval import ceiling as C
-from objdel.eval import signal
-from objdel.reward.advantages import advantages_v4
-from objdel.reward.cache import ExpertCache
+from objdel.verify import ceiling as C
+from objdel.verify import stats as signal
+from objdel.verify.reward.advantages import advantages_v4
+from objdel.verify.reward.cache import ExpertCache
 
 
 def _group_terms(iou_last, f5_last):

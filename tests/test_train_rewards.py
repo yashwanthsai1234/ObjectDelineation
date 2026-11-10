@@ -5,8 +5,11 @@ import numpy as np
 import pytest
 
 from objdel.geom.engine import DEFECTS
-from objdel.reward import ExpertCache, advantages_v4, legal_gate, score_batch, topology_reward
 from objdel.train import rewards as R
+from objdel.verify.reward import advantages as reward_advantages
+from objdel.verify.reward.advantages import advantages_v4, legal_gate, topology_reward
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_batch
 
 G, W = 8, 50
 NAMES = ("nodule",)
@@ -57,8 +60,8 @@ def call_all(rw, kw, **extra):
 
 def test_funcs_are_weight_zero_loggers_plus_one_aggregator():
     funcs, weights = reward().funcs()
-    assert [f.__name__ for f in funcs] == [*R.LOGGED, R.AGGREGATOR]
-    assert weights == [0.0] * len(R.LOGGED) + [1.0]
+    assert [f.__name__ for f in funcs] == [*reward_advantages.LOGGED, R.AGGREGATOR]
+    assert weights == [0.0] * len(reward_advantages.LOGGED) + [1.0]
 
 
 def test_values_equal_score_batch_and_advantages_v4():
@@ -69,7 +72,7 @@ def test_values_equal_score_batch_and_advantages_v4():
     legal = legal_gate(ref)
     for name in ("format_ok", "legal", "topo_any"):
         assert got[name] == ref[name].tolist()
-    for name in R.GATED:  # the geometric terms as advantages_v4 sees them: 0 for an illegal rollout
+    for name in reward_advantages.GATED:  # the geometric terms as advantages_v4 sees them: 0 for an illegal rollout
         assert got[name] == (ref[name] * legal).tolist()
     assert got["r_topo"] == topology_reward(ref).tolist()
     assert got[R.AGGREGATOR] == advantages_v4(ref).tolist()
@@ -159,7 +162,7 @@ def test_an_illegal_high_iou_answer_does_not_raise_the_logged_geometry():
             for i, (t, k) in enumerate(zip(texts, keys, strict=True))]
     ref = score_batch(jobs)
     assert all(ref["legal"][i] == 0 and ref["iou_tc"][i] == 1.0 for i in swap)  # the precondition
-    for name in R.GATED:
+    for name in reward_advantages.GATED:
         assert all(hacked[name][i] == 0.0 for i in swap)
         if name != "loc":  # the honest answers are hits: their location term is 0 too
             assert np.mean(hacked[name]) < np.mean(honest[name])

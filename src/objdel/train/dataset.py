@@ -2,8 +2,8 @@
 
 prepare(store, out) reads the item store (objdel.data.store) and writes, per item that has pixels:
 - images/<item_id>.png: the model input of objdel.targets.frame (uint8 RGB; PNG is lossless);
-- caches/<item_id>/<object>.npz: objdel.reward.ExpertCache.save of the frame's rater stack (items with >= 2 raters,
-  rl_eligible); loaded lazily by cache_loader, never serialized into a dataset;
+- caches/<item_id>/<object>.npz: objdel.verify.reward.cache.ExpertCache.save of the frame's rater stack (items with >= 2
+  raters, rl_eligible); loaded lazily by cache_loader, never serialized into a dataset;
 - <dataset>/<split>.jsonl, one record per item: item_id, group_id, W, H, box, scale, raters, targets (one canonical
   text per rater, objdel.targets.build_target with the reward's size rule, None if uncertifiable), rl,
   disagreement (the raters' joint topology answers differ), the SHA-256 of the image pixels and each cache digest;
@@ -18,10 +18,10 @@ Rows (Hugging Face datasets, conversational, one {"type": "image"} placeholder t
 column, decoded lazily from the PNG path):
 - sft_rows: messages = [user: image + PROMPTS[dataset], assistant: target text], one row per voting rater with a
   target. A rater whose whole mask is below the reward's size filter abstains from the topology vote (break-it B2-4,
-  objdel.reward.rater_answers): its own answer can never be topo-any, so SFT does not teach it (10 / 23,469 LIDC
-  train targets; RL keeps the items). All voting raters are rows (not one random rater per epoch): an epoch then
-  shows each item's whole rater distribution, which is the topology histogram the RL reward matches; it needs no
-  custom sampler. Issue I5: with tokenizer and
+  objdel.verify.reward.score.rater_answers): its own answer can never be topo-any, so SFT does not teach it (10 / 23,469
+  LIDC train targets; RL keeps the items). All voting raters are rows (not one random rater per epoch): an epoch then
+  shows each item's whole rater distribution, which is the topology histogram the RL reward matches; it needs no custom
+  sampler. Issue I5: with tokenizer and
   max_tokens (the model's max_completion_length), targets longer than the budget (+1 end-of-turn token) are
   dropped, so SFT never teaches an answer that GRPO generation would truncate.
 - prompt_rows / grpo_rows: prompt (the same user turn), image, key (item_id, the cache key), W, H, names; only
@@ -53,9 +53,8 @@ https://huggingface.co/docs/trl/main/en/dataset_formats
 import hashlib
 import json
 import platform
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
 from importlib.metadata import version
 from itertools import batched
 from multiprocessing import get_context
@@ -71,8 +70,11 @@ from objdel.geom.shape import canonicalize
 from objdel.geom.text import SCHEMAS, parse, serialize
 from objdel.hashing import pixels_sha256
 from objdel.io import read_json, read_jsonl, write_json
-from objdel.reward import ExpertCache, fingerprint, rater_answers, rl_eligible
 from objdel.targets import build_target, frame, min_areas, target_set_hash
+from objdel.verify.reward.cache import ExpertCache, rl_eligible
+from objdel.verify.reward.score import rater_answers
+from objdel.verify.reward.spec import fingerprint
+from objdel.verify.store import voting
 
 PROMPTS = {
     "riga": 'Outline the optic disc and the optic cup in this fundus crop. Answer with JSON only: '
@@ -202,19 +204,6 @@ def target_tokens(tokenizer, text: str) -> int:
     return len(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 
-def _caches(root, key: str, digests: dict[str, str]) -> dict[str, ExpertCache]:
-    return {n: ExpertCache.load(Path(root, "caches", key, f"{n}.npz"), d) for n, d in digests.items()}
-
-
-def voting(root, rec: dict, dataset: str) -> set[int]:
-    """Indices of the raters with a topology vote (objdel.reward.rater_answers; all raters of an item without
-    caches, which has one rater)."""
-    if not rec["caches"]:
-        return set(range(len(rec["raters"])))
-    return {i for rs in rater_answers(_caches(root, rec["item_id"], rec["caches"]), SCHEMAS[dataset]).values()
-            for i in rs}
-
-
 def sft_rows(root, dataset: str, split: str, tokenizer=None, max_tokens: int | None = None) -> Dataset:
     """One row per voting rater's target (B2-4); with tokenizer and max_tokens, answers over the budget are dropped
     (I5)."""
@@ -291,28 +280,6 @@ class OpenOnce:
             out.append(row | {"image": opened[k]})
         self.last = (key, out)
         return out
-
-
-def cache_loader(root, maxsize: int | None = 64) -> Callable[[str], dict[str, ExpertCache]]:
-    """key -> {object: ExpertCache}, checked against the digests in the prepared records (ValueError;
-    StaleCacheError after a reward fingerprint change). The records are the files the manifest lists, each checked
-    against its SHA-256 (I45: no glob, so a stray or edited jsonl is never read). maxsize: LRU size (a RIGA item's
-    caches hold ~9 MB), loaded on first use; None loads every cache now (preload: the LIDC train set is ~0.33 GB)."""
-    root = Path(root)
-    digests = {}
-    for rel, entry in read_json(root / "manifest.json")["files"].items():
-        text = (root / rel).read_bytes()
-        if hashlib.sha256(text).hexdigest() != entry["sha256"]:
-            raise ValueError(f"{root / rel}: not the file the manifest records")
-        digests |= {r["item_id"]: r["caches"] for r in map(json.loads, text.splitlines()) if r["rl"]}
-    if maxsize is None:
-        return {k: _caches(root, k, d) for k, d in digests.items()}.__getitem__
-
-    @lru_cache(maxsize)
-    def load(key: str) -> dict[str, ExpertCache]:
-        return _caches(root, key, digests[key])
-
-    return load
 
 
 class _Render:

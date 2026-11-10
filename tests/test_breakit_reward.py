@@ -6,17 +6,13 @@ import json
 import numpy as np
 import pytest
 
-from objdel.eval import gates, hack_audit, metrics, summarize
-from objdel.reward import (
-    ExpertCache,
-    advantages_v4,
-    score_batch,
-    score_completion,
-    score_mask,
-    sig_id,
-    topology_reward,
-)
-from objdel.reward import cache as cache_mod
+from objdel.eval.audit import hack_audit
+from objdel.verify import gates
+from objdel.verify.metrics import metrics, summarize
+from objdel.verify.reward import cache as cache_mod
+from objdel.verify.reward.advantages import advantages_v4, topology_reward
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_batch, score_completion, score_mask, sig_id
 
 W = 50
 NOD = ("nodule",)
@@ -139,7 +135,7 @@ def prepared(tmp_path, n=3):
 
 def test_b2_8_cache_loader_after_a_fingerprint_change(tmp_path, monkeypatch):
     pytest.importorskip("datasets")
-    from objdel.train import dataset
+    from objdel.verify import store as dataset
     root = prepared(tmp_path)
     monkeypatch.setattr(cache_mod, "fingerprint", lambda: "numpy or opencv pin changed")
     try:
@@ -152,7 +148,7 @@ def test_b2_8_cache_loader_after_a_fingerprint_change(tmp_path, monkeypatch):
 
 def test_cache_loader_lru_eviction_reloads_identically(tmp_path):
     pytest.importorskip("datasets")
-    from objdel.train import dataset
+    from objdel.verify import store as dataset
     load = dataset.cache_loader(prepared(tmp_path), maxsize=2)
     first = load("it0")["nodule"].digest
     for k in ("it1", "it2", "it1"):

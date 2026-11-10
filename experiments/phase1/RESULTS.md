@@ -298,7 +298,7 @@ and local wheel.
 
 ## 8. Phase 2 handoff
 
-**Entry gates** (PLAN §7; checked on val after SFT; `objdel.eval.gates.phase2_entry` decides each dataset on its
+**Entry gates** (PLAN §7; checked on val after SFT; `objdel.verify.gates.phase2_entry` decides each dataset on its
 own, B4-5):
 
 | Gate | Requirement |

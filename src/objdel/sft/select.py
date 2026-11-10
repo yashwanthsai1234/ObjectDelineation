@@ -12,8 +12,8 @@ completions' `.meta.json` stamp (prompts SHA-256, child command) is written befo
 stamp means the file is reused when complete and resumed otherwise (the HF sampler keeps whole finished batches), on a
 retry or a rerun alike; another stamp empties it. An attempt that finishes no new item counts against TRIES.
 SIGTERM / SIGINT (the run cap's `timeout`) kill the child's process group before select_ckpt exits. Score them in
-this process (objdel.eval.metrics: the device work runs in one process, D7), build the B2 signal panel and run G-vision
-on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
+this process (objdel.verify.metrics: the device work runs in one process, D7), build the B2 signal panel and run
+G-vision on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
 G-vision; an unmeasured G-vision fails (--vision is required, --no-vision makes every branch ineligible). Rule R-B
 (prereg.select_rb) picks; none eligible -> the deepest is gated (§6.3). --items N: a seeded subset (SUBSET_SEED)
 for selection only (D13 HF path).
@@ -192,7 +192,8 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
 def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:
     """sample_view on the view (a.items: subset), then metrics -> summarize (eval_run's report form), the
     signal panel and the per-item K-sample mean IoU_tc per structure (G-prior)."""
-    from objdel.eval import signal, summarize
+    from objdel.verify import stats as signal
+    from objdel.verify.metrics import summarize
 
     rows = evaluate.eval_rows(view, a.items)
     results, groups = evaluate.score_items(rows, sample_view(a, branch, rows, out, k), view.resolve())
@@ -203,7 +204,7 @@ def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:
 
 def prior_ci(model_iou: dict, prior_rows: list[dict]) -> dict:
     """G-prior (b): paired per-item (model - image-blind prior) IoU_tc per structure, nodule-cluster bootstrap."""
-    from objdel.eval import signal
+    from objdel.verify import stats as signal
 
     prior = {r["item_id"]: r["iou_tc"] for r in prior_rows}
     ids = [i for i in model_iou if i in prior]
@@ -229,7 +230,7 @@ def hf_check(a, name: str, out: Path) -> dict:
     branch `name` on HF_CHECK_ITEMS seeded shifted-val items at K; vLLM's answers are that branch's shifted samples
     (<out>/<name>/shifted/items.jsonl). Per metric, the per-item mean difference vLLM - HF with the nodule-cluster
     bootstrap 95 % CI (PLAN G-parity: every difference inside its CI); pass = 0 inside every CI."""
-    from objdel.eval import signal
+    from objdel.verify import stats as signal
 
     rows = evaluate.eval_rows(a.shifted, HF_CHECK_ITEMS)
     hf = argparse.Namespace(**vars(a) | {"sampler": "hf"})

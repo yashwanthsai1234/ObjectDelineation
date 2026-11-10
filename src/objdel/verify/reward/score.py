@@ -45,9 +45,8 @@ import numpy as np
 from objdel.geom import engine as _gpucheck
 from objdel.geom.shape import pack_objects
 from objdel.geom.text import GRID, parse
-
-from .cache import ExpertCache, device_many
-from .spec import REWARD_V5
+from objdel.verify.reward.cache import ExpertCache, device_many
+from objdel.verify.reward.spec import REWARD_V5
 
 NUMERIC = ("format_ok", "legal", "iou_tc", "iou_min", "f5", "g_area", "topo_any", "topo_freq", "sig_id", "loc")
 _FAILED = dict.fromkeys(NUMERIC, 0.0) | {"sig_id": -1.0}

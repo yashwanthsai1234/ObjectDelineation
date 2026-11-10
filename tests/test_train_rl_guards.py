@@ -149,11 +149,12 @@ def test_rows_flags_take_exact_hex(capsys, monkeypatch):
 
 def test_train_views_is_gone(capsys, monkeypatch):
     """U42 (B1.5 side): the old multi-root path is deleted, the one-root path stays."""
-    from objdel.train import dataset, serve
+    from objdel.train import dataset
+    from objdel.verify import store
 
     assert "--train-views" in refused(capsys, *TRAIN, "--train-views", "v", monkeypatch=monkeypatch)
-    assert not hasattr(dataset, "grpo_rows_views") and not hasattr(serve, "VIEW_SEP")
-    assert not hasattr(serve, "_tagged")
+    assert not hasattr(dataset, "grpo_rows_views") and not hasattr(store, "VIEW_SEP")
+    assert not hasattr(store, "_tagged")
 
 
 def test_budget_flags_need_a_session_start_and_a_rate(monkeypatch):

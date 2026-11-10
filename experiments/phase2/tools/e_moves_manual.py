@@ -28,10 +28,20 @@ EDITS: list[tuple[str, str, str, str]] = [
     # names that are gone (negative checks) now look in the new homes
     ("E3b", "tests/test_train_rl_guards.py", 'not hasattr(serve, "VIEW_SEP")\n    assert not hasattr(serve, "_tagged")',
      'not hasattr(store, "VIEW_SEP")\n    assert not hasattr(store, "_tagged")'),
-    ("E3b", "tests/test_train_rl_guards.py", '    from objdel.rl import rows as rl_rows\n',
-     '    from objdel.rl import rows as rl_rows\n    from objdel.verify import store\n'),
+    ("E3b", "tests/test_train_rl_guards.py", '    from objdel.train import dataset\n\n    assert "--train-views"',
+     '    from objdel.train import dataset\n    from objdel.verify import store\n\n    assert "--train-views"'),
+    # the move drops a module import that is only partly due (the fixture still returns the old module until E5)
+    ("E3b", "tests/test_p2_breakit_data.py", 'pytest.importorskip("datasets")\n    return dataset',
+     'pytest.importorskip("datasets")\n    from objdel.train import dataset\n    return dataset'),
     ("E5", "tests/test_outline_lengths.py", 'assert not hasattr(dataset, "_tokens") and not hasattr(dataset, "_voting")',
      'assert not any(hasattr(m, n) for m in (policy_rows, verify_store) for n in ("_tokens", "_voting"))'),
+    ("E3b", "tests/test_train_trl.py",
+     '    assert all(hasattr(objdel.eval, n) for n in ("hack_audit", "gates", "metrics", "summarize", "vision"))\n'
+     '    assert not hasattr(objdel.eval, "alarms" + "_for")',
+     '    from objdel.eval import audit\n\n    assert callable(audit.hack_audit)\n'
+     '    assert not hasattr(audit, "alarms" + "_for")'),
+    ("E3b", "tests/test_train_trl.py", "from pathlib import Path\n\n    import objdel.eval\n    from objdel.train import callbacks\n",
+     "from pathlib import Path\n\n    from objdel.train import callbacks\n"),
     ("E3c", "tests/test_train_trl.py",
      '    assert all(hasattr(objdel.eval, n) for n in ("hack_audit", "gates", "metrics", "summarize", "vision"))\n'
      '    assert not hasattr(objdel.eval, "alarms" + "_for")',
@@ -42,18 +52,26 @@ EDITS: list[tuple[str, str, str, str]] = [
      'CERTIFY = f"""\nfrom objdel.geom.certify import certify\n'),
     ("E5", "tests/test_p2_train_rl.py", "from objdel.train import rewards\n", "from objdel.rl import reward as rewards\n"),
     ("E5", "tests/test_trl_adapter.py", '"from objdel.train import trl_adapter as T\\n"', '"from objdel.rl import trl_adapter as T\\n"'),
-    ("E5", "tests/test_p2_eval.py", '"from objdel.eval import gates, metrics, vision; print(vision.decide(1, 1, 1)[\'action\'])"',
+    ("E5", "tests/test_p2_eval.py", '"from objdel.eval import vision; print(vision.decide(1, 1, 1)[\'action\'])"',
      '"from objdel.policy import vision; print(vision.decide(1, 1, 1)[\'action\'])"'),
     ("E5", "tests/test_nvtx.py", '"\\n\\ndef _planted():\\n    from objdel.train import nvtx\\n    return nvtx\\n"',
      '"\\n\\ndef _planted():\\n    from objdel.policy import marks\\n    return marks\\n"'),
-    ("E5", "tests/test_nvtx.py", 'replace("from objdel.train import nvtx", "from ..train import nvtx")',
-     'replace("from objdel.policy import marks", "from ..policy import marks")'),
+    ("E5", "tests/test_nvtx.py", 'replace("from objdel.train import nvtx", "from ...train import nvtx")',
+     'replace("from objdel.policy import marks", "from ...policy import marks")'),
     # the NVTX name scan walked train/; its code now sits in policy/ and rl/
     ("E5", "tests/test_nvtx.py", "    import objdel.train\n\n    names, bad = set(), []\n"
      "    for f in Path(objdel.train.__file__).parent.glob(\"*.py\"):",
      "    import objdel.policy\n    import objdel.rl\n\n    names, bad = set(), []\n"
      "    pkgs = (Path(objdel.policy.__file__).parent, Path(objdel.rl.__file__).parent)\n"
      "    for f in (f for d in pkgs for f in d.glob(\"*.py\")):"),
+    # code in strings imported the package re-exports that E3b removes (R-1): name the defining modules
+    ("E3b", "tests/test_reward.py", 'from objdel.verify.reward import ExpertCache\\n"',
+     'from objdel.verify.reward.cache import ExpertCache\\n"'),
+    ("E3b", "tests/test_reward.py", "from objdel.verify.reward import NUMERIC, ExpertCache, advantages_v4, score_batch\n",
+     "from objdel.verify.reward.advantages import advantages_v4\nfrom objdel.verify.reward.cache import ExpertCache\n"
+     "from objdel.verify.reward.score import NUMERIC, score_batch\n"),
+    ("E3b", "tests/test_p2_eval.py", '"from objdel.eval import gates, metrics, vision; print(',
+     '"from objdel.eval import vision; print('),
     # the seam test: the package API is geom (polygonize) plus the defining modules
     ("E3a", "tests/test_rings.py", "        from objdel.checker import bitquads  # noqa: F401\n",
      "        from objdel.geom import bitquads  # noqa: F401\n"),
@@ -66,11 +84,8 @@ EDITS: list[tuple[str, str, str, str]] = [
 ]
 
 # README's example imported package re-exports, which phase E removes (R-1): name the defining modules
-EDITS.append(("E3c", "README.md", "from objdel.verify.reward import ExpertCache, score_completion\n"
-              "from objdel.data.targets import build_target, min_areas\n",
-              "from objdel.data.targets.build import build_target, min_areas\n"
-              "from objdel.verify.reward.cache import ExpertCache\n"
-              "from objdel.verify.reward.score import score_completion\n"))
+EDITS.append(("E3c", "README.md", "from objdel.data.targets import build_target, min_areas\n",
+              "from objdel.data.targets.build import build_target, min_areas\n"))
 
 # the one test without the fixture keeps the module alias
 EDITS.append(("E5", "tests/test_p2_breakit_data.py", "t = D._no_holes(", "t = sft_rows._no_holes("))

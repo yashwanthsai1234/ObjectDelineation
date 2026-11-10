@@ -71,7 +71,7 @@ def val_items(root, ds: str, n: int = 20) -> list[tuple]:
     from pathlib import Path
 
     from objdel.geom.text import SCHEMAS
-    from objdel.reward import ExpertCache
+    from objdel.verify.reward.cache import ExpertCache
 
     root, names = Path(root), SCHEMAS[ds]
     out = []

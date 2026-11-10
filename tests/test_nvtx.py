@@ -753,7 +753,8 @@ def built(monkeypatch, tmp_path):
 
     from objdel.core.spec import TrainerFlags
     from objdel.rl.build import build_trainer
-    from objdel.train import configs, fast, rewards, serve
+    from objdel.train import configs, fast, rewards
+    from objdel.verify import store as serve
 
     got = []
 
@@ -838,17 +839,18 @@ def test_train_rl_flags():
         assert e.value.code == 2
 
 
-# S12: objdel.reward never imports objdel.train -------------------------------------------------------------------
+# S12: objdel.verify.reward never imports objdel.train -----------------------------------------------------------------
 
 
-def train_imports(folder):
-    """Imports of objdel.train anywhere in the modules under `folder` (function bodies too), as file:line."""
+def train_imports(folder, package="objdel.verify.reward"):
+    """Imports of objdel.train anywhere in the modules of `package` under `folder` (function bodies too), as
+    file:line."""
     import ast
     from pathlib import Path
 
     hits = []
     for f in sorted(Path(folder).rglob("*.py")):
-        pkg = ["objdel", *f.relative_to(Path(folder).parent).parent.parts]  # the module's package, e.g. objdel.reward
+        pkg = [*package.split("."), *f.relative_to(folder).parent.parts]  # the module's package
         for node in ast.walk(ast.parse(f.read_text())):
             if isinstance(node, ast.Import):
                 mods = [n.name for n in node.names]
@@ -867,14 +869,14 @@ def test_reward_never_imports_train(tmp_path):
     import shutil
     from pathlib import Path
 
-    import objdel.reward
+    import objdel.verify.reward
 
-    src = Path(objdel.reward.__file__).parent
+    src = Path(objdel.verify.reward.__file__).parent
     assert train_imports(src) == []
     bad = tmp_path / "reward"
     shutil.copytree(src, bad, ignore=shutil.ignore_patterns("__pycache__"))
     score = bad / "score.py"
     score.write_text(score.read_text() + "\n\ndef _planted():\n    from objdel.train import nvtx\n    return nvtx\n")
     assert [h.split(":")[0] for h in train_imports(bad)] == ["score.py"]
-    score.write_text(score.read_text().replace("from objdel.train import nvtx", "from ..train import nvtx"))
+    score.write_text(score.read_text().replace("from objdel.train import nvtx", "from ...train import nvtx"))
     assert [h.split(":")[0] for h in train_imports(bad)] == ["score.py"]

@@ -15,7 +15,8 @@ import pytest
 
 from experiments.phase2.perf import bench_checker as B
 from objdel import _gpucheck
-from objdel.reward import ExpertCache, score_many
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_many
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "experiments/phase2/perf/bench_checker.py"
@@ -175,7 +176,7 @@ def test_replay_arm_runs_without_cv2_or_scipy(tmp_path):
     p = _replay_child(f"import runpy; runpy.run_path({str(SCRIPT)!r})", tmp_path)  # import alone
     assert p.returncode == 0, p.stderr
 
-    fake = tmp_path / "fake"  # the pre-E old tree: objdel with only _gpucheck, no objdel.geom or objdel.reward
+    fake = tmp_path / "fake"  # the pre-E old tree: objdel with only _gpucheck, no objdel.geom or objdel.verify.reward
     (fake / "objdel").mkdir(parents=True)
     (fake / "objdel/__init__.py").write_text("")
     (fake / "objdel/_gpucheck.py").write_text(textwrap.dedent(f"""

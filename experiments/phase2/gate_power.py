@@ -36,8 +36,8 @@ from typing import NamedTuple
 import numpy as np
 
 from objdel.data.windows import OFFSET_EDGES, SIZE_EDGES  # B1.1 cells
-from objdel.eval import signal
 from objdel.io import read_json, read_jsonl
+from objdel.verify import stats as signal
 
 K = 8
 MISS = signal.MISS

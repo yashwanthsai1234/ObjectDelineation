@@ -1,7 +1,7 @@
 """The cache EDT on the engine (Phase D, D7; tests P08, U15, D-R06 and D-R07 of Implementation.md D.9, B15 of
 D.spec.md).
 
-`objdel.reward.cache.edt` calls `gc.edt`, the table build's integer EDT kernels on one map. The oracle is scipy's
+`objdel.verify.reward.cache.edt` calls `gc.edt`, the table build's integer EDT kernels on one map. The oracle is scipy's
 exact transform cast to float32; equality is on bytes (so -0.0 and NaN would show). The stored caches stay valid only
 if the fingerprint and every value `ExpertCache.build` computes are unchanged, so the data test rebuilds real caches
 with both transforms.
@@ -13,10 +13,10 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
-import objdel.reward as R
 from objdel.geom import engine as gc
-from objdel.reward import ExpertCache
-from objdel.reward import cache as rc
+from objdel.verify.reward import cache as rc
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.spec import fingerprint
 
 DATA = Path(os.environ.get("OBJDEL_DATA_ROOT", Path(__file__).resolve().parents[1] / "data"))
 # the fingerprint before D7 (numpy 2.5.4, scipy 1.18.1)
@@ -93,7 +93,7 @@ def test_edt_input_limits():
 
 def test_fingerprint_is_unchanged():
     """D-R06: the fingerprint the stored caches carry; D7 replaces scipy's EDT by the engine's without changing it."""
-    assert R.fingerprint() == FINGERPRINT
+    assert fingerprint() == FINGERPRINT
 
 
 def _caches(ds: str, limit: int) -> list[Path]:

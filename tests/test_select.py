@@ -1,4 +1,4 @@
-"""objdel.eval.select (Implementation.md A4): the medoid answer and the pixel vote, chosen with no doctor masks."""
+"""objdel.verify.select (Implementation.md A4): the medoid answer and the pixel vote, chosen with no doctor masks."""
 
 import inspect
 
@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from test_eval import disk, text_of
 
-from objdel.eval import metrics
-from objdel.eval.select import medoid, vote_mask
-from objdel.reward import ExpertCache
+from objdel.verify.metrics import metrics
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.select import medoid, vote_mask
 
 M3 = np.array([[1, .5, .5], [.5, 1, .9], [.5, .9, 1]])
 

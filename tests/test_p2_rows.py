@@ -65,7 +65,7 @@ def test_manifest_and_rows_follow_the_schedule(built, world):  # noqa: F811
 
 
 def test_each_window_has_its_own_png_and_caches_and_they_load(built):
-    from objdel.reward import ExpertCache
+    from objdel.verify.reward.cache import ExpertCache
     recs = Q.records(built.out)
     uniq = {r["item_id"]: r for r in recs}
     pngs = {built.out / "images" / f"{i}.png" for i in uniq}
@@ -81,9 +81,10 @@ def test_each_window_has_its_own_png_and_caches_and_they_load(built):
 
 def test_cache_loader_and_grpo_rows_read_the_root_in_schedule_order(built, world):  # noqa: F811
     from objdel.train import dataset as D
+    from objdel.verify import store as verify_store
     rows = D.grpo_rows(built.out, "lidc", "train", oversample=1)
     assert list(rows["key"]) == [w.window_id for w in world.sched]
-    load = D.cache_loader(built.out)
+    load = verify_store.cache_loader(built.out)
     assert load(rows["key"][0])
 
 

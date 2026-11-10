@@ -12,8 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from experiments.cuda_checker import compare as C
 from objdel.geom import engine as gc
+from tests.oracles import cuda_parity as C
 
 
 def _gpus() -> int:

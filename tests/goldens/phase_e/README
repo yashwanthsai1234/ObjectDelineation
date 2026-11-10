@@ -111,3 +111,11 @@ objdel.infra.vast.ledger and objdel.infra.bundle; git_sha in objdel.core.provena
 HARD_STOP 21.4 in objdel.infra.vast.ledger; objdel.infra.vast.remote loses code_sha_text). old_names re-recorded on the
 merge tree: final_eval loses code_sha (train_sft and vast/policy were already CLI-only). Goldens 1-6, host_syncs and
 tests_import_experiments unchanged.
+E3b (impl2-emoves2, verify): module_strings_stale re-recorded on its own tree: it gains the tool's planted old names
+that E3b retires (e_moves.py objdel.eval.metrics, e_moves_manual.py objdel.train.serve, test_e_moves.py objdel.reward)
+and loses e_moves_manual's targets that now exist (objdel.policy, rl, sft, verify.reward, verify.store) and
+reward_variants' objdel.reward.annotators (reworded); docstrings that named reward or eval re-exports now name the
+defining module. old_names re-recorded for the split modules that stay: train/dataset.py loses _caches, cache_loader
+and voting, train/rewards.py loses LOGGED, GATED and logged_terms (all in objdel.verify.store and
+objdel.verify.reward.advantages); train/serve.py is gone and keeps its recorded names (test_move_complete finds each
+in objdel.verify.store). Goldens 1-6, host_syncs and tests_import_experiments unchanged.

@@ -184,6 +184,13 @@ def test_module_strings_resolve():
     assert set(unresolved_module_strings()) <= stale
 
 
+def test_eval_init_imports_nothing():
+    """U10 (E3b): objdel/eval/__init__.py is a docstring only, so no re-export keeps a moved verify module in eval
+    (E5 deletes the file)."""
+    init = SRC / "eval" / "__init__.py"
+    assert not init.exists() or not [n for n in parse(init).body if isinstance(n, ast.Import | ast.ImportFrom)]
+
+
 def test_g_probe_lr_not_read():
     """The pre-registered record `prereg.G_PROBE` is read for no learning rate; `configs.rl_lr` is the one source."""
     bad = []

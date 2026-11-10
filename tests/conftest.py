@@ -102,10 +102,10 @@ def char_model(tmp_path_factory):
 
 @pytest.fixture
 def clean_store():
-    """An empty objdel.train.serve STORE before and after the test, and gc unfrozen (train_rl freezes it)."""
+    """An empty objdel.verify.store STORE before and after the test, and gc unfrozen (train_rl freezes it)."""
     import gc
 
-    from objdel.train import serve
+    from objdel.verify import store as serve
 
     serve.STORE.clear()
     yield

@@ -7,9 +7,9 @@ import cv2
 import pytest
 from scipy import ndimage
 
-from objdel.eval import metrics
 from objdel.geom.certify import certify
-from objdel.reward import ExpertCache
+from objdel.verify.metrics import metrics
+from objdel.verify.reward.cache import ExpertCache
 from tests.test_eval import nodule_raters, riga_raters, targets
 
 CASES = (("lidc", nodule_raters, 50), ("riga", riga_raters, 100))

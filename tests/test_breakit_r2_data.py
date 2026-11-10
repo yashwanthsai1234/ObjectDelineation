@@ -5,7 +5,7 @@ import pytest
 from objdel.data import coverage as Cov
 from objdel.data import quality as Q
 from objdel.data import windows as Wn
-from objdel.eval import select
+from objdel.verify import select
 
 
 def _fe():

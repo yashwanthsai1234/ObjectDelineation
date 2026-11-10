@@ -41,10 +41,9 @@ import numpy as np
 
 from objdel.geom import engine as _gpucheck
 from objdel.geom.topology import betti
+from tests.oracles import cuda_parity as C
 from tests.oracles.bitquad_oracle import bitquads
 from tests.oracles.polygonize_oracle import polygonize
-
-from . import compare as C
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent

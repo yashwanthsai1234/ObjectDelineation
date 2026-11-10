@@ -73,9 +73,8 @@ from typing import Any, Protocol
 import pandas as pd
 from trl.data_utils import prepare_multimodal_messages
 
-from objdel.reward import REWARD_V4
-
-from . import configs, rewards
+from objdel.train import configs, rewards
+from objdel.verify.reward.spec import REWARD_V4
 
 G = REWARD_V4.group
 
@@ -185,7 +184,7 @@ def build_prompt(row, processor) -> tuple[str, list]:
 
 def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = None) -> list[dict]:
     """The sampler child's completions -> eval_run rows {"item_id", "samples", "truncated", "tokens"} (tokens:
-    completion length in token ids, for eval.metrics' token stats; samples in k order, items in first-seen order).
+    completion length in token ids, for verify.metrics' token stats; samples in k order, items in first-seen order).
     ValueError unless every id has exactly the exported n samples k = 0 .. n-1, each once, and (with ids, the
     exported keys) the ids are exactly those (BK2-3, BK3-7: a cut or doubled file would change K silently)."""
     by: dict[str, dict[int, dict]] = {}

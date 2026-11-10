@@ -320,9 +320,10 @@ def run_rl(a) -> dict:
     merge the LoRA, save <out>/final, write <out>/rl.json; returns the rl.json document."""
     from transformers.trainer_utils import get_last_checkpoint
 
-    from objdel.reward import REWARDS, reward_fingerprint
-    from objdel.train import configs, dataset, record, serve
+    from objdel.train import configs, dataset, record
     from objdel.train.callbacks import ExpectStep1, LocGuard
+    from objdel.verify import store as serve
+    from objdel.verify.reward.spec import REWARDS, reward_fingerprint
 
     stop = session_budget(a)  # every refusal before any model or engine load, the budget first
     check_flags(a)

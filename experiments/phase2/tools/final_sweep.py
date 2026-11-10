@@ -314,7 +314,7 @@ def record(root: Path) -> dict:
     rec.update(tracked=len(tracked), lab=sum("/lab/" in x for x in tracked),
                phase0=sum(x.startswith(RETIRED_TREES[0] + "/") for x in tracked))
     try:
-        import objdel.reward.spec as spec
+        import objdel.verify.reward.spec as spec
 
         rec["fingerprint"] = spec.fingerprint()
     except Exception as e:  # noqa: BLE001 - the record is a report, not a gate on import health

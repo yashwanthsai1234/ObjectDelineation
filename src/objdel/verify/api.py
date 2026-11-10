@@ -1,7 +1,7 @@
 """The verifier API: score answers against the expert caches of a prepared view root, stamped with the reward spec.
 
 API_VERSION: the minor number grows with additive fields only; the major number grows with a breaking change.
-Scoring goes through objdel.train.rewards.score_jobs and logged_terms, the functions TRLReward calls, so the
+Scoring goes through objdel.verify.reward's score_batch and logged_terms, the functions TRLReward calls, so the
 service and the trainer have one scoring path (one CUDA checker call per batch). A model outline that does not parse
 is a normal result (ScoreResult.error = the parser code); a batch the service cannot score is a VerifyError.
 
@@ -15,8 +15,10 @@ from importlib.metadata import version
 from pathlib import Path
 
 from objdel.geom import engine as _gpucheck
-from objdel.reward import REWARD_V4, TERMS, fingerprint
-from objdel.train import rewards, serve
+from objdel.verify import store
+from objdel.verify.reward.advantages import logged_terms
+from objdel.verify.reward.score import score_batch
+from objdel.verify.reward.spec import REWARD_V4, TERMS, fingerprint
 
 API_VERSION = "1.0"
 REWARDS = {"reward_v4": REWARD_V4}
@@ -74,8 +76,8 @@ class Verifier:
             raise VerifyError("spec_mismatch", f"unknown reward {reward!r}; this service has {sorted(REWARDS)}")
         self.reward, self.device = REWARDS[reward], device
         root = Path(view_root)
-        serve.preload(root, sorted({p.parent.name for p in root.glob("*/*.jsonl")}))
-        self._caches = serve.loader(root)
+        store.preload(root, sorted({p.parent.name for p in root.glob("*/*.jsonl")}))
+        self._caches = store.loader(root)
         self.stamp = Stamp(API_VERSION, reward, fingerprint(), _gpucheck.build(), version("objdel"))
 
     def score(self, items: Sequence[ScoreItem]) -> list[ScoreResult]:
@@ -87,10 +89,10 @@ class Verifier:
         jobs = [(i.text, i.truncated, tuple(c), c, *c[next(iter(c))].union.shape[::-1])
                 for i, c in zip(items, caches, strict=True)]
         try:
-            T = rewards.score_jobs(jobs)
+            T = score_batch(jobs)
         except RuntimeError as e:
             raise VerifyError("device_error", str(e)) from e
-        terms = rewards.logged_terms(T)
+        terms = logged_terms(T)
         w = dict(zip(TERMS, self.reward.weights, strict=True))
         return [ScoreResult(i.id, None if T["error"][j] else float(sum(w[k] * terms[k][j] for k in w)),
                             {k: float(v[j]) for k, v in terms.items()}, T["defects"][j], T["error"][j] or None)

@@ -1,4 +1,5 @@
-"""objdel.reward: reward v4 cache, terms, completion scoring, advantages, determinism (plan §4.3; no data needed).
+"""objdel.verify.reward: reward v4 cache, terms, completion scoring, advantages, determinism (plan §4.3; no data
+needed).
 
 Data-backed gates (K8, K8b, K9, R3, R4, R5, local gradient) are in test_reward_gates.py."""
 import json
@@ -17,20 +18,12 @@ from hypothesis import strategies as st
 from oracles import reward_harness as H
 from oracles import reward_reference as ref
 
-import objdel.reward as R
 from objdel.geom.shape import to_mask
-from objdel.reward import (
-    REWARD_V4,
-    ExpertCache,
-    advantages_v4,
-    loo_bias,
-    rl_eligible,
-    score_batch,
-    score_completion,
-    score_mask,
-    topology_reward,
-)
-from objdel.reward import cache as cache_mod
+from objdel.verify.reward import cache as cache_mod
+from objdel.verify.reward.advantages import advantages_v4, legal_gate, loo_bias, topology_reward, topology_valid
+from objdel.verify.reward.cache import ExpertCache, StaleCacheError, rl_eligible, voters
+from objdel.verify.reward.score import NUMERIC, rater_answers, score_batch, score_completion, score_many, score_mask
+from objdel.verify.reward.spec import CACHE_SPEC, REWARD_V4, TERMS, fingerprint
 
 
 def disk(n, r, cy=None, cx=None):
@@ -63,9 +56,9 @@ def test_frozen_constants_match_plan():
     v = REWARD_V4
     assert (v.weights, v.floors, v.c_topo, v.lam, v.eps, v.group, v.drop_spread) == (
         (0.3, 0.3, 0.1, 0.3), (0.05, 0.05, 0.25, 0.05), 2.0, 0.5, 0.1, 8, 1e-2)
-    c = R.CACHE_SPEC
+    c = CACHE_SPEC
     assert (v.iou_gate, c.expert_score, c.tau_floor, c.tau_quantile) == (0.5, 0.95, 1.0, 95.0)
-    assert R.TERMS == ("iou_tc", "f5", "legal", "g_area")
+    assert TERMS == ("iou_tc", "f5", "legal", "g_area")
 
 
 def test_single_rater_items_are_not_rl_eligible():
@@ -162,12 +155,12 @@ def test_save_load_roundtrip_tamper_and_fingerprint(tmp_path, three, monkeypatch
     stale = parts | {"t5": np.float64(123.0), "fingerprint": np.str_("old")}
     old_digest = cache_mod._digest(parts["raters"], c.tau, 123.0, "old")
     np.savez_compressed(tmp_path / "old.npz", **(stale | {"sha256": np.str_(old_digest)}))
-    with pytest.raises(R.StaleCacheError, match="fingerprint"):  # valid file of another reward fingerprint (B2-8)
+    with pytest.raises(StaleCacheError, match="fingerprint"):  # valid file of another reward fingerprint (B2-8)
         ExpertCache.load(tmp_path / "old.npz", expected_digest=old_digest)
     rebuilt = ExpertCache.load(tmp_path / "old.npz", expected_digest=old_digest, rebuild=True)
     assert rebuilt.t5 == c.t5 and rebuilt.digest == c.digest  # rebuilt from the verified masks
     monkeypatch.setattr(cache_mod, "fingerprint", lambda: "changed constants")
-    with pytest.raises(R.StaleCacheError):
+    with pytest.raises(StaleCacheError):
         ExpertCache.load(tmp_path / "c.npz")
     assert ExpertCache.load(tmp_path / "c.npz", rebuild=True).digest != c.digest  # under the new fingerprint
 
@@ -177,12 +170,12 @@ def test_fingerprint_covers_every_library_of_the_stored_values(monkeypatch):
     fingerprint, so stored caches are refused as stale (B2-8)."""
     import cv2
     import scipy
-    base = R.fingerprint()
+    base = fingerprint()
     for mod in (np, cv2, scipy):
         with monkeypatch.context() as m:
             m.setattr(mod, "__version__", "0.0.0-test")
-            assert R.fingerprint() != base, mod.__name__
-    assert R.fingerprint() == base
+            assert fingerprint() != base, mod.__name__
+    assert fingerprint() == base
 
 
 def test_pickle_rederives_the_cache(three):
@@ -194,7 +187,7 @@ def test_pickle_rederives_the_cache(three):
 
 def test_cache_build_is_deterministic_across_interpreters(three):
     st_, c = three
-    code = ("import numpy as np\nfrom objdel.reward import ExpertCache\n"
+    code = ("import numpy as np\nfrom objdel.verify.reward.cache import ExpertCache\n"
             "y, x = np.mgrid[:60, :60]\nd = np.hypot(y - 29.5, x - 29.5)\n"
             "print(ExpertCache.build(np.stack([d <= 18, d <= 19, d <= 20])).digest)")
     out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
@@ -273,20 +266,20 @@ def test_sub_filter_raters_abstain_from_topology():
         assert (t.sig, t.topo_freq, t.iou_tc) == (rt["sig"], rt["topo_freq"], pytest.approx(rt["iou_tc"], abs=1e-12))
     both = ExpertCache.build(np.stack([tiny, tiny]))
     assert both.voters == (0, 1) and score_mask(tiny, both).topo_freq == 1.0  # all abstain: the unanimous answer
-    assert R.voters([(), ()]) == (0, 1) and R.voters([(1,), (), (0, 0)]) == (0, 2)
+    assert voters([(), ()]) == (0, 1) and voters([(1,), (), (0, 0)]) == (0, 2)
 
 
 def test_rater_answers_are_joint_over_voters_and_check_rater_counts(riga_like):
     _, _, caches, _ = riga_like
-    assert R.rater_answers(caches, ("disc", "cup")) == {((0,), (0,)): [0, 1], ((0,), (1,)): [2]}
+    assert rater_answers(caches, ("disc", "cup")) == {((0,), (0,)): [0, 1], ((0,), (1,)): [2]}
     tiny = np.zeros((50, 50), bool)
     tiny[20:22, 20:22] = True
     cup = ExpertCache.build(np.stack([caches["cup"].raters[0], caches["cup"].raters[1], tiny]))
-    assert R.rater_answers({"disc": caches["disc"], "cup": cup}, ("disc", "cup")) == {((0,), (0,)): [0, 1]}
+    assert rater_answers({"disc": caches["disc"], "cup": cup}, ("disc", "cup")) == {((0,), (0,)): [0, 1]}
     two = ExpertCache.build(caches["cup"].raters[:2])
     for pair in ({"disc": caches["disc"], "cup": two}, {"disc": two, "cup": caches["cup"]}):  # B2-9
         with pytest.raises(ValueError, match="rater counts"):
-            R.rater_answers(pair, ("disc", "cup"))
+            rater_answers(pair, ("disc", "cup"))
 
 
 def test_area_guard(three):
@@ -347,18 +340,18 @@ def test_contract_keys_and_failures(riga_like):
     discs, cups, caches, _ = riga_like
     names = ("disc", "cup")
     ok = score_completion(text({"disc": discs[0], "cup": cups[0]}), False, names, caches, 50, 50)
-    assert set(ok) == set(R.NUMERIC) | {"error", "defects"}
+    assert set(ok) == set(NUMERIC) | {"error", "defects"}
     assert ok["format_ok"] == ok["legal"] == 1.0 and ok["error"] == "" and ok["defects"] == {}
-    (row, objs), = R.score_many([(text({"disc": discs[0], "cup": cups[0]}), False, names, caches, 50, 50)])
+    (row, objs), = score_many([(text({"disc": discs[0], "cup": cups[0]}), False, names, caches, 50, 50)])
     assert row == ok  # one pass: terms and ObjectTerms
     assert objs == {n: score_mask(raster(p[0]), caches[n]) for n, p in (("disc", discs), ("cup", cups))}
-    assert R.score_many([("hello", False, names, caches, 50, 50)])[0][1] == {}
+    assert score_many([("hello", False, names, caches, 50, 50)])[0][1] == {}
     for bad, trunc, code in ((text({"disc": discs[0], "cup": cups[0]}), True, "truncated"),
                              ('{"disc":[],"cup":[', False, "incomplete"), ("hello", False, "syntax"),
                              (text({"cup": cups[0], "disc": discs[0]}), False, "keys")):
         r = score_completion(bad, trunc, names, caches, 50, 50)
         assert r["error"] == code and r["format_ok"] == r["legal"] == 0.0 and r["sig_id"] == -1.0
-        assert all(r[k] == 0.0 for k in R.NUMERIC if k != "sig_id")
+        assert all(r[k] == 0.0 for k in NUMERIC if k != "sig_id")
 
 
 def test_illegal_completion_keeps_terms_but_is_not_legal(riga_like):
@@ -367,9 +360,9 @@ def test_illegal_completion_keeps_terms_but_is_not_legal(riga_like):
     r = score_completion(text({"disc": [(bowtie, [])], "cup": cups[0]}), False, ("disc", "cup"), caches, 50, 50)
     assert r["format_ok"] == 1.0 and r["legal"] == 0.0 and r["defects"] and r["error"] == ""
     a = advantages_v4({k: np.repeat(r[k], 8) if k != "legal" else np.r_[0.0, np.ones(7)]
-                       for k in R.NUMERIC} | {"iou_tc": np.r_[0.9, np.full(7, 0.5)]})
+                       for k in NUMERIC} | {"iou_tc": np.r_[0.9, np.full(7, 0.5)]})
     b = advantages_v4({k: np.repeat(r[k], 8) if k != "legal" else np.r_[0.0, np.ones(7)]
-                       for k in R.NUMERIC} | {"iou_tc": np.r_[0.1, np.full(7, 0.5)]})
+                       for k in NUMERIC} | {"iou_tc": np.r_[0.1, np.full(7, 0.5)]})
     assert np.array_equal(a, b) and a[0] < a[1:].min()  # an illegal rollout's terms do not count
 
 
@@ -388,7 +381,7 @@ def test_iou_min_gates_topology_per_object(riga_like):
     assert missed["topo_any"] == 1.0 and missed["iou_min"] == 0.0 and missed["iou_tc"] >= 0.5
     good = score_completion(text({"disc": discs[0], "cup": cups[0]}), False, names, caches, 50, 50)
     assert good["iou_min"] == 1.0
-    T = {k: np.array([good[k]] * 7 + [missed[k]]) for k in R.NUMERIC}
+    T = {k: np.array([good[k]] * 7 + [missed[k]]) for k in NUMERIC}
     assert topology_reward(T)[7] == 0.0 and topology_reward(T)[0] > 0
     single = {k: v for k, v in T.items() if k != "iou_min"}  # terms without iou_min: gated on iou_tc (one object)
     assert topology_reward(single)[7] > 0
@@ -430,7 +423,7 @@ def test_score_batch_matches_jobs_in_order_and_concurrent_calls(riga_like):
     assert [serial["topo_freq"][i] for i in range(24)] == [score_completion(*j)["topo_freq"] for j in jobs]
     with ThreadPoolExecutor(4) as pool:  # concurrent calls share the checker
         for t in pool.map(score_batch, [jobs] * 4):
-            assert all(np.array_equal(serial[k], t[k]) for k in R.NUMERIC) and serial["error"] == t["error"]
+            assert all(np.array_equal(serial[k], t[k]) for k in NUMERIC) and serial["error"] == t["error"]
 
 
 # ------------------------------------------------------------------ advantages
@@ -542,7 +535,9 @@ def test_dark_room_noise_on_a_constant_term_moves_advantages_little(term, bound)
 K10_SNIPPET = """
 import hashlib, json
 import numpy as np
-from objdel.reward import NUMERIC, ExpertCache, advantages_v4, score_batch
+from objdel.verify.reward.advantages import advantages_v4
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import NUMERIC, score_batch
 def digest(t):
     h = hashlib.sha256()
     for k in NUMERIC:
@@ -595,9 +590,9 @@ def test_legal_gate_is_the_one_legality_rule():
     rng = np.random.default_rng(0)
     T = {k: rng.uniform(0.6, 1.0, 8) for k in ("iou_tc", "iou_min", "f5", "g_area", "topo_freq")}
     T |= {"legal": np.array([1.0] * 6 + [0.0, 0.0]), "topo_any": np.ones(8), "sig_id": np.zeros(8)}
-    assert R.legal_gate(T).tolist() == [True] * 6 + [False] * 2
-    assert not R.topology_valid(T)[6:].any() and R.topology_valid(T)[:6].all()
+    assert legal_gate(T).tolist() == [True] * 6 + [False] * 2
+    assert not topology_valid(T)[6:].any() and topology_valid(T)[:6].all()
     U = {k: v.copy() for k, v in T.items()}
     for k in ("iou_tc", "f5", "g_area"):
         U[k][6:] = rng.uniform(0, 1, 2)  # illegal rollouts' terms are not seen by the advantage
-    assert np.array_equal(R.advantages_v4(T), R.advantages_v4(U))
+    assert np.array_equal(advantages_v4(T), advantages_v4(U))

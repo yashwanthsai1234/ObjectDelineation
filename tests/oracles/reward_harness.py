@@ -3,7 +3,7 @@ perturbations, realistic honest GRPO rollouts, the adversary suite, K9 pairs and
 
 Ported from the lab (archive/phase1_lab/t_reward: rewardcore/perturb.py, scripts/honest.py,
 scripts/adversaries.py, scripts/iter4_adversaries.py, scripts/k9_discrimination.py, scripts/k9_v3.py) onto the
-production objdel.reward. Self-contained (numpy, scipy, OpenCV, objdel) so it can be imported both as
+production objdel.verify.reward. Self-contained (numpy, scipy, OpenCV, objdel) so it can be imported both as
 `oracles.reward_harness` (pytest) and `tests.oracles.reward_harness` (experiments: one harness for the pytest gates
 and the full-data gate tables, so they cannot drift; ISSUES I19).
 """
@@ -15,8 +15,13 @@ import numpy as np
 from scipy import ndimage
 
 from objdel.geom.topology import instance_topology, min_area, signature
-from objdel.reward import ExpertCache, advantages_v4, score_mask, sig_id, voters
-from objdel.reward.cache import edt  # exact EDT; 1e6 where no zero pixel exists
+from objdel.verify.reward.advantages import advantages_v4
+from objdel.verify.reward.cache import (
+    ExpertCache,
+    edt,  # exact EDT; 1e6 where no zero pixel exists
+    voters,
+)
+from objdel.verify.reward.score import score_mask, sig_id
 
 G = 8
 # packed per-rollout terms (one row per rollout)
@@ -43,7 +48,7 @@ def subset(ds: str, key: str) -> str:
 def load_lidc_disagreement(fixtures_dir: Path) -> dict[str, np.ndarray]:
     """Full-LIDC train items (no duplicated reader, k >= 2) whose voting raters' size-filtered signatures differ
     (lab ITERATION3 R6 / M3 census: 251 train items; 239 once raters whose whole mask is below the size filter
-    abstain, objdel.reward.voters: on the other 12 the abstainer was the only different answer)."""
+    abstain, objdel.verify.reward.cache.voters: on the other 12 the abstainer was the only different answer)."""
     fixtures_dir = Path(fixtures_dir)
     with open(fixtures_dir / "lidc_full_meta.csv") as f:
         meta = {r["key"]: r for r in csv.DictReader(f)}

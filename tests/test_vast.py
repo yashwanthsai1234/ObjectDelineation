@@ -1456,7 +1456,7 @@ def test_run_spec_json_holds_the_spec_code_and_versions_and_never_overwrites_ano
     from importlib.metadata import version
 
     from objdel.core.spec import RunSpec, load_spec
-    from objdel.reward.spec import fingerprint
+    from objdel.verify.reward.spec import fingerprint
 
     monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
     (tmp_path / "pyproject.toml").touch()  # repo_root refuses an OBJDEL_REPO without one (E2)

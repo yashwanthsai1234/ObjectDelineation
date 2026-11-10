@@ -8,10 +8,10 @@ from test_data_windows import lidc_item
 from objdel.data import coverage as Cov
 from objdel.data import splits as Sp
 from objdel.data import windows as Wn
-from objdel.eval import ceiling as C
-from objdel.eval import gates as G
-from objdel.eval import select
-from objdel.eval import signal as S
+from objdel.verify import ceiling as C
+from objdel.verify import gates as G
+from objdel.verify import select
+from objdel.verify import stats as S
 
 
 def _gate_items(n_patients):

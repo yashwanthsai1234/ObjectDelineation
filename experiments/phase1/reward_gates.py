@@ -10,7 +10,7 @@ variants live in tests/oracles/reward_harness.py and reward_variants.py.
 
 References:
 - Gate definitions: experiments/phase1/PLAN.md §7 (K3, K4, K8, K8b, K9, K10, R3, R4, R5); reward v4:
-  objdel.reward (its module references); lab protocol: archive/phase1_lab/t_reward/results/ITERATION4.md.
+  objdel.verify.reward (its module references); lab protocol: archive/phase1_lab/t_reward/results/ITERATION4.md.
 - Spearman rho (K8): https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.spearmanr.html
 - Cluster (item-level) percentile bootstrap CIs (K8, K9, R3, R4): C. A. Field, A. H. Welsh, "Bootstrapping clustered
   data", JRSS B 69(3), 2007, https://doi.org/10.1111/j.1467-9868.2007.00593.x
@@ -35,7 +35,9 @@ from scipy import stats
 
 from objdel.geom.shape import canonicalize
 from objdel.geom.text import serialize
-from objdel.reward import NUMERIC, ExpertCache, advantages_v4, score_batch, score_completion
+from objdel.verify.reward.advantages import advantages_v4
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import NUMERIC, score_batch, score_completion
 from tests.oracles import reward_harness as H
 from tests.oracles import reward_variants as V
 
@@ -307,7 +309,7 @@ def digest(t) -> str:
 
 K10_CODE = """import pickle, sys
 from experiments.phase1.reward_gates import digest
-from objdel.reward import score_batch
+from objdel.verify.reward import score_batch
 print(digest(score_batch(pickle.load(open(sys.argv[1], "rb")))))
 """
 

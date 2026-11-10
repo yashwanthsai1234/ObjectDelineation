@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from objdel.eval import ceiling as C
-from objdel.reward import score
-from objdel.reward.cache import ExpertCache
+from objdel.verify import ceiling as C
+from objdel.verify.reward import score
+from objdel.verify.reward.cache import ExpertCache
 
 H = W = 64
 
@@ -261,7 +261,7 @@ def _walk(x):
 
 
 def test_summarize_strata_add_up_and_use_patient_then_nodule_draws():
-    from objdel.eval import signal
+    from objdel.verify import stats as signal
 
     rows, groups = _rows(), _groups(_rows())
     s = C.summarize(rows, groups, boot=300)

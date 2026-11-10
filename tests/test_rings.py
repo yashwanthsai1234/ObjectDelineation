@@ -19,10 +19,10 @@ import scipy.ndimage as ndi
 
 import objdel.geom.certify
 import objdel.geom.rings
-from experiments.cuda_checker import compare as C
 from objdel.geom import rings
 from objdel.geom.certify import certify
 from tests.oracles import bitquad_oracle as BQ
+from tests.oracles import cuda_parity as C
 from tests.oracles import polygonize_oracle as PO
 from tests.test_cuda_checker import k1_masks
 

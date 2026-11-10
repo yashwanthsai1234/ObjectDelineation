@@ -11,11 +11,11 @@ import numpy as np
 import pytest
 import scipy
 
-import objdel.reward as R
 from objdel.data import splits
 from objdel.data.splits import val_half
-from objdel.reward import ExpertCache, StaleCacheError
-from objdel.reward import spec as S
+from objdel.verify.reward import spec as S
+from objdel.verify.reward.cache import ExpertCache, StaleCacheError
+from objdel.verify.reward.spec import fingerprint
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -24,15 +24,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
                                        ("lam", 0.9), ("eps", 0.2), ("group", 4), ("drop_spread", 0.05),
                                        ("iou_gate", 0.6)])
 def test_reward_weights_do_not_change_fingerprint(monkeypatch, field, val):
-    before = R.fingerprint()
+    before = fingerprint()
     monkeypatch.setattr(S, "REWARD_V4", dataclasses.replace(S.REWARD_V4, **{field: val}))
-    assert R.fingerprint() == before
+    assert fingerprint() == before
 
 
 def test_cache_inputs_change_fingerprint(monkeypatch):
     """7 inputs, 7 distinct digests besides the base one: the three CacheSpec constants, the size rule, numpy,
     scipy and OpenCV versions."""
-    base = R.fingerprint()
+    base = fingerprint()
     assert len(base) == 64 and int(base, 16) >= 0
     seen = {base}
     changes = [(S, "CACHE_SPEC", dataclasses.replace(S.CACHE_SPEC, expert_score=0.9)),
@@ -43,8 +43,8 @@ def test_cache_inputs_change_fingerprint(monkeypatch):
     for mod, name, val in changes:
         with monkeypatch.context() as m:
             m.setattr(mod, name, val)
-            seen.add(R.fingerprint())
-    assert len(seen) == 8 and R.fingerprint() == base
+            seen.add(fingerprint())
+    assert len(seen) == 8 and fingerprint() == base
 
 
 def disk(n, r):
@@ -60,9 +60,9 @@ def test_stored_values_survive_the_new_fingerprint(tmp_path):
     changes, and a cache saved under the old fingerprint is stale until rebuilt."""
     c = ExpertCache.build(np.stack([disk(60, 18), disk(60, 19), disk(60, 20)]))
     assert (c.tau.hex(), c.t5.hex()) == ("0x1.1e377a0000000p+1", "0x1.8412c21ddf4f2p+1")  # captured before B1.0
-    assert R.fingerprint() != OLD_FINGERPRINT
+    assert fingerprint() != OLD_FINGERPRINT
     assert c.digest != "5076f66ee82bea6f9a06b15011539affae8e732181d3917b2ac09e51ca672024"  # the pre-B1.0 digest
-    from objdel.reward import cache as cache_mod
+    from objdel.verify.reward import cache as cache_mod
     old = cache_mod._digest(c.raters, c.tau, c.t5, OLD_FINGERPRINT)
     np.savez_compressed(tmp_path / "old.npz", raters=c.raters, tau=c.tau, t5=c.t5, fingerprint=OLD_FINGERPRINT,
                         sha256=old)

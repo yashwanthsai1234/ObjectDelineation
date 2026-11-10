@@ -1,4 +1,4 @@
-"""objdel.train.serve (M3, plan D14): preloaded caches, CacheRef, TRLReward on
+"""objdel.verify.store (M3, plan D14): preloaded caches, CacheRef, TRLReward on
 preloaded caches, and the K3/K4 harness. CI-safe: a mini prepared layout is written from the conftest synthetic items
 (no datasets, no torch); the real-data K3 run is evidence in experiments/phase2/impl/M3.md."""
 
@@ -14,10 +14,12 @@ import pytest
 
 from experiments.phase1.reward_gates import make_jobs
 from objdel.geom.text import SCHEMAS
-from objdel.reward import ExpertCache, advantages_v4, rl_eligible, score_batch
 from objdel.sft import select as sft_select
-from objdel.train import serve
 from objdel.train.rewards import TRLReward
+from objdel.verify import store as serve
+from objdel.verify.reward.advantages import advantages_v4
+from objdel.verify.reward.cache import ExpertCache, rl_eligible
+from objdel.verify.reward.score import score_batch
 
 ROOT = Path(__file__).resolve().parents[1]
 EOS = 0

@@ -22,6 +22,7 @@ import numpy as np
 from objdel.hashing import file_sha256
 from objdel.io import read_jsonl
 from objdel.train import configs, dataset
+from objdel.verify import store as verify_store
 
 LIMITS = (256, 512, 800, 1000, 1200, 1536)
 LONGEST = 20
@@ -97,7 +98,8 @@ def report(train: Path, views: list[Path], datasets: list[str], splits: list[str
     for root in [train, *views]:
         row = {"manifest_sha256": ((p := root / "manifest.json").is_file() and file_sha256(p) or None)}
         for ds in datasets:
-            got = {sp: count(dataset.records(root, ds, sp), tok, lambda r, ds=ds, root=root: dataset.voting(root, r, ds))
+            got = {sp: count(dataset.records(root, ds, sp), tok,
+                             lambda r, ds=ds, root=root: verify_store.voting(root, r, ds))
                    for sp in splits if (root / ds / f"{sp}.jsonl").is_file()}
             if got:
                 row[ds] = got

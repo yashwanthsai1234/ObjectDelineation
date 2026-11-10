@@ -1,6 +1,6 @@
 """Slow, independent reference of reward v4 (tests only): cache values, per-object terms, completion terms and
 group advantages, written from the definition (lab ITERATION4.md, plan §3.2) without sharing code with
-objdel.reward.
+objdel.verify.reward.
 
 Independence: scipy.ndimage distance transforms and morphology instead of OpenCV; the topology oracle
 (scipy labeling of each component on its own) instead of Spaghetti; full-frame computations instead of the

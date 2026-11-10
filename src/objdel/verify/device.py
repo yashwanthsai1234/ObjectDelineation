@@ -1,4 +1,4 @@
-"""The pixel work of objdel.eval.metrics on the CUDA checker (Implementation.md D7): one objdel._gpucheck.eval_sets
+"""The pixel work of objdel.verify.metrics on the CUDA checker (Implementation.md D7): one objdel.geom.engine.eval_sets
 call per item rasterizes its K answers and compares them, per object, with the raters and the vote of the object's
 device tables (ExpertCache.device). Only integer counts come back (ItemCounts); metrics() makes every score from them
 with the formulas it used on host masks, so the values do not change (B14 of D.spec.md).
@@ -24,8 +24,7 @@ import numpy as np
 from objdel.geom import engine as _gpucheck
 from objdel.geom.shape import pack_objects
 from objdel.geom.text import GRID, Parsed
-from objdel.reward import ExpertCache
-from objdel.reward.cache import device_many
+from objdel.verify.reward.cache import ExpertCache, device_many
 
 MAX_SCRATCH_BYTES = 256 << 20  # eval_sets scratch cap per chunk [estimate; D1 arena measurement]
 eval_sets_s = 0.0  # wall time of this process's eval_sets calls (final_eval resets it per view: D-G14 record)
@@ -41,7 +40,7 @@ class ItemCounts:
     soft: np.ndarray        # (T, 3) |P_t|, |R_t|, |P_t & R_t| per soft-Dice threshold
     surf: np.ndarray        # (K + k, 3) surfels of the drawn samples and raters by length (sqrt(2)/2, 1, sqrt(2))
     nsd_out: np.ndarray     # (K, k, 2, 3) per (sample, rater), direction, length: surfels beyond the NSD cut
-    vote_iou_tc: float      # IoU_tc of the pixel vote of the legal samples (objdel.eval.select.vote_mask)
+    vote_iou_tc: float      # IoU_tc of the pixel vote of the legal samples (objdel.verify.select.vote_mask)
 
 
 def soft_cut(n: int, t: float) -> int:

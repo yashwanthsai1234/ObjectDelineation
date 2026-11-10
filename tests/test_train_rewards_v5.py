@@ -3,8 +3,11 @@ completions/truncated_grad_share logs; grpo_config follows the spec's group. The
 import numpy as np
 from test_train_rewards import CACHES, EOS, NAMES, PAD, W, batch, call_all
 
-from objdel.reward import REWARD_V4, REWARD_V5, advantages_v5, legal_gate, score_batch, topology_reward
 from objdel.train import rewards as R
+from objdel.verify.reward import advantages as reward_advantages
+from objdel.verify.reward.advantages import advantages_v5, legal_gate, topology_reward
+from objdel.verify.reward.score import score_batch
+from objdel.verify.reward.spec import REWARD_V4, REWARD_V5
 
 
 def reward_v5():
@@ -14,8 +17,8 @@ def reward_v5():
 def test_default_is_v4_and_v5_names_its_aggregator():
     assert R.TRLReward(CACHES.__getitem__, {EOS}).aggregator == R.AGGREGATOR == "advantage_v4"
     funcs, weights = reward_v5().funcs()
-    assert [f.__name__ for f in funcs] == [*R.LOGGED, "advantage_v5"] and weights[-1] == 1.0
-    assert "loc" in R.LOGGED and "loc" in R.GATED and REWARD_V4.group == REWARD_V5.group
+    assert [f.__name__ for f in funcs] == [*reward_advantages.LOGGED, "advantage_v5"] and weights[-1] == 1.0
+    assert "loc" in reward_advantages.LOGGED and "loc" in reward_advantages.GATED and REWARD_V4.group == REWARD_V5.group
 
 
 def test_v5_values_equal_score_batch_and_advantages_v5():
@@ -42,4 +45,4 @@ def test_grpo_config_follows_the_spec_group(tmp_path):
     from objdel.train import configs
 
     c = configs.grpo_config("qwen3-vl-2b", str(tmp_path), reward=REWARD_V5, use_cpu=True, use_vllm=False)
-    assert c.num_generations == REWARD_V5.group and len(c.reward_weights) == len(R.LOGGED) + 1
+    assert c.num_generations == REWARD_V5.group and len(c.reward_weights) == len(reward_advantages.LOGGED) + 1

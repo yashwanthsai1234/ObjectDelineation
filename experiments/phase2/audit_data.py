@@ -7,7 +7,7 @@ failure (report gates DG9b, DG14, DG14b, DG16 never change the exit code). Imple
 The rows root's manifest.schedule gives the pool (draws, seed, excluded_ids) and the schedule arguments; the target
 is the train shifted law of that pool. The val view feeds only the DG16 report (val-shape, val-select, whole val).
 On the Mac the manifest's exclusions_sha256 must equal the SHA-256 of the current exclusions file (DG1b). DG14b needs
-objdel.eval.ceiling (A2). Reads untrusted data: run with python -I.
+objdel.verify.ceiling (A2). Reads untrusted data: run with python -I.
 """
 import argparse
 import json

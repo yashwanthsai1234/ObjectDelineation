@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 
 from experiments.phase2 import final_eval as FE
-from objdel.eval import signal as S
 from objdel.policy import evaluate as EV
+from objdel.verify import stats as S
 
 ROOT = Path(__file__).resolve().parents[1]
 CI_KEYS = {"mean", "ci95_nodule", "ci95_patient", "ci95_item", "higher_is_better"}
@@ -671,7 +671,7 @@ def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
     counts that do not match exit 2 with no output."""
     import shutil
 
-    from objdel.train import serve
+    from objdel.verify import store as serve
 
     v2 = Path(shutil.copytree(ev, tmp_path / "lidc-val-two"))
     loads, roots, calls = [], [], []

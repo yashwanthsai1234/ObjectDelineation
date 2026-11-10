@@ -4,8 +4,8 @@ import dataclasses
 
 import numpy as np
 
-from objdel.reward import REWARD_V5, advantages_v5
-from objdel.reward.advantages import _groups, _topology, rewards_v5
+from objdel.verify.reward.advantages import _groups, _topology, advantages_v5, rewards_v5
+from objdel.verify.reward.spec import REWARD_V5
 
 
 def group(**kw):

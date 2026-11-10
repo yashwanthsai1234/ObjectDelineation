@@ -32,8 +32,10 @@ import numpy as np
 
 from experiments.phase1.reward_gates import digest, make_jobs
 from objdel.geom.text import SCHEMAS
-from objdel.reward import ExpertCache, advantages_v4, score_batch, score_completion
-from objdel.train import serve
+from objdel.verify import store as serve
+from objdel.verify.reward.advantages import advantages_v4
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_batch, score_completion
 
 SIDE, K, N_VERT = 500, 6, 720
 DISC_HF, CUP_HF = 0.0055, 0.013  # high-harmonic roughness: sets the traced vertex count (completion length)

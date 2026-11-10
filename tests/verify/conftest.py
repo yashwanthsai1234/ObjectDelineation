@@ -5,8 +5,8 @@ import json
 import numpy as np
 import pytest
 
-from objdel.reward import ExpertCache
 from objdel.targets import build_target
+from objdel.verify.reward.cache import ExpertCache
 
 SIDE = 50
 KEY = "lidc/1.2.0/n000/z000"

@@ -1,10 +1,10 @@
 """Evaluation metrics of K sampled completions per item against its raters (plan §4.7, judge R10).
 
-Everything goes through the training path: objdel.reward.score_many (score_completion's parse, then the CUDA checker
-scores every object: mask, defects, IoU_tc, F5, g_area, size-filtered signature) and advantages_v4 on the item's
-ExpertCaches. The item-level comparisons between samples and raters (pairwise IoU, boundary IoU, NSD, soft Dice, GED,
-HM-IoU, duplicates, the pixel vote) come from integer counts that one objdel._gpucheck.eval_sets call per item makes on
-the device (objdel.eval.device): no mask reaches the host. Per item (`metrics`):
+Everything goes through the training path: objdel.verify.reward.score.score_many (score_completion's parse, then the
+CUDA checker scores every object: mask, defects, IoU_tc, F5, g_area, size-filtered signature) and advantages_v4 on the
+item's ExpertCaches. The item-level comparisons between samples and raters (pairwise IoU, boundary IoU, NSD, soft Dice,
+GED, HM-IoU, duplicates, the pixel vote) come from integer counts that one objdel.geom.engine.eval_sets call per item
+makes on the device (objdel.verify.device): no mask reaches the host. Per item (`metrics`):
 
 - per sample: format_ok, legal, IoU_tc, F5, g_area (legality-gated), topology-any (the joint size-filtered signature
   is some rater's), the v4 advantage in its group, `passed` = legal and topology-any and IoU_tc >= 0.5 for every object;
@@ -14,7 +14,7 @@ the device (objdel.eval.device): no mask reaches the host. Per item (`metrics`):
 - per object and sample: NSD@tau (surface Dice) against the best rater, tau = NSD_TAU per structure; boundary IoU
   against the best rater and against the strict-majority vote, d = BIOU_D per structure;
 - per object: soft Dice (MRNet protocol), the squared generalized energy distance (GED), HM-IoU, the K x K IoU of the
-  answers (`sample_iou`, illegal answers as empty masks; objdel.eval.select reads it), the IoU_tc of the answers'
+  answers (`sample_iou`, illegal answers as empty masks; objdel.verify.select reads it), the IoU_tc of the answers'
   pixel vote (`pixel_vote_iou_tc`, analysis only) and the doctors' vote area (`vote_area`, px);
 - per item: TV and JS (base 2) between the K-sample topology histogram and the rater histogram, minimum-mode
   retention, mode coverage, pass@k for k in 1, 2, 4, ..., <= min(K, 64), and per GRPO group of G = 8 samples (one
@@ -24,26 +24,26 @@ the device (objdel.eval.device): no mask reaches the host. Per item (`metrics`):
 Definitions and choices:
 - A sample's topology answer is its joint size-filtered signature (score_completion's sig_id); unparseable or
   illegal samples share one "fail" answer that no rater gives. The rater histogram is over the voting raters
-  (objdel.reward.rater_answers: a rater whose whole mask is below the size filter abstains), as in the reward.
-  Histograms are per image; summaries average the per-image TV / JS, never histograms pooled over images (lab
+  (objdel.verify.reward.score.rater_answers: a rater whose whole mask is below the size filter abstains), as in the
+  reward. Histograms are per image; summaries average the per-image TV / JS, never histograms pooled over images (lab
   t_dynamics REPORT).
 - Minimum-mode retention = min over rater answers a of pi_v(a) / f(a), with pi_v the sample histogram restricted to
   rater answers and renormalised (lab t_dynamics grpo_toy.py); 1 iff pi_v = f, 0 when some rater answer is never
   sampled or no sample gives a rater answer.
 - Coverage = share of distinct rater answers drawn by at least one sample (Multi-Answer RL's coverage).
-- Pass criterion: the reward's own validity gate (objdel.reward.topology_valid: legal, a rater drew the topology,
-  IoU_tc >= REWARD_V4.iou_gate for every object, score_completion's iou_min), so a RIGA answer with a good disc and a
-  missed cup fails. The Phase 2 geometry gate (summarize's iou_tc_pass) is its geometric part, legal and IoU_tc >= 0.5
-  for every object; topology is gated by the synthetic topology probe (objdel.eval.probes; plan D20).
+- Pass criterion: the reward's own validity gate (objdel.verify.reward.advantages.topology_valid: legal, a rater drew
+  the topology, IoU_tc >= REWARD_V4.iou_gate for every object, score_completion's iou_min), so a RIGA answer with a good
+  disc and a missed cup fails. The Phase 2 geometry gate (summarize's iou_tc_pass) is its geometric part, legal and
+  IoU_tc >= 0.5 for every object; topology is gated by the synthetic topology probe (objdel.eval.probes; plan D20).
 - Duplicates (GRPO groups) are outputs the reward cannot tell apart: equal format and legality flags and equal
   raw rasters of every object (device.duplicate_keys: intersection == both areas), so re-spelled texts of one mask
   (sub-pixel vertex nudges, whitespace) count as duplicates, as the reward's low-spread drop treats them (B2-6).
 - Failed (unparseable or truncated) samples get 0 for every score, an empty mask for the probability map and GED,
   and areas of an empty mask (the audit only reads parsed samples). Illegal samples (parsed, but some ring defective)
-  are failures too, by the reward's legality gate (objdel.reward.legal_gate, which zeroes every term of an illegal
-  rollout in advantages_v4): 0 for IoU_tc, F5, g_area and the vote / D_max scores, and an empty mask for the probability
-  map and GED, so they never count toward the geometry gates (REVIEW #2). Their areas and components stay those of
-  their raster, which the audit reads for every parsed sample.
+  are failures too, by the reward's legality gate (objdel.verify.reward.advantages.legal_gate, which zeroes every term
+  of an illegal rollout in advantages_v4): 0 for IoU_tc, F5, g_area and the vote / D_max scores, and an empty mask for
+  the probability map and GED, so they never count toward the geometry gates (REVIEW #2). Their areas and components
+  stay those of their raster, which the audit reads for every parsed sample.
 - Soft Dice (Ji et al. 2021, MRNet code): the soft ground truth is the mean of the rater masks (uniform expertness
   1/k), the prediction the mean of the K sample masks; both are binarized with >= t for t in 0.1, 0.3, 0.5, 0.7, 0.9,
   Dice is computed per threshold (two empty masks: 1) and averaged. QUBIQ's BDice is the same with 9 thresholds.
@@ -103,21 +103,12 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from objdel.eval.device import ItemCounts, duplicate_keys, item_counts
 from objdel.geom.text import parse
-from objdel.reward import (
-    NUMERIC,
-    REWARD_V4,
-    TERMS,
-    ExpertCache,
-    advantages_v4,
-    legal_gate,
-    rater_answers,
-    score_many,
-    score_mask,
-    sig_id,
-    topology_valid,
-)
+from objdel.verify.device import ItemCounts, duplicate_keys, item_counts
+from objdel.verify.reward.advantages import advantages_v4, legal_gate, topology_valid
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import NUMERIC, rater_answers, score_many, score_mask, sig_id
+from objdel.verify.reward.spec import REWARD_V4, TERMS
 
 THRESHOLDS = (0.1, 0.3, 0.5, 0.7, 0.9)  # MRNet soft Dice
 PASS_KS = (1, 2, 4, 8, 16, 32, 64)
@@ -237,8 +228,8 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
             names: Sequence[str] | None = None, truncated: Sequence[bool] | None = None,
             caches: Mapping[str, ExpertCache] | None = None, tokens: Sequence[int] | None = None) -> dict:
     """Metrics of one item: K completions (texts) against the rater masks {name: bool (k, H, W)} on a W x H frame;
-    tokens: completion token counts (optional). The terms come from one
-    CUDA checker call per item (objdel.reward.score_many), the item-level counts from one more (eval.device).
+    tokens: completion token counts (optional). The terms come from one CUDA checker call per item
+    (objdel.verify.reward.score.score_many), the item-level counts from one more (verify.device).
 
     Returns JSON-native values: per-sample lists under "samples" and "objects"[name], item scalars otherwise
     (module docstring). Raises ValueError for fewer than 2 raters or samples, or mismatched lengths."""

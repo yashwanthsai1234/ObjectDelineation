@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from experiments.phase2 import gate_power as GP
-from objdel.eval import signal
+from objdel.verify import stats as signal
 
 RUNS = 300
 

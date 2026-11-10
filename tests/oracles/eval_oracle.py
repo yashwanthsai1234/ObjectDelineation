@@ -1,5 +1,5 @@
-"""Host reference of objdel.eval.metrics' item-level comparisons: the code metrics() ran on host masks before D7
-moved its pixel work to the engine (objdel.eval.device), kept as the oracle of gc.eval_sets and as the subject of A5's
+"""Host reference of objdel.verify.metrics' item-level comparisons: the code metrics() ran on host masks before D7
+moved its pixel work to the engine (objdel.verify.device), kept as the oracle of gc.eval_sets and as the subject of A5's
 boundary-IoU and NSD reference tests (the official boundary-iou-api and google-deepmind/surface-distance formulas).
 """
 import hashlib
@@ -8,8 +8,8 @@ import cv2
 import numpy as np
 from scipy import ndimage
 
-from objdel.eval.select import vote_mask
-from objdel.reward import score_mask
+from objdel.verify.reward.score import score_mask
+from objdel.verify.select import vote_mask
 
 _D = 0.5 * np.sqrt(2.0)  # surfel length per 2 x 2 neighbourhood code (surface-distance lookup table, 1 px spacing)
 _SURFEL = np.array([0, _D, _D, 1, _D, 1, 2 * _D, _D, _D, 2 * _D, 1, _D, 1, _D, _D, 0])

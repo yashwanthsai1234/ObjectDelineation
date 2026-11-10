@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from oracles import score_numpy as host
 
-from objdel.reward import REWARD_V5, ExpertCache, score_completion, score_mask, sig_id
-from objdel.reward.score import gated_loc, location
-from objdel.reward.spec import RewardV5
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import gated_loc, location, score_completion, score_mask, sig_id
+from objdel.verify.reward.spec import REWARD_V5, RewardV5
 from tests.test_reward_v5_advantages import R_of, group
 
 N = 96

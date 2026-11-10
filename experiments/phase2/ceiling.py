@@ -1,4 +1,4 @@
-"""Fair ceiling of a view: each doctor and the model against the same k - 1 doctors (objdel.eval.ceiling, plan A2).
+"""Fair ceiling of a view: each doctor and the model against the same k - 1 doctors (objdel.verify.ceiling, plan A2).
 
     python -I -m experiments.phase2.ceiling --view data/eval_views/lidc-val-shifted --split val \
         [--answers runs/a3/eval_val/answers.jsonl] --out runs/a3/ceiling_val
@@ -17,8 +17,9 @@ import json
 import time
 from pathlib import Path
 
-from objdel.eval import ceiling
-from objdel.train import dataset, serve
+from objdel.train import dataset
+from objdel.verify import ceiling
+from objdel.verify import store as serve
 
 
 def _item(job) -> dict:

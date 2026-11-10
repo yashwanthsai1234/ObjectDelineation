@@ -1,6 +1,6 @@
 """E1.2: one source for each reward constant."""
-from objdel.eval import signal
-from objdel.reward.spec import REWARD_V4, TERMS
+from objdel.verify import stats as signal
+from objdel.verify.reward.spec import REWARD_V4, TERMS
 
 
 def test_signal_weights_equal_reward_spec():

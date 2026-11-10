@@ -1,6 +1,6 @@
 """Hack audit of an evaluation (plan §4.7, §9): hedging, fragmentation, duplication and reward-favoured failures.
 
-Reads the per-item results of objdel.eval.metrics. Area statistics use parsed samples only (format failures are
+Reads the per-item results of objdel.verify.metrics. Area statistics use parsed samples only (format failures are
 measured by the format rate), per structure (dataset/object); dataset statistics per dataset.
 
 Per-output quantities (A = predicted area, raters' areas A_min..A_max, U = raters' union, the egg of the egg-yolk

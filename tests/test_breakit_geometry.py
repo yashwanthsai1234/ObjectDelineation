@@ -19,9 +19,9 @@ from objdel.geom import shape
 from objdel.geom.shape import to_mask, to_masks
 from objdel.geom.text import parse, pattern, serialize
 from objdel.geom.topology import instance_topology, min_area, signature, size_filter
-from objdel.reward.cache import ExpertCache
-from objdel.reward.score import score_completion
 from objdel.targets import build_target, frame
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_completion
 from tests.oracles.bitquad_oracle import bitquads
 
 DOC = '{"nodule":[{"outer":[[0,0],[1000,0],[1000,1000]],"holes":[]}]}'

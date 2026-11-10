@@ -10,12 +10,12 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from objdel.eval import ceiling as C
-from objdel.eval import signal
-from objdel.reward.advantages import advantages_v4
-from objdel.reward.cache import ExpertCache
+from objdel.verify import ceiling as C
+from objdel.verify import stats as signal
+from objdel.verify.reward.advantages import advantages_v4
+from objdel.verify.reward.cache import ExpertCache
 
-M = importlib.import_module("objdel.eval.metrics")  # objdel.eval re-exports the function under the same name
+M = importlib.import_module("objdel.verify.metrics")  # objdel.eval re-exports the function under the same name
 
 
 def _disc(r, cy=16, cx=16, n=32):

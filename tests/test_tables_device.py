@@ -15,9 +15,9 @@ import numpy as np
 import pytest
 
 from objdel.geom import engine as gc
-from objdel.reward import ExpertCache
-from objdel.reward import cache as rc
-from objdel.reward.score import score_many
+from objdel.verify.reward import cache as rc
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_many
 from tests.oracles.reward_reference import host_tables
 
 DATA = Path(os.environ.get("OBJDEL_DATA_ROOT", Path(__file__).resolve().parents[1] / "data"))
@@ -292,7 +292,7 @@ def test_no_cpu_labelling_or_edt_in_build_or_after_load(tmp_path, monkeypatch):
 
 
 def rc_score(mask, cache):
-    from objdel.reward.score import score_mask
+    from objdel.verify.reward.score import score_mask
     return score_mask(mask, cache)
 
 

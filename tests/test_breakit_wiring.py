@@ -48,6 +48,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
     from objdel.train import configs
     from objdel.train import dataset as D
     from objdel.train import rewards as R
+    from objdel.verify import store as verify_store
 
     work = tmp_path_factory.mktemp("b4")
     store.write(synthetic_items(("train", "val"), unanimous=True), work / "store")
@@ -61,7 +62,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
         return ds.remove_columns("image").map(lambda r: {"prompt": "x"})
 
     train, val = rows("train"), rows("val")
-    funcs, _ = R.TRLReward(D.cache_loader(work / "prep"), R.stop_ids(model, tok)).funcs()
+    funcs, _ = R.TRLReward(verify_store.cache_loader(work / "prep"), R.stop_ids(model, tok)).funcs()
     args = configs.grpo_config("qwen3-vl-2b", str(work / "run"), use_vllm=False, learning_rate=1e-6, max_steps=2,
                                per_device_train_batch_size=G * len(train), gradient_accumulation_steps=1,
                                per_device_eval_batch_size=G * len(val), use_cpu=True, bf16=False,
@@ -97,9 +98,10 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 def _reference_advantages(chain, keys):
     """advantages_v4 of the scripted texts, scored independently of TRL on the prepared caches."""
     from objdel.geom.text import SCHEMAS
-    from objdel.reward import advantages_v4, score_batch
-    from objdel.train import dataset as D
-    load, rec, seen, jobs = D.cache_loader(chain["work"] / "prep"), chain["recs"], {}, []
+    from objdel.verify import store as verify_store
+    from objdel.verify.reward.advantages import advantages_v4
+    from objdel.verify.reward.score import score_batch
+    load, rec, seen, jobs = verify_store.cache_loader(chain["work"] / "prep"), chain["recs"], {}, []
     for k in keys:
         i = seen[k] = seen.get(k, -1) + 1
         text, eos = chain["script"][k][i % G]
@@ -180,7 +182,7 @@ def test_eval_runner_edges(chain):
 # ------------------------------------------------------------------ gates, docs, scripts, CI (static)
 
 def _summary(ds):
-    """The part of objdel.eval.summarize's per-dataset output that the gates read, all perfect."""
+    """The part of objdel.verify.metrics.summarize's per-dataset output that the gates read, all perfect."""
     obj = {"iou_tc_median": 1.0}
     objects = {"riga": {"disc": obj, "cup": obj}, "lidc": {"nodule": obj}}[ds]
     return {"format": 1.0, "legal": 1.0, "iou_tc_pass": 1.0, "group": G, "dup_rate": 0.0, "signal_share": 1.0,
@@ -188,7 +190,7 @@ def _summary(ds):
 
 
 def _report(datasets):
-    """A perfect plan §5.1 report (schema: objdel.eval.gates): shifted + rescaled views, prior, probes, G-vision."""
+    """A perfect plan §5.1 report (schema: objdel.verify.gates): shifted + rescaled views, prior, probes, G-vision."""
     summary = {"datasets": {d: _summary(d) for d in datasets}}
     names = {"riga": ("disc", "cup"), "lidc": ("nodule",)}
     prior = {d: {n: {"diff": 0.1, "ci": [0.05, 0.15]} for n in names[d]} for d in datasets}
@@ -199,13 +201,13 @@ def _report(datasets):
 
 
 def test_gates_pass_a_perfect_two_dataset_report():
-    from objdel.eval import gates
+    from objdel.verify import gates
     g = gates.phase2_entry(_report(("riga", "lidc")))
     assert g["pass"] and g["datasets"] == {"lidc": True, "riga": True} and g["warnings"] == []
 
 
 def test_b4_5_gates_accept_a_model_dropped_from_lidc():
-    from objdel.eval import gates
+    from objdel.verify import gates
     r = _report(("riga",))
     r["probes"] = {"precision": {"pass": False, "capacity": {"pass": False}}, "topology": {"pass": False}}
     assert gates.phase2_entry(r)["pass"]  # LIDC (and its probes) not judged
@@ -277,11 +279,13 @@ def test_real_lidc_sample_prepared_equals_store_and_eval_frames(store_dir):
     from objdel.data import store
     from objdel.geom.text import SCHEMAS
     from objdel.geom.topology import min_area
-    from objdel.reward import ExpertCache, score_completion
     from objdel.targets import build_target, frame
     from objdel.train import dataset as D
+    from objdel.verify import store as verify_store
+    from objdel.verify.reward.cache import ExpertCache
+    from objdel.verify.reward.score import score_completion
     recs = {r["item_id"]: r for r in D.records(PREPARED, "lidc", "val")}
-    load, names, seen = D.cache_loader(PREPARED, maxsize=4), SCHEMAS["lidc"], []
+    load, names, seen = verify_store.cache_loader(PREPARED, maxsize=4), SCHEMAS["lidc"], []
     for it in store.load("lidc", "val", store_dir):  # the first 4 items and the first disagreement item
         rec = recs[it.item_id]
         if len(seen) >= 4 and not rec["disagreement"]:

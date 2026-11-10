@@ -2,7 +2,7 @@
 and compared on the box (tests/test_scorer_sums.py), since one venv holds one build.
 
 Sets (`b_sets`): `random` = 200 random masks plus all-zero, all-one and one-pixel 64 x 64 masks; `polygons_<G>` = the
-first 10,000 fuzz polygons of experiments/cuda_checker/compare.py but the K1 "holes" family (`polygon_cases`), one
+first 10,000 fuzz polygons of tests/oracles/cuda_parity.py but the K1 "holes" family (`polygon_cases`), one
 score_polygons call per grid G; `windows_1000` =
 the first 1,000 crops of checker_eval/masks.npz. Tables rule: every object m is scored against
 `b_tables(m)` = ExpertCache.build of three rolls of m, three raters in m's own frame (m itself is not a rater).
@@ -19,11 +19,11 @@ from pathlib import Path
 
 import numpy as np
 
-from experiments.cuda_checker import compare as C
 from objdel.geom import engine as G
 from objdel.geom.shape import unpack_rows
 from objdel.io import write_json
-from objdel.reward import ExpertCache
+from objdel.verify.reward.cache import ExpertCache
+from tests.oracles import cuda_parity as C
 
 ROOT = Path(__file__).resolve().parents[3]
 SUMS = ("sum_x", "sum_y")
@@ -54,7 +54,7 @@ def _sha(*arrays) -> str:
 
 def score_masks_of(masks, packed=None) -> tuple[str, dict]:
     """(input SHA-256, score_masks result) of the masks, each against its b_tables, in the layout of
-    objdel.reward.score.score_mask (one byte per pixel, hw int32, start int64)."""
+    objdel.verify.reward.score.score_mask (one byte per pixel, hw int32, start int64)."""
     if packed is None:
         packed = (np.concatenate([np.ascontiguousarray(m, bool).view(np.uint8).reshape(-1) for m in masks]),
                   np.array([m.shape for m in masks], np.int32),

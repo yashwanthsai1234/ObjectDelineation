@@ -1,7 +1,7 @@
 """GRPO-signal panel of K = 8 sampled groups per item, D12 checkpoint rule R-B and the per-item Spearman (PLAN §5.1
 G-signal / G-probe, D12, M11; promoted from archive/phase2_lab/B2 score.py, analyze.py, posthoc.py `parts`).
 
-Per item (one GRPO group of G = 8 samples at T = 1), from `objdel.eval.metrics` output (`group`):
+Per item (one GRPO group of G = 8 samples at T = 1), from `objdel.verify.metrics` output (`group`):
 - R = 0.3 IoU_tc + 0.3 F5 + 0.1 legal + 0.3 g_area, the G-probe raw composite on the legality-gated terms
   (illegal or unparseable samples: R = 0);
 - r_std (population std of R), sigma (some gated geometric term above its REWARD_V4 floor; σ-share = its mean),
@@ -28,7 +28,7 @@ from collections.abc import Callable, Sequence
 import numpy as np
 from scipy import stats
 
-from objdel.reward.spec import REWARD_V4, TERMS
+from objdel.verify.reward.spec import REWARD_V4, TERMS
 
 WEIGHTS = dict(zip(TERMS, REWARD_V4.weights, strict=True))  # REWARD_V4.weights on the raw gated terms
 IOU_OK = 0.5  # legal_wrong: legal and IoU_tc < this (REWARD_V4.iou_gate)
@@ -41,7 +41,7 @@ VETO_STAT, ALT_STAT = "sd_geom", "r_std"
 
 
 def group(item_id: str, texts: Sequence[str], m: dict) -> dict:
-    """One item's group record from `objdel.eval.metrics(texts, ...)` output (B2 score.py's scored form)."""
+    """One item's group record from `objdel.verify.metrics(texts, ...)` output (B2 score.py's scored form)."""
     s = m["samples"]
     R = sum(w * np.asarray(s[t]) for t, w in WEIGHTS.items())
     return {

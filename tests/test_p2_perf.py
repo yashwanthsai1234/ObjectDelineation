@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("trl")
-from objdel.reward.spec import REWARD_V4  # noqa: E402
 from objdel.train import configs  # noqa: E402
+from objdel.verify.reward.spec import REWARD_V4  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 KV_PER_TOKEN = 112 * 1024  # Qwen3-VL-2B bf16: 28 layers x 8 KV heads x 128 x (K, V) x 2 bytes (PLAN D13)

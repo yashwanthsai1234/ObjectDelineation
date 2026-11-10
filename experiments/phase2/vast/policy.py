@@ -282,7 +282,7 @@ def cmd_run_spec(a) -> None:
     silently."""
     from importlib.metadata import version
 
-    from objdel.reward.spec import fingerprint
+    from objdel.verify.reward.spec import fingerprint
 
     rec = {"spec": load_spec(repo_root() / a.spec).model_dump(mode="json"),
            "git_sha": code_sha(repo_root(), required=False) or "unknown",

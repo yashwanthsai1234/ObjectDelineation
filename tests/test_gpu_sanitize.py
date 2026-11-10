@@ -4,8 +4,8 @@ Synthetic inputs from fixed seeds, no data/. tests/test_gpu_determinism.py runs 
 import numpy as np
 import pytest
 
-from experiments.cuda_checker import compare as C
 from objdel.geom import engine as gc
+from tests.oracles import cuda_parity as C
 from tests.test_cuda_checker_gpu import _gpus
 
 pytestmark = [pytest.mark.gpu, pytest.mark.sanitizer,

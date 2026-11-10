@@ -46,10 +46,10 @@ def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
 
 @NEEDS_ARCHIVE
 def test_the_old_ceiling_is_archived_and_not_imported():
-    """S05: rater_ceiling moved to archive/phase2_lab/A4 (replaced by objdel.eval.ceiling); nothing imports it."""
+    """S05: rater_ceiling moved to archive/phase2_lab/A4 (replaced by objdel.verify.ceiling); nothing imports it."""
     new = ROOT / "archive/phase2_lab/A4"  # the old tree is gone (test_retired_trees_hold_nothing)
     assert (new / "rater_ceiling.py").is_file() and (new / "rater_ceiling.json").is_file()
-    assert "replaced by objdel.eval.ceiling (Phase A2)" in (ROOT / "archive/README.md").read_text()
+    assert "replaced by objdel.verify.ceiling (Phase A2)" in (ROOT / "archive/README.md").read_text()
     for top in ("src", "experiments", "tests"):
         for p in (ROOT / top).rglob("*.py"):
             assert not re.search(r"^\s*(from|import)\s.*rater_ceiling", p.read_text(), re.M), p
@@ -60,7 +60,7 @@ def test_metric_definitions_are_in_the_code():
     IoU band; the band widths are BIOU_D."""
     import importlib
 
-    metrics = importlib.import_module("objdel.eval.metrics")  # the package exports the function of that name
+    metrics = importlib.import_module("objdel.verify.metrics")
     doc = metrics.__doc__
     assert re.search(r"D(2|²)_GED[^\n]*K = 8", doc) and re.search(r"HM-IoU8[^\n]*not comparable", doc)
     assert re.search(r"[Bb]oundary IoU[^\n]*mask_to_boundary", doc)

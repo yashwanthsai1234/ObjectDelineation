@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 from oracles.topology_oracle import cv2_betti, cv2_components, cv2_instance_topology, cv2_signature, cv2_size_filter
 
-from experiments.cuda_checker import compare as C
 from objdel.geom import engine as _gpucheck
 from objdel.geom import topology as T
 from objdel.geom.certify import certify_many
 from objdel.geom.topology import betti, instance_topology, signature, signatures, size_filter, topologies
+from tests.oracles import cuda_parity as C
 
 MIN_AREAS = (0, 1, 2, 3, 7, 10, 100, 10**6, 10**9)
 
@@ -146,8 +146,8 @@ def test_no_cpu_labelling_in_targets_cache_and_certify(monkeypatch):
     from scipy import ndimage
 
     from objdel.geom.certify import certify
-    from objdel.reward import ExpertCache
     from objdel.targets import build_target, min_areas
+    from objdel.verify.reward.cache import ExpertCache
 
     y, x = np.ogrid[:80, :80]
     disc, cup = (y - 40) ** 2 + (x - 40) ** 2 <= 900, (y - 40) ** 2 + (x - 44) ** 2 <= 144

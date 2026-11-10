@@ -85,7 +85,7 @@ markers = [
 # https://coverage.readthedocs.io/en/latest/config.html#run-concurrency
 concurrency = ["multiprocessing", "thread"]
 parallel = true
-# Forked reward-pool workers (objdel.train.serve) start coverage from this file, not from --cov: without a source
+# Forked workers (prepare's pool) start coverage from this file, not from --cov: without a source
 # they also trace tests/ and experiments/ and the report counts those files against objdel.
 source_pkgs = ["objdel"]
 
@@ -158,15 +158,12 @@ id = "layers-interim"  # each move commit sets its own list (Implementation.md E
 name = "objdel layers (current packages)"
 type = "layers"
 containers = ["objdel"]
-layers = ["infra", "train", "eval", "reward | targets", "data", "geom", "core"]
+layers = ["infra", "train", "eval", "targets", "data", "verify", "geom", "core"]
 exhaustive = false
 ignore_imports = [
     "objdel.eval.vision -> objdel.train.dataset",  # cycle edge; E5 removes it (vision moves to policy)
     "objdel.data.windows -> objdel.targets.**",  # B1.1; E3c removes it (targets merges into data)
     "objdel.data.quality -> objdel.targets.**",  # B1.3; E3c removes it
-    "objdel.data.quality -> objdel.eval.ceiling",  # B1.3 DG14; E3b removes it (ceiling moves to verify)
-    "objdel.data.* -> objdel.reward.**",  # B1.1 rl_eligible; E3b removes it (reward becomes verify)
-    "objdel.data.windows -> objdel.reward",  # the same edge, through the package itself
 ]
 broken_contract_guidance = "Move the import down or the code up."
 
@@ -174,6 +171,6 @@ broken_contract_guidance = "Move the import down or the code up."
 id = "pure-core"
 name = "the verifier side never imports the ML stack"
 type = "forbidden"
-source_modules = ["objdel.geom", "objdel.reward", "objdel.targets", "objdel.data"]
+source_modules = ["objdel.geom", "objdel.verify", "objdel.targets", "objdel.data"]
 forbidden_modules = ["torch", "trl", "transformers", "peft", "vllm", "datasets", "accelerate"]
 broken_contract_guidance = "torch and friends live in the train/policy layers only."

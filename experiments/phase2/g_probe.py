@@ -34,11 +34,11 @@ from pathlib import Path
 import numpy as np
 
 from experiments.phase2.prereg import G_PROBE, g_probe
-from objdel.eval import signal
 from objdel.io import read_json
 from objdel.policy.evaluate import eval_rows, score_items
 from objdel.rl.build import build_trainer
 from objdel.rl.run import save_json
+from objdel.verify import stats as signal
 
 SEEDS = (11, 12, 13)  # step-0 draw a, step-0 draw b, step 20
 
@@ -102,7 +102,7 @@ def probe(a, ckpt: Path, train, rows) -> dict:
 def main(argv=None) -> int:
     """CLI: the ProbeStage -> one probe per candidate checkpoint (at most two) -> <out>/g_probe.json."""
     from objdel.core.spec import ProbeStage, cli_stage
-    from objdel.train import serve
+    from objdel.verify import store as serve
 
     a = cli_stage(ProbeStage, sys.argv[1:] if argv is None else argv)
     out = Path(a.out)

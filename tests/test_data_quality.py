@@ -383,13 +383,13 @@ def test_dg12_fails_on_a_target_error(world, rows):
 
 
 def stub_ceiling(monkeypatch, values):
-    """objdel.eval.ceiling with a loo_caches whose left-out doctor r scores values[r % len(values)] (score_mask
+    """objdel.verify.ceiling with a loo_caches whose left-out doctor r scores values[r % len(values)] (score_mask
     patched to return the stub cache's value)."""
-    from objdel.reward import score
+    from objdel.verify.reward import score
 
     def loo_caches(cache):
         return [types.SimpleNamespace(index=r, cache=values[r % len(values)]) for r in range(cache.k)]
-    monkeypatch.setitem(sys.modules, "objdel.eval.ceiling", types.SimpleNamespace(loo_caches=loo_caches))
+    monkeypatch.setitem(sys.modules, "objdel.verify.ceiling", types.SimpleNamespace(loo_caches=loo_caches))
     monkeypatch.setattr(score, "score_mask", lambda mask, cache: types.SimpleNamespace(iou_tc=cache))
 
 

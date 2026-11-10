@@ -2,7 +2,7 @@
 rows of an eval view, one item's checker metrics, and the per-item and summary statistics of final_eval.
 
 - eval_rows(view, items, rl_only): the prompt rows of a view's lidc/val records (a seeded subset with `items`).
-- score_items(rows, done, root): per-item metrics (objdel.eval.metrics on the preloaded caches, in this process: one
+- score_items(rows, done, root): per-item metrics (objdel.verify.metrics on the preloaded caches, in this process: one
   CUDA context, D7) and the signal groups.
 - per_item(result) and summarize(items, groups): final_eval's K-sample means, answer choices (A4) and the schema-2
   summary with item, nodule and patient bootstrap intervals (final_eval's module docstring names every key).
@@ -17,8 +17,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from objdel.eval import metrics, select, signal
-from objdel.train import serve
+from objdel.verify import select
+from objdel.verify import stats as signal
+from objdel.verify import store as serve
+from objdel.verify.metrics import metrics
 
 if TYPE_CHECKING:  # the sampler module imports TRL's data utils; a rescore loads no ML stack
     from objdel.train.sample import Sampler

@@ -8,7 +8,8 @@ from oracles import reward_harness as H
 from oracles import reward_reference as ref
 from scipy import stats
 
-from objdel.reward import ExpertCache, score_mask
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_mask
 
 pytestmark = pytest.mark.data
 

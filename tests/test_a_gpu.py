@@ -16,10 +16,10 @@ import numpy as np
 import pytest
 
 from experiments.phase2.perf import make_a_goldens as GOLD
-from objdel.eval import ceiling
 from objdel.geom import engine as _gpucheck
-from objdel.reward import score
-from objdel.reward.cache import ExpertCache
+from objdel.verify import ceiling
+from objdel.verify.reward import score
+from objdel.verify.reward.cache import ExpertCache
 
 ROOT = Path(__file__).resolve().parents[1]
 PREPARED = Path(os.environ.get("OBJDEL_PREPARED", ROOT / "data" / "prepared"))  # the box's prepared root
@@ -46,6 +46,7 @@ def test_g03_device_bytes(monkeypatch):
     """G03: the ceiling scores on the leave-one-out caches' device tables, and only per-object numbers come back
     (no returned array as large as a mask)."""
     from objdel.train import dataset
+    from objdel.verify import store as verify_store
 
     called, sizes = set(), []
     real_device = ExpertCache.device
@@ -65,7 +66,7 @@ def test_g03_device_bytes(monkeypatch):
     proxy.score_masks, proxy.score_polygons = spy(_gpucheck.score_masks), spy(_gpucheck.score_polygons)
     monkeypatch.setattr(ExpertCache, "device", device)
     monkeypatch.setattr(score, "_gpucheck", proxy)
-    caches, gold = dataset.cache_loader(PREPARED), _golden()
+    caches, gold = verify_store.cache_loader(PREPARED), _golden()
     recs = {r["item_id"]: r for r in dataset.records(PREPARED, "lidc", "val")}
     for item_id, texts in list(gold["texts"].items())[:5]:
         cache, r = caches(item_id)["nodule"], recs[item_id]
@@ -80,7 +81,7 @@ def test_g04_legacy_ceiling(split, legacy, found, n_found, tmp_path, clean_store
     """G04 (A-G2): the legacy LOO d_max values of the ceiling CLI on the shifted view are the old ceiling's, on all
     items and on R5's found items (K-mean IoU_tc >= 0.1)."""
     from experiments.phase2 import ceiling as CLI
-    from objdel.eval import signal
+    from objdel.verify import stats as signal
 
     view = ROOT / "data" / "eval_views" / f"lidc-{split}-shifted"
     if not (view / "manifest.json").is_file():

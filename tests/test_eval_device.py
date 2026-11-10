@@ -20,13 +20,13 @@ from oracles import eval_oracle as O
 from oracles.eval_items import BOWTIE, items, val_items
 from scipy import ndimage
 
-from objdel.eval import device as D
 from objdel.geom import engine as gc
 from objdel.geom.shape import pack_objects, to_masks
 from objdel.geom.text import GRID, parse
-from objdel.reward import ExpertCache
+from objdel.verify import device as D
+from objdel.verify.reward.cache import ExpertCache
 
-M_ = importlib.import_module("objdel.eval.metrics")
+M_ = importlib.import_module("objdel.verify.metrics")
 DATA = Path(os.environ.get("OBJDEL_DATA_ROOT", Path(__file__).resolve().parents[1] / "data"))
 GOLDEN = Path(__file__).parent / "goldens" / "d_r05_metrics.json"
 RUNS = Path(__file__).resolve().parents[1] / "runs"

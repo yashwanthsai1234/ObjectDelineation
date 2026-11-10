@@ -15,15 +15,16 @@ from oracles.eval_oracle import pairwise_iou
 
 from experiments.phase2 import prereg as P
 from experiments.phase2 import select_ckpt as SC
-from objdel.eval import gates, metrics, probes, summarize
-from objdel.eval import signal as S
-from objdel.eval.metrics import _ged, min_mode_retention, tv_js
+from objdel.eval import probes
 from objdel.policy import evaluate
-from objdel.reward import ExpertCache
 from objdel.sft import select as sft_select
 from objdel.targets import build_target
 from objdel.train import sample as V
-from objdel.train import serve
+from objdel.verify import gates
+from objdel.verify import stats as S
+from objdel.verify import store as serve
+from objdel.verify.metrics import _ged, metrics, min_mode_retention, summarize, tv_js
+from objdel.verify.reward.cache import ExpertCache
 
 ROOT = Path(__file__).resolve().parents[1]
 VIEWS = ROOT / "data" / "eval_views"

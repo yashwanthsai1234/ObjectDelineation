@@ -1,4 +1,4 @@
-"""Mac golden of A.9.6 G02b: the fair ceiling's `doctor` and `model` (objdel.eval.ceiling.item) on 50 LIDC val items,
+"""Mac golden of A.9.6 G02b: the fair ceiling's `doctor` and `model` (objdel.verify.ceiling.item) on 50 LIDC val items,
 on the CPU build of the checker. The box test (tests/test_a_gpu.py::test_g02b_builds) scores the same items and texts
 on the CUDA build and compares with ==, since one venv holds one build.
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.eval import ceiling
+from objdel.verify import ceiling
 
 ADVERSARIAL = tuple(f'{{"nodule":[{{"outer":{o},"holes":{h}}}]}}' for o, h in (
     ("[[100,100],[500,500],[900,100],[900,900],[500,500],[100,900]]", "[]"),  # self-touching (vertex pinch)
@@ -47,8 +47,10 @@ def inputs(prepared: Path, n: int = 50) -> dict[str, list[str]]:
 def values(prepared: Path, texts: dict[str, list[str]]) -> dict[str, list[str]]:
     """{item_id: [doctor, model] as float hex} on this venv's build."""
     from objdel.train import dataset
+    from objdel.verify import store as verify_store
 
-    caches, recs = dataset.cache_loader(prepared), {r["item_id"]: r for r in dataset.records(prepared, "lidc", "val")}
+    caches = verify_store.cache_loader(prepared)
+    recs = {r["item_id"]: r for r in dataset.records(prepared, "lidc", "val")}
     out = {}
     for i, t in texts.items():
         row = ceiling.item(caches(i)["nodule"], t, [False] * len(t), recs[i]["W"], recs[i]["H"])

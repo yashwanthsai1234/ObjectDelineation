@@ -64,9 +64,8 @@ from transformers.utils import is_torch_bf16_gpu_available
 if TYPE_CHECKING:
     from trl import GRPOConfig, SFTConfig
 
-from objdel.reward import REWARD_V4
-
-from .rewards import LOGGED
+from objdel.verify.reward.advantages import LOGGED
+from objdel.verify.reward.spec import REWARD_V4
 
 MODELS = {
     "qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct",

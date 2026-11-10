@@ -12,10 +12,10 @@ from oracles.eval_oracle import nsd
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment, linprog
 
-from objdel.eval import gates, metrics, summarize
-from objdel.eval.metrics import NSD_TAU, hm_iou, min_mode_retention, tv_js
-from objdel.reward import ExpertCache
 from objdel.targets import build_target, min_areas
+from objdel.verify import gates
+from objdel.verify.metrics import NSD_TAU, hm_iou, metrics, min_mode_retention, summarize, tv_js
+from objdel.verify.reward.cache import ExpertCache
 
 S = 50
 
@@ -432,6 +432,7 @@ def test_eval_run_scores_with_the_prepared_caches(stores):
     pytest.importorskip("cv2")
     from experiments.phase1 import eval_run
     from objdel.train import dataset as D
+    from objdel.verify import store as verify_store
     D.prepare(stores / "store", stores / "prep", splits=("val",), procs=1)
     frames = eval_run.load_prepared(stores / "prep", "val")
     assert frames and all(f["prepared"] == str((stores / "prep").resolve()) for f in frames.values())
@@ -443,7 +444,7 @@ def test_eval_run_scores_with_the_prepared_caches(stores):
 
     def loader(key):  # any key -> {object: ExpertCache} loader, e.g. serve.loader(root) (coordinator request)
         seen.append(key)
-        return D.cache_loader(stores / "prep")(key)
+        return verify_store.cache_loader(stores / "prep")(key)
 
     assert json.dumps(eval_run.evaluate(rows, frames, caches=loader)) == json.dumps(want)
     assert sorted(seen) == sorted(r["item_id"] for r in rows if frames[r["item_id"]]["k"] >= 2)
@@ -627,7 +628,7 @@ def test_vision_module_imports_without_torch():
             "    def find_spec(self, name, path=None, target=None):\n"
             "        if name.split('.')[0] in ('torch', 'transformers'): raise ImportError(name)\n"
             "sys.meta_path.insert(0, Block())\n"
-            "from objdel.eval import gates, metrics, vision; print(vision.decide(1, 1, 1)['action'])")
+            "from objdel.eval import vision; print(vision.decide(1, 1, 1)['action'])")
     out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "ok"
 

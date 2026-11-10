@@ -10,12 +10,12 @@ import pytest
 from oracles.raster_oracle import oracle_winding
 from oracles.topology_oracle import signature as oracle_signature
 
-from experiments.cuda_checker import compare as C
 from objdel.geom import engine as _gpucheck
 from objdel.geom.shape import pack_objects
 from objdel.geom.text import GRID, MAX_RINGS
 from objdel.targets import BuildConfig, build_target, min_areas
 from objdel.targets import build as B
+from tests.oracles import cuda_parity as C
 from tests.oracles.kept_oracle import kept as kept_oracle
 
 

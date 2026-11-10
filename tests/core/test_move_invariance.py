@@ -27,7 +27,7 @@ VOLATILE = {"output_dir", "logging_dir", "run_name", "hub_model_id", "hub_token"
 def reference_value() -> str:
     """Golden 1: the value part of reward.spec.fingerprint(), without library versions."""
     from objdel.geom.topology import min_area
-    from objdel.reward.spec import REWARD_V4
+    from objdel.verify.reward.spec import REWARD_V4
 
     value = (astuple(REWARD_V4), [min_area(a) for a in (0, 999, 1001, 10**4, 10**6)])
     return hashlib.sha256(repr(value).encode()).hexdigest()
@@ -58,8 +58,8 @@ def _box_text(rng, names) -> str:
 
 def score_corpus() -> dict[str, list[str]]:
     """Golden 3: score_batch on 64 polygon texts (box rings, some broken) against fixture caches, each float as hex."""
-    from objdel.reward import ExpertCache
-    from objdel.reward.score import NUMERIC, score_batch
+    from objdel.verify.reward.cache import ExpertCache
+    from objdel.verify.reward.score import NUMERIC, score_batch
 
     def stack(boxes, W=50):
         m = np.zeros((len(boxes), W, W), bool)
@@ -160,7 +160,7 @@ def record() -> None:
     import cv2
     import scipy
 
-    from objdel.reward.spec import fingerprint
+    from objdel.verify.reward.spec import fingerprint
 
     flat = {"reference_value": reference_value(), "target_set_hash": target_hash(), "chain_argv": chain_argv(),
             "dropped_flags": golden().get("dropped_flags", {}),
@@ -199,7 +199,7 @@ def test_golden_1_full_fingerprint_when_the_libraries_match():
     import cv2
     import scipy
 
-    from objdel.reward.spec import fingerprint
+    from objdel.verify.reward.spec import fingerprint
 
     rec = golden().get("fingerprint")
     if rec is None or rec["versions"] != [np.__version__, cv2.__version__, scipy.__version__]:

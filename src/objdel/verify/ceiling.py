@@ -24,10 +24,9 @@ from typing import NamedTuple
 
 import numpy as np
 
-from objdel.reward import score
-from objdel.reward.cache import ExpertCache
-
-from . import signal
+from objdel.verify import stats as signal
+from objdel.verify.reward import score
+from objdel.verify.reward.cache import ExpertCache
 
 METRICS = ("doctor", "model", "model_all_k", "diff", "legacy_loo_dmax_item")
 MODEL = ("model", "model_all_k", "diff")

@@ -106,9 +106,9 @@ def files_digest(root: Path) -> tuple[int, str]:
 
 def build(a) -> int:
     from experiments.phase2 import audit_data
-    from objdel.reward import fingerprint
     from objdel.targets import target_set_hash
     from objdel.train import dataset as D
+    from objdel.verify.reward.spec import fingerprint
 
     if a.steps <= 0 or a.steps % a.block_steps:
         raise SystemExit(f"--steps {a.steps} is not a positive multiple of block_steps {a.block_steps}")

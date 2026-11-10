@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from objdel.geom import engine as gc
-from objdel.reward import ExpertCache
+from objdel.verify.reward.cache import ExpertCache
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = (4, 2)  # (waits, drain_syncs) per score_polygons call before D5 (gpucheck.cpp score_polygons, score_words)
@@ -121,7 +121,7 @@ def test_label_pairs_count_only_the_rows_the_size_filter_changed(cache):
     the host scorer in all four cases, alone and in one call."""
     from oracles import score_numpy as host
 
-    from objdel.reward import score_mask
+    from objdel.verify.reward.score import score_mask
     small, _ = cache
     cases = _filter_cases()
     for m, rows in cases:

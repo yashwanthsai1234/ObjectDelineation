@@ -5,10 +5,10 @@
         rescaled=data/eval_views/lidc-val-rescaled] \
         [--datasets lidc riga] [--models prior medsam sam2] [--every 1] [--threads 2]
 
-Every row is labelled with its view and scored by objdel.reward.score_mask (IoU_tc) on the view's prepared caches,
-the gate path (§5.1 G-prior, G-geometry). Promoted from archive/phase2_lab/A4 null_prior.py, null_prior_jitter.py (the
-prior on
-shifted frames is now simply the prior on the shifted view) and medsam_check.py (official min-max variant only).
+Every row is labelled with its view and scored by objdel.verify.reward.score.score_mask (IoU_tc) on the view's prepared
+caches, the gate path (§5.1 G-prior, G-geometry). Promoted from archive/phase2_lab/A4 null_prior.py,
+null_prior_jitter.py (the prior on shifted frames is now simply the prior on the shifted view) and medsam_check.py
+(official min-max variant only).
 - prior: a disc at the frame centre whose diameter is the median train-target diameter for that frame side S and
   structure (fit on the centred train records' certified targets, >= 5 px); never looks at the image.
 - medsam: flaviagiammarino/medsam-vit-base, box = the view's rater-union box + 1 px (LIDC) / + 5 px (RIGA) mapped to
@@ -30,7 +30,8 @@ from scipy.stats import binomtest
 from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS, parse
 from objdel.io import read_jsonl
-from objdel.reward import ExpertCache, score_mask
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_mask
 
 MEDSAM, SAM2 = "flaviagiammarino/medsam-vit-base", "facebook/sam2.1-hiera-tiny"
 MARGIN = {"lidc": 1, "riga": 5}

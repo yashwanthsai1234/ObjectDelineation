@@ -221,7 +221,7 @@ def test_every_config_that_samples_on_v1_names_its_sampler():
 def test_g_probe_json_writes_null_for_nan(tmp_path):
     pytest.importorskip("scipy")
     from experiments.phase2 import g_probe as GP
-    from objdel.eval import signal as S
+    from objdel.verify import stats as S
 
     gains = np.zeros(40)  # constant gains: Spearman undefined
     rho = S.spearman_ci(np.arange(40.0), gains, [f"lidc/{i}" for i in range(40)], boot=50)

@@ -1,9 +1,9 @@
-"""The host scorer that the CUDA checker's scorer replaced (tests only): objdel.reward.score.score_mask and
+"""The host scorer that the CUDA checker's scorer replaced (tests only): objdel.verify.reward.score.score_mask and
 band_depth as they were before scoring moved onto the device (git ed74aca), unchanged, so the tests can demand
 bit-identical results from the device on any mask. Masks and the per-completion combination come from the caller.
 
 Reward v5 (B3.2) adds the centroid sums, from np.nonzero of the full-frame mask, and the location terms, with the
-same float64 arithmetic as objdel.reward.score (location, gated_loc).
+same float64 arithmetic as objdel.verify.reward.score (location, gated_loc).
 
 Numpy and OpenCV: bounding-box crop, Spaghetti-labeled size-filtered signature (objdel.geom.topology), float64
 sums of the float32 band distances.
@@ -79,7 +79,7 @@ def score_completion(text, truncated, names, caches, W, H) -> dict:
     raster), objects scored by score_mask above."""
     from objdel.geom.shape import to_masks
     from objdel.geom.text import parse
-    from objdel.reward import NUMERIC, rater_answers, sig_id
+    from objdel.verify.reward.score import NUMERIC, rater_answers, sig_id
 
     p = parse(text, names, truncated)
     if not p.ok:

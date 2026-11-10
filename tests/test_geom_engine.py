@@ -4,8 +4,8 @@
 import re
 from pathlib import Path
 
-import objdel._gpucheck as ext
 from objdel.geom import engine
+from objdel.geom import engine as ext
 
 ROOT = Path(__file__).resolve().parents[1]
 USE = re.compile(r"\b_gpucheck\.([A-Za-z]\w*)\b")

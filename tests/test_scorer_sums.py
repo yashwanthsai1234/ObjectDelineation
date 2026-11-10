@@ -100,8 +100,8 @@ def test_g01_polygon_inputs_do_not_depend_on_the_platform_libm(monkeypatch):
     (mpmath; glibc's result on every case the box met) as under this platform's."""
     import math
 
-    from experiments.cuda_checker import compare as C
     from experiments.phase2.perf.make_b_goldens import polygon_cases
+    from tests.oracles import cuda_parity as C
 
     mpmath = pytest.importorskip("mpmath")
 

@@ -11,9 +11,9 @@ import cv2
 import numpy as np
 import pytest
 
-from experiments.cuda_checker import compare as C
 from objdel.geom import engine as gc
 from objdel.geom.certify import certify
+from tests.oracles import cuda_parity as C
 
 SQ = [(100, 100), (900, 100), (900, 900), (100, 900)]
 HOLE = [(400, 400), (400, 600), (600, 600), (600, 400)]

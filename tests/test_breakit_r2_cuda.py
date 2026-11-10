@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from objdel.geom.rings import polygonize, trace
-from objdel.reward.cache import ExpertCache
+from objdel.verify.reward.cache import ExpertCache
 
 
 def test_complex_offset_refused():

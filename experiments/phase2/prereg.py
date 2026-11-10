@@ -8,7 +8,7 @@ Rules:
 - C1 stop rule (§5.2): rungs smallest first; C1 = the first rung passing every C1 gate. Report-only: G-prior (a)
   (unless the owner sets G_PRIOR_A_THRESHOLD before V1, never after seeing C1), G-topology (b); G-probe never climbs
   the ladder (not PASS after the D12(c) repair: the rung passes with a "G-probe warning").
-- D12 rule R-B: `objdel.eval.signal.select_rb` (veto statistic sd_geom, post-hoc; r_std reported, disagreement
+- D12 rule R-B: `objdel.verify.stats.select_rb` (veto statistic sd_geom, post-hoc; r_std reported, disagreement
   flagged), constants in RB.
 - G-probe (§5.1): PASS / FAIL / INCONCLUSIVE against the step-0 null (two step-0 draws, different sampler seeds).
 - C2 (§5.2, §5.0): clauses (1)-(5), the 3-seed rule (>= 2 of 3 seeds >= 0.50, none < 0.30) and the fourth-seed
@@ -20,7 +20,8 @@ import json
 
 import numpy as np
 
-from objdel.eval import gates, signal
+from objdel.verify import gates
+from objdel.verify import stats as signal
 
 # ---------------------------------------------------------------- C1 (§5.1, §5.2)
 G_PRIOR_A_THRESHOLD = None  # owner-set before V1 only (<= SAM 2.1-tiny's centred share - 5 pts); None = report-only

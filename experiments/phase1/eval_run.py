@@ -9,11 +9,11 @@ Input: JSONL, one line per item, {"item_id": "<dataset>/...", "samples": [text, 
 framed exactly as for training (objdel.targets.frame) and its caches are built from the frame's rater masks; with
 --prepared (a data/prepared-layout directory, e.g. an eval view) the item's W, H and digest-checked caches come from
 the prepared records and caches (D25: 1.3-5x faster; `caches=` takes any key -> {object: ExpertCache} loader, e.g.
-objdel.train.serve.loader(root), default objdel.train.dataset.cache_loader). Items with fewer than 2 raters cannot be
-scored by the reward (no rater-pair tolerance) and are skipped and counted (I45). Scored by objdel.eval.metrics with
+objdel.verify.store.loader(root), default objdel.verify.store.cache_loader). Items with fewer than 2 raters cannot be
+scored by the reward (no rater-pair tolerance) and are skipped and counted (I45). Scored by objdel.verify.metrics with
 the dataset's schema. The report holds the per-dataset summary, the hack audit (against the baseline report's
 audit, normally the SFT checkpoint, for the component alarm), the skipped items and the Phase 2 entry gates measurable
-on this one view (objdel.eval.gates.phase2_entry with report["views"][--view]; the full decision needs every view,
+on this one view (objdel.verify.gates.phase2_entry with report["views"][--view]; the full decision needs every view,
 the probes and G-vision and is made by select_ckpt), decided per dataset (--datasets: the datasets the model is judged
 on); per-item results go to items.jsonl. Reads untrusted data: run with python -I.
 
@@ -32,9 +32,11 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.data import store
-from objdel.eval import gates, hack_audit, metrics, summarize
+from objdel.eval.audit import hack_audit
 from objdel.geom.text import SCHEMAS
 from objdel.targets import frame
+from objdel.verify import gates
+from objdel.verify.metrics import metrics, summarize
 
 
 def load_frames(root, split: str, ids=None, every: dict | None = None) -> dict:
@@ -87,7 +89,7 @@ def _job(args) -> dict:
     names = SCHEMAS[fr["dataset"]]
     if caches is None and "prepared" in fr:
         if fr["prepared"] not in _LOADERS:  # one LRU loader per process
-            from objdel.train.dataset import cache_loader
+            from objdel.verify.store import cache_loader
             _LOADERS[fr["prepared"]] = cache_loader(fr["prepared"])
         caches = _LOADERS[fr["prepared"]]
     c = caches(row["item_id"]) if caches is not None else None

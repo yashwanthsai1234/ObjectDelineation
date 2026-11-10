@@ -5,10 +5,10 @@ independent of the code under test: masks packed bit by bit in Python, and the r
 import numpy as np
 import pytest
 
-from experiments.cuda_checker import compare as C
 from objdel.geom import engine as _gpucheck
 from objdel.geom import shape
 from objdel.geom.shape import to_masks
+from tests.oracles import cuda_parity as C
 
 WIDTHS = (1, 31, 32, 33, 63, 64, 65, 512)
 

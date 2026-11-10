@@ -289,7 +289,7 @@ def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, 
     with the default --sampler vllm) returns `hf_check` as its pass."""
     SC = _sc()
     from experiments.phase2 import prereg
-    from objdel.train import serve
+    from objdel.verify import store as serve
 
     run = tmp_path / "run"
     for n in names:

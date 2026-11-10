@@ -18,7 +18,7 @@ from experiments.phase2 import select_ckpt as SC  # noqa: E402
 from objdel.policy import evaluate  # noqa: E402
 from objdel.sft import select as sft_select  # noqa: E402
 from objdel.train import sample as V  # noqa: E402
-from objdel.train import serve  # noqa: E402
+from objdel.verify import store as serve  # noqa: E402
 
 
 def _boom(*a, **k):

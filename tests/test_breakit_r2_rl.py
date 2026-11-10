@@ -70,7 +70,8 @@ def stub(tmp_path, monkeypatch):
 
     from experiments.phase2 import train_rl
     from objdel.rl import build
-    from objdel.train import dataset, serve
+    from objdel.train import dataset
+    from objdel.verify import store as serve
 
     monkeypatch.setattr(serve, "preload", lambda root, ds: None)
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: ["k1", "k2"])

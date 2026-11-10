@@ -1,7 +1,7 @@
 """Superseded and candidate reward variants for the A/B tests (EXECUTION.md §8), on packed rollouts.
 
-Not production code: objdel.reward implements reward v4 only. Variants:
-- phase0 (AB2): the Phase 0 reward (deleted `objdel.reward.annotators`): IoU vs the strict-majority vote,
+Not production code: objdel.verify.reward implements reward v4 only. Variants:
+- phase0 (AB2): the Phase 0 reward (deleted reward module `annotators`): IoU vs the strict-majority vote,
   band 1 - (missed core + spill) / |U|, nearest-Betti topology gated on IoU >= 0.5, all on size-filtered
   masks; per-group standardize each term, mix 0.3 / 0.3 / 0.4, standardize again (`group_advantages`).
 - v2 (AB2): lab ITERATION2 (t_stack/prod.py): IoU_tc with a max-over-all-raters fallback, F5, legality gate,
@@ -27,7 +27,8 @@ from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
 from objdel.geom.topology import betti, size_filter
-from objdel.reward import ExpertCache, score_mask
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_mask
 
 from .reward_harness import FIELDS, G, advantages, packed
 

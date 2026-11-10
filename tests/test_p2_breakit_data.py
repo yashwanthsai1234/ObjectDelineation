@@ -439,13 +439,13 @@ def bundled(tmp_path_factory, synthetic_items):
 
 
 def test_bundled_prepared_root_preloads_on_the_box(bundled):
-    from objdel.train import serve
+    from objdel.verify import store as serve
     assert serve.preload(bundled[0] / "prepared", ["lidc"]) > 0
 
 
 def test_bundled_prepared_root_loads_with_cache_loader(bundled):
-    from objdel.train import dataset as D
-    D.cache_loader(bundled[0] / "prepared")
+    from objdel.verify import store as verify_store
+    verify_store.cache_loader(bundled[0] / "prepared")
 
 
 def test_bundle_carries_no_wall_clock_file(bundled):

@@ -18,6 +18,7 @@ from scipy import ndimage  # noqa: E402
 from objdel.data import Item, store  # noqa: E402
 from objdel.targets import frame  # noqa: E402
 from objdel.train import dataset as D  # noqa: E402
+from objdel.verify import store as verify_store  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PREPARED = ROOT / "data" / "prepared"
@@ -66,7 +67,7 @@ def swap(a: Path, b: Path) -> None:
 def test_b3_1_binrushed1_inputs_carry_no_rater_ink():
     need(PREPARED / "riga" / "train.jsonl")
     import cv2
-    inked, caches = [], D.cache_loader(PREPARED, maxsize=1)
+    inked, caches = [], verify_store.cache_loader(PREPARED, maxsize=1)
     for r in D.records(PREPARED, "riga", "train"):
         if "BinRushed1/" not in r["item_id"]:
             continue
@@ -203,4 +204,4 @@ def test_cache_loader_detects_swapped_caches(tmp_path):
     out = prepared(tmp_path)
     swap(*(out / "caches" / f"lidc/1.2.3/n00{c}/z001" / "nodule.npz" for c in (0, 1)))  # two items' caches
     with pytest.raises(ValueError, match="digests differ"):
-        D.cache_loader(out)("lidc/1.2.3/n000/z001")
+        verify_store.cache_loader(out)("lidc/1.2.3/n000/z001")

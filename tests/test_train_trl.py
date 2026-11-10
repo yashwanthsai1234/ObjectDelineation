@@ -19,9 +19,12 @@ from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast 
 from trl import GRPOConfig, GRPOTrainer  # noqa: E402
 from trl.trainer.utils import RepeatSampler  # noqa: E402
 
-from objdel.reward import ExpertCache, advantages_v4, legal_gate, sig_id  # noqa: E402
 from objdel.train import configs, sample  # noqa: E402
 from objdel.train import rewards as R  # noqa: E402
+from objdel.verify.reward import advantages as reward_advantages  # noqa: E402
+from objdel.verify.reward.advantages import advantages_v4, legal_gate  # noqa: E402
+from objdel.verify.reward.cache import ExpertCache  # noqa: E402
+from objdel.verify.reward.score import sig_id  # noqa: E402
 
 G = 8
 A, B = sig_id(((0,),)), sig_id(((1,),))
@@ -49,7 +52,8 @@ HAND = {  # hand-set reward-v4 terms per prompt (one group each)
 
 
 def fake_score_batch(jobs):
-    """Stands in for objdel.reward.score_batch: the hand terms of each job's prompt (caches = {"key": prompt})."""
+    """Stands in for objdel.verify.reward.score.score_batch: the hand terms of each job's prompt (caches = {"key":
+    prompt})."""
     seen, rows = {}, []
     for job in jobs:
         k = job[3]["key"]
@@ -122,9 +126,9 @@ def test_r2_trl_advantages_equal_advantages_v4(tiny, tmp_path, monkeypatch):
     assert np.abs(by_group[order.index(4)]).max() > 0.5
     for name in ("format_ok", "legal", "iou_tc", "f5", "g_area"):  # per-term logs: the terms, legality-gated
         logged = np.array(list(trainer._logs["rewards"][name]))
-        assert np.abs(logged - T[name] * (legal_gate(T) if name in R.GATED else 1)).max() <= 1e-6
+        assert np.abs(logged - T[name] * (legal_gate(T) if name in reward_advantages.GATED else 1)).max() <= 1e-6
     last = [h for h in trainer.state.log_history if "loss" in h][-1]
-    assert {f"rewards/{n}/mean" for n in R.LOGGED} <= set(last)
+    assert {f"rewards/{n}/mean" for n in reward_advantages.LOGGED} <= set(last)
     assert not any(isinstance(v, float) and np.isnan(v) for v in last.values())
 
 
@@ -306,15 +310,16 @@ def test_controller_is_gone_and_the_live_callbacks_stay():
     import subprocess
     from pathlib import Path
 
-    import objdel.eval
     from objdel.train import callbacks
 
     assert callbacks.TraceStep and callbacks.NvtxSteps and callbacks.BudgetStop
     for name in ("Contr" + "oller", "audit_" + "alarm", "FI" + "RED"):
         with pytest.raises(AttributeError):
             getattr(callbacks, name)
-    assert all(hasattr(objdel.eval, n) for n in ("hack_audit", "gates", "metrics", "summarize", "vision"))
-    assert not hasattr(objdel.eval, "alarms" + "_for")
+    from objdel.eval import audit
+
+    assert callable(audit.hack_audit)
+    assert not hasattr(audit, "alarms" + "_for")
     root = Path(__file__).resolve().parents[1]
     files = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "-co", "--exclude-standard", "src",
                             "experiments/phase2"], capture_output=True, text=True, check=True).stdout.split("\0")

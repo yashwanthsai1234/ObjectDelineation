@@ -194,8 +194,8 @@ def _a9_items():
     """Key sets of the schema-2 files, taken from the code: evaluate.summarize on fake items, one metrics() call."""
     import numpy as np
 
-    from objdel.eval import metrics
     from objdel.policy import evaluate as FE
+    from objdel.verify.metrics import metrics
 
     ids = [f"lidc/p{p}/n001/z{s}" for p in range(2) for s in range(2)]
     items = [{"item_id": i, **{m: 0.5 + k / 10 for m in FE.METRICS}, **{m: 0.5 for m in FE.SELECTION}}

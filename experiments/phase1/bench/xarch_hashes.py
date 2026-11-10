@@ -45,12 +45,15 @@ import numpy as np
 
 from objdel.data import Item, splits
 from objdel.data import riga as riga_mod
-from objdel.eval import metrics
 from objdel.geom.shape import to_masks
 from objdel.geom.text import SCHEMAS, parse, serialize
 from objdel.geom.topology import betti, instance_topology, min_area, signature, size_filter
-from objdel.reward import ExpertCache, advantages_v4, fingerprint, score_batch, topology_reward
 from objdel.targets import BuildConfig, build_target, frame, target_set_hash
+from objdel.verify.metrics import metrics
+from objdel.verify.reward.advantages import advantages_v4, topology_reward
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_batch
+from objdel.verify.reward.spec import fingerprint
 from tests.oracles.polygonize_oracle import polygonize
 
 SEED = 20261019

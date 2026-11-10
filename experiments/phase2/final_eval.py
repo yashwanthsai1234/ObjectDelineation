@@ -37,10 +37,10 @@ reward's rule).
 - iou_tc: IoU against the doctors' band (the reward's term); f5: the boundary score (calibrated so a new doctor
   scores 0.95); precision / recall / dice: pixels against the doctors' strict-majority outline;
 - nsd, boundary_iou (best doctor) and boundary_iou_vote (the majority outline); soft_dice, hm_iou (HM-IoU8) and ged
-  (lower is better) per item: objdel.eval.metrics defines them;
+  (lower is better) per item: objdel.verify.metrics defines them;
 - miss_rate: the share of items whose K-mean IoU_tc is below 0.1 (not the best of K); iou_found: the mean IoU_tc of
   the other items, its CIs drawn on that subset;
-- sel_*: one answer chosen per item with no doctor masks (objdel.eval.select; `per_item`), and `paired`: the per-item
+- sel_*: one answer chosen per item with no doctor masks (objdel.verify.select; `per_item`), and `paired`: the per-item
   differences medoid - mean of K and vote - mean of K with their patient and nodule CIs. `gate_a` decides Gate A
   from the val patient CI. Run gates keep sel_mean_of_k (= iou_tc);
 - noise_floor: K-answer sampling noise from the two answer halves (`noise_floor`); printed beside gains, never a rule.
@@ -71,12 +71,13 @@ import numpy as np
 
 from experiments.phase2.freeze_views import render_files
 from objdel.data import quality as Q
-from objdel.eval import device, signal
 from objdel.geom import engine as _gpucheck
 from objdel.hashing import file_sha256
 from objdel.io import code_sha, read_json, read_jsonl
 from objdel.io import write_atomic as _write
 from objdel.policy.evaluate import METRICS, evaluate, per_item, score_items, summarize
+from objdel.verify import device
+from objdel.verify import stats as signal
 
 ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VIEWS = ROOT / "docs/reference/frozen_views.json"  # /workspace/src on the box
@@ -363,7 +364,8 @@ def _identity(view: Path, split: str) -> dict:
 def rescore(src: Path, view: Path, split: str, out: Path) -> None:
     """--rescore: score src/answers.jsonl again on the view, with no model; exit 2 when the view's manifest is not
     the one src was sampled on."""
-    from objdel.train import dataset, serve
+    from objdel.train import dataset
+    from objdel.verify import store as serve
 
     f = src / "final_eval.json"
     old = read_json(f) if f.exists() else {}
@@ -432,7 +434,8 @@ def main(argv=None) -> None:
 
     import torch
 
-    from objdel.train import dataset, serve
+    from objdel.train import dataset
+    from objdel.verify import store as serve
 
     t0 = time.time()
     for root in dict.fromkeys(v.resolve() for v in views):

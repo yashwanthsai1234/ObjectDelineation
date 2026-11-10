@@ -5,9 +5,11 @@ import pytest
 from conftest import KEY, SIDE
 
 from objdel.geom import engine as _gpucheck
-from objdel.reward import REWARD_V4, ExpertCache, fingerprint
-from objdel.train import rewards
 from objdel.verify.api import API_VERSION, ScoreItem, Verifier, VerifyError
+from objdel.verify.reward.advantages import logged_terms
+from objdel.verify.reward.cache import ExpertCache
+from objdel.verify.reward.score import score_batch
+from objdel.verify.reward.spec import REWARD_V4, fingerprint
 
 
 def test_score_has_the_bits_of_the_shared_scoring_function(view_root, answers):
@@ -16,8 +18,8 @@ def test_score_has_the_bits_of_the_shared_scoring_function(view_root, answers):
     items += [ScoreItem("cut", KEY, answers[0], True), ScoreItem("bad", KEY, "not json", False)]
     got = v.score(items)
     cache = ExpertCache.load(view_root / "caches" / KEY / "nodule.npz")
-    T = rewards.score_jobs([(i.text, i.truncated, ("nodule",), {"nodule": cache}, SIDE, SIDE) for i in items])
-    terms = rewards.logged_terms(T)
+    T = score_batch([(i.text, i.truncated, ("nodule",), {"nodule": cache}, SIDE, SIDE) for i in items])
+    terms = logged_terms(T)
     assert [r.id for r in got] == ["i0", "i1", "i2", "cut", "bad"]
     for j, r in enumerate(got[:3]):
         assert r.error is None and r.defects == {}

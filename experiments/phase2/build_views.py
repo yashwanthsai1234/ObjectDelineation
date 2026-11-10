@@ -3,17 +3,17 @@
     .venv/bin/python -I -m experiments.phase2.build_views --out data/views/lidc-bundle-v2 [--store data/store]
         [--dataset lidc] [--split train] [--epochs 3] [--seed 0] [--nonsimple-repeat 4] [--procs 2] [--limit N]
 
-Per item with pixels (objdel.data.store): the policy frame gives the reward's size rule (min_areas: shift-, scale-
-and D4-invariant while the union stays inside) and the voting raters (objdel.reward.voters: non-empty size-filtered
-signature; I27, B2-4). Per epoch, voting rater and repeat (non-simple targets, i.e. any object other than one part
-without holes, are repeated `nonsimple_repeat` times, each repeat with its own draw), one row spec drawn from
-augment.row_rng(seed, epoch, item_id, rater_index, rep): the window (augment.draw: S uniform over the policy side
-and its ladder neighbours, the sides of the shifted and rescaled eval views, uniform shift with the union inside and
-2 px clearance, no other outlined nodule), the op
-(D4 for LIDC, id / fh for RIGA), and for LIDC the CT window (L -300 +- 60, W 1400 +- 80) and noise (sigma <= 10 HU).
-The target is build_target on the op applied to the rater's mask in that window (certified, and pixel-exact for
-LIDC, or ValueError); its raster is compared pixel for pixel with the mask for the per-op exact share (RIGA < 1).
-The answer-token budget (I5) is applied when rows are read (objdel.train.dataset.view_rows), per tokenizer.
+Per item with pixels (objdel.data.store): the policy frame gives the reward's size rule (min_areas: shift-, scale- and
+D4-invariant while the union stays inside) and the voting raters (objdel.verify.reward.cache.voters: non-empty
+size-filtered signature; I27, B2-4). Per epoch, voting rater and repeat (non-simple targets, i.e. any object other than
+one part without holes, are repeated `nonsimple_repeat` times, each repeat with its own draw), one row spec drawn from
+augment.row_rng(seed, epoch, item_id, rater_index, rep): the window (augment.draw: S uniform over the policy side and
+its ladder neighbours, the sides of the shifted and rescaled eval views, uniform shift with the union inside and 2 px
+clearance, no other outlined nodule), the op (D4 for LIDC, id / fh for RIGA), and for LIDC the CT window (L -300 +- 60,
+W 1400 +- 80) and noise (sigma <= 10 HU). The target is build_target on the op applied to the rater's mask in that
+window (certified, and pixel-exact for LIDC, or ValueError); its raster is compared pixel for pixel with the mask for
+the per-op exact share (RIGA < 1). The answer-token budget (I5) is applied when rows are read
+(objdel.train.dataset.view_rows), per tokenizer.
 
 Writes <out>/rows.jsonl (sorted by epoch, item_id, rater_index, rep), <out>/context/<item_id>.npz (augment.
 write_context: int16 HU for LIDC, uint8 RGB for RIGA) and <out>/manifest.json (config, source manifests' SHA-256,
@@ -44,8 +44,8 @@ from objdel.geom.shape import to_mask
 from objdel.geom.text import SCHEMAS
 from objdel.geom.topology import signature
 from objdel.io import write_json
-from objdel.reward import voters
 from objdel.targets import BuildConfig, augment, build_target, frame, min_areas
+from objdel.verify.reward.cache import voters
 
 NO_JITTER = {"window": None, "noise_sigma": 0.0, "noise_seed": 0}
 

@@ -27,7 +27,7 @@ Items with one rater are excluded from RL (`rl_eligible`): their band has no wid
 a single answer. `build` refuses them.
 
 Bit-for-bit reproducibility across CPUs (M9 F1, F2; impl/M9_x86.md, impl/S2.md). The EDT runs in the checker
-engine (objdel._gpucheck.edt, the kernels that build the device tables): exact integer squared distances (Felzenszwalb
+engine (objdel.geom.engine.edt, the kernels that build the device tables): exact integer squared distances (Felzenszwalb
 and Huttenlocher's lower envelope in integers), a float64 sqrt, rounded to float32. That is the correctly rounded
 float32 sqrt (double rounding is innocuous for sqrt with 53 >= 2 * 24 + 2 bits), bit-identical to scipy's exact
 Maurer transform (the oracle of the tests and of the D7 cache gate, runs/d7) and to OpenCV's own trueDistTrans on arm64
@@ -91,8 +91,7 @@ from scipy import integrate, stats
 
 from objdel.geom import engine as _gpucheck
 from objdel.geom.topology import min_area
-
-from .spec import CACHE_SPEC, fingerprint
+from objdel.verify.reward.spec import CACHE_SPEC, fingerprint
 
 _CROSS = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
 _BIG = np.float32(1e6)  # distance when no target pixel exists in the crop

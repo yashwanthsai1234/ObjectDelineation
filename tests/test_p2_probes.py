@@ -193,7 +193,7 @@ def test_cli_help(script):
 
 def test_baselines_prior_on_fixture(tmp_path, disc_mask):
     from experiments.phase2 import baselines
-    from objdel.reward import ExpertCache
+    from objdel.verify.reward.cache import ExpertCache
 
     recs = []
     for i, (cx, r) in enumerate([(25, 8), (25, 10), (20, 6)]):
@@ -258,12 +258,12 @@ def test_real_built_probe_dirs_patient_disjoint():
 
 
 def test_probe_dir_accepted_by_preload(precision_dir):
-    serve = pytest.importorskip("objdel.train.serve")
+    serve = pytest.importorskip("objdel.verify.store")
     assert serve.preload(precision_dir, ["lidc"]) == 0  # single-rater items: no RL caches, records match manifest
 
 
 def test_probe_outputs_through_phase2_entry(precision_dir, topology_dir):
-    from objdel.eval import gates
+    from objdel.verify import gates
 
     good = P.score_precision(_rows(precision_dir, M.model_noise(0.5)), precision_dir)
     disc = _rows(precision_dir, P.model_centroid_disc)
