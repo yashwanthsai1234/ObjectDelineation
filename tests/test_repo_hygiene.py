@@ -205,7 +205,7 @@ def test_phase0_scripts_and_records_moved():
     PLAN_0b.md) stay on the owner's machine, git-ignored, so a worktree may not hold them."""
     assert len(list((ROOT / "archive/phase0").glob("*.py"))) == 8
     rec = ROOT / "docs/research/records/phase0"
-    md = {f.rsplit("/", 1)[1] for f in tracked("docs/research/records/phase0") if f.count("/") == 4 and f.endswith(".md")}
+    md = {f.rsplit("/", 1)[1] for f in tracked(":(glob)docs/research/records/phase0/*.md")}
     assert (rec / "results").is_dir() and md == {"README.md", "RESULTS.md", "RESULTS_0b.md"}
     plans = [f"docs/research/records/phase0/{n}" for n in ("PLAN.md", "PLAN_0b.md")]
     ignored = subprocess.run(["git", "check-ignore", *plans], cwd=ROOT, capture_output=True, text=True).stdout.split()
