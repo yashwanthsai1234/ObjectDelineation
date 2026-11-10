@@ -256,7 +256,9 @@ def _equal(got, want, where):
 
 def test_metrics_equal_the_golden_without_host_pixels(monkeypatch):
     """D-R05 / S01: the 50 synthetic items (duplicates, illegal, unparseable, truncated, all-identical) give every
-    field of the pre-D7 golden, with to_masks, cv2.erode, scipy labelling and EDT and OpenCV labelling raising."""
+    field of the pre-D7 golden, with to_masks, cv2.erode, scipy labelling and EDT and OpenCV labelling raising.
+    Comb merge: the advantage of items 5, 8, ..., 23 re-recorded for BR2-math-1 (illegal rollouts share one FAIL
+    topology answer); with the old answer rule the output equals the pre-D7 golden in every field."""
     g = json.loads(GOLDEN.read_text())
     its = items()
     h = hashlib.sha256()
