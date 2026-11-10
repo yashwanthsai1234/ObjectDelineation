@@ -516,6 +516,23 @@ def write_seq_gaps(out_dir: str, values: list[float], rows: int) -> None:
                                                  "valid_tokens"], "steps": steps}) + "\n")  # fmt: skip
 
 
+def truncate_seq_gaps(out_dir: str, steps: int) -> None:
+    """Cuts <out_dir>/seq_gaps.f32 back to the first `steps` steps (a resumed run: the steps after its checkpoint run
+    again and append again); a missing file stays missing."""
+    import json
+    from pathlib import Path
+
+    d = Path(out_dir)
+    if not (d / "seq_gaps.f32").exists():
+        return
+    meta = json.loads((d / "seq_gaps.json").read_text())
+    size = min(steps, meta["steps"]) * meta["rows_per_step"] * 3 * 4
+    with open(d / "seq_gaps.f32", "r+b") as f:
+        f.truncate(size)
+    meta["steps"] = size // (meta["rows_per_step"] * 3 * 4)
+    (d / "seq_gaps.json").write_text(json.dumps(meta) + "\n")
+
+
 def no_lora_input_cast(model) -> int:
     """Turns off PEFT's cast of each LoRA layer's input to its fp32 adapter dtype; returns the layers changed. Only
     under bf16 autocast: there the adapter matmul casts the input straight back to bf16, so the fp32 copy (one per

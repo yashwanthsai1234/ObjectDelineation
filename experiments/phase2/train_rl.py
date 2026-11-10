@@ -210,6 +210,7 @@ def main(argv=None) -> int:
 
     from experiments.phase2.g_probe import make_trainer, save_json
     from objdel.train import dataset, serve
+    from objdel.train.fast import truncate_seq_gaps
 
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)  # every refusal before any model or engine load
     stop = budget_stop(a)
@@ -220,6 +221,9 @@ def main(argv=None) -> int:
     last = get_last_checkpoint(str(a.out / "trainer")) if a.resume and (a.out / "trainer").is_dir() else None
     if a.resume and last is None:
         print(f"--resume: no checkpoint in {a.out / 'trainer'}; starting at step 0", file=sys.stderr)
+    start = int(Path(last).name.split("-")[1]) if last else 0
+    if a.resume:
+        truncate_seq_gaps(str(a.out / "trainer"), start)
     for root in [a.train] + ([a.heldout] if a.heldout else []):
         serve.preload(root, ["lidc"])
     gc.freeze()  # preloaded store: leave it out of the GC scans (was inside serve.fork_pool)
@@ -233,7 +237,7 @@ def main(argv=None) -> int:
     trainer.train(resume_from_checkpoint=last)
     t1 = time.time()
     save_final(trainer.accelerator.unwrap_model(trainer.model), proc, a.out)
-    done, start = trainer.state.global_step, int(Path(last).name.split("-")[1]) if last else 0
+    done = trainer.state.global_step
     log, cfg = trainer.state.log_history, trainer.args
     rows = schedule and {"root": str(a.train), "revision": a.rows_revision, "manifest_sha256": a.rows_manifest_sha256,
                          "ids_sha256": schedule["ids_sha256"]}

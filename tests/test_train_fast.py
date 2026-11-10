@@ -1189,3 +1189,18 @@ def test_f04_is_summary_costs_under_2pct_of_a_step():
     run()
     torch.cuda.synchronize()
     assert time.perf_counter() - t0 < 0.02 * 23.6
+
+
+def test_truncate_seq_gaps_cuts_to_the_resumed_step_count(tmp_path):
+    """B2.0 handoff: a resumed run drops the rows of the steps after its checkpoint; the json steps follow."""
+    from objdel.train.fast import truncate_seq_gaps, write_seq_gaps
+
+    for k in range(3):
+        write_seq_gaps(str(tmp_path), [float(k)] * 6, 2)  # 2 rows x 3 cols per step
+    truncate_seq_gaps(str(tmp_path), 2)
+    meta, a = read_seq_gaps(tmp_path)
+    assert meta["steps"] == 2 and a[:, 0, 0].tolist() == [0.0, 1.0]
+    truncate_seq_gaps(str(tmp_path), 5)  # more than the file holds: unchanged
+    assert read_seq_gaps(tmp_path)[0]["steps"] == 2
+    truncate_seq_gaps(str(tmp_path / "none"), 1)  # no file: nothing happens
+    assert not (tmp_path / "none").exists()
