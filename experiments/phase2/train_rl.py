@@ -7,7 +7,8 @@
     python -I -m experiments.phase2.train_rl --merge-last --model qwen3-vl-2b --ckpt {rd}/ckpt --out {rd}/b1-rows
     python -I -m experiments.phase2.train_rl --spec specs/b1_rows.yaml --stage train [--rd RD] [--data DATA]
 
-The flags are an objdel.core.spec.RlStage (cli_stage: one flag per field, --grpo as JSON, --profile-window S,E);
+The flags are an objdel.core.spec.RlStage (cli_stage: one flag per field, --grpo as JSON, --profile-window S,E with
+1 <= S <= E: `1,STEPS` traces every step, S >= 2 with --trace);
 train_rl adds the rules that need objdel.train (the numerics preset names, the --grpo keys it owns).
 
 The trainer is the G-probe's (g_probe.make_trainer): FastGRPO with OpenOnce and ImageMemo, vLLM colocate drawing,

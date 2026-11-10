@@ -64,7 +64,7 @@ class TrainerFlags(BaseModel, frozen=True, extra="forbid"):
     group_requests: bool = False
     no_ckpt_layers: int = Field(0, ge=0, le=28)  # C9 arm (a): of Qwen3-VL-2B's 28 text decoder layers; no clamp
     runaway_cap: float = Field(0, ge=0)
-    profile_window: tuple[int, int] | None = None
+    profile_window: tuple[int, int] | None = None  # S,E: NvtxSteps; 1,steps traces every step; S >= 2 with trace
     count_syncs: bool = False
     host_meta: bool = False
     check_meta_every: int = Field(50, ge=0)
@@ -77,8 +77,10 @@ class TrainerFlags(BaseModel, frozen=True, extra="forbid"):
 
     @model_validator(mode="after")
     def _window(self):
-        if self.profile_window and not 2 <= self.profile_window[0] <= self.profile_window[1]:
-            raise ValueError(f"profile_window {self.profile_window}: needs 2 <= S <= E")
+        w = self.profile_window
+        if w and not (1 <= w[0] <= w[1] and (w[0] >= 2 or not self.trace)):
+            raise ValueError(f"profile_window {w}: needs 1 <= S <= E, and S >= 2 with --trace (torch.profiler warms "
+                             "up one step before step S)")
         return self
 
 

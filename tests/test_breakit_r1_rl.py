@@ -127,10 +127,12 @@ def test_budget_stop_cannot_be_silently_off(case):
     assert c.should_training_stop and c.should_save
 
 
-@pytest.mark.parametrize("resume_at", [11, pytest.param(12, marks=pytest.mark.xfail(strict=True, reason=(
-    "plan decision: NvtxSteps captures exactly steps s..e; test_nvtx.test_profiler_window_edges pins no partial "
-    "capture on a resume past s - 1")))])
-def test_nvtx_capture_window_survives_resume(monkeypatch, resume_at):
+@pytest.mark.parametrize(("window", "resume_at", "want"), [
+    ((12, 14), 11, ["start", "stop"]), ((12, 14), 12, ["start", "stop"]), ((12, 14), 13, ["start", "stop"]),
+    ((12, 14), 14, []), ((1, 14), 0, ["start", "stop"])])  # owner decision 2026-11-09 (BR1-rl-6, choice 1)
+def test_nvtx_capture_window_survives_resume(monkeypatch, tmp_path, window, resume_at, want):
+    import json
+
     import torch
 
     from objdel.train.callbacks import NvtxSteps
@@ -139,13 +141,17 @@ def test_nvtx_capture_window_survives_resume(monkeypatch, resume_at):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda.profiler, "start", lambda: calls.append("start"))
     monkeypatch.setattr(torch.cuda.profiler, "stop", lambda: calls.append("stop"))
-    cb, state = NvtxSteps((12, 14)), SimpleNamespace(global_step=resume_at)
-    cb.on_train_begin(None, state, _control())
+    cb, state, args = NvtxSteps(window), SimpleNamespace(global_step=resume_at), SimpleNamespace(output_dir=tmp_path)
+    cb.on_train_begin(args, state, _control())
     for s in range(resume_at + 1, 16):
         state.global_step = s
-        cb.on_step_end(None, state, _control())
-    cb.on_train_end(None, state, _control())
-    assert calls == ["start", "stop"]
+        cb.on_step_end(args, state, _control())
+    cb.on_train_end(args, state, _control())
+    assert calls == want
+    got = json.loads((tmp_path / "profile_window.json").read_text())
+    assert got["asked"] == list(window)
+    assert got["captured"] == ([max(window[0], resume_at + 1), window[1]] if want else None)
+    assert got["partial"] == (resume_at >= window[0])
 
 
 def _fake_terms(n, iou):

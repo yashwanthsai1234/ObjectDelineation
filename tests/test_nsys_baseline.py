@@ -26,7 +26,7 @@ def test_capture_script_pins_and_flags():
                  "nsight-systems-2026.5.2_2026.5.2.323-1_amd64.deb",
                  "24954cc4d4cb5f051dc91c6a44101d7ccf15c802ab8ea8a32c09dd22542f9031",
                  "e71440978244e3883fc769da91a44a03451129ce21988d0db656a6bf7c1cb56b",
-                 "sha256sum -c", "dpkg-deb -x", 'timeout --signal=INT --kill-after=120 "${NSYS_TIMEOUT:-1200}"',
+                 "sha256sum -c", "dpkg-deb -x", 'timeout --signal=INT --kill-after=120 "${NSYS_TIMEOUT:-0}"',
                  "OBJDEL_NVTX=1", '--profile-window "$S,$E"', "--capture-range=cudaProfilerApi", "exit 3", "exit 4",
                  "nvtx_pushpop_trace,nvtx_gpu_proj_trace,cuda_gpu_trace,cuda_api_trace", "pkill"):  # fmt: skip
         assert text in s, text
@@ -43,18 +43,22 @@ def test_capture_script_passes_shellcheck():
     assert out.returncode == 0, out.stdout
 
 
-def test_capture_script_runs_the_command_under_nsys_with_the_window(tmp_path):
-    """A stub nsys in NSYS_HOME logs its arguments; a stub `timeout` (none on the Mac) drops its own flags."""
+@pytest.mark.parametrize(("timeout", "want"), [(None, "0"), ("1800", "1800")])
+def test_capture_script_runs_the_command_under_nsys_with_the_window(tmp_path, timeout, want):
+    """A stub nsys in NSYS_HOME logs its arguments; a stub `timeout` (none on the Mac) logs its duration and drops
+    its own flags. No default cut: unset NSYS_TIMEOUT gives GNU timeout's 0 (no limit), so a whole-run capture
+    (--profile-window 1,N) is not killed; a caller that wants a limit sets NSYS_TIMEOUT."""
     home, bin_ = tmp_path / "nsys" / "target-linux-x64", tmp_path / "bin"
     home.mkdir(parents=True)
     bin_.mkdir()
-    log = tmp_path / "calls.txt"
+    log, dur = tmp_path / "calls.txt", tmp_path / "timeout.txt"
     (home / "nsys").write_text(f'#!/bin/sh\necho "$@" >> {log}\n')
-    (bin_ / "timeout").write_text('#!/bin/sh\nshift 3\nexec "$@"\n')
+    (bin_ / "timeout").write_text(f'#!/bin/sh\necho "$3" > {dur}\nshift 3\nexec "$@"\n')
     for f in (home / "nsys", bin_ / "timeout"):
         f.chmod(0o755)
-    env = os.environ | {"NSYS_HOME": str(tmp_path / "nsys"), "PATH": f"{bin_}:{os.environ['PATH']}",
-                        "PY": sys.executable}  # fmt: skip
+    env = {k: v for k, v in os.environ.items() if k != "NSYS_TIMEOUT"} | {
+        "NSYS_HOME": str(tmp_path / "nsys"), "PATH": f"{bin_}:{os.environ['PATH']}", "PY": sys.executable}
+    env |= {"NSYS_TIMEOUT": timeout} if timeout else {}
     out = subprocess.run(["bash", str(SCRIPT), str(tmp_path / "rd"), "x", "16", "17", "--", "echo", "hi"], env=env,
                          capture_output=True, text=True)  # fmt: skip
     assert out.returncode == 0, out.stderr
@@ -63,7 +67,7 @@ def test_capture_script_runs_the_command_under_nsys_with_the_window(tmp_path):
     profile = next(c for c in calls if c.startswith("profile"))
     assert profile.endswith("echo hi --profile-window 16,17") and "--capture-range=cudaProfilerApi" in profile
     assert any(c.startswith("export --type sqlite") for c in calls) and any(c.startswith("stats") for c in calls)
-    assert (tmp_path / "rd/nsys/x_tables.txt").exists()
+    assert (tmp_path / "rd/nsys/x_tables.txt").exists() and dur.read_text().strip() == want
 
 
 # I12-I15: nsys_baseline on the hand-made export ------------------------------------------------------------------
