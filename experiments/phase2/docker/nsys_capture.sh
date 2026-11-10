@@ -4,12 +4,12 @@
 #   nsys_capture.sh RD NAME S E -- CMD...
 #
 # Installs the pinned Nsight Systems CLI once per box (dpkg-deb -x: no GUI dependencies), runs CMD under
-# `nsys profile` with `--profile-window S E` appended (train_rl: callbacks.NvtxSteps starts the cudaProfilerApi
+# `nsys profile` with `--profile-window S,E` appended (train_rl: callbacks.NvtxSteps starts the cudaProfilerApi
 # capture at the end of step S-1 and stops it at the end of step E), then writes RD/nsys/NAME.{nsys-rep,sqlite},
 # NAME_tables.txt (the export schema differs by nsys version) and NAME_stats_<report>.csv for
 # experiments.phase2.nsys_baseline (--stats RD/nsys/NAME_stats).
 # Exit 3: install or `nsys status -e` failed; exit 4: capture failed or timed out. The caller then runs the fallback
-# (same arm with `--trace DIR --profile-window 16 17` and OBJDEL_NVTX unset: torch.profiler on step 16).
+# (same arm with `--trace DIR --profile-window 16,17` and OBJDEL_NVTX unset: torch.profiler on step 16).
 # Pins: the Debian 13 CUDA repo package, then the CLI-only devtools package (Ubuntu 24.04 build) as the second try,
 # each checked by SHA-256 [measured: curl, 2026-11-08]. A manual retry may install the pinned package with apt after
 # the repo's cuda-keyring_1.1-1_all.deb. No CUDA memory-usage tracing (NVIDIA: "may cause significant runtime overhead"),
@@ -31,7 +31,7 @@ NSYS=$(find "$H" -type f -name nsys -path '*target-linux-x64*' -print -quit)   #
 [ -n "$NSYS" ] || NSYS=$(find "$H" -type f -name nsys -print -quit)   # the CLI package layout is not checked
 { "$NSYS" --version > "$RD/nsys/version.txt" && "$NSYS" status -e >> "$RD/nsys/version.txt"; } || exit 3
 timeout --signal=INT --kill-after=120 "${NSYS_TIMEOUT:-1200}" env OBJDEL_NVTX=1 "$NSYS" profile -t cuda,nvtx,osrt \
-  --capture-range=cudaProfilerApi --capture-range-end=stop -o "$RD/nsys/$NAME" "$@" --profile-window "$S" "$E" \
+  --capture-range=cudaProfilerApi --capture-range-end=stop -o "$RD/nsys/$NAME" "$@" --profile-window "$S,$E" \
   || exit 4
 "$NSYS" export --type sqlite -o "$RD/nsys/$NAME.sqlite" "$RD/nsys/$NAME.nsys-rep"
 "${PY:-/opt/venv/bin/python}" -I -c 'import sqlite3, sys

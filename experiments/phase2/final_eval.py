@@ -1,7 +1,7 @@
 """Final evaluation of a tuned model on a whole split: K samples per item, scored by the checker.
 
     python -I -m experiments.phase2.final_eval --ckpt DIR --view data/eval_views/lidc-val-shifted --split val \
-        --train data/prepared --out runs/eval/val [--k 8] [--seed 11] [--per-call 64]
+        --train data/prepared --out runs/eval/val [-k 8] [--seed 11] [--per-call 64]
     python -I -m experiments.phase2.final_eval --ckpt DIR --train data/prepared --view V1 --split val --out O1 \
         --view V2 --split val --out O2          # several views, one model load (one --out: O/<view name>/)
     python -I -m experiments.phase2.final_eval --ckpt DIR --train data/prepared --view V --split val --out O \
@@ -11,6 +11,10 @@
         --out runs/a3/pre_rental.json
     python -I -m experiments.phase2.final_eval --resummarize runs/r5/eval/eval_test --out runs/r5/eval_a1/eval_test \
         [--store data/store]
+    python -I -m experiments.phase2.final_eval --spec specs/b1_rows.yaml --stage eval [--rd RD] [--data DATA]
+
+The model forms read their flags as an objdel.core.spec.EvalStage (cli_stage: kebab flags, K as -k, or a spec stage);
+--hash-view and --resummarize load no model and are read before it.
 
 Every RL-eligible item of the view's <split> records (the G-probe uses a 128-item subset of the val view; this uses
 all of them, and runs on the test split's view built by build_eval_views --split test). Samples with vLLM through
@@ -335,19 +339,20 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
 
 
 def load_trainer(a):
-    """The vLLM trainer of --ckpt (g_probe.make_trainer on the training rows), built once per process."""
+    """The vLLM trainer of the stage's ckpt (g_probe.make_trainer on the training rows), built once per process."""
     from experiments.phase2 import g_probe
+    from objdel.core.spec import ProbeStage
     from objdel.train import dataset
 
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=dataset.DISAGREEMENT_OVERSAMPLE)
-    args = argparse.Namespace(model=a.model, out=a.out[0], grpo="{}", train=a.train)
+    probe = ProbeStage(model=a.model, ckpt=a.ckpt, train=a.train, probe=a.view[0], out=a.out[0])
     if not a.adapter:
-        return g_probe.make_trainer(args, a.ckpt, train, 1)[0]
+        return g_probe.make_trainer(probe, Path(a.ckpt), train, 1)[0]
     from peft import set_peft_model_state_dict  # option F: vLLM serves the adapter unmerged, as in training
     from safetensors.torch import load_file
 
-    trainer = g_probe.make_trainer(args, a.ckpt, train, 1, numerics="lora-seqmask")[0]
-    set_peft_model_state_dict(trainer.model, load_file(a.adapter / "adapter_model.safetensors"))
+    trainer = g_probe.make_trainer(probe, Path(a.ckpt), train, 1, numerics="lora-seqmask")[0]
+    set_peft_model_state_dict(trainer.model, load_file(Path(a.adapter) / "adapter_model.safetensors"))
     return trainer
 
 
@@ -474,57 +479,51 @@ def rescore(src: Path, view: Path, split: str, out: Path) -> None:
     score(view, split, out, rows, answers, run, t0)
 
 
-def main(argv=None) -> None:
+def no_model(argv: list[str]) -> None:
+    """--hash-view VIEW --out FILE and --resummarize DIR --out DIR [--store S]: no model, no EvalStage."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--ckpt", type=Path)
-    ap.add_argument("--view", type=Path, action="append", help="an eval view directory (data/prepared layout); "
-                    "repeat it to sample several views in one process")
-    ap.add_argument("--split", action="append", help="the split of each --view, in the same order (default val)")
-    ap.add_argument("--train", type=Path, help="the prepared training data (make_trainer's dataset)")
-    ap.add_argument("--out", type=Path, action="append", required=True,
-                    help="one folder (a subfolder per view when several), or one per --view")
-    ap.add_argument("--adapter", type=Path, metavar="DIR",
-                    help="--ckpt's base plus this LoRA folder (a run trained under lora-seqmask), served unmerged")
-    ap.add_argument("--rescore", type=Path, metavar="DIR", help="score DIR/answers.jsonl again (no model)")
-    ap.add_argument("--hash-view", type=Path, metavar="VIEW", help="write VIEW's identity record to --out and exit")
-    ap.add_argument("--resummarize", type=Path, metavar="DIR", help="a finished run: summarize its items.jsonl again")
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--hash-view", type=Path, metavar="VIEW", help="write VIEW's identity record to --out and exit")
+    mode.add_argument("--resummarize", type=Path, metavar="DIR", help="a finished run: summarize its items.jsonl again")
+    ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--store", type=Path, default=Path("data/store"), help="the item store (group_id per item)")
-    ap.add_argument("--model", default="qwen3-vl-2b")
-    ap.add_argument("--k", type=int, default=8)
-    ap.add_argument("--seed", type=int, default=11)
-    ap.add_argument("--per-call", type=int, default=64, help="items per vLLM generation call")
-    ap.add_argument("--limit", type=int, help="smoke runs: sample and score at most N items per view, evenly spaced "
-                    "(limit_rows); the view checks and hashes still cover the whole view")
     a = ap.parse_args(argv)
-    if a.limit is not None and a.limit < 1:
-        ap.error("--limit must be at least 1")
-    if a.k < 2:
-        ap.error("--k must be >= 2")
-    if a.resummarize:
-        if a.out[0].resolve() == a.resummarize.resolve():
-            ap.error("--out must not be the --resummarize folder")
-        return resummarize(a.resummarize, a.out[0], a.store)
     if a.hash_view:
-        return hash_view(a.hash_view, a.out[0])
+        return hash_view(a.hash_view, a.out)
+    if a.out.resolve() == a.resummarize.resolve():
+        ap.error("--out must not be the --resummarize folder")
+    return resummarize(a.resummarize, a.out, a.store)
+
+
+def main(argv=None) -> None:
+    from objdel.core.spec import EvalStage, cli_stage
+
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if {"--hash-view", "--resummarize"} & set(argv):
+        return no_model(argv)
+    a = cli_stage(EvalStage, argv)
+
+    def error(msg: str):
+        print(f"final_eval: error: {msg}", file=sys.stderr)
+        sys.exit(2)
+
+    if a.ckpt and not a.train:
+        error("--ckpt needs --train")
     for name in ("adapter_config.json", "adapter_model.safetensors") if a.adapter else ():
-        if not (a.adapter / name).is_file():
-            ap.error(f"--adapter {a.adapter}: {name} is missing")
-    views, splits = a.view or [], a.split or ["val"]
-    if bool(a.ckpt) == bool(a.rescore) or not views or (a.ckpt and not a.train):
-        ap.error("give --view and exactly one of --ckpt (with --train) and --rescore")
-    if len(splits) != len(views) or len(a.out) not in (1, len(views)):
-        ap.error("give one --split per --view, and one --out or one per --view")
-    outs = a.out if len(a.out) == len(views) else [a.out[0] / v.resolve().name for v in views]
+        if not (Path(a.adapter) / name).is_file():
+            error(f"--adapter {a.adapter}: {name} is missing")
+    views, splits = [Path(v) for v in a.view], list(a.split) or ["val"] * len(a.view)
+    outs = [Path(o) for o in a.out] if len(a.out) == len(views) else [Path(a.out[0]) / v.resolve().name for v in views]
     for view, split in zip(views, splits, strict=True):
         check_view(view, split)
     if len({o.resolve() for o in outs}) != len(outs):
-        ap.error("two views write the same --out folder: give distinct --view directory names or one --out each")
+        error("two views write the same --out folder: give distinct --view directory names or one --out each")
     if a.rescore:
-        if outs[0].resolve() == a.rescore.resolve():
-            ap.error("--out must not be the --rescore folder")
+        if outs[0].resolve() == Path(a.rescore).resolve():
+            error("--out must not be the --rescore folder")
         if len(views) != 1:
-            ap.error("--rescore takes one --view")
-        return rescore(a.rescore, views[0], splits[0], outs[0])
+            error("--rescore takes one --view")
+        return rescore(Path(a.rescore), views[0], splits[0], outs[0])
 
     from objdel.train import dataset, serve
 
@@ -540,7 +539,7 @@ def main(argv=None) -> None:
                   **{k: d[k] for k in ("samples", "truncated", "tokens")}}
                  for r, d in zip(rows, answers, strict=True)]
         run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed} | (
-            {"adapter": str(a.adapter), "adapter_sha256": file_sha256(a.adapter / "adapter_model.safetensors")}
+            {"adapter": str(a.adapter), "adapter_sha256": file_sha256(Path(a.adapter) / "adapter_model.safetensors")}
             if a.adapter else {}) | _identity(view, split) | {
             "seconds": {"load_and_sample": time.time() - t0}} | ({"limit": a.limit} if a.limit else {})
         _write(out / "answers.jsonl", _lines(lines))  # before scoring: a scoring crash keeps the sampling

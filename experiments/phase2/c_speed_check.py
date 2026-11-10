@@ -41,15 +41,14 @@ BATCHES, PER_BATCH, G, VIEWS, CHUNK = 5, 32, 8, 2000, 64  # five batches of 32 p
 
 
 def parse(argv=None):
+    """(--pixels and --sync, the train_rl stage of the other flags)."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     ap.add_argument("--pixels", action="store_true", help="C1: the five batches, then G-EQ1")
     ap.add_argument("--sync", action="store_true", help="C5: G-SY1, G-SY2, G-SY3")
     flag, rest = ap.parse_known_args(argv)
     from experiments.phase2 import train_rl
 
-    a = train_rl.parse(rest)
-    a.pixels, a.sync = flag.pixels, flag.sync
-    return a
+    return flag, train_rl.parse(rest)
 
 
 def refuse_val(root) -> None:
@@ -379,26 +378,27 @@ def run_pixels(trainer, rows, n_rows: int, out: Path) -> dict:
 
 
 def main(argv=None) -> int:
-    a = parse(argv)
-    if not (a.pixels or a.sync):
+    flag, a = parse(argv)
+    if not (flag.pixels or flag.sync):
         print("nothing to check: pass --pixels and/or --sync", file=sys.stderr)
         return 2
-    if a.pixels:
+    if flag.pixels:
         refuse_val(a.train)
     from experiments.phase2.g_probe import make_trainer, save_json
     from objdel.train import dataset
 
-    a.fast_sync, a.gpu_pixels = a.sync or a.fast_sync, "auto" if a.pixels else a.gpu_pixels
+    a = a.model_copy(update={"fast_sync": flag.sync or a.fast_sync, "gpu_pixels": "auto" if flag.pixels else a.gpu_pixels})
+    out = Path(a.out)
     train = dataset.grpo_rows(a.train, "lidc", "train")
-    trainer, _, _ = make_trainer(a, a.ckpt, train, 1)
+    trainer, _, _ = make_trainer(a, Path(a.ckpt), train, 1)
     outs = {}
-    if a.pixels:
-        outs["pixels"] = run_pixels(trainer, dataset.OpenOnce(train), len(train), a.out)
-    if a.sync:
+    if flag.pixels:
+        outs["pixels"] = run_pixels(trainer, dataset.OpenOnce(train), len(train), out)
+    if flag.sync:
         outs["sync"] = run_sync(trainer, trainer.lora_dir is not None)  # option F: make_trainer set the adapter dir
-    for name, out in outs.items():
-        save_json(a.out / "c_check" / f"{name}.json", out)
-        print(json.dumps({name: out}))
+    for name, res in outs.items():
+        save_json(out / "c_check" / f"{name}.json", res)
+        print(json.dumps({name: res}))
     return 0 if all(o["passed"] for o in outs.values()) else 1
 
 

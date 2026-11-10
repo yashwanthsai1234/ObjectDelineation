@@ -1,0 +1,147 @@
+{
+ "train_rl": {
+  "dests": [
+   "allow_cpu_pixels",
+   "b1_adapter",
+   "budget_usd",
+   "check_meta_every",
+   "check_rope_every",
+   "checks_from_step",
+   "ckpt",
+   "count_syncs",
+   "encode_check",
+   "encoder_once",
+   "expect_step1",
+   "f_check",
+   "fast_sync",
+   "fixed_usd",
+   "gpu_pixels",
+   "group_requests",
+   "grpo",
+   "heldout",
+   "heldout_every",
+   "heldout_items",
+   "host_meta",
+   "log_by_prompt",
+   "lr",
+   "merge_last",
+   "model",
+   "no_ckpt_layers",
+   "numerics",
+   "opsm_start_delta",
+   "out",
+   "profile_window",
+   "prompt_memo",
+   "rate_usd_per_h",
+   "record_batches",
+   "resume",
+   "reward",
+   "rows_manifest_sha256",
+   "rows_revision",
+   "runaway_cap",
+   "save_steps",
+   "session_start",
+   "shared_prefix",
+   "steps",
+   "trace",
+   "train"
+  ],
+  "dropped": [],
+  "negated": [
+   "f_check"
+  ]
+ },
+ "g_probe": {
+  "dests": [
+   "ckpt",
+   "compile",
+   "grpo",
+   "items",
+   "model",
+   "out",
+   "plain",
+   "probe",
+   "select",
+   "shared_prefix",
+   "trace",
+   "train"
+  ],
+  "dropped": []
+ },
+ "select_ckpt": {
+  "dests": [
+   "items",
+   "k",
+   "model",
+   "no_vision",
+   "only",
+   "out",
+   "prepared",
+   "probes",
+   "rescaled",
+   "rotated",
+   "run",
+   "sampler",
+   "seed",
+   "shifted",
+   "timeout_s",
+   "vision"
+  ],
+  "dropped": []
+ },
+ "final_eval": {
+  "dests": [
+   "adapter",
+   "ckpt",
+   "hash_view",
+   "k",
+   "limit",
+   "model",
+   "out",
+   "per_call",
+   "rescore",
+   "resummarize",
+   "seed",
+   "split",
+   "store",
+   "train",
+   "view"
+  ],
+  "dropped": [
+   "hash_view",
+   "resummarize",
+   "store"
+  ]
+ },
+ "train_sft": {
+  "dests": [
+   "a0",
+   "branches",
+   "branches_from",
+   "data_root",
+   "deterministic",
+   "freeze_vision",
+   "model",
+   "model_path",
+   "output_dir",
+   "profile",
+   "resume",
+   "rolling_minutes",
+   "rows_plan",
+   "run_dir",
+   "sampler",
+   "seed",
+   "sft",
+   "stages",
+   "steps_per_epoch",
+   "view",
+   "vision",
+   "vision_reference_only"
+  ],
+  "dropped": [
+   "rows_plan",
+   "sampler",
+   "stages"
+  ]
+ }
+}

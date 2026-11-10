@@ -1,7 +1,0 @@
-# impl2_gpu_test.yaml split over two boxes rented at once (owner, 2026-11-09): box A = CUDA build, env check, make gpu-check, the GPU smokes.
-# Steps 0, 1, 2, 3 of impl2_gpu_test.yaml, unchanged; launch config impl2_gpu_launch.yaml.
-steps:
-  - ["bash", "-c", "bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c \"import objdel._gpucheck as g; assert g.build() == 'cuda'\" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_gpu_scoring.py"]
-  - ["bash", "experiments/phase2/docker/env_check.sh", "{rd}/ckpt", "{rd}/env_check.json"]
-  - ["~", "bash", "-c", "OBJDEL_DATA_ROOT={data} PY=/opt/venv/bin/python bash experiments/cuda_checker/run_box.sh --gpu-check; rc=$?; echo $rc > {rd}/gpu_check.exit; exit $rc"]
-  - ["~", "-m", "pytest", "-m", "gpu", "tests/test_train_fast.py::test_g02_is_summary_no_sync", "tests/test_train_fast.py::test_g08a_smoke"]

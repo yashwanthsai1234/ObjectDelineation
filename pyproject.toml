@@ -114,6 +114,7 @@ convention = "google"
 "src/objdel/train/vllm_sync.py" = ["TID251"]    # moves into rl/ in E5
 "tests/test_vllm_sync.py" = ["TID251"]
 "tests/test_breakit_r1_rl.py" = ["TID251"]
+"tests/test_c_flags.py" = ["TID251"]            # C5 --lora-sync test patches vllm_generation.LLM
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Dotted names that import-linter cannot forbid. Each ban is added when its task lands.

@@ -5,7 +5,7 @@
 # checker_eval/masks.npz, prepared/lidc/val.jsonl, prepared/caches/lidc/). Outputs: {rd}/k1, {rd}/k2, {rd}/d1, brought
 # back by pull.sh. A "~" step may fail without stopping the chain: a K1 failure must not cost the K2 and bench minutes.
 # {rd} = /workspace/runs/<run_id>, {data} = /workspace/data/lidc. Commands (Mac):
-#   make preflight CONFIG=experiments/phase2/configs/c_launch.yaml   (the V2 launch config, front section 6.1)
+#   make preflight CONFIG=specs/c_speed.yaml   (the V2 launch config, front section 6.1)
 #   sync_up.sh <run>   (code + the LIDC bundle), then run.sh <run> experiments/phase2/configs/r_d1.yaml, pull.sh <run>
 steps:
   # toolkit (nvcc 13.0.88, CCCL, NVTX, compute-sanitizer 13.4.92 into /opt/venv) and the engine's CUDA build

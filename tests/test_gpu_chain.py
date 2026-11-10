@@ -61,7 +61,7 @@ def test_junit_skips_lists_each_skip(tmp_path):
 
 
 def test_d_gpu_test_runs_the_chain_then_a_box_tests():
-    s = policy.chain(ROOT / "experiments/phase2/configs/d_gpu_test.yaml", "r")
+    s = policy.chain(ROOT / "specs/d_gpu_test.yaml", "r")
     assert s[0] == ["bash", "-c", "OBJDEL_DATA_ROOT=/workspace/data/lidc PY=/opt/venv/bin/python "
                                   "bash experiments/cuda_checker/run_box.sh --gpu-check"]
     ids = [t for t in s[1][2].split() if "::" in t]

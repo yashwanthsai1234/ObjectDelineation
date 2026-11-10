@@ -98,9 +98,11 @@ def test_train_sft_profile_writes_a_trace_of_one_step(tmp_path, synthetic_items)
 def test_train_sft_refuses_profile_with_branches(tmp_path):
     pytest.importorskip("trl")
     from experiments.phase2 import train_sft as TS
+    from objdel.core.spec import SftStage
 
     with pytest.raises(ValueError, match="profile is for timing runs"):
-        TS.train(TS.RunArgs("m", "v", str(tmp_path / "o"), vision=False, profile=str(tmp_path / "p")))
+        TS.train(SftStage(model="m", view="v", output_dir=str(tmp_path / "o"), vision=False,
+                          profile=str(tmp_path / "p")))
 
 
 def test_p1_chain_checks_the_card_and_the_checker_before_rl():

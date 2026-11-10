@@ -76,9 +76,9 @@ def test_kernel_drafts_ship_without_build_or_results(code):
 
 
 def test_runbooks_have_no_scratch_path_hand_copy_or_stale_torch(tmp_path):
-    assert PF.runbooks(None, None) == []
+    assert PF.runbooks(None) == []
     k = tmp_path / "docs/implementation2.0/kernels/K9"
     k.mkdir(parents=True)
     (k / "GPU_RUN.md").write_text("torch 2.14.1 in /opt/venv\nscp root@h:/x .\nrsync -a a b\n")
     (k / "a.cpp").write_text("// /" + "private/tmp/x\n")
-    assert len(PF.runbooks(None, None, tmp_path)) == 4
+    assert len(PF.runbooks(None, tmp_path)) == 4

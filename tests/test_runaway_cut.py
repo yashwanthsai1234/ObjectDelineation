@@ -38,8 +38,9 @@ def test_per_row_params_order_length_and_no_mutation():
 
 
 def args(**kw):
+    """train_rl's stage of the flags; a value None is a bare flag."""
     return train_rl.parse(["--model", "qwen3-vl-2b", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "1",
-                           *[x for k, v in kw.items() for x in (f"--{k.replace('_', '-')}", v)]])
+                           *[x for k, v in kw.items() for x in (f"--{k.replace('_', '-')}", v) if x is not None]])
 
 
 def test_runaway_cap_is_off_by_default():
@@ -85,8 +86,8 @@ def test_beta_zero_builds_and_b1_keeps_1e3(tmp_path):
     from pathlib import Path
 
     assert configs.grpo_config("qwen3-vl-2b", str(tmp_path), use_cpu=True, use_vllm=False, beta=0.0).beta == 0.0
-    plan = (Path(__file__).resolve().parents[1] / "experiments/phase2/configs/b1_rows.yaml").read_text()
-    assert "beta" not in plan.replace("beta 1e-3", "")  # the comment may name it; no key overrides it
+    plan = (Path(__file__).resolve().parents[1] / "specs/b1_rows.yaml").read_text()
+    assert "beta" not in plan  # no grpo key overrides it
     assert configs.grpo_config("qwen3-vl-2b", str(tmp_path), use_cpu=True, use_vllm=False).beta == 1e-3
 
 
@@ -137,6 +138,4 @@ def test_row_caps_follow_each_rows_own_outline():
 
 def test_runaway_cap_and_group_requests_go_together():
     """U-RC3: one n = G request per block carries the block's one cap (vllm_requests.group_params)."""
-    a = args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}')
-    a.group_requests = True
-    train_rl.check_flags(a)  # no raise
+    train_rl.check_flags(args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}', group_requests=None))

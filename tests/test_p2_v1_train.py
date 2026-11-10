@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from test_p2_scripts import stage
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "experiments/phase2/configs"
@@ -44,7 +45,7 @@ def test_deterministic_is_applied_before_anything_loads(TS, tmp_path, monkeypatc
     import torch
 
     monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
-    a = TS.RunArgs("lfm2.5-vl-450m", _view(tmp_path, 0), str(tmp_path / "o"), vision=False, deterministic=True)
+    a = stage("lfm2.5-vl-450m", _view(tmp_path, 0), str(tmp_path / "o"), vision=False, deterministic=True)
     try:
         with pytest.raises(ValueError, match="view epoch"):
             TS.train(a)
@@ -52,13 +53,13 @@ def test_deterministic_is_applied_before_anything_loads(TS, tmp_path, monkeypatc
         assert torch.are_deterministic_algorithms_enabled() and torch.is_deterministic_algorithms_warn_only_enabled()
         monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":16:8")  # an explicit setting wins
         with pytest.raises(ValueError, match="view epoch"):
-            TS.train(TS.RunArgs("m", a.view, str(tmp_path / "o"), vision=False, deterministic=True, run_dir=""))
+            TS.train(stage("m", a.view, str(tmp_path / "o"), vision=False, deterministic=True, run_dir=""))
         assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":16:8"
     finally:
         torch.use_deterministic_algorithms(False)
     monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG")
     with pytest.raises(ValueError, match="view epoch"):
-        TS.train(TS.RunArgs("m", a.view, str(tmp_path / "o"), vision=False, run_dir=""))
+        TS.train(stage("m", a.view, str(tmp_path / "o"), vision=False, run_dir=""))
     assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ and not torch.are_deterministic_algorithms_enabled()
 
 
@@ -94,18 +95,18 @@ def test_alloc_conf_is_set_before_anything_loads(TS, tmp_path, monkeypatch):
     """PLAN D4: expandable segments (fragmentation), read by the CUDA caching allocator at its first allocation."""
     monkeypatch.setenv("PYTORCH_ALLOC_CONF", "")  # restored after the test
     monkeypatch.delenv("PYTORCH_ALLOC_CONF")
-    a = TS.RunArgs("lfm2.5-vl-450m", _view(tmp_path, 0), str(tmp_path / "o"), vision=False)
+    a = stage("lfm2.5-vl-450m", _view(tmp_path, 0), str(tmp_path / "o"), vision=False)
     with pytest.raises(ValueError, match="view epoch"):
         TS.train(a)
     assert os.environ["PYTORCH_ALLOC_CONF"] == "expandable_segments:True"
     monkeypatch.setenv("PYTORCH_ALLOC_CONF", "max_split_size_mb:64")  # an explicit setting wins
     with pytest.raises(ValueError, match="view epoch"):
-        TS.train(TS.RunArgs("m", a.view, str(tmp_path / "o"), vision=False, run_dir=""))
+        TS.train(stage("m", a.view, str(tmp_path / "o"), vision=False, run_dir=""))
     assert os.environ["PYTORCH_ALLOC_CONF"] == "max_split_size_mb:64"
 
 
 def _tiny_args(TS, tmp_path, synthetic_items, model_path=None, **kw):
-    """RunArgs of a CPU run on a 2-epoch synthetic view (branches 0.5 / 1 at 10 steps/epoch unless overridden)."""
+    """The SftStage of a CPU run on a 2-epoch synthetic view (branches 0.5 / 1 at 10 steps/epoch unless overridden)."""
     from test_p2_scripts import CPU_SFT, _tiny_vlm
 
     from experiments.phase2 import build_views as BV
@@ -115,7 +116,7 @@ def _tiny_args(TS, tmp_path, synthetic_items, model_path=None, **kw):
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
     o = {"branches": [0.5, 1.0], "steps_per_epoch": 10, "vision": False, "rolling_minutes": 1e3, "sft": CPU_SFT,
          "model_path": model_path or str(_tiny_vlm(tmp_path / "m"))}
-    return TS.RunArgs("lfm2.5-vl-450m", str(tmp_path / "view"), str(tmp_path / "o"), **(o | kw))
+    return stage("lfm2.5-vl-450m", str(tmp_path / "view"), str(tmp_path / "o"), **(o | kw))
 
 
 def _manifest_of(tmp_path):
@@ -292,10 +293,10 @@ def _probe(tmp_path, **doc):
 def test_branches_from_reads_the_final_verdict_checkpoint(TS, tmp_path):
     ckpt = "/workspace/runs/v1/r1-lfm/branches/e0.5"  # D12(c): the repair branch e0.5 got the final verdict
     rel = _probe(tmp_path, verdict="INCONCLUSIVE", ckpt=ckpt, probed=["e1", "e0.5"])
-    a = TS.RunArgs("lfm2.5-vl-450m", _view(tmp_path, 0), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
+    a = stage("lfm2.5-vl-450m", _view(tmp_path, 0), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
     with pytest.raises(ValueError, match="decays to 0.575 epochs"):  # resolved to [0.5] before the view check
         TS.train(a)
-    assert a.branches == [0.5]
+    assert a.branches == (0.5, 1.0, 2.0)  # a frozen stage: train rebinds a copy, the input is unchanged
 
 
 @pytest.mark.parametrize(
@@ -303,18 +304,18 @@ def test_branches_from_reads_the_final_verdict_checkpoint(TS, tmp_path):
 )
 def test_branches_from_refuses_without_a_verdict(TS, tmp_path, doc):
     rel = _probe(tmp_path, **doc) if doc else "r1-lfm/g_probe/g_probe.json"
-    a = TS.RunArgs("lfm2.5-vl-450m", _view(tmp_path, 3), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
+    a = stage("lfm2.5-vl-450m", _view(tmp_path, 3), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
     with pytest.raises(SystemExit, match="C2 must not start"):
         TS.train(a)
     assert not (tmp_path / "c2").exists()
 
 
 @pytest.mark.parametrize("path", C2 + [CONFIGS / "r1_lfm.yaml"], ids=lambda p: p.stem)
-def test_runner_only_keys_parse(TS, path, tmp_path):
-    from trl import TrlParser
+def test_runner_only_keys_are_not_stage_fields(TS, path):
+    """U22: an SftStage takes the launch config minus the runner-only keys, and refuses those keys."""
+    from pydantic import ValidationError
 
-    extra = {"sampler": "hf", "stages": ["train"]}
-    (tmp_path / "c.yaml").write_text(json.dumps(_yaml(path) | extra))  # JSON is YAML
-    (a,) = TrlParser([TS.RunArgs]).parse_args_and_config(["--config", str(tmp_path / "c.yaml")])
-    assert a.sampler == "hf" and a.stages == ["train"]
-
+    raw = {k: v for k, v in _yaml(path).items() if k not in ("sampler", "stages", "rows_plan")}
+    assert stage(**raw).model == raw["model"]
+    with pytest.raises(ValidationError):
+        stage(**raw, sampler="hf", stages=["train"])

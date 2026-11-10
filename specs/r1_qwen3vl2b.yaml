@@ -1,0 +1,34 @@
+schema_version: 1
+name: r1_qwen3vl2b
+compute: {gpu: RTX_5090, cap_hours: 6.0}
+stages:
+- kind: cmd
+  name: gpu_scorers
+  argv: [bash, -c, 'bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+      tests/test_gpu_scoring.py']
+- kind: sft
+  name: train
+  model: qwen3-vl-2b
+  view: views/lidc-bundle-v3
+  output_dir: r1-qwen3vl2b
+  seed: 1
+  branches: [0.5, 1.0, 2.0, 3.0]
+  vision: {prepared: prepared, reference: vision_ref/qwen3-vl-2b.json}
+  sft: {per_device_train_batch_size: 4, gradient_accumulation_steps: 8, dataloader_num_workers: 6, dataloader_persistent_workers: true}
+- kind: select
+  name: select
+  run: '{rd}/r1-qwen3vl2b'
+  prepared: '{data}/prepared'
+  probes: '{data}/eval_views'
+  sampler: vllm
+  shifted: '{data}/eval_views/lidc-val-shifted'
+  rescaled: '{data}/eval_views/lidc-val-rescaled'
+  rotated: '{data}/eval_views/lidc-val-rotated'
+  vision: {prepared: '{data}/prepared', reference: '{rd}/vision_ref/qwen3-vl-2b.json'}
+- kind: probe
+  name: probe
+  model: qwen3-vl-2b
+  select: '{rd}/r1-qwen3vl2b/select'
+  train: '{data}/prepared'
+  probe: '{data}/eval_views/lidc-val-shifted'
+  out: '{rd}/r1-qwen3vl2b/g_probe'

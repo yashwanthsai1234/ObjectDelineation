@@ -54,7 +54,7 @@ def test_trainers_skip_flop_counting():
     assert "def floating_point_ops(self, inputs):" in src and "            return 0" in src
     gp = (ROOT / "experiments/phase2/g_probe.py").read_text()
     assert 'cls = GRPOTrainer if getattr(a, "plain", False) else fast.FastGRPO' in gp
-    assert "make_trainer(a, a.ckpt, train" in (ROOT / "experiments/phase2/train_rl.py").read_text()
+    assert "make_trainer(a, Path(a.ckpt), train" in (ROOT / "experiments/phase2/train_rl.py").read_text()
 
 
 def test_vllm_context_is_bounded():

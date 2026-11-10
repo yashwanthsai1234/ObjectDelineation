@@ -705,7 +705,7 @@ def built(monkeypatch, tmp_path):
     monkeypatch.setattr(fast, "FastGRPO", Trainer)
 
     def make(**over):
-        a = SimpleNamespace(model="qwen3-vl-2b", out=tmp_path, train=tmp_path, grpo="{}")
+        a = SimpleNamespace(model="qwen3-vl-2b", out=tmp_path, train=tmp_path, grpo={})
         for k, v in over.items():
             setattr(a, k, v)
         g_probe.make_trainer(a, tmp_path, None, 3)
@@ -733,7 +733,7 @@ def test_make_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold(
     from objdel.train.callbacks import OpsmDelta
 
     assert built() == []
-    (cb,) = built(grpo='{"off_policy_mask_threshold": 0.5}')
+    (cb,) = built(grpo={"off_policy_mask_threshold": 0.5})
     assert isinstance(cb, OpsmDelta)
 
 
@@ -759,9 +759,9 @@ def test_train_rl_flags():
     base = ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "20"]
     a = train_rl.parse(base)
     assert a.profile_window is None and a.trace is None
-    a = train_rl.parse([*base, "--profile-window", "4", "6", "--trace", "D"])
-    assert a.profile_window == [4, 6] and a.trace == "D"
-    for bad in (["1", "2"], ["6", "4"]):
+    a = train_rl.parse([*base, "--profile-window", "4,6", "--trace", "D"])
+    assert a.profile_window == (4, 6) and a.trace == "D"
+    for bad in (["1,2"], ["6,4"]):
         with pytest.raises(SystemExit) as e:
             train_rl.parse([*base, "--profile-window", *bad])
         assert e.value.code == 2

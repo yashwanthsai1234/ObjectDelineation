@@ -1,0 +1,12 @@
+# Run spec (objdel.core.spec); notes and history: docs/runbooks/specs.md#c_speed_c6
+schema_version: 1
+name: c_speed_c6
+compute: {gpu: RTX_5090, cap_hours: 3.0}
+bundle_view: views/lidc-bundle-v3
+stages:
+- kind: cmd
+  name: gr1
+  argv: [-m, pytest, -q, -p, 'no:cacheprovider', -m, gpu, 'tests/test_c_gpu.py::test_g_gr1_requests_independent']
+- {kind: rl, name: c6, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/rows/lidc-train-b1', out: '{rd}/c_c6', steps: 20,
+  save_steps: 1000, shared_prefix: true, rows_revision: 34213dceb068128f1a1abf9c67aa65dd59bc1220, rows_manifest_sha256: 472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4,
+  group_requests: true}

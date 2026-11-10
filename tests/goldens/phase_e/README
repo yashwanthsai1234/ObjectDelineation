@@ -17,6 +17,18 @@ module_strings_stale.json  dotted objdel names in strings that already point now
 old_names.json             E-G16 baseline: top-level definitions of each old module (OLD_MODULES in test_layers.py).
                            Re-record after a merge that changes one of them:
                            .venv/bin/python -I -c "import sys; sys.path.insert(0, '.'); import tests.core.test_layers as t; t.record_old_names()"
+cli_dests.json             U52: per CLI the argparse dest names (train_sft: the RunArgs fields) read on the tree just
+                           before E6.4 replaced the argparse tables with cli_parse, and the dests that leave the stage
+                           (final_eval reads --hash-view, --resummarize and --store before cli_parse; train_sft's
+                           runner-only keys). Recorded once; it cannot be recorded again after E6.4. Comb3 merge of impl2-E0
+                           (2026-11-09): the dests re-read on impl2-comb3 1c4beeb, the merged history's last tree
+                           before E6.4 (train_rl + f_check (negated: --no-f-check), b1_adapter, checks_from_step,
+                           record_batches, expect_step1, encode_check, encoder_once, - lora_sync; g_probe and
+                           select_ckpt - procs; final_eval + adapter).
+plan_argv.json             E6.2: policy.chain(<old plan>, "x") of each plan file a spec replaced, recorded from the
+                           plan files before E6.6 archived them (b1_rows, a3_*, b2_fp16, b3_v5, rl_full, r5_shared on
+                           impl2-E0 fc86269; impl2_gpu_test* and d_gpu_test on impl2-comb2 b4e1483; c_speed* on
+                           impl2-Cc 1180818). Never re-record: the old files are gone (tests/infra/test_chain.py).
 
 Lane merge (impl2, after E0): lanes branched before E0 change these on purpose, so the merged tree re-records only
 what they changed. Golden 1: RewardV4 gains its `name` field (B3.3; the constants are unchanged). Golden 3: score_batch

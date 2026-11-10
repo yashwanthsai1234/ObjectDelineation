@@ -269,13 +269,13 @@ def test_no_live_file_names_a_retired_tree(tmp_path):
 # --- CLEAN9: small debts ---------------------------------------------------------------------------------------------
 
 
-def test_make_preflight_default_config_loads_as_run_args():
+def test_make_preflight_default_config_loads_as_a_run_spec():
+    """U19 after E6.8: the default is the live RL spec, and load_spec accepts it."""
     cfg = re.search(r"^CONFIG \?= (\S+)", (ROOT / "Makefile").read_text(), re.M).group(1)
-    assert cfg == "experiments/phase2/configs/r1_qwen3vl2b.yaml"
-    from experiments.phase2 import preflight
+    assert cfg == "specs/b1_rows.yaml"
+    from objdel.core.spec import load_spec
 
-    args, _ = preflight.load(ROOT / cfg)
-    assert args.view == "views/lidc-bundle-v3"
+    assert load_spec(ROOT / cfg).bundle_view == "views/lidc-bundle-v3"
 
 
 def test_train_sft_names_its_loader_load_items():

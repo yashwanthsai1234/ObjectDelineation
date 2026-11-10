@@ -1,11 +1,9 @@
-"""The implementation-2.0 GPU test rental ($0 checks on the Mac): impl2_gpu_test.yaml (plan) and impl2_gpu_launch.yaml
-(launch config) parse, every module, flag, node id and file they name exists, the hard and soft steps are where the
-recovery sequence needs them, and the money block gives a cap that fits the $3 hard stop. Like tests/test_b1_plans.py:
-a missing flag fails here and not on the paid box."""
+"""The implementation-2.0 GPU test rental ($0 checks on the Mac): specs/impl2_gpu_test.yaml and its two-box split
+(impl2_gpu_test_a.yaml, impl2_gpu_test_b.yaml) parse, every module, flag, node id and file they name exists, the hard
+and soft steps are where the recovery sequence needs them, and the money block gives a cap that fits the $3 hard stop.
+Like tests/test_b1_plans.py: a missing flag fails here and not on the paid box."""
 
-import argparse
 import csv
-import importlib
 import json
 import shlex
 import subprocess
@@ -14,18 +12,36 @@ from pathlib import Path
 import pytest
 
 yaml = pytest.importorskip("yaml")
+from test_b1_plans import parse_step  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = ROOT / "experiments/phase2/configs"
-PLAN, LAUNCH, B1 = "impl2_gpu_test.yaml", "impl2_gpu_launch.yaml", "b1_rows.yaml"
+CONFIGS = ROOT / "specs"
+PLAN, B1 = "impl2_gpu_test.yaml", "b1_rows.yaml"
+SPLIT = {"impl2_gpu_test_a.yaml": (0, 1, 2, 3), "impl2_gpu_test_b.yaml": (0, 1, *range(4, 12))}
 RD, DATA = "/workspace/runs/r", "/workspace/data/lidc"
 HARD = {0, 1, 6}  # build, env_check, the lost-run simulation; every other step is soft ("~")
 SOFT_TAIL_USD = 0.35  # front 6.4 rule 5: BudgetStop = approved - the tail after the RL steps
 HARD_STOP_ROOM_USD = 3.00  # the ledger closed at $16.90, HARD_STOP 19.90 (owner, 2026-11-09)
 
 
+# The money block of the old plan file (front 6 rules and planning inputs); the spec holds only compute.cap_hours and
+# the RL stages' budget_usd, and the tests below check both against it.
+BUDGET = {
+    "approved_usd": 2.20,
+    "planning_dph_usd": 0.641,  # front 6: the offer limit, the highest rate the launch accepts
+    "planning_gb_usd": 0.0065,  # front 6: bandwidth ceiling per GB, up and down
+    "fixed_gb_down": 15,  # policy.DOWN_GB
+    "gb_up_per_h": 6,  # policy.UP_GB_PER_H
+    "cap_hours": 3.05,
+    "budget_stop_usd": 1.85,
+    "ledger_closed_usd": 16.90,  # measured: ledger.csv, 2026-11-08 (hard stop 19.90 = 16.90 + 3.00)
+    "minutes": {"launch_to_first_run": 38, "build": 3, "env_check": 1, "gpu_check": 44, "gpu_smoke": 5,
+                "eval_smoke_r5": 6.2, "rl_run1": 15.2, "merge_last": 2, "rl_resume": 10.6, "eval_smoke_final": 6.0},
+}
+
+
 def raw() -> dict:
-    return yaml.safe_load((CONFIGS / PLAN).read_text())
+    return {"budget": BUDGET}
 
 
 def steps() -> list[list[str]]:
@@ -105,8 +121,10 @@ def test_named_files_exist():
 
 def test_smoke_node_ids_are_the_b1_rows_ones():
     """test_b1_plans collects exactly these two ids; here they must stay the same two."""
-    b1 = yaml.safe_load((CONFIGS / B1).read_text())["steps"][2]
-    ids = [w for w in steps()[3] if "::" in w]
+    from experiments.phase2.vast import policy
+
+    b1 = policy.chain(CONFIGS / B1, "r")[2]
+    ids = [w for w in words(steps()[3]) if "::" in w]
     assert ids == [w for w in b1 if "::" in w] and len(ids) == 2
 
 
@@ -125,28 +143,6 @@ def test_every_output_lands_under_the_run_folder_and_only_val_is_read():
 
 
 # --- every module step parses with its module's own parser ------------------------------------------------------
-
-
-class Parsed(Exception):
-    pass
-
-
-def parse_step(step: list[str]) -> argparse.Namespace:
-    w = words(step)
-    assert w[0] == "-m"
-    mod = importlib.import_module(w[1])
-    real = argparse.ArgumentParser.parse_args
-
-    def stop(self, args=None, namespace=None):
-        raise Parsed(real(self, args, namespace))
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(argparse.ArgumentParser, "parse_args", stop)
-        try:
-            mod.main(w[2:])
-        except Parsed as p:
-            return p.args[0]
-    raise AssertionError(f"{w[1]}.main never parsed its arguments")
 
 
 def test_every_module_step_parses_with_its_module():
@@ -192,8 +188,8 @@ def test_rl_smoke_is_one_block_with_one_lost_run_recovery():
     assert a.save_steps == r.save_steps == 10 and a.steps % a.save_steps == 0 and a.save_steps < a.steps
     assert a.shared_prefix and r.shared_prefix and a.lr == r.lr == b1.lr and not a.resume and r.resume
     assert m.merge_last and not a.merge_last and not r.merge_last
-    assert a.out == m.out == r.out and a.ckpt == m.ckpt == r.ckpt == Path(f"{RD}/ckpt")
-    assert a.train == r.train == b1.train == Path(f"{DATA}/rows/lidc-train-b1")
+    assert a.out == m.out == r.out and a.ckpt == m.ckpt == r.ckpt == f"{RD}/ckpt"
+    assert a.train == r.train == b1.train == f"{DATA}/rows/lidc-train-b1"
     assert (a.rows_revision, a.rows_manifest_sha256) == (r.rows_revision, r.rows_manifest_sha256) \
         == (b1.rows_revision, b1.rows_manifest_sha256)
     assert a.budget_usd == r.budget_usd == pytest.approx(raw()["budget"]["budget_stop_usd"])
@@ -223,7 +219,7 @@ def test_rows_pins_equal_the_b1_rows_pins_and_resolve_for_fetch_hf():
     from experiments.phase2.vast import policy
 
     def pins(name):
-        s = next(s for s in yaml.safe_load((CONFIGS / name).read_text())["steps"] if "experiments.phase2.train_rl" in s
+        s = next(s for s in policy.chain(CONFIGS / name, "r") if "experiments.phase2.train_rl" in s
                  and "--rows-revision" in s)
         return after(s, "--rows-revision"), after(s, "--rows-manifest-sha256")
 
@@ -236,19 +232,25 @@ def test_rows_pins_equal_the_b1_rows_pins_and_resolve_for_fetch_hf():
             assert after(s, "--rows-revision") == rev and after(s, "--rows-manifest-sha256") == sha
 
 
-def test_launch_config_is_the_run_args_file_and_preflight_reads_the_rows_pin():
-    from experiments.phase2 import preflight
+def test_the_spec_holds_what_the_launch_config_held_and_the_money_block():
+    """E6.6: impl2_gpu_launch.yaml is archived; each spec has b1's bundle_view, compute.cap_hours is the money block's
+    cap, and every RL stage stops at its budget_stop_usd."""
+    from objdel.core.spec import load_spec
 
-    r1 = yaml.safe_load((CONFIGS / "r1_qwen3vl2b.yaml").read_text())
-    cfg = yaml.safe_load((CONFIGS / LAUNCH).read_text())
-    assert {k: cfg[k] for k in ("model", "view", "seed")} == {k: r1[k] for k in ("model", "view", "seed")}
-    assert cfg["output_dir"] == "impl2-gpu-test" and "steps" not in cfg and "branches" not in cfg
-    assert cfg["rows_plan"] == f"experiments/phase2/configs/{PLAN}"
-    a, _ = preflight.load(CONFIGS / LAUNCH)
-    root, sha, rev = preflight.rows_plan(a)
-    assert root.name == "lidc-train-b1" and root.parent.name == "views" and len(sha) == 64 and len(rev) == 40
-    with pytest.raises(TypeError, match="unexpected keyword"):
-        preflight.load(CONFIGS / PLAN)  # a plan file is never stamped: RunArgs has no `steps` or `budget` field
+    b1 = load_spec(CONFIGS / B1)
+    for name in (PLAN, *SPLIT):
+        spec = load_spec(CONFIGS / name)
+        assert spec.bundle_view == b1.bundle_view and spec.compute == b1.compute.model_copy(
+            update={"cap_hours": BUDGET["cap_hours"]})
+        assert {s.budget_usd for s in spec.stages if s.kind == "rl" and not s.merge_last} <= {BUDGET["budget_stop_usd"]}
+
+
+@pytest.mark.parametrize("name", SPLIT)
+def test_the_two_box_split_runs_the_plan_steps_unchanged(name):
+    """Owner, 2026-11-09: box A = steps 0-3 (build, env check, gpu-check, GPU smokes); box B = steps 0, 1, 4-11."""
+    from experiments.phase2.vast import policy
+
+    assert policy.chain(CONFIGS / name, "r") == [steps()[i] for i in SPLIT[name]]
 
 
 # --- the money --------------------------------------------------------------------------------------------------

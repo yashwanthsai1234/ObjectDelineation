@@ -339,6 +339,11 @@ def cmd_launch(a) -> None:
         die(f"offer {a.offer} was not picked with offers.sh --pick")
     if why := reasons(o, o["_gpu"], o["_dataset"], o["_disk"]):
         die("; ".join(why))
+    compute = load_spec(Path(a.config)).compute  # the spec bounds the flag: one cap source per launch (E6.8b)
+    if a.cap_hours > compute.cap_hours:
+        die(f"--cap-hours {a.cap_hours} is above the spec's compute.cap_hours {compute.cap_hours}")
+    if o["_gpu"] != compute.gpu:
+        die(f"offer {a.offer} is a {o['_gpu']}: {o['_gpu']} is not compute.gpu {compute.gpu}")
     if why := launch_refusal(o, a.cap_hours):
         die(why)
     cap_s, now = int(a.cap_hours * 3600) + PULL_S, time.time()
@@ -524,13 +529,16 @@ def cmd_run(a) -> None:
         die(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
     if a.module.endswith(".yaml"):
         stages, name = chain(ROOT / a.module, a.run_id), Path(a.module).stem
-        guard = [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} "
+        if a.module.startswith("specs/"):  # E6.5: the spec, code and versions beside the log, before any stage
+            guard = [f"/opt/venv/bin/python -I -m experiments.phase2.vast.policy run_spec {shlex.quote(a.module)} "
+                     f"/workspace/runs/{a.run_id}/run_spec.json"]
+        guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} "
                  f"experiments/phase2/configs/r0.yaml first' >&2; false; }}; }}"
                  for r in vision_refs(ROOT / a.module, a.run_id)]  # fmt: skip
     elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
         stages, name = [["-m", a.module, *a.args]], a.module.rsplit(".", 1)[1]
     else:
-        die("module must be experiments.phase2.<script> or experiments/phase2/configs/<name>.yaml")
+        die("module must be experiments.phase2.<script> or a run spec specs/<name>.yaml")
     cap = int(min(a.cap_hours * 3600, run["deadline"] - time.time() - MARGIN_S))
     if cap <= 0:
         die("no time left before the instance cap")
@@ -552,6 +560,25 @@ def cmd_run(a) -> None:
              f"timeout -k 120 {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; echo $? > {rd}/EXIT; kill %1")  # fmt: skip
     remote(run, f"tmux new-session -d -s {a.run_id}-{name} {shlex.quote('bash -c ' + shlex.quote(inner))}")
     ledger(event="run", run_id=a.run_id, instance_id=run["instance"], detail=f"{a.module} cap_s={cap}")
+
+
+def cmd_run_spec(a) -> None:
+    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (CODE_SHA, written by sync_up;
+    else "unknown"), the trl, torch and transformers versions and the reward fingerprint, as strict JSON. A different
+    spec already in OUT stops the chain: a second run with the same id never overwrites it silently."""
+    from importlib.metadata import version
+
+    from objdel.reward.spec import fingerprint
+
+    sha = ROOT / "CODE_SHA"
+    rec = {"spec": load_spec(ROOT / a.spec).model_dump(mode="json"),
+           "git_sha": sha.read_text().strip() if sha.is_file() else "unknown",
+           **{p: version(p) for p in ("trl", "torch", "transformers")}, "reward_fingerprint": fingerprint()}
+    out = Path(a.out)
+    if out.is_file() and json.loads(out.read_text())["spec"] != rec["spec"]:
+        die(f"{out} holds a different spec: use a new run id")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(rec, indent=1, allow_nan=False))
 
 
 def cmd_pull(a) -> None:
@@ -581,7 +608,7 @@ def push_target(spec: RunSpec, run_id: str) -> tuple[str, str, bool]:
 
 def cmd_push_hf(a) -> None:
     """hf_push on the box for CONFIG's run (CONFIG is a run spec, or an SFT launch config: repo branch = its
-    output_dir; a config with rows_plan names a train_rl output: --rl); the token is checked here first."""
+    output_dir); the token is checked here first."""
     import yaml
 
     from experiments.phase2 import hf_push
@@ -591,7 +618,7 @@ def cmd_push_hf(a) -> None:
         path, out, rl = push_target(load_spec(ROOT / a.config), a.run_id)
         kind = "--rl" if rl else "--run"
     else:
-        out, kind = c["output_dir"], "--rl" if c.get("rows_plan") else "--run"
+        out, kind = c["output_dir"], "--run"
         path = f"/workspace/runs/{a.run_id}/{out}"
     token = secret("objdel-hf-write")
     if bad := hf_push.token_problems(hf_push.whoami(token), hf_push.REPO):
@@ -609,14 +636,8 @@ ROWS_CHECK = ("import hashlib, json, pathlib, sys; d, want = pathlib.Path(sys.ar
 
 
 def rows_pin(revision: str) -> str:
-    """The --rows-manifest-sha256 that the plans in experiments/phase2/configs and specs/ pin beside REVISION."""
-    import yaml
-
-    plans = sorted((ROOT / "experiments/phase2/configs").glob("*.yaml"))
-    pins = {str(s[s.index("--rows-manifest-sha256") + 1]) for p in plans
-            for s in (yaml.safe_load(p.read_text()) or {}).get("steps", [])
-            if "--rows-revision" in s and str(s[s.index("--rows-revision") + 1]) == revision}
-    pins |= {s.rows_manifest_sha256 for p in sorted((ROOT / "specs").glob("*.yaml")) for s in load_spec(p).stages
+    """The rows_manifest_sha256 that the rl stages of specs/ pin beside REVISION."""
+    pins = {s.rows_manifest_sha256 for p in sorted((ROOT / "specs").glob("*.yaml")) for s in load_spec(p).stages
              if s.kind == "rl" and s.rows_revision == revision}
     if len(pins) != 1:
         die(f"--rows {revision}: the plans pin {len(pins)} manifest SHA-256 values for it (need exactly one)")
@@ -717,6 +738,7 @@ CLI = {  # subcommand -> its arguments, in order
                 "--bundle-dir": {"type": Path, "default": ROOT / "build" / "bundles"}, "--code-only": FLAG},
     "run": {"run_id": {}, "module": {}, "--cap-hours": {"type": float, "default": 24},
             "args": {"nargs": argparse.REMAINDER}},
+    "run_spec": {"spec": {}, "out": {}},
     "pull": {"run_id": {"nargs": "?"}},
     "push_hf": {"run_id": {}, "config": {}},
     "fetch_hf": {"run_id": {}, "revision": {"nargs": "?"}, "--rows": {"nargs": 2, "metavar": ("REVISION", "ROOT")},

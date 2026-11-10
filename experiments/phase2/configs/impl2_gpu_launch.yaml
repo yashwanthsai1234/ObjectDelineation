@@ -1,9 +1,0 @@
-# The launch config of the implementation-2.0 GPU test rental (the one file `make preflight CONFIG=` stamps for it and
-# launch.sh --config reads); the plan file run.sh runs is impl2_gpu_test.yaml. A RunArgs file like b1_launch.yaml: no
-# branches, never given to run.sh; rows_plan makes preflight check the rows root that the plan's first train_rl step
-# pins (ROWS root, ROWS revision). Nothing is pushed to HF after this rental, so there is no push_hf.sh line.
-model: qwen3-vl-2b
-view: views/lidc-bundle-v3
-seed: 1
-output_dir: impl2-gpu-test
-rows_plan: experiments/phase2/configs/impl2_gpu_test.yaml

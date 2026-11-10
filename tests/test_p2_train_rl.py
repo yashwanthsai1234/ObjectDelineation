@@ -261,20 +261,15 @@ def test_procs_is_an_argparse_error_before_any_preload(stub, capsys, extra):
     assert stub.calls == []
 
 
-def test_help_has_no_procs_and_keeps_the_other_options(stub, capsys, monkeypatch):
-    """CT-33: --help names no pool; the option list is the pre-CLEAN one minus --procs."""
-    import argparse
-
-    seen, orig = [], argparse.ArgumentParser.parse_args
-    monkeypatch.setattr(argparse.ArgumentParser, "parse_args",
-                        lambda self, *a, **k: seen.append(self) or orig(self, *a, **k))
+def test_help_has_no_procs_and_keeps_the_other_options(stub, capsys):
+    """CT-33: --help names no pool; every pre-CLEAN option but --procs stays (E6.4: the RlStage fields, in model
+    order; later lanes add their own flags)."""
     with pytest.raises(SystemExit) as e:
         stub.main(["--help"])
     out = capsys.readouterr().out
-    assert e.value.code == 0 and "procs" not in out and "scoring workers" not in out
-    now = [s for act in seen[0]._actions for s in act.option_strings]
-    assert "--procs" not in now  # every pre-CLEAN option but --procs, in order; later lanes add their own flags
-    assert [o for o in now if o in OPTIONS] == [o for o in OPTIONS if o != "--procs"]
+    assert e.value.code == 0 and "--procs" not in out and "scoring workers" not in out
+    words = {w.strip(",[]|") for w in out.split()}  # CliApp lists a bool as "--x, --no-x"
+    assert [o for o in OPTIONS if o != "--procs" and o not in words] == []
 
 
 def test_no_pool_and_one_freeze_after_the_last_preload(stub):

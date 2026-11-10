@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("yaml")
 
-CONFIGS = Path(__file__).resolve().parents[1] / "experiments/phase2/configs"
+CONFIGS = Path(__file__).resolve().parents[1] / "specs"
 
 
 def steps(name: str) -> list[list[str]]:

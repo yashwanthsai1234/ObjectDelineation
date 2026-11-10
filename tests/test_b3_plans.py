@@ -9,16 +9,14 @@ from test_b1_plans import CONFIGS, after, module_steps, parse_step, steps
 yaml = pytest.importorskip("yaml")
 
 
-def test_b3_launch_is_the_run_args_file_of_v3():
-    from experiments.phase2 import preflight
+def test_b3_v5_spec_holds_what_b3_launch_held():
+    """E6.6: b3_launch.yaml is archived; the spec has b1's bundle_view and pushes its rl out, revision b3-v5."""
+    from experiments.phase2.vast import policy
+    from objdel.core.spec import load_spec
 
-    raw = yaml.safe_load((CONFIGS / "b3_launch.yaml").read_text())
-    b1 = yaml.safe_load((CONFIGS / "b1_launch.yaml").read_text())
-    assert {k: raw[k] for k in ("model", "view", "seed")} == {k: b1[k] for k in ("model", "view", "seed")}
-    assert raw["output_dir"] == "b3-v5" and raw["rows_plan"] == "experiments/phase2/configs/b3_v5.yaml"
-    preflight.load(CONFIGS / "b3_launch.yaml")
-    with pytest.raises(TypeError, match="steps"):
-        preflight.load(CONFIGS / "b3_v5.yaml")
+    spec = load_spec(CONFIGS / "b3_v5.yaml")
+    assert spec.bundle_view == load_spec(CONFIGS / "b1_rows.yaml").bundle_view
+    assert policy.push_target(spec, "x")[1:] == ("b3-v5", True)
 
 
 def test_b3_v5_holds_the_b3_9_steps_in_order():
