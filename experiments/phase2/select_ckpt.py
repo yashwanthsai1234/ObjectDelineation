@@ -54,7 +54,7 @@ import numpy as np
 from objdel.eval import gates
 from objdel.geom import engine as _gpucheck
 from objdel.train import serve
-from objdel.train.evaluate import score_items, view_rows
+from objdel.train.evaluate import eval_rows, score_items
 
 ROOT = Path(__file__).resolve().parents[2]
 VLLM_VENV = Path("/opt/vllm")  # the phase2 image's second venv; the vllm_native image has vLLM in the running venv
@@ -198,7 +198,7 @@ def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:
     signal panel and the per-item K-sample mean IoU_tc per structure (G-prior)."""
     from objdel.eval import signal, summarize
 
-    rows = view_rows(view, a.items)
+    rows = eval_rows(view, a.items)
     results, groups = score_items(rows, sample_view(a, branch, rows, out, k), view.resolve())
     (out / "items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in results))
     iou = {r["item_id"]: {n: float(np.mean(o["iou_tc"])) for n, o in r["objects"].items()} for r in results}
@@ -224,7 +224,7 @@ def score_probe(a, branch: Path, p: str, out: Path) -> dict:
     from objdel.eval import probes
 
     d = a.probes / f"probe-{p}"
-    done = sample_view(a, branch, view_rows(d, rl_only=False), out / f"probe-{p}", a.k)
+    done = sample_view(a, branch, eval_rows(d, rl_only=False), out / f"probe-{p}", a.k)
     return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # c2_analyze pairs seeds
 
 
@@ -263,7 +263,7 @@ def hf_check(a, name: str, out: Path) -> dict:
     bootstrap 95 % CI (PLAN G-parity: every difference inside its CI); pass = 0 inside every CI."""
     from objdel.eval import signal
 
-    rows = view_rows(a.shifted, HF_CHECK_ITEMS)
+    rows = eval_rows(a.shifted, HF_CHECK_ITEMS)
     hf = argparse.Namespace(**vars(a) | {"sampler": "hf"})
     done = sample_view(hf, a.run / "branches" / name, rows, out / name / "hf-check", a.k)
     got = {"hf": {r["item_id"]: r["samples"] for r in score_items(rows, done, a.shifted.resolve())[0]}}

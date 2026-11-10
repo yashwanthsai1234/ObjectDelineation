@@ -279,7 +279,7 @@ def test_select_ckpt_probe_rows_are_the_probe_items():
     root = VIEWS / "probe-topology"
     if not (root / "lidc" / "val.jsonl").is_file():
         pytest.skip("no probe-topology view")
-    rows = SC.view_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
+    rows = SC.eval_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
     assert len(rows) == len(probes.records(root)) == 680
 
 

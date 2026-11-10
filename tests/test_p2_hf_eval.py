@@ -232,7 +232,7 @@ def test_hf_rate_step_samples_base_weights_and_writes_the_rate(tmp_path, monkeyp
         return {}
 
     monkeypatch.setattr(r0_parity, "weights", lambda model: tmp_path / "base")
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None, rl_only=True: [{"key": str(i)} for i in range(items)])
+    monkeypatch.setattr(SC, "eval_rows", lambda view, items=None, rl_only=True: [{"key": str(i)} for i in range(items)])
     monkeypatch.setattr(SC, "sample_view", sample_view)
     out = tmp_path / "hf-rate-lfm"
     assert HR.main(["--model", "lfm2.5-vl-450m", "--view", str(tmp_path / "v"), "--out", str(out)]) == 0

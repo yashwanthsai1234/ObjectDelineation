@@ -256,10 +256,10 @@ def test_items_subset_is_seeded_not_the_first_n(monkeypatch):
     monkeypatch.setattr(D, "records", lambda root, ds, split: recs)
     monkeypatch.setattr(D, "_verified", lambda root, rs: rs)
     rl = [r["item_id"] for r in recs if r["rl"]]
-    sub = [r["key"] for r in SC.view_rows(Path("v"), 20)]
+    sub = [r["key"] for r in SC.eval_rows(Path("v"), 20)]
     assert len(set(sub)) == 20 and set(sub) <= set(rl) and sub != rl[:20] and sub == sorted(sub)
-    assert sub == [r["key"] for r in SC.view_rows(Path("v"), 20)]
-    assert len(SC.view_rows(Path("v"))) == 80 and len(SC.view_rows(Path("v"), rl_only=False)) == 100
+    assert sub == [r["key"] for r in SC.eval_rows(Path("v"), 20)]
+    assert len(SC.eval_rows(Path("v"))) == 80 and len(SC.eval_rows(Path("v"), rl_only=False)) == 100
 
 
 def test_g_probe_report_form():

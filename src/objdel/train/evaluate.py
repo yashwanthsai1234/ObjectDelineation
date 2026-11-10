@@ -15,7 +15,7 @@ import numpy as np
 from objdel.eval import metrics, select, signal
 from objdel.train import serve
 
-SUBSET_SEED = 0  # view_rows' `items`: one fixed subset for every branch and rung
+SUBSET_SEED = 0  # eval_rows' `items`: one fixed subset for every branch and rung
 
 # name -> (source, higher_is_better): "samples" and "objects" lists are averaged over the K answers, "item" scalars
 # (one per object and item) are copied
@@ -33,7 +33,7 @@ def _score(job) -> dict:
     return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
 
 
-def view_rows(view: Path, items: int | None = None, rl_only: bool = True) -> list[dict]:
+def eval_rows(view: Path, items: int | None = None, rl_only: bool = True) -> list[dict]:
     """Prompt rows of an eval view's lidc/val records (images checked against their records): the scored items (rl,
     with caches) or, with rl_only=False, every record (probe records are rl: false); `items` = a seeded subset."""
     from objdel.train import dataset as D

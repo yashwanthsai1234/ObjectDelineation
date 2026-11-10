@@ -57,7 +57,7 @@ def test_g_probe_with_passing_gates_keeps_the_d12c_repair(tmp_path, monkeypatch)
 
     monkeypatch.setattr(serve, "preload", lambda *a, **k: 0)
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: [])
-    monkeypatch.setattr(GP, "view_rows", lambda *a, **k: [])
+    monkeypatch.setattr(GP, "eval_rows", lambda *a, **k: [])
     verdicts = iter(["INCONCLUSIVE", "PASS"])
     monkeypatch.setattr(GP, "probe", lambda a, ckpt, *r: {"verdict": next(verdicts), "h0": 0, "gain": 0,
                                                           "ckpt": str(ckpt)})
@@ -109,7 +109,7 @@ def test_hf_check_compares_vllm_and_hf_metrics_per_item(tmp_path, monkeypatch, s
         return {k: list(vals[i] + d) for k in SC.HF_CHECK_KEYS}
 
     seen = {}
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None: seen.setdefault("items", items) and
+    monkeypatch.setattr(SC, "eval_rows", lambda view, items=None: seen.setdefault("items", items) and
                         [{"key": i} for i in keys])  # fmt: skip
     monkeypatch.setattr(SC, "sample_view", lambda a, b, rows, out, k: seen.update(sampler=a.sampler, out=out) or {})
     monkeypatch.setattr(SC, "score_items", lambda rows, done, root: (
@@ -140,7 +140,7 @@ def _c2_run(tmp_path, monkeypatch, names=("e1",)):
         return {r["key"]: {"item_id": r["key"], "samples": ["{}"] * k} for r in rows}
 
     monkeypatch.setattr(SC, "exited", lambda run: {"config": {"model": "lfm2.5-vl-450m"}})
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None, rl_only=True: [{"key": f"{view.name}/{i}"}
+    monkeypatch.setattr(SC, "eval_rows", lambda view, items=None, rl_only=True: [{"key": f"{view.name}/{i}"}
                                                                                  for i in range(3)])
     monkeypatch.setattr(SC, "sample_view", sample_view)
     monkeypatch.setattr(SC, "score_view", _boom)
@@ -265,7 +265,7 @@ def _r0(tmp_path, monkeypatch, *, bad_ids=(), shift=0.0):
         return np.full(len(ids), -1.0)
 
     monkeypatch.setattr(R, "weights", lambda model: tmp_path / "base")
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None, rl_only=True: [{"key": f"lidc/n{i:02d}/z0"}
+    monkeypatch.setattr(SC, "eval_rows", lambda view, items=None, rl_only=True: [{"key": f"lidc/n{i:02d}/z0"}
                                                                                  for i in range(items)])
     monkeypatch.setattr(SC, "sample_view", sample_view)
     monkeypatch.setattr(parity, "load", lambda model_dir, prompts, dtype: ("model", _Proc()))
