@@ -516,7 +516,7 @@ def test_u_cf4_a_planted_train_rl_step_fails_each_rule():
     with pytest.raises(AssertionError):
         check_train_rl(bad_root, ref)
     with pytest.raises(AssertionError):
-        check_train_rl([("17" if good[i - 1] == "--steps" else w) for i, w in enumerate(good)], ref)
+        check_train_rl([("37" if good[i - 1] == "--steps" else w) for i, w in enumerate(good)], ref)  # not % 20
     with pytest.raises(AssertionError):
         check_train_rl(good, ("0" * 40, ref[1]))
 
