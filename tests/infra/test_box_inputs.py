@@ -1,5 +1,6 @@
 """Box inputs ship (Implementation.md front 6.1 step 4): every path a box step reads is in the code sync
-(policy.code_files) or in the LIDC bundle (bundle.members). S09: the R-D1 run config and the K3 runbook (D1 step 0).
+(policy.code_files) or in the LIDC bundle (bundle.members). S09: the K3 runbook (D1 step 0; the R-D1
+plan it also checked is finished: archived in E6.6, local only).
 Reads no data/: the bundle is listed for a temp tree."""
 import os
 import re
@@ -14,7 +15,6 @@ from objdel.infra import preflight as PF
 from objdel.infra.vast import remote as P
 
 ROOT = Path(__file__).resolve().parents[2]
-R_D1 = ROOT / "experiments/phase2/configs/r_d1.yaml"
 KERNELS = ROOT / "docs/implementation2.0/kernels"
 SRC = "/workspace/src/"
 
@@ -54,12 +54,8 @@ def bundle(tmp_path_factory) -> set[str]:
     return {name for name, _ in BU.members("lidc", d)}
 
 
-def test_r_d1_and_k3_read_only_shipped_paths(code, bundle):
-    text = R_D1.read_text()
-    assert unshipped(text, code, bundle) == []
+def test_k3_reads_only_shipped_paths(code, bundle):
     assert unshipped((KERNELS / "K3/GPU_RUN.md").read_text(), code, bundle) == []
-    assert "/workspace/src/docs/implementation2.0/kernels/K1" in text and "{data}/checker_eval/masks.npz" in text
-    assert "OBJDEL_DATA_ROOT={data}" in next(s for s in text.split("\n  - ") if "bench_checker" in s)
 
 
 def test_a_planted_unshipped_read_fails(code, bundle):

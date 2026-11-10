@@ -18,11 +18,8 @@ import pytest
 from objdel.sft import select as sft_select
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIGS = ROOT / "experiments/phase2/configs"
+SPECS = sorted((ROOT / "specs").glob("*.yaml"))
 
-
-def _yaml(path):
-    return pytest.importorskip("yaml").safe_load(path.read_text())
 
 
 # ---------------------------------------------------------------- hf_sample: batches of items, resume
@@ -213,10 +210,11 @@ def test_topology_report_carries_the_probe_item_ids(tmp_path, monkeypatch):
 
 def test_every_config_that_samples_on_v1_names_its_sampler():
     """D13 fallback (b37917b): HF generate, except R1 Qwen3-VL-2B: vLLM with select_ckpt's HF check (owner
-    2026-11-05)."""
-    paths = sorted(CONFIGS.glob("r1_*.yaml")) + sorted(CONFIGS.glob("c2_*.yaml")) + [CONFIGS / "rx8.yaml"]
-    want = {p.stem: "hf" for p in paths} | {"r1_qwen3vl2b": "vllm"}
-    assert {p.stem: _yaml(p).get("sampler") for p in paths} == want
+    2026-11-05). The C2 and rx8 configs (sampler hf) left git in E6.6; each spec's select stage names its sampler."""
+    from objdel.core.spec import load_spec
+
+    got = {p.stem: [s.sampler for s in load_spec(p).stages if s.kind == "select"] for p in SPECS}
+    assert {k: v for k, v in got.items() if v} == {"r1_qwen3vl2b": ["vllm"]}
 
 
 def test_g_probe_json_writes_null_for_nan(tmp_path):

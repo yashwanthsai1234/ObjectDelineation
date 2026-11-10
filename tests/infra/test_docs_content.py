@@ -151,12 +151,6 @@ def test_no_stale_trl_version_text_outside_frozen_paths():
     assert hits == []
 
 
-def test_r2_config_comment_is_not_history_wording():
-    text = _read("experiments/phase2/configs/r2_qwen3vl2b.yaml")
-    assert "first run on a GPU here" not in text
-    assert "first GPU run: r2 (see docs/results/runs.md)" in text
-
-
 FROZEN_RECORDS = (
     ["experiments/phase2/PLAN.md", "experiments/phase2/V0_V1.md", "experiments/phase1/PLAN.md"]
     + [f"experiments/phase2/JUDGE_R{i}.md" for i in range(1, 5)]

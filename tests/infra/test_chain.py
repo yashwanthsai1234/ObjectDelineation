@@ -12,7 +12,7 @@ from objdel.infra.vast import chain as C
 from tests.experiments.test_move_invariance import later_edits
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIGS, SPECS = ROOT / "experiments/phase2/configs", ROOT / "specs"
+SPECS = ROOT / "specs"
 GOLDEN = json.loads((ROOT / "tests/goldens/phase_e/invariance.json").read_text())["chain_argv"]
 for _g in GOLDEN.values():
     _g["argv"] = later_edits(_g["argv"])
@@ -54,38 +54,60 @@ def test_every_spec_is_ported_or_checked_elsewhere():
     assert {p.stem for p in SPECS.glob("*.yaml")} == set(PLAN_ARGV) | {"r1_qwen3vl2b"}
 
 
+# r1_qwen3vl2b.yaml, the SFT launch config that specs/r1_qwen3vl2b.yaml replaced (archived in E6.6, local only),
+# minus its runner-only key `sampler`
+OLD_R1 = {"model": "qwen3-vl-2b", "view": "views/lidc-bundle-v3", "output_dir": "r1-qwen3vl2b", "seed": 1,
+          "branches": (0.5, 1.0, 2.0, 3.0),
+          "vision": {"prepared": "prepared", "reference": "vision_ref/qwen3-vl-2b.json"},
+          "sft": {"per_device_train_batch_size": 4, "gradient_accumulation_steps": 8, "dataloader_num_workers": 6,
+                  "dataloader_persistent_workers": True}}
+
+
 def r1_spec() -> S.RunSpec:
-    """r1_qwen3vl2b.yaml (the SFT launch config) and its chain as one spec (the form E6.2 ports)."""
-    raw = yaml.safe_load((CONFIGS / "r1_qwen3vl2b.yaml").read_text())
-    train = S.SftStage(name="train", **{k: tuple(v) if k == "branches" else v for k, v in raw.items()
-                                        if k not in ("sampler", "stages")})
-    ev = "{data}/eval_views/"
-    select = S.SelectStage(
-        name="select", run="{rd}/r1-qwen3vl2b", prepared="{data}/prepared", probes="{data}/eval_views", sampler="vllm",
-        shifted=ev + "lidc-val-shifted", rescaled=ev + "lidc-val-rescaled", rotated=ev + "lidc-val-rotated",
-        vision=S.VisionRef(prepared="{data}/prepared", reference="{rd}/vision_ref/qwen3-vl-2b.json"))
-    probe = S.ProbeStage(name="probe", model="qwen3-vl-2b", select="{rd}/r1-qwen3vl2b/select",
-                         train="{data}/prepared", probe=ev + "lidc-val-shifted", out="{rd}/r1-qwen3vl2b/g_probe")
-    gpu = S.CmdStage(name="gpu_scorers", argv=tuple(C.chain(CONFIGS / "r1_qwen3vl2b.yaml", "x")[0]))
-    return S.RunSpec(schema_version=1, name="r1_qwen3vl2b", compute=S.ComputeSpec(gpu="RTX_5090", cap_hours=1.7),
-                     stages=(gpu, train, select, probe))
+    return S.load_spec(SPECS / "r1_qwen3vl2b.yaml")
 
 
 def test_the_sft_launch_config_maps_onto_an_sft_stage_and_the_chain_stages_equal_golden_5():
     spec = r1_spec()
     gold = GOLDEN["r1_qwen3vl2b"]["argv"]  # gpu scorers, train (--config <yaml>), select, probe
-    argv = [S.to_argv(s, "/workspace/runs/x", C.DATA) for s in spec.stages]
+    argv = C.chain(SPECS / "r1_qwen3vl2b.yaml", "x")
     assert [argv[0], argv[2], argv[3]] == [gold[0], gold[2], gold[3]]
-    raw = yaml.safe_load((CONFIGS / "r1_qwen3vl2b.yaml").read_text())
     got = spec.stages[1].model_dump()
-    assert {k: got[k] for k in raw if k != "sampler"} == {k: tuple(v) if k == "branches" else v
-                                                          for k, v in raw.items() if k != "sampler"}
+    assert {k: got[k] for k in OLD_R1} == OLD_R1
 
 
-def test_vision_refs_of_a_spec_equal_the_old_config(tmp_path):
-    f = tmp_path / "r1.yaml"
-    f.write_text(yaml.safe_dump(json.loads(r1_spec().model_dump_json(exclude={"stages": {"__all__": {"soft"}}}))))
-    assert C.vision_refs(f, "x") == GOLDEN["r1_qwen3vl2b"]["vision_refs"]
+def test_chain_refuses_an_old_schema_plan(tmp_path):
+    """I29: an old `steps:` plan raises ValidationError and an old SFT launch config too, before any remote call."""
+    from pydantic import ValidationError
+
+    old = tmp_path / "r2_qwen3vl2b.yaml"
+    old.write_text('steps:\n  - ["-m", "experiments.phase2.g_probe", "--model", "qwen3-vl-2b"]\n')
+    with pytest.raises(ValidationError):
+        C.chain(old, "x")
+    cfg = tmp_path / "r1_qwen3vl2b.yaml"
+    cfg.write_text(yaml.safe_dump({**OLD_R1, "branches": list(OLD_R1["branches"]), "sampler": "vllm"}))
+    with pytest.raises(ValidationError):
+        C.chain(cfg, "x")
+    assert not list((ROOT / "experiments/phase2/configs").glob("*.yaml"))  # E6.6: the old plans left git
+    elsewhere = tmp_path / "b1_rows.yaml"
+    elsewhere.write_text((SPECS / "b1_rows.yaml").read_text())
+    with pytest.raises(ValueError, match="only a run spec in specs/"):
+        C.chain(elsewhere, "x")
+
+
+# I29: every spec a front 6.3 rental names runs from specs/, never from the old plan folder
+RENTAL_PLANS = ("a3_measure", "c_speed", "c_speed_b", "c_speed_c6", "d_gpu_test", "b2_fp16", "a3_test", "b3_v5")
+
+
+@pytest.mark.parametrize("plan", RENTAL_PLANS)
+def test_rental_plans_run_only_from_specs(plan):
+    assert C.chain(SPECS / f"{plan}.yaml", "x")
+    with pytest.raises(FileNotFoundError):
+        C.chain(ROOT / f"experiments/phase2/configs/{plan}.yaml", "x")
+
+
+def test_vision_refs_of_a_spec_equal_the_old_config():
+    assert C.vision_refs(SPECS / "r1_qwen3vl2b.yaml", "x") == GOLDEN["r1_qwen3vl2b"]["vision_refs"]
 
 
 def test_push_target_takes_the_last_rl_or_sft_stage():

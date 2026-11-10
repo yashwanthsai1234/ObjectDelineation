@@ -1133,7 +1133,7 @@ def test_no_phase_b_script_but_final_eval_scores_the_test_view():
                             "src/objdel/policy/final_eval.py"]
     from objdel.infra.vast import chain as C
 
-    for y in [*(ROOT / "experiments/phase2/configs").glob("*.yaml"), *(ROOT / "specs").glob("*.yaml")]:
+    for y in sorted((ROOT / "specs").glob("*.yaml")):
         for step in C.chain(y, "r"):
             if "lidc-test" in " ".join(step):
                 assert "experiments.phase2.final_eval" in step, (y.name, step)
