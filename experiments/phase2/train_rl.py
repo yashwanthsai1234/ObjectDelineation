@@ -87,8 +87,8 @@ def parse(argv=None) -> argparse.Namespace:
                     help="C5 option F: vLLM serves the adapter, written to DIR (a tmpfs folder) at each sync")
     ap.add_argument("--group-requests", action="store_true",
                     help="C6: vLLM gets one request with n = num_generations per prompt, not n = 1 per row")
-    ap.add_argument("--no-ckpt-layers", type=int, metavar="K",
-                    help="C9 arm (a): gradient checkpointing off on the last K text decoder layers")
+    ap.add_argument("--no-ckpt-layers", type=int, default=0, metavar="K",
+                    help="C9 arm (a): gradient checkpointing off on the last K of the 28 text decoder layers (0: none)")
     ap.add_argument("--lr", type=float, help="learning rate (default: the G-probe's, LoRA or full FT)")
     ap.add_argument("--resume", action="store_true", help="continue from the last <out>/trainer/checkpoint-N")
     ap.add_argument("--merge-last", action="store_true",
@@ -142,6 +142,8 @@ def parse(argv=None) -> argparse.Namespace:
     for k in ("steps", "save_steps", "heldout_every"):  # TRL reads max_steps <= 0 as "train num_train_epochs"
         if getattr(a, k) is not None and getattr(a, k) < 1:
             ap.error(f"--{k.replace('_', '-')} {getattr(a, k)}: needs >= 1")
+    if not 0 <= a.no_ckpt_layers <= 28:  # Qwen3-VL-2B's text decoder; no clamp
+        ap.error(f"--no-ckpt-layers {a.no_ckpt_layers}: needs 0..28")
     if a.budget_usd is not None and a.session_start is None:
         ap.error("--budget-usd needs a session start: --session-start or OBJDEL_SESSION_START (run.sh exports it)")
     if a.budget_usd is not None and a.rate_usd_per_h is None:
