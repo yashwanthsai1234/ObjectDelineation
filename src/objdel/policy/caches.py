@@ -1,11 +1,14 @@
 """Per-batch caches of the GRPO forwards (perf C2, C3, C6; from the old train/fast.py, E5): VisionCache,
-EncoderCache, RopeCache, RopeTemplate, ImageMemo, and RowMeta (the host metadata of a batch's rows)."""
+EncoderCache, RopeCache, RopeTemplate, ImageMemo, PromptMemo, and RowMeta (the host metadata of a batch's rows)."""
 
 import dataclasses
+import re
+import threading
 import typing
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from objdel.policy import marks as nvtx
 
@@ -313,9 +316,16 @@ class ImageMemo:
     def __init__(self, inner, gpu: tuple[str, str] | None = None, per_image: bool = False):
         """gpu: (gpu_pixels backend, device) to prepare missed images with gpu_pixels.patchify (C1), or None for the
         processor itself (the B1 control). per_image (--encoder-once, C3): pixel_values holds each distinct image of
-        the call once (first-appearance order) instead of once per row; image_grid_thw stays one row per row."""
+        the call once (first-appearance order) instead of once per row; image_grid_thw stays one row per row.
+        The creating thread owns the memo (C.9.9 rule 8): a call from any other thread raises."""
         self.inner, self.gpu, self.per_image = inner, gpu, per_image
         self.memo: dict[tuple, tuple] = {}  # (id(image), kwargs) -> (image, its patch rows, its grid row)
+        self.owner = threading.get_ident()
+
+    def check_thread(self) -> None:
+        """RuntimeError outside the owner thread (the trainer's main thread; the reward prefetch never calls it)."""
+        if threading.get_ident() != self.owner:
+            raise RuntimeError(f"ImageMemo belongs to thread {self.owner}, called from {threading.get_ident()}")
 
     @classmethod
     def install(cls, processing_class):
@@ -347,6 +357,7 @@ class ImageMemo:
         one miss per image not yet in the memo and no hit (an empty list, or images already there: nothing)."""
         from transformers.image_utils import make_flat_list_of_images
 
+        self.check_thread()
         kw = repr(sorted(kwargs.items()))
         miss = self.missing(make_flat_list_of_images(images) if images else [], kw)
         self.misses += len(miss)
@@ -388,6 +399,7 @@ class ImageMemo:
         """Image processor call that processes only images not yet in the memo and returns pixel values and grids of
         all, in order.
         """
+        self.check_thread()
         with nvtx.range("image_memo"):
             from transformers.feature_extraction_utils import BatchFeature
             from transformers.image_utils import make_flat_list_of_images
@@ -402,3 +414,78 @@ class ImageMemo:
             data = {"pixel_values": torch.cat([r for _, r, _ in once]),
                     "image_grid_thw": torch.stack([g for *_, g in parts])}
             return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
+
+
+def plain_instance(cls):
+    """A bare instance of cls (no __init__): PromptMemo's copies and pickles rebuild the processor's own class."""
+    return cls.__new__(cls)
+
+
+class PromptMemo:
+    """TRL pass 2's processor call (grpo_trainer.py:2645, `processing_class(images=, text=, padding=True,
+    return_tensors="pt")`) with the text part once per (text, image sizes) per run (C2 step 5). The 256 rows of a step
+    hold a few prompt layouts, and a row's ids, mask and token types depend only on its text and its images' sizes.
+    Pixel values and grids still come from the processor's image step (the ImageMemo), so the output equals the
+    processor's own. Any other call signature runs the processor unchanged."""
+
+    FAMILY = re.compile(r"Qwen[\d_.]*VLProcessor")  # one Qwen-VL processor class name, no subclass name match
+    IMAGE_KEYS = ("pixel_values", "image_grid_thw")
+
+    def __init__(self, call, inner):
+        self.call, self.inner, self.rows = call, inner, {}  # (text, sizes) -> {key: (L,) tensor}
+
+    @classmethod
+    def install(cls, processing_class, image_memo):
+        """Replace the processor's __call__ through a subclass of the same name (isinstance, attributes, saved
+        files unchanged). The installed memo on a second call; None (nothing installed) for another family or
+        without an ImageMemo."""
+        base = type(processing_class)
+        if isinstance(base.__dict__.get("prompt_memo"), cls):
+            return base.prompt_memo
+        if image_memo is None or not cls.FAMILY.fullmatch(base.__name__):
+            return None
+        memo = cls(base.__call__, image_memo.inner)
+
+        def __call__(self, *args, **kwargs):
+            return memo(self, *args, **kwargs)
+
+        def __reduce_ex__(self, protocol):  # pickle and deepcopy give the plain class
+            _, _, *rest = object.__reduce_ex__(self, max(protocol, 2))
+            return (plain_instance, (base,), *rest)
+
+        processing_class.__class__ = type(base.__name__, (base,), {
+            "__call__": __call__, "__reduce_ex__": __reduce_ex__, "prompt_memo": memo,
+            "__module__": base.__module__, "__qualname__": base.__qualname__})  # fmt: skip
+        return memo
+
+    def __call__(self, proc, *args, **kwargs):
+        """TRL pass 2's call from the memo rows (padded as the tokenizer pads) and the image step; else the original."""
+        images, text = kwargs.get("images"), kwargs.get("text")
+        if (args or set(kwargs) != {"images", "text", "padding", "return_tensors"} or kwargs["padding"] is not True
+                or kwargs["return_tensors"] != "pt" or not isinstance(text, list) or not isinstance(images, list)
+                or len(images) != len(text) or not all(isinstance(t, str) for t in text)
+                or any(im is None for im in images)):  # fmt: skip
+            return self.call(proc, *args, **kwargs)
+        from transformers.feature_extraction_utils import BatchFeature
+
+        rows = [self.row(proc, t, im) for t, im in zip(text, images, strict=True)]
+        width, left = max(len(r["input_ids"]) for r in rows), proc.tokenizer.padding_side == "left"
+        pad = {k: proc.tokenizer.pad_token_id if k == "input_ids" else 0 for k in rows[0]}
+        data = {k: torch.stack([F.pad(r[k], (width - len(r[k]), 0) if left else (0, width - len(r[k])),
+                                      value=pad[k]) for r in rows]) for k in rows[0]}  # fmt: skip
+        pixels = self.call(proc, images=images, padding=True, return_tensors="pt")  # the image step: the ImageMemo
+        return BatchFeature({**data, **{k: pixels[k] for k in self.IMAGE_KEYS}})
+
+    def row(self, proc, text: str, images) -> dict:
+        """One row's unpadded text fields, from one processor call per new key on the plain image processor (the
+        ImageMemo counts each row once, in the batch's image step)."""
+        imgs = images if isinstance(images, list | tuple) else [images]
+        key = (text, tuple((x.height, x.width) if hasattr(x, "height") else tuple(np.shape(x)) for x in imgs))
+        if key not in self.rows:
+            memo, proc.image_processor = proc.image_processor, self.inner
+            try:
+                out = self.call(proc, images=[images], text=[text], padding=True, return_tensors="pt")
+            finally:
+                proc.image_processor = memo
+            self.rows[key] = {k: v[0] for k, v in out.items() if k not in self.IMAGE_KEYS}
+        return self.rows[key]

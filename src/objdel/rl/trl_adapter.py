@@ -34,7 +34,7 @@ from trl.trainer.utils import split_pixel_values_by_grid, split_tensor_dict, uns
 from objdel.geom import engine as _gpucheck
 from objdel.policy import marks as nvtx
 from objdel.policy import models
-from objdel.policy.caches import EncoderCache, ImageMemo, RopeCache, VisionCache
+from objdel.policy.caches import EncoderCache, ImageMemo, PromptMemo, RopeCache, VisionCache
 from objdel.policy.sampler import G
 from objdel.rl import record, runaway, vllm_requests
 from objdel.rl.forward import (
@@ -538,6 +538,13 @@ class FastGRPO(FastForward, GRPOTrainer):
             raise RuntimeError("no GPU pixel backend equals the CPU processor (pass --allow-cpu-pixels to run on it)")
         self.images.gpu = None if backend is None else (backend, "cuda")
         return backend or "cpu"
+
+    def use_prompt_memo(self) -> bool:
+        """C2, train_rl --prompt-memo: _tokenize_prompts tokenizes one row per prompt layout (pass 1, vLLM path) and
+        PromptMemo serves TRL pass 2's processor call (step 5). False when PromptMemo does not fit the processor
+        (TRL's pass 2 then runs: slower, the same output)."""
+        self.prompt_memo = True
+        return PromptMemo.install(self.processing_class, self.images) is not None
 
     def use_encoder_once(self) -> bool:
         """C3, train_rl --encoder-once (needs --host-meta: the update's rows carry their image ids): EncoderCache takes
