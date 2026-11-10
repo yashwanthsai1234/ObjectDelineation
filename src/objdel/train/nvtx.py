@@ -9,7 +9,8 @@ OBJDEL_NVTX_SYNC (read once, here): "1" (default) keeps FastGRPO.timed's end-of-
 runs; "0" times each phase with a CUDA event pair instead, so a trace shows the real overlap between phases.
 
 Range names are fixed (tests/test_nvtx.py scans for them): step, loader, micro, batch, generate, sync, wake, sleep,
-rewards, checker, logps, forward, optimizer, log, vision_cache, rope_cache, image_memo.
+rewards, checker, logps, forward, optimizer, log, vision_cache, rope_cache, rope_template, image_memo,
+and `generate/tail` (see `tail`).
 """
 
 import contextlib
@@ -61,6 +62,35 @@ def range(name: str):  # noqa: A001 (the plan's name; torch.cuda.nvtx has `range
     """A context manager: range_push(name) on entry and range_pop() on exit (also on an exception) when enabled,
     else a no-op."""
     return _range(name) if enabled() else contextlib.nullcontext()
+
+
+@contextlib.contextmanager
+def tail(engine, below: int):
+    """The decode tail (C11): a `generate/tail` range from the first `engine.step()` that leaves fewer than `below`
+    unfinished requests to the end of the block, so a trace shows the seconds spent on the few longest answers (C0
+    step 6b checks its logged-length estimate against it). The patched `step` lives on the instance only inside the
+    block. A no-op when NVTX is off. Needs an engine with `step()` and `get_num_unfinished_requests()`, which
+    `LLM._run_engine` loops on [unverified for vLLM 0.32.0: the box]."""
+    if not enabled():
+        yield
+        return
+    step, thin = engine.step, False
+
+    def counted(*args, **kwargs):
+        nonlocal thin
+        out = step(*args, **kwargs)
+        if not thin and engine.get_num_unfinished_requests() < below:
+            push("generate/tail")
+            thin = True
+        return out
+
+    engine.step = counted
+    try:
+        yield
+    finally:
+        del engine.step  # the instance patch only; the class's step is back
+        if thin:
+            pop()
 
 
 class SyncCount:

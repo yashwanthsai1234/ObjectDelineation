@@ -1159,6 +1159,14 @@ class FastGRPO(FastForward, GRPOTrainer):
             ids.append(memo[key])
         return ids, ([i or None for i in images] if any(images) else None), {}
 
+    def decode_tail(self):
+        """C11: the NVTX `generate/tail` range of the vLLM decode loop, opened once fewer than num_generations answers
+        run. Nothing without NVTX, without vLLM, or under --group-requests (one request then holds G answers)."""
+        if not (nvtx.enabled() and self.use_vllm) or self.group_requests:
+            return contextlib.nullcontext()
+        G = self.num_generations if self.model.training else self.num_generations_eval
+        return nvtx.tail(self.vllm_generation.llm.llm_engine, G)
+
     def _generate(self, prompts):
         if self.images is not None:  # the previous batch's images
             self.images.clear()
@@ -1168,7 +1176,7 @@ class FastGRPO(FastForward, GRPOTrainer):
         if self.use_vllm:
             self.patch_vllm_prompts()
             self.time_vllm_phases()
-        with self.timed("generate"):
+        with self.timed("generate"), self.decode_tail():
             out = super()._generate(prompts)
         if (self.host_meta or self.record_dir) and self.rows is not None and len(self.rows) == len(out[1]):
             eos_and_pad = [*self.eos_token_ids, self._tokenizer.pad_token_id]  # TRL's truncation list
