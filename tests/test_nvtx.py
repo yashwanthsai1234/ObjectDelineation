@@ -239,8 +239,9 @@ def test_no_cuda_no_profiler_and_no_ranges(monkeypatch, no_nvtx_calls):
 
 # U30, U56: FastGRPO.timed ----------------------------------------------------------------------------------------
 
-NAMES = {"step", "loader", "micro", "batch", "generate", "sync", "wake", "sleep", "rewards", "checker", "logps",
-         "forward", "optimizer", "log", "vision_cache", "rope_cache", "rope_template", "image_memo"}
+NAMES = {"step", "loader", "micro", "batch", "generate", "sync", "wake", "wake_weights", "wake_kv", "sleep",
+         "rewards", "checker", "logps", "forward", "optimizer", "log", "vision_cache", "rope_cache", "rope_template",
+         "image_memo", "encoder_once"}
 
 
 def fake_trainer(**attrs):
@@ -359,7 +360,7 @@ def test_timed_without_cuda_uses_the_host_clock_even_with_sync_off(monkeypatch):
 
 def range_names():
     """Every string literal passed to nvtx.range / nvtx.push / .timed under src/objdel/train (AST scan), and the
-    phase names of FastGRPO.time_vllm_phases's `hooks` table (its wrappers pass them to `timed` as `_phase`)."""
+    phase names of FastGRPO.time_vllm_phases's `hooks` table and WAKE_PHASE (its wrappers pass them to `timed`)."""
     import ast
     from pathlib import Path
 
@@ -376,8 +377,11 @@ def range_names():
                     names.add(arg.value)
                 elif f.name != "nvtx.py" and getattr(arg, "id", "") not in ("phase", "_phase"):  # timed, its wrappers
                     bad.append(f"{f.name}:{node.lineno}")
-            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "hooks":
+            if (isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "hooks"
+                    and isinstance(node.value, ast.Tuple)):  # fmt: skip
                 names |= {e.elts[2].value for e in node.value.elts}
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "WAKE_PHASE":
+                names |= {v.value for v in node.value.values}
     return names, bad
 
 
@@ -472,6 +476,26 @@ def test_step_time_is_the_gap_between_logs_without_a_sync(monkeypatch):
         t.log({})
         t._metrics["train"].clear()  # as TRL's log does
     assert [x.get("time/step_s") for x in logged] == [None, [30.0], [35.0]]
+
+
+def test_sync_calls_is_the_count_of_syncs_between_logs(monkeypatch):
+    """G-SP2: time/sync_calls is one value per log, the sync calls since the previous log (a step with none logs 0);
+    a trainer whose phases are not timed logs no such key."""
+    from types import SimpleNamespace
+
+    logged = capture_log(monkeypatch)
+    t = fake_trainer()
+    t.log({})
+    t._metrics["train"].clear()
+    t.vllm_generation = SimpleNamespace(llm=SimpleNamespace(wake_up=lambda tags=None: None, sleep=lambda level=1: None),
+                                        sync_weights=lambda: None)  # fmt: skip
+    t.time_vllm_phases()
+    for calls in (1, 2, 0):
+        for _ in range(calls):
+            t.vllm_generation.sync_weights()
+        t.log({})
+        t._metrics["train"].clear()
+    assert [x.get("time/sync_calls") for x in logged] == [None, [1], [2], [0]]
 
 
 def test_log_adds_no_host_read(monkeypatch):

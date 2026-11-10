@@ -574,7 +574,25 @@ def test_vllm_sync_wake_and_sleep_are_timed():
     vg.sync_weights(), llm.wake_up(tags=["kv_cache"]), llm.sleep(level=2)
     assert calls == [("sync",), ("wake", ["kv_cache"]), ("sleep", 2)]
     timed = {k: len(v) for k, v in t._metrics["train"].items()}
-    assert timed == {"time/sync_s": 1, "time/wake_s": 1, "time/sleep_s": 1}
+    assert timed == {"time/sync_s": 1, "time/wake_kv_s": 1, "time/sleep_s": 1}
+
+
+def test_wake_time_is_split_by_tags_and_no_wake_time_is_lost(monkeypatch):
+    """U-MS3: ["weights"] charges time/wake_weights_s only, ["kv_cache"] time/wake_kv_s only; any other call (no tags,
+    both tags) charges time/wake_s, so the sum of the wake keys is the total."""
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    clock = iter(range(100))
+    monkeypatch.setattr(fast.time, "perf_counter", lambda: next(clock) * 1.0)
+    llm = SimpleNamespace(wake_up=lambda tags=None: None, sleep=lambda level=1: None)
+    t = object.__new__(fast.FastGRPO)
+    t.model, t.vllm_generation = SimpleNamespace(training=True), SimpleNamespace(llm=llm, sync_weights=lambda: None)
+    t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    t.time_vllm_phases()
+    llm.wake_up(tags=["weights"]), llm.wake_up(["kv_cache"]), llm.wake_up(), llm.wake_up(tags=["weights", "kv_cache"])
+    assert {k: len(v) for k, v in t._metrics["train"].items()} == {
+        "time/wake_weights_s": 1, "time/wake_kv_s": 1, "time/wake_s": 2}  # fmt: skip
 
 
 def group_batch(groups, G, lengths, pads=None, P=12, T=10, seed=3):
@@ -1459,7 +1477,7 @@ def test_dr_grpo_loss_scales_by_the_completion_limit_on_a_one_row_example():
                     max_completion_length=limit, current_gradient_accumulation_steps=1,
                     _entropy_bonus_enabled=False)  # fmt: skip
         t._get_per_token_logps_and_entropies = lambda *a, **k: (torch.zeros(1, 3), torch.zeros(1, 3), None)
-        t.accelerator.gather, t.accelerator.reduce = (lambda x: x), (lambda x, reduction: x)
+        t.accelerator.gather, t.accelerator.reduce = (lambda x: x), (lambda x, **_: x)
         loss[limit] = t._compute_loss(None, {"prompt_ids": torch.ones(1, 2, dtype=torch.long),
                                              "prompt_mask": torch.ones(1, 2, dtype=torch.long),
                                              "completion_ids": torch.ones(1, 3, dtype=torch.long),
