@@ -336,3 +336,41 @@ def test_resume_truncates_seq_gaps_to_the_checkpoint_step(stub):
     assert stub.run(*stub.train, "--resume") == 0
     assert (trainer / "seq_gaps.f32").stat().st_size == 2 * 2 * 3 * 4
     assert json.loads((trainer / "seq_gaps.json").read_text())["steps"] == 2
+
+
+def test_expect_step1_needs_encode_check_and_files_are_read_before_the_model_loads(stub, tmp_path):
+    """U-CF5: --expect-step1 without --encode-check is a parse error; a missing file fails before make_trainer."""
+    with pytest.raises(SystemExit) as e:
+        stub.run(*stub.train, "--expect-step1", str(tmp_path / "rl.json"))
+    assert e.value.code == 2
+    with pytest.raises(FileNotFoundError):
+        stub.run(*stub.train, "--expect-step1", str(tmp_path / "rl.json"), "--encode-check", str(tmp_path / "e.json"))
+    assert stub.calls == []  # not even the preload ran
+
+
+def test_a_step_1_mismatch_exits_3_after_step_1_with_the_file(stub, tmp_path, monkeypatch):
+    """U-CF5: the callback train_rl hands the trainer stops it; main returns 3, writes the file, saves no model."""
+    import experiments.phase2.g_probe as g_probe
+
+    base = {"rewards/iou_tc/mean": 0.5, "rewards/legal/mean": 0.9, "completions/mean_length": 100.0,
+            "grad_norm": 0.003264, "sampling/sampling_logp_difference/mean": 0.009515}
+    (tmp_path / "rl.json").write_text(json.dumps({"log": [{"step": 1, **base}]}))
+    (tmp_path / "e.json").write_text(json.dumps({"bits_equal": True}))
+    seen = {}
+
+    def make(*a, calls=(), **k):
+        (cb,) = [c for c in calls if hasattr(c, "mismatch")]
+
+        def train(resume_from_checkpoint=None):  # TRL logs step 1, then asks the callbacks whether to go on
+            ctl = SimpleNamespace(should_training_stop=False)
+            log = [{"step": 1, **base, "rewards/legal/mean": 0.5}]
+            cb.on_log(None, SimpleNamespace(global_step=1, log_history=log), ctl)
+            seen["stop"] = ctl.should_training_stop
+
+        return SimpleNamespace(train=train, model=None), None, 5e-5
+
+    monkeypatch.setattr(g_probe, "make_trainer", make)
+    rc = stub.run(*stub.train, "--expect-step1", str(tmp_path / "rl.json"), "--encode-check", str(tmp_path / "e.json"))
+    assert rc == 3 and seen["stop"] is True
+    assert json.loads((stub.out / "step1_mismatch.json").read_text())["mismatch"] == {"rewards/legal/mean": [0.9, 0.5]}
+    assert not (stub.out / "rl.json").exists() and not (stub.out / "final").exists()

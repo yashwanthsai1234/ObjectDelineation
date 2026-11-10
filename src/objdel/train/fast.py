@@ -29,7 +29,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
-from objdel.train import nvtx, runaway, trl_adapter, vllm_requests
+from objdel.train import nvtx, record, runaway, trl_adapter, vllm_requests
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -915,6 +915,8 @@ class FastGRPO(FastForward, GRPOTrainer):
     host_meta = False  # C4, train_rl --host-meta: RowMeta from _generate's host lists, row-aligned in the batch
     check_meta_every = 50  # C4, train_rl --check-meta-every N: compare host_meta with the device masks (0: never)
     check_rope_every = 50  # C2, train_rl --check-rope-every N: compare template rope positions with HF (0: never)
+    checks_from_step = 1  # C0, train_rl --checks-from-step S: --check-*-every count from step S; recording starts there
+    record_dir = None  # C0, train_rl --record-batches DIR (record.open_dir): each generation batch from step S on
     rope_check = False  # this generation batch's forwards run the rope check (FastForward reads it)
     meta = None  # the generation batch's RowMeta, from _generate to the batch
     prompt_memo = False  # C2, train_rl --prompt-memo: _tokenize_prompts tokenizes one row per prompt layout
@@ -1002,17 +1004,26 @@ class FastGRPO(FastForward, GRPOTrainer):
             with self.timed("batch"):
                 batch = super()._generate_and_score_completions(inputs)
             if self.meta is not None:
-                batch["host_meta"] = host_rows(self.meta)
-                n = self.check_meta_every
-                if n and self.state.global_step % n == 0:  # steps 1, N + 1, 2N + 1, ...
-                    check_meta(batch)
-                n = self.check_rope_every
-                self.rope_check = bool(n) and self.state.global_step % n == 0
+                if self.host_meta:
+                    batch["host_meta"] = host_rows(self.meta)
+                    if self.check_due(self.check_meta_every):
+                        check_meta(batch)
+                    self.rope_check = self.check_due(self.check_rope_every)
+                if self.record_dir and self.model.training and self.state.global_step + 1 >= self.checks_from_step:
+                    name = f"step{self.state.global_step + 1:04d}.pt"
+                    torch.save(record.batch_record(batch, self.meta, self.rope and self.rope.base),
+                               self.record_dir / name)
             return batch
         finally:
             self.rows, self.meta = None, None
             if skip:
                 self.vllm_importance_sampling_correction = True
+
+    def check_due(self, every: int) -> bool:
+        """Whether this generation batch is a check step of a --check-*-every flag: steps S, S + every, S + 2 every,
+        ... where S is --checks-from-step (default 1; every 0 never)."""
+        late = self.state.global_step + 1 - self.checks_from_step  # steps since S; negative before it
+        return bool(every) and late >= 0 and late % every == 0
 
     def skip_old_logps(self) -> bool:
         """C10: with one generation per optimizer step and one iteration (TRL's own aligned case), the weights do not
@@ -1160,7 +1171,7 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.time_vllm_phases()
         with self.timed("generate"):
             out = super()._generate(prompts)
-        if self.host_meta and self.rows is not None and len(self.rows) == len(out[1]):
+        if (self.host_meta or self.record_dir) and self.rows is not None and len(self.rows) == len(out[1]):
             eos_and_pad = [*self.eos_token_ids, self._tokenizer.pad_token_id]  # TRL's truncation list
             cfg = getattr(self.model, "config", None)
             vision = [getattr(cfg, k, None) for k in ("image_token_id", "video_token_id", "vision_start_token_id",

@@ -120,6 +120,8 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     trainer.host_meta = bool(getattr(a, "host_meta", False))  # C4
     trainer.check_meta_every = getattr(a, "check_meta_every", 50)
     trainer.check_rope_every = getattr(a, "check_rope_every", 50)  # C2
+    trainer.checks_from_step = getattr(a, "checks_from_step", 1)  # C0: the check flags and recording act from step S
+    trainer.record_dir = getattr(a, "record_batches", None)  # C0, opened (and checked empty) by train_rl before the load
     trainer.prompt_memo = bool(getattr(a, "prompt_memo", False))  # C2
     if getattr(a, "gpu_pixels", "off") == "auto":  # C1: 8 training images for the start-up self-check
         imgs = [train[i]["image"] for i in range(min(8, len(train)))]
