@@ -240,7 +240,7 @@ def test_no_cuda_no_profiler_and_no_ranges(monkeypatch, no_nvtx_calls):
 # U30, U56: FastGRPO.timed ----------------------------------------------------------------------------------------
 
 NAMES = {"step", "loader", "micro", "batch", "generate", "sync", "wake", "sleep", "rewards", "checker", "logps",
-         "forward", "optimizer", "log", "vision_cache", "rope_cache", "image_memo"}
+         "forward", "optimizer", "log", "vision_cache", "rope_cache", "rope_template", "image_memo"}
 
 
 def fake_trainer(**attrs):
@@ -609,7 +609,7 @@ def built(monkeypatch, tmp_path):
     monkeypatch.setattr("transformers.AutoModelForImageTextToText", stub)  # by path: imports above swap the module
     monkeypatch.setattr("transformers.AutoProcessor", stub)
     monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace(
-        fp16=False, off_policy_mask_threshold=k.get("off_policy_mask_threshold"), output_dir="o"))
+        fp16=False, vllm_lora=False, off_policy_mask_threshold=k.get("off_policy_mask_threshold"), output_dir="o"))
     monkeypatch.setattr(rewards, "TRLReward", lambda *a, **k: SimpleNamespace(funcs=lambda: ([], [])))
     monkeypatch.setattr(rewards, "stop_ids", lambda *a: set())
     monkeypatch.setattr(serve, "loader", lambda *roots: None)
@@ -646,6 +646,22 @@ def test_make_trainer_attaches_the_live_opsm_delta_only_under_an_opsm_threshold(
     assert built() == []
     (cb,) = built(grpo='{"off_policy_mask_threshold": 0.5}')
     assert isinstance(cb, OpsmDelta)
+
+
+def test_make_trainer_installs_the_lora_sync_only_under_option_f(built, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from objdel.train import configs, vllm_sync
+
+    calls = []
+    monkeypatch.setattr(vllm_sync, "install",
+                        lambda t, numerics, adapter_dir=None: calls.append((numerics, adapter_dir)) or True)
+    built()
+    assert calls == []
+    monkeypatch.setattr(configs, "grpo_config", lambda *a, **k: SimpleNamespace(
+        fp16=False, off_policy_mask_threshold=None, output_dir="o", vllm_lora=True))
+    built()
+    assert [c[0] for c in calls] == ["lora-seqmask"] and calls[0][1].is_dir()
 
 
 def test_train_rl_flags():

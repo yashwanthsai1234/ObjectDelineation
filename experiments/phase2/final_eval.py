@@ -341,7 +341,14 @@ def load_trainer(a):
 
     train = dataset.grpo_rows(a.train, "lidc", "train", oversample=dataset.DISAGREEMENT_OVERSAMPLE)
     args = argparse.Namespace(model=a.model, out=a.out[0], grpo="{}", train=a.train)
-    return g_probe.make_trainer(args, a.ckpt, train, 1)[0]
+    if not a.adapter:
+        return g_probe.make_trainer(args, a.ckpt, train, 1)[0]
+    from peft import set_peft_model_state_dict  # option F: vLLM serves the adapter unmerged, as in training
+    from safetensors.torch import load_file
+
+    trainer = g_probe.make_trainer(args, a.ckpt, train, 1, numerics="lora-seqmask")[0]
+    set_peft_model_state_dict(trainer.model, load_file(a.adapter / "adapter_model.safetensors"))
+    return trainer
 
 
 def sample_items(trainer, rows: list[dict], a) -> list[dict]:
@@ -476,6 +483,8 @@ def main(argv=None) -> None:
     ap.add_argument("--train", type=Path, help="the prepared training data (make_trainer's dataset)")
     ap.add_argument("--out", type=Path, action="append", required=True,
                     help="one folder (a subfolder per view when several), or one per --view")
+    ap.add_argument("--adapter", type=Path, metavar="DIR",
+                    help="--ckpt's base plus this LoRA folder (a run trained under lora-seqmask), served unmerged")
     ap.add_argument("--rescore", type=Path, metavar="DIR", help="score DIR/answers.jsonl again (no model)")
     ap.add_argument("--hash-view", type=Path, metavar="VIEW", help="write VIEW's identity record to --out and exit")
     ap.add_argument("--resummarize", type=Path, metavar="DIR", help="a finished run: summarize its items.jsonl again")
@@ -497,6 +506,9 @@ def main(argv=None) -> None:
         return resummarize(a.resummarize, a.out[0], a.store)
     if a.hash_view:
         return hash_view(a.hash_view, a.out[0])
+    for name in ("adapter_config.json", "adapter_model.safetensors") if a.adapter else ():
+        if not (a.adapter / name).is_file():
+            ap.error(f"--adapter {a.adapter}: {name} is missing")
     views, splits = a.view or [], a.split or ["val"]
     if bool(a.ckpt) == bool(a.rescore) or not views or (a.ckpt and not a.train):
         ap.error("give --view and exactly one of --ckpt (with --train) and --rescore")
@@ -527,7 +539,9 @@ def main(argv=None) -> None:
         lines = [{"item_id": r["key"], "group_id": groups[r["key"]], "W": r["W"], "H": r["H"],
                   **{k: d[k] for k in ("samples", "truncated", "tokens")}}
                  for r, d in zip(rows, answers, strict=True)]
-        run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed} | _identity(view, split) | {
+        run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed} | (
+            {"adapter": str(a.adapter), "adapter_sha256": file_sha256(a.adapter / "adapter_model.safetensors")}
+            if a.adapter else {}) | _identity(view, split) | {
             "seconds": {"load_and_sample": time.time() - t0}} | ({"limit": a.limit} if a.limit else {})
         _write(out / "answers.jsonl", _lines(lines))  # before scoring: a scoring crash keeps the sampling
         _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))

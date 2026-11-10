@@ -102,6 +102,7 @@
   "row_meta",
   "seq_kl",
   "summary_metrics",
+  "vllm_engine_kwargs",
   "vllm_kwargs",
   "window",
   "window_from_meta",
@@ -305,7 +306,6 @@
   "verdict"
  ],
  "experiments/phase2/train_rl.py": [
-  "NEEDS_FASTGRPO",
   "_finite",
   "_hex",
   "_sha",

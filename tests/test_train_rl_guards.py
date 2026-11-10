@@ -418,7 +418,7 @@ def test_numerics_defaults_to_the_b1_control(monkeypatch):
 
 
 def test_numerics_takes_the_presets_that_need_only_a_config(monkeypatch):
-    for name in ("bf16-seqmask", "bf16-tis", "bf16-tis-opsm"):
+    for name in ("bf16-seqmask", "bf16-tis", "bf16-tis-opsm", "lora-seqmask"):
         assert parse(*TRAIN, "--numerics", name, monkeypatch=monkeypatch).numerics == name
 
 
@@ -426,8 +426,6 @@ def test_unknown_numerics_is_refused(capsys, monkeypatch):
     assert "bf16-fp8" in refused(capsys, *TRAIN, "--numerics", "bf16-fp8", monkeypatch=monkeypatch)
 
 
-def test_lora_seqmask_is_refused_until_the_lora_serving_plumbing_lands(capsys, monkeypatch):
-    assert "FastGRPO" in refused(capsys, *TRAIN, "--numerics", "lora-seqmask", monkeypatch=monkeypatch)
 
 
 def test_fp16_seqmask_parses(monkeypatch):

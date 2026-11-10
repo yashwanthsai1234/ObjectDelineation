@@ -47,9 +47,6 @@ import sys
 import time
 from pathlib import Path
 
-# lora-seqmask needs vLLM LoRA serving (option F plumbing, B2.2), not built yet
-NEEDS_FASTGRPO = ("lora-seqmask",)
-
 
 def _finite(lo_open: bool):
     def check(s: str) -> float:
@@ -83,8 +80,6 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--shared-prefix", action="store_true", help="pack each group's prompt once per chunk (FastGRPO)")
     ap.add_argument("--fast-sync", action="store_true",
                     help="C5: the vLLM weight push in one load_weights call (vllm_sync), not TRL's per-parameter loop")
-    ap.add_argument("--lora-sync", type=Path, metavar="DIR",
-                    help="C5 option F: vLLM serves the adapter, written to DIR (a tmpfs folder) at each sync")
     ap.add_argument("--group-requests", action="store_true",
                     help="C6: vLLM gets one request with n = num_generations per prompt, not n = 1 per row")
     ap.add_argument("--no-ckpt-layers", type=int, metavar="K",
@@ -146,8 +141,6 @@ def parse(argv=None) -> argparse.Namespace:
         ap.error("--budget-usd needs a session start: --session-start or OBJDEL_SESSION_START (run.sh exports it)")
     if a.budget_usd is not None and a.rate_usd_per_h is None:
         ap.error("--budget-usd needs a rate: --rate-usd-per-h or OBJDEL_RATE_USD_PER_H (run.sh exports it)")
-    if a.numerics in NEEDS_FASTGRPO:
-        ap.error(f"--numerics {a.numerics} needs FastGRPO plumbing (vLLM LoRA serving, B2.2), not built yet")
     if a.opsm_start_delta is not None and (a.numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
         ap.error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
     grpo = json.loads(a.grpo)

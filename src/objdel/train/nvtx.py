@@ -9,7 +9,7 @@ OBJDEL_NVTX_SYNC (read once, here): "1" (default) keeps FastGRPO.timed's end-of-
 runs; "0" times each phase with a CUDA event pair instead, so a trace shows the real overlap between phases.
 
 Range names are fixed (tests/test_nvtx.py scans for them): step, loader, micro, batch, generate, sync, wake, sleep,
-rewards, checker, logps, forward, optimizer, log, vision_cache, rope_cache, image_memo.
+rewards, checker, logps, forward, optimizer, log, vision_cache, rope_cache, rope_template (C2), image_memo.
 """
 
 import contextlib
