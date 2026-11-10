@@ -61,7 +61,8 @@ def test_fetch_hf_has_its_shim():
 
 # --- B1.5: rows root and checkpoint folder names (I40, I40b) ------------------------------------------------------
 
-ZERO40, ZERO64 = "0" * 40, "0" * 64  # b1_rows.yaml's placeholders until B1.4 step 5 pins the upload
+ZERO40 = "0" * 40  # b1_rows.yaml's revision placeholder until B1.4 step 5 pins the upload
+ROWS_SHA = "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4"  # the built root's manifest SHA-256
 
 
 def test_hf_pull_allow_keeps_repo_paths_under_local_dir(tmp_path, monkeypatch):
@@ -92,7 +93,7 @@ def test_fetch_rows_downloads_the_root_and_checks_it_on_the_box(monkeypatch):
             "--allow 'rows/lidc-train-b1/**' && ") in cmd
     check = shlex.split(cmd.split(" && ")[-1])
     assert check[:3] == ["/opt/venv/bin/python", "-I", "-c"] and check[3] == P.ROWS_CHECK
-    assert check[4:] == ["/workspace/data/lidc/rows/lidc-train-b1", ZERO64]  # the SHA the plan pins for that revision
+    assert check[4:] == ["/workspace/data/lidc/rows/lidc-train-b1", ROWS_SHA]  # the SHA the plan pins for that revision
 
 
 def rows_root(tmp: Path, files_count=2) -> tuple[Path, str]:
