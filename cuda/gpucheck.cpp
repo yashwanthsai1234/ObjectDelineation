@@ -2557,7 +2557,7 @@ constexpr i32 kNoSource = 0x7FFFFFFF;  // squared distance when the frame has no
 
 struct EdtFrame {
   const u32* src;    // H rows of words_per_row(W) words, bits past W are 0
-  i32 *g, *s, *t;    // H x W scratch: row distances, parabola rows, their first rows
+  u16 *g, *s, *t;    // H x W scratch: row distances, parabola rows, their first rows (H + W <= 65534)
   i32* d;            // H x W squared distances
   i32 H, W;
 };
@@ -2574,7 +2574,7 @@ struct EdtRows {
     const EdtFrame& e = f[m];
     const i32 y = i32(i - row_start[m]), W = e.W, wpr = words_per_row(W), inf = e.H + W;
     const u32* row = e.src + i64(y) * wpr;
-    i32* o = e.g + i64(y) * W;
+    u16* o = e.g + i64(y) * W;
     i64 last = -1;  // column of the last source in the words before j
     for (i32 j = 0; j < wpr; ++j) {
       const u32 bits = row[j];
@@ -2583,7 +2583,7 @@ struct EdtRows {
         if (x >= W) continue;
         const u32 low = bits & ((2u << b) - 1u);  // bits 0..b (2u << 31 wraps to 0: all bits)
         const i64 src = low ? i64(32 * j + 31 - clz(low)) : last;
-        o[x] = src >= 0 ? i32(x - src) : inf;
+        o[x] = u16(src >= 0 ? i32(x - src) : inf);
       }
       if (bits) last = 32 * j + 31 - clz(bits);
     }
@@ -2595,7 +2595,7 @@ struct EdtRows {
         if (x >= W) continue;
         const u32 high = bits & ~((1u << b) - 1u);  // bits b..31
         const i64 src = high ? i64(32 * j + ctz(high)) : next;
-        if (src >= 0 && src - x < o[x]) o[x] = i32(src - x);
+        if (src >= 0 && src - x < o[x]) o[x] = u16(src - x);
       }
       if (bits) next = 32 * j + ctz(bits);
     }
@@ -2615,8 +2615,8 @@ struct EdtCols {
     const i32 x = i32(c - col_start[m]), H = e.H, W = e.W;
     const i64 inf = H + W;
     auto G = [&](i64 r) -> i64 { return e.g[r * W + x]; };
-    auto S = [&](i64 q) -> i32& { return e.s[q * W + x]; };
-    auto T = [&](i64 q) -> i32& { return e.t[q * W + x]; };
+    auto S = [&](i64 q) -> u16& { return e.s[q * W + x]; };
+    auto T = [&](i64 q) -> u16& { return e.t[q * W + x]; };
     bool any = false;
     for (i32 r = 0; r < H && !any; ++r) any = G(r) < inf;
     if (!any) {
@@ -2633,10 +2633,10 @@ struct EdtCols {
     for (i32 u = 1; u < H; ++u) {
       while (q >= 0 && F(T(q), S(q)) > F(T(q), u)) --q;
       if (q < 0) {
-        q = 0, S(0) = u;
+        q = 0, S(0) = u16(u);
       } else {
         const i64 v = 1 + sep(S(q), u);
-        if (v < H) ++q, S(q) = u, T(q) = i32(v);
+        if (v < H) ++q, S(q) = u16(u), T(q) = u16(v);
       }
     }
     for (i32 u = H - 1; u >= 0; --u) {
@@ -2648,6 +2648,13 @@ struct EdtCols {
 
 // float32(sqrt(float64(d2))): scipy's sqrt of the exact integer, rounded once more to float32 (cache.edt).
 HD inline float edt_value(i32 d2) { return d2 == kNoSource ? 1e6f : float(sqrt(double(d2))); }
+
+// Per pixel of one map: edt_value of its squared distance (gc.edt).
+struct EdtMap {
+  const i32* d2;
+  float* out;
+  HD void operator()(i64 p) const { out[p] = edt_value(d2[p]); }
+};
 
 // Per call row: the map where(union, dist_in_core, dist_out_union).
 struct TableMap {
@@ -2798,6 +2805,254 @@ struct HoleEmit {
     }
   }
 };
+
+
+// ===================================================================== evaluation sets
+// eval_sets (D7): the pixel work of objdel.eval.metrics' item-level comparisons, for sets of K sample polygons against
+// one cache's tables (k rater planes and the vote). Only integer counts come back (and the IoU_tc of each set's pixel
+// vote, scored on the device by score_words): the M x M intersections of the drawn samples (raw raster AND legal),
+// the raters and the vote; the K x K intersections of the RAW samples (duplicates); the M x M intersections of their
+// boundary-IoU bands; per threshold the soft-Dice counts; per mask the surfels by length class on the (H + 1) x (W + 1)
+// corner grid; per (sample, rater) the surfels farther than the NSD cut from the other surface, by an exact squared
+// EDT of each surface (EdtRows, EdtCols). Every count is an integer sum, so any schedule and any chunk split give the
+// same values. Per set, its plane table holds M drawn / rater / vote planes (an illegal sample's drawn plane is the
+// chunk's zero plane), then K raw, M band and M eroded planes.
+
+struct ESet {     // one set of a chunk (device pointers)
+  i64 p0;         // its first entry in the plane table (3 M + K entries)
+  u32* grid;      // (K + k) masks x 4 corner-grid planes: border, then the classes sqrt(2)/2, 1, sqrt(2)
+  const i32* d2;  // (K + k) squared EDTs of the borders, (H + 1) x (W + 1) each
+  u32* vote;      // the pixel-vote plane (lane 0's dev arena)
+  i64 nsd_cut;
+  i32 H, W, d, legal;  // frame, boundary-IoU band width, legal samples
+};
+
+HD inline u32 valid_bits(i32 W, i32 j) {  // the pixels of word j of a row of W pixels
+  const i32 tail = W - 32 * j;
+  return tail >= 32 ? ~0u : (1u << tail) - 1u;
+}
+
+// Per set row: the pixel vote (2 x legal drawn samples with the pixel > legal samples, objdel.eval.select.vote_mask)
+// and, per threshold t, |P_t|, |R_t|, |P_t & R_t| with P_t = (drawn samples >= cut[t][0]), R_t = (raters >= cut[t][1]).
+struct EvalPix {
+  const ESet* s;
+  u32* const* pp;
+  const i64* start;
+  i64 n;
+  i32 K, k, T;
+  const i32* cut;  // (n, T, 2)
+  i64* soft;       // (n, T, 3)
+  HD void operator()(i64 i) const {
+    const i64 e = segment(start, n, i);
+    const ESet& v = s[e];
+    const i32 y = i32(i - start[e]), wpr = words_per_row(v.W);
+    u32* const* p = pp + v.p0;
+    const i32* c = cut + e * T * 2;
+    i64 acc[3 * kMaxThresholds] = {};
+    for (i32 j = 0; j < wpr; ++j) {
+      const i64 at = i64(y) * wpr + j;
+      const u32 valid = valid_bits(v.W, j);
+      u32 vote = 0;
+      for (i32 b = 0; b < 32 && (valid >> b & 1u); ++b) {
+        i32 cs = 0, cr = 0;
+        for (i32 q = 0; q < K; ++q) cs += i32(p[q][at] >> b & 1u);
+        for (i32 q = 0; q < k; ++q) cr += i32(p[K + q][at] >> b & 1u);
+        if (2 * cs > v.legal) vote |= 1u << b;
+        for (i32 t = 0; t < T; ++t) {
+          const bool pb = cs >= c[2 * t], rb = cr >= c[2 * t + 1];
+          acc[3 * t] += pb, acc[3 * t + 1] += rb, acc[3 * t + 2] += pb && rb;
+        }
+      }
+      v.vote[at] = vote;
+    }
+    for (i32 t = 0; t < 3 * T; ++t)
+      if (acc[t]) atomic_add(soft + e * T * 3 + t, acc[t]);
+  }
+};
+
+// Per (set, mask m of the M, row): the row erosion of m by d pixels (outside the frame counts as background), into its
+// eroded plane. d <= 31, so a pixel's window lies in its word and the two next to it.
+struct EvalErode {
+  const ESet* s;
+  u32* const* pp;
+  const i64* start;
+  i64 n;
+  i32 K, M;
+  HD void operator()(i64 i) const {
+    const i64 e = segment(start, n, i);
+    const ESet& v = s[e];
+    const i64 local = i - start[e];
+    const i32 m = i32(local / v.H), y = i32(local % v.H), wpr = words_per_row(v.W);
+    const u32* a = pp[v.p0 + m] + i64(y) * wpr;
+    u32* o = pp[v.p0 + 2 * M + K + m] + i64(y) * wpr;
+    for (i32 j = 0; j < wpr; ++j) {
+      const u32 w = a[j], l = j > 0 ? a[j - 1] : 0u, r = j + 1 < wpr ? a[j + 1] : 0u;
+      u32 x = w;
+      for (i32 dx = 1; dx <= v.d; ++dx) x &= ((w >> dx) | (r << (32 - dx))) & ((w << dx) | (l >> (32 - dx)));
+      o[j] = x;
+    }
+  }
+};
+
+// Per (set, mask m, row): band = m & ~(the column erosion of m's eroded rows), metrics.band: the official
+// mask_to_boundary (cv2.erode of the zero-padded mask, d iterations of a 3 x 3 square = one (2d + 1) square).
+struct EvalBand {
+  const ESet* s;
+  u32* const* pp;
+  const i64* start;
+  i64 n;
+  i32 K, M;
+  HD void operator()(i64 i) const {
+    const i64 e = segment(start, n, i);
+    const ESet& v = s[e];
+    const i64 local = i - start[e];
+    const i32 m = i32(local / v.H), y = i32(local % v.H), wpr = words_per_row(v.W);
+    const u32 *a = pp[v.p0 + m], *er = pp[v.p0 + 2 * M + K + m];
+    u32* o = pp[v.p0 + M + K + m] + i64(y) * wpr;
+    const bool inside = y - v.d >= 0 && y + v.d < v.H;
+    for (i32 j = 0; j < wpr; ++j) {
+      u32 x = inside ? ~0u : 0u;
+      for (i32 dy = -v.d; inside && dy <= v.d; ++dy) x &= er[i64(y + dy) * wpr + j];
+      o[j] = a[i64(y) * wpr + j] & ~x;
+    }
+  }
+};
+
+// One warp per (set, pair i <= j) of a group of G planes from entry `off` of each set's plane table:
+// out[set][i][j] = out[set][j][i] = popcount(plane i & plane j) (K2-draft SetInter).
+struct PairCount {
+  const ESet* s;
+  u32* const* pp;
+  i64 pairs;  // per set: G (G + 1) / 2
+  i32 off, G;
+  i64* out;   // (n, G, G)
+  HD void operator()(i64 t, Warp w) const {
+    const i64 e = t / pairs;
+    i64 local = t % pairs, i = 0;
+    while (local >= G - i) local -= G - i, ++i;
+    const i64 j = i + local;
+    const ESet& v = s[e];
+    const i64 nw = i64(v.H) * words_per_row(v.W);
+    const u32 *a = pp[v.p0 + off + i], *b = pp[v.p0 + off + j];
+    i64 c = 0;
+    for (i64 q = w.lane; q < nw; q += w.size) c += popc(a[q] & b[q]);
+    c = wsum(c);
+    if (w.lane == 0) out[(e * G + i) * G + j] = c, out[(e * G + j) * G + i] = c;
+  }
+};
+
+// Per (set, mask q of the K drawn samples and k raters, corner row y in [0, H]): the 2 x 2 code of every corner x in
+// [0, W] (metrics._surface: 8 m(y-1, x-1) + 4 m(y-1, x) + 2 m(y, x-1) + m(y, x), outside the frame 0), bit-sliced: an odd
+// count is a surfel of length sqrt(2)/2, two diagonal pixels (codes 6, 9) one of sqrt(2), two others one of 1; the
+// border is every code but 0 and 15. Writes the four grid planes and adds the class counts to surf.
+struct EvalGrid {
+  const ESet* s;
+  u32* const* pp;
+  const i64* start;
+  i64 n;
+  i32 K, k;
+  i64* surf;  // (n, K + k, 3)
+  HD void operator()(i64 i) const {
+    const i64 e = segment(start, n, i);
+    const ESet& v = s[e];
+    const i64 local = i - start[e];
+    const i32 q = i32(local / (v.H + 1)), y = i32(local % (v.H + 1)), wpr = words_per_row(v.W),
+              gwpr = words_per_row(v.W + 1);
+    const i64 gp = i64(v.H + 1) * gwpr;
+    const u32* m = pp[v.p0 + q];
+    u32* g = v.grid + 4 * q * gp + i64(y) * gwpr;
+    auto word = [&](i32 row, i32 j) { return row < 0 || row >= v.H || j < 0 || j >= wpr ? 0u : m[i64(row) * wpr + j]; };
+    i64 n0 = 0, n1 = 0, n2 = 0;
+    for (i32 j = 0; j < gwpr; ++j) {
+      const u32 up = word(y - 1, j), dn = word(y, j);
+      const u32 a = (up << 1) | (word(y - 1, j - 1) >> 31), b = up, c = (dn << 1) | (word(y, j - 1) >> 31), d = dn;
+      const u32 odd = a ^ b ^ c ^ d, two = ~odd & (a | b | c | d) & ~(a & b & c & d), diag = two & ((a & d) | (b & c));
+      g[0] = odd | two, g[gp] = odd, g[2 * gp] = two & ~diag, g[3 * gp] = diag;
+      n0 += popc(odd), n1 += popc(two & ~diag), n2 += popc(diag);
+      ++g;
+    }
+    i64* o = surf + (e * (K + k) + q) * 3;
+    if (n0) atomic_add(o, n0);
+    if (n1) atomic_add(o + 1, n1);
+    if (n2) atomic_add(o + 2, n2);
+  }
+};
+
+// Per (set, sample i, rater j, corner row y): the surfels of i farther than the cut from j's surface (direction 0) and
+// those of j farther from i's (direction 1), by class. An empty surface (no source: kNoSource) is farther than any cut.
+struct EvalNsd {
+  const ESet* s;
+  const i64* start;
+  i64 n;
+  i32 K, k;
+  i64* nsd;  // (n, K, k, 2, 3)
+  HD void operator()(i64 i) const {
+    const i64 e = segment(start, n, i);
+    const ESet& v = s[e];
+    const i64 local = i - start[e];
+    const i64 pair = local / (v.H + 1);
+    const i32 a = i32(pair / k), b = K + i32(pair % k), y = i32(local % (v.H + 1)), gwpr = words_per_row(v.W + 1),
+              gw = v.W + 1;
+    const i64 gp = i64(v.H + 1) * gwpr, px = i64(v.H + 1) * gw;
+    i64 acc[6] = {};
+    for (int dir = 0; dir < 2; ++dir) {
+      const i32 from = dir ? b : a, to = dir ? a : b;
+      const i32* d2 = v.d2 + to * px + i64(y) * gw;
+      for (int r = 0; r < 3; ++r) {
+        const u32* g = v.grid + (4 * from + 1 + r) * gp + i64(y) * gwpr;
+        for (i32 j = 0; j < gwpr; ++j)
+          for (u32 m = g[j]; m; m &= m - 1) {
+            const i32 d = d2[32 * j + ctz(m)];
+            acc[3 * dir + r] += d == kNoSource || d > v.nsd_cut;
+          }
+      }
+    }
+    i64* o = nsd + ((e * K + a) * k + (b - K)) * 6;
+    for (int r = 0; r < 6; ++r)
+      if (acc[r]) atomic_add(o + r, acc[r]);
+  }
+};
+
+// One chunk of eval_sets: sets [a, b) and their K b - K a shapes. The uploaded part first (the polygon inputs, the
+// sets, the plane table, the cuts, the item starts, the EDT frames and their starts), then the work planes, the zero
+// plane and the outputs (zeroed together).
+struct EvalChunk {
+  PolyChunk c;
+  i64 nb, rows, erows, grows, nrows, frames, frows, fcols, maxpw, band_words, grid_words, px;
+  size_t sets, pp, cut, rs, es, gs, ns, fr, frs, fcs, up, wide_r, wide_v, raw, band, er, grid, g, s, t, d2, zero,
+      inter, raw_i, band_i, soft, surf, nsd, size;
+};
+
+EvalChunk eval_chunk(const Polygons& in, const std::vector<i64>& ws, const std::vector<TableView>& tv, i32 K, i32 k,
+                     i32 T, i64 a, i64 b) {
+  EvalChunk x{};
+  const i32 M = K + k + 1, Q = K + k;
+  x.c = plan(in, ws, a * K, b * K);
+  x.nb = b - a;
+  for (i64 e = a; e < b; ++e) {
+    const TableView& v = tv[size_t(e)];
+    const i64 pw = i64(v.H) * words_per_row(v.W), gp = i64(v.H + 1) * words_per_row(v.W + 1),
+              px = i64(v.H + 1) * (v.W + 1);
+    x.rows += v.H, x.erows += M * i64(v.H), x.grows += Q * i64(v.H + 1), x.nrows += i64(K) * k * (v.H + 1);
+    x.frames += Q, x.frows += Q * i64(v.H + 1), x.fcols += Q * i64(v.W + 1);
+    x.maxpw = mx(x.maxpw, pw), x.band_words += M * pw, x.grid_words += 4 * Q * gp, x.px += Q * px;
+  }
+  const i64 nb = x.nb, NP = 3 * M + K;
+  Layout l;
+  put_inputs(l, x.c);
+  x.sets = l.put<ESet>(nb), x.pp = l.put<u32*>(nb * NP), x.cut = l.put<i32>(nb * T * 2);
+  x.rs = l.put<i64>(nb + 1), x.es = l.put<i64>(nb + 1), x.gs = l.put<i64>(nb + 1), x.ns = l.put<i64>(nb + 1);
+  x.fr = l.put<EdtFrame>(x.frames), x.frs = l.put<i64>(x.frames + 1), x.fcs = l.put<i64>(x.frames + 1);
+  x.up = l.size;
+  x.wide_r = l.put<u8>(x.c.n), x.wide_v = l.put<u8>(x.c.n), x.raw = l.put<u32>(x.c.nwords);
+  x.band = l.put<u32>(x.band_words), x.er = l.put<u32>(x.band_words), x.grid = l.put<u32>(x.grid_words);
+  x.g = l.put<u16>(x.px), x.s = l.put<u16>(x.px), x.t = l.put<u16>(x.px), x.d2 = l.put<i32>(x.px);
+  x.zero = l.put<u32>(x.maxpw), x.inter = l.put<i64>(nb * M * M), x.raw_i = l.put<i64>(nb * K * K);
+  x.band_i = l.put<i64>(nb * M * M), x.soft = l.put<i64>(nb * T * 3), x.surf = l.put<i64>(nb * Q * 3);
+  x.nsd = l.put<i64>(nb * K * k * 6);
+  x.size = l.size;
+  return x;
+}
 
 }  // namespace
 
@@ -3027,7 +3282,7 @@ BuiltTables add_tables_from_raters(const std::vector<Raters>& in) {
     o_nc[size_t(o)] = l.put<u32>(i64(c.H) * words_per_row(c.W));
     o_part[size_t(o)] = l.put<i64>(i64(c.H) * (c.k + 2));
   }
-  const size_t o_g = l.put<i32>(2 * px), o_s = l.put<i32>(2 * px), o_t = l.put<i32>(2 * px), o_d = l.put<i32>(2 * px);
+  const size_t o_g = l.put<u16>(2 * px), o_s = l.put<u16>(2 * px), o_t = l.put<u16>(2 * px), o_d = l.put<i32>(2 * px);
   cl.back(l);
   const size_t o_ss = l.put<i64>(K + 1), o_res = l.put<i64>(K + 2 * m), o_vt = l.put<u8>(K);
 
@@ -3062,8 +3317,8 @@ BuiltTables add_tables_from_raters(const std::vector<Raters>& in) {
                   d_out, d_out + n, ptr<i64>(d, o_part[size_t(o)]), a0, c.H, c.W, c.k};
     for (int f = 0; f < 2; ++f) {  // frame 2o: sources = the union (distance to it); 2o + 1: the non-core pixels
       const i64 at = 2 * pix + f * n;
-      fs[2 * o + f] = EdtFrame{f ? bs[o].notcore : bs[o].uni, ptr<i32>(d, o_g) + at, ptr<i32>(d, o_s) + at,
-                               ptr<i32>(d, o_t) + at, ptr<i32>(d, o_d) + at, c.H, c.W};
+      fs[2 * o + f] = EdtFrame{f ? bs[o].notcore : bs[o].uni, ptr<u16>(d, o_g) + at, ptr<u16>(d, o_s) + at,
+                               ptr<u16>(d, o_t) + at, ptr<i32>(d, o_d) + at, c.H, c.W};
       frs[2 * o + f + 1] = frs[2 * o + f] + c.H, fcs[2 * o + f + 1] = fcs[2 * o + f] + c.W;
     }
     rs[o + 1] = rs[o] + c.H;
@@ -3124,6 +3379,45 @@ BuiltTables add_tables_from_raters(const std::vector<Raters>& in) {
 }
 
 i64 add_tables(const Tables& t) { return add_tables_many({t})[0]; }
+
+// One map's EDT with the table build's kernels (EdtRows, EdtCols, edt_value): the sources are the zero pixels. One
+// upload from pageable memory, one wait, the map read back (the device is idle), as add_tables_from_raters.
+std::vector<float> edt(const u8* nonzero, i32 H, i32 W) {
+  GC_RANGE("edt");
+  const i64 n = i64(H) * W, wpr = words_per_row(W);
+  std::vector<float> out(static_cast<size_t>(n));
+  if (n == 0) return out;
+  Layout l;
+  const size_t o_f = l.put<EdtFrame>(1), o_rs = l.put<i64>(2), o_cs = l.put<i64>(2), o_src = l.put<u32>(H * wpr),
+               up = l.size;
+  const size_t o_g = l.put<u16>(n), o_s = l.put<u16>(n), o_t = l.put<u16>(n), o_d = l.put<i32>(n),
+               o_out = l.put<float>(n);
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  clear_error();
+  Drain drain{e};
+  e.start("edt", 1);
+  Lane& L = e.lanes[0];
+  const Stream st = L.stream;
+  u8* d = L.score.get(l.size);
+  std::vector<u8> host(up, 0);
+  u32* src = ptr<u32>(host.data(), o_src);
+  for (i32 y = 0; y < H; ++y)
+    for (i32 x = 0; x < W; ++x)
+      if (!nonzero[i64(y) * W + x]) src[y * wpr + x / 32] |= u32(1) << (x % 32);
+  *ptr<EdtFrame>(host.data(), o_f) = EdtFrame{ptr<u32>(d, o_src), ptr<u16>(d, o_g), ptr<u16>(d, o_s),
+                                              ptr<u16>(d, o_t), ptr<i32>(d, o_d), H, W};
+  ptr<i64>(host.data(), o_rs)[0] = ptr<i64>(host.data(), o_cs)[0] = 0;
+  ptr<i64>(host.data(), o_rs)[1] = H, ptr<i64>(host.data(), o_cs)[1] = W;
+  to_device(d, host.data(), up, st);
+  const EdtFrame* df = ptr<EdtFrame>(d, o_f);
+  for_each_warp(st, H, EdtRows{df, ptr<i64>(d, o_rs), 1});
+  for_each(st, W, EdtCols{df, ptr<i64>(d, o_cs), 1});
+  for_each(st, n, EdtMap{ptr<i32>(d, o_d), ptr<float>(d, o_out)});
+  wait(st);
+  read_back(out.data(), d + o_out, sizeof(float) * size_t(n));
+  return out;
+}
 
 // Freed in stream order on lane 0 (no host wait); every call drains both lanes before it returns, so no kernel still
 // reads the tables.
@@ -3328,6 +3622,126 @@ Certified certify_polygons(const Polygons& in, const Masks& ref, const i32* ref_
   return out;
 }
 
+
+// Sets in chunks whose scratch (one lane-0 score arena block) stays within the cap; per chunk one upload from pageable
+// memory, the kernels, one wait and the counts read back (the device is idle). Then one score_words call scores every
+// set's pixel vote (in lane 0's dev arena) against its tables.
+EvalCounts eval_sets(const Polygons& in, const EvalSets& es) {
+  GC_RANGE("eval_sets");
+  const i64 n = es.n;
+  const i32 K = es.K, T = es.T;
+  EvalCounts out;
+  if (n == 0) return out;
+  std::vector<i64> ws(size_t(in.n + 1), 0), shape_tables(static_cast<size_t>(in.n)), vws(size_t(n + 1), 0);
+  for (i64 q = 0; q < in.n; ++q) {
+    ws[size_t(q + 1)] = ws[size_t(q)] + i64(in.H[q]) * words_per_row(in.W[q]);
+    shape_tables[size_t(q)] = es.tables[q / K];
+  }
+  Engine& e = engine();
+  std::lock_guard<std::mutex> lock(e.mu);
+  Drain drain{e};
+  const std::vector<TableView> all = views(shape_tables.data(), in.n, in.W, in.H);
+  const i32 k = out.k = all[0].k, M = K + k + 1, Q = K + k;
+  std::vector<TableView> tv;
+  for (i64 s = 0; s < n; ++s) {
+    tv.push_back(all[size_t(s * K)]);
+    if (tv.back().k != k) throw std::invalid_argument("eval_sets: every set's tables must have the same raters");
+    for (i32 c = 0; c < T; ++c)
+      if (es.cuts[(s * T + c) * 2 + 1] > k) throw std::invalid_argument("eval_sets: rater cuts must be in [0, k]");
+    vws[size_t(s + 1)] = vws[size_t(s)] + i64(tv.back().H) * words_per_row(tv.back().W);
+  }
+  out.inter.assign(size_t(n * M * M), 0), out.inter_raw.assign(size_t(n * K * K), 0);
+  out.band_inter.assign(size_t(n * M * M), 0), out.soft.assign(size_t(n * T * 3), 0);
+  out.surf.assign(size_t(n * Q * 3), 0), out.nsd.assign(size_t(n * K * k * 6), 0);
+  clear_error();
+  Timer t{nullptr, {}};
+  e.start("eval_sets", n);
+  Lane& L = e.lanes[0];
+  const Stream st = L.stream;
+  u32* vote = ptr<u32>(L.dev.get(sizeof(u32) * size_t(vws[size_t(n)])), 0);
+  const i64 NP = 3 * M + K;
+  for (i64 a = 0, b = 0; a < n; a = b) {
+    b = a + 1;
+    if (i64(eval_chunk(in, ws, tv, K, k, T, a, b).size) > es.max_scratch_bytes)
+      throw std::invalid_argument("eval_sets: one set needs more scratch than max_scratch_bytes");
+    while (b < n && i64(eval_chunk(in, ws, tv, K, k, T, a, b + 1).size) <= es.max_scratch_bytes) ++b;
+    const EvalChunk x = eval_chunk(in, ws, tv, K, k, T, a, b);
+    const i64 nb = x.nb;
+    counters().eval_scratch_peak = mx(counters().eval_scratch_peak, i64(x.size));
+    u8* d = L.score.get(x.size);
+    std::vector<u8> host(x.up, 0);
+    pack(in, ws, x.c, host.data());
+    ESet* sets = ptr<ESet>(host.data(), x.sets);
+    u32** pp = ptr<u32*>(host.data(), x.pp);
+    i64 *rs = ptr<i64>(host.data(), x.rs), *ers = ptr<i64>(host.data(), x.es), *grs = ptr<i64>(host.data(), x.gs),
+        *nrs = ptr<i64>(host.data(), x.ns), *frs = ptr<i64>(host.data(), x.frs), *fcs = ptr<i64>(host.data(), x.fcs);
+    EdtFrame* fr = ptr<EdtFrame>(host.data(), x.fr);
+    rs[0] = ers[0] = grs[0] = nrs[0] = frs[0] = fcs[0] = 0;
+    i64 band = 0, grid = 0, px = 0, f = 0;
+    for (i64 j = 0; j < nb; ++j) {
+      const i64 s = a + j;
+      const TableView& v = tv[size_t(s)];
+      const i64 pw = i64(v.H) * words_per_row(v.W), gp = i64(v.H + 1) * words_per_row(v.W + 1),
+                fp = i64(v.H + 1) * (v.W + 1);
+      u32** p = pp + j * NP;
+      i32 legal = 0;
+      for (i32 q = 0; q < K; ++q) {
+        u32* raw = ptr<u32>(d, x.raw) + ws[size_t(s * K + q)] - ws[size_t(a * K)];
+        const bool ok = es.legal[s * K + q] != 0;
+        legal += ok;
+        p[q] = ok ? raw : ptr<u32>(d, x.zero), p[M + q] = raw;
+      }
+      for (i32 r = 0; r < k; ++r) p[K + r] = const_cast<u32*>(v.raters) + r * pw;
+      p[K + k] = const_cast<u32*>(v.vote);
+      for (i32 m = 0; m < M; ++m)
+        p[M + K + m] = ptr<u32>(d, x.band) + band + m * pw, p[2 * M + K + m] = ptr<u32>(d, x.er) + band + m * pw;
+      for (i32 q = 0; q < Q; ++q) {
+        fr[f] = EdtFrame{ptr<u32>(d, x.grid) + grid + 4 * q * gp, ptr<u16>(d, x.g) + px + q * fp,
+                         ptr<u16>(d, x.s) + px + q * fp,          ptr<u16>(d, x.t) + px + q * fp,
+                         ptr<i32>(d, x.d2) + px + q * fp,         v.H + 1,
+                         v.W + 1};
+        frs[f + 1] = frs[f] + v.H + 1, fcs[f + 1] = fcs[f] + v.W + 1, ++f;
+      }
+      sets[j] = ESet{j * NP, ptr<u32>(d, x.grid) + grid, ptr<i32>(d, x.d2) + px, vote + vws[size_t(s)],
+                     es.nsd_cut[s], v.H, v.W, es.band_d[s], legal};
+      std::copy_n(es.cuts + s * T * 2, T * 2, ptr<i32>(host.data(), x.cut) + j * T * 2);
+      rs[j + 1] = rs[j] + v.H, ers[j + 1] = ers[j] + M * i64(v.H), grs[j + 1] = grs[j] + Q * i64(v.H + 1);
+      nrs[j + 1] = nrs[j] + i64(K) * k * (v.H + 1);
+      band += M * pw, grid += 4 * Q * gp, px += Q * fp;
+    }
+    to_device(d, host.data(), x.up, st);
+    zero(d + x.zero, x.size - x.zero, st);
+    const Shapes sh = shapes(x.c, d, in.G);
+    const ESet* ds = ptr<ESet>(d, x.sets);
+    u32* const* dp = ptr<u32*>(d, x.pp);
+    const EdtFrame* df = ptr<EdtFrame>(d, x.fr);
+    i64 *inter = ptr<i64>(d, x.inter), *raw_i = ptr<i64>(d, x.raw_i), *band_i = ptr<i64>(d, x.band_i);
+    for_each(st, x.c.n, Precision{sh, ptr<u8>(d, x.wide_r), ptr<u8>(d, x.wide_v)});
+    raster(st, sh, ptr<u8>(d, x.wide_r), ptr<u32>(d, x.raw), x.c.rows);
+    for_each(st, x.rows, EvalPix{ds, dp, ptr<i64>(d, x.rs), nb, K, k, T, ptr<i32>(d, x.cut), ptr<i64>(d, x.soft)});
+    for_each(st, x.erows, EvalErode{ds, dp, ptr<i64>(d, x.es), nb, K, M});
+    for_each(st, x.erows, EvalBand{ds, dp, ptr<i64>(d, x.es), nb, K, M});
+    const i64 pm = i64(M) * (M + 1) / 2, pk = i64(K) * (K + 1) / 2;
+    for_each_warp(st, nb * pm, PairCount{ds, dp, pm, 0, M, inter});
+    for_each_warp(st, nb * pk, PairCount{ds, dp, pk, M, K, raw_i});
+    for_each_warp(st, nb * pm, PairCount{ds, dp, pm, M + K, M, band_i});
+    for_each(st, x.grows, EvalGrid{ds, dp, ptr<i64>(d, x.gs), nb, K, k, ptr<i64>(d, x.surf)});
+    for_each_warp(st, x.frows, EdtRows{df, ptr<i64>(d, x.frs), x.frames});
+    for_each(st, x.fcols, EdtCols{df, ptr<i64>(d, x.fcs), x.frames});
+    for_each(st, x.nrows, EvalNsd{ds, ptr<i64>(d, x.ns), nb, K, k, ptr<i64>(d, x.nsd)});
+    wait(st);
+    read_back(out.inter.data() + a * M * M, inter, sizeof(i64) * size_t(nb * M * M));
+    read_back(out.inter_raw.data() + a * K * K, raw_i, sizeof(i64) * size_t(nb * K * K));
+    read_back(out.band_inter.data() + a * M * M, band_i, sizeof(i64) * size_t(nb * M * M));
+    read_back(out.soft.data() + a * T * 3, d + x.soft, sizeof(i64) * size_t(nb * T * 3));
+    read_back(out.surf.data() + a * Q * 3, d + x.surf, sizeof(i64) * size_t(nb * Q * 3));
+    read_back(out.nsd.data() + a * K * k * 6, d + x.nsd, sizeof(i64) * size_t(nb * K * k * 6));
+  }
+  Scores sc;
+  score_words(L, tv, vote, vws, sc, t);
+  out.vote_iou_tc = std::move(sc.iou_tc);
+  return out;
+}
 
 Topology topology(const Masks& in, const i64* min_area, bool want_masks) {
   GC_RANGE("topology");

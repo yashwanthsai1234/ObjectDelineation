@@ -2,8 +2,9 @@
 
 Everything goes through the training path: objdel.reward.score_many (score_completion's parse, then the CUDA checker
 scores every object: mask, defects, IoU_tc, F5, g_area, size-filtered signature) and advantages_v4 on the item's
-ExpertCaches. The item-level comparisons between samples and raters (pairwise IoU, NSD, soft Dice, GED, HM-IoU,
-duplicates) still read the samples' masks, from one objdel.geometry.to_masks call per item. Per item (`metrics`):
+ExpertCaches. The item-level comparisons between samples and raters (pairwise IoU, boundary IoU, NSD, soft Dice, GED,
+HM-IoU, duplicates, the pixel vote) come from integer counts that one objdel._gpucheck.eval_sets call per item makes on
+the device (objdel.eval.device): no mask reaches the host. Per item (`metrics`):
 
 - per sample: format_ok, legal, IoU_tc, F5, g_area (legality-gated), topology-any (the joint size-filtered signature
   is some rater's), the v4 advantage in its group, `passed` = legal and topology-any and IoU_tc >= 0.5 for every object;
@@ -36,8 +37,8 @@ Definitions and choices:
   for every object; topology is gated by the synthetic topology probe (objdel.eval.probes; plan D20), and
   topo_any_unanimous is reported only (val has 0 unanimous non-simple items).
 - Duplicates (GRPO groups) are outputs the reward cannot tell apart: equal format and legality flags and equal
-  rasters of every object (SHA-256 of the packed masks), so re-spelled texts of one mask (sub-pixel vertex nudges,
-  whitespace) count as duplicates, as the reward's low-spread drop treats them (B2-6).
+  raw rasters of every object (device.duplicate_keys: intersection == both areas), so re-spelled texts of one mask
+  (sub-pixel vertex nudges, whitespace) count as duplicates, as the reward's low-spread drop treats them (B2-6).
 - Failed (unparseable or truncated) samples get 0 for every score, an empty mask for the probability map and GED,
   and areas of an empty mask (the audit only reads parsed samples). Illegal samples (parsed, but some ring defective)
   are failures too, by the reward's legality gate (objdel.reward.legal_gate, which zeroes every term of an illegal
@@ -58,16 +59,17 @@ Definitions and choices:
 - Boundary IoU (Cheng et al. 2021), as the official boundary-iou-api `mask_to_boundary`: the band of a mask is the
   mask minus its erosion (1 px zero border, 3 x 3 ones, d iterations of cv2.erode, border cropped);
   boundary IoU = |band(a) & band(b)| / |band(a) | band(b)|; two empty bands: 1, one empty band: 0 (the official code
-  has no empty rule). d = BIOU_D px at frame resolution (as NSD_TAU). Computed on the masks' joint bounding box,
-  which gives the full-frame value exactly (outside the box every pixel is 0, as the zero border is). d = 2 on a
-  nodule about 8 px wide covers most of it, so there boundary IoU adds little over IoU.
+  has no empty rule). d = BIOU_D px at frame resolution (as NSD_TAU). On the device the erosion is one (2d + 1)
+  square with the outside of the frame as background, the same band. d = 2 on a nodule about 8 px wide covers most
+  of it, so there boundary IoU adds little over IoU.
 - NSD@tau (Nikolov et al. 2018; Metrics Reloaded's default boundary metric), as google-deepmind/surface-distance
   (compute_surface_distances + compute_surface_dice_at_tolerance, spacing 1 px): surfels on the corner grid of 2 x 2
   neighbourhood codes, weighted by their contour length; (|S_P within tau of S_G| + |S_G within tau of S_P|) /
   (|S_P| + |S_G|), distances by exact EDT; two empty masks: 1 (the reference gives 0 / 0), one empty: 0. Per sample
   the maximum over the raters (like D_max), so a rater's own target scores 1. tau at frame resolution (D25, A4 S2):
   2 px LIDC, 9 px disc, 16 px cup. 4-connected boundary pixels (A4's prototype) differ from the reference by up to
-  0.14 on LIDC rater pairs (impl/M4.md).
+  0.14 on LIDC rater pairs (impl/M4.md). The device counts surfels per length class beyond the cut, so the length
+  sums run in another order than the host's: NSD may differ from the host value by <= 1e-12 (D7, D-G9).
 - Token statistics: per sample completion token counts when the caller passes them (train.sample / sample_vllm);
   summarize reports the truncated share, mean and p95 tokens.
 
@@ -93,22 +95,17 @@ References:
   https://github.com/google-deepmind/surface-distance (metrics.py, lookup_tables.py) ; Metrics Reloaded:
   https://arxiv.org/abs/2206.01653
 - Per-image TV / JS and minimum-mode retention: archive/phase1_lab/t_dynamics/REPORT.md, grpo_toy.py
-- Duplicate hash on packed rasters (numpy.packbits):
-  https://numpy.org/doc/stable/reference/generated/numpy.packbits.html ; identical rewards give a zero-signal group
-  (DAPO dynamic sampling): https://arxiv.org/abs/2503.14476
+- Identical rewards give a zero-signal group (DAPO dynamic sampling): https://arxiv.org/abs/2503.14476
 """
-import hashlib
 import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 
-import cv2
 import numpy as np
-from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
-from objdel.eval.select import vote_mask
-from objdel.geometry import parse, to_masks
+from objdel.eval.device import ItemCounts, duplicate_keys, item_counts
+from objdel.geometry import parse
 from objdel.reward import (
     NUMERIC,
     REWARD_V4,
@@ -131,8 +128,7 @@ _ZEROED = ("iou_tc", "f5", "g_area", "iou_vote", "dice_vote", "d_max", "precisio
            "boundary_iou", "boundary_iou_vote")
 NSD_TAU = {"nodule": 2.0, "disc": 9.0, "cup": 16.0}  # px at frame resolution (D25)
 BIOU_D = {"nodule": 2, "disc": 9, "cup": 16}  # boundary IoU band width, px at frame resolution
-_D = 0.5 * np.sqrt(2.0)  # surfel length per 2 x 2 neighbourhood code (surface-distance lookup table, 1 px spacing)
-_SURFEL = np.array([0, _D, _D, 1, _D, 1, 2 * _D, _D, _D, 2 * _D, 1, _D, 1, _D, _D, 0])
+_D = 0.5 * np.sqrt(2.0)  # surfel lengths of the 2 x 2 codes (surface-distance lookup table, 1 px spacing): _D, 1, 2 _D
 _GEOMETRIC = [(t, f) for t, f in zip(TERMS, REWARD_V4.floors, strict=True) if t != "legal"]  # (term, sigma floor)
 
 
@@ -168,38 +164,17 @@ def min_mode_retention(p: Mapping, f: Mapping) -> float:
     return _unit(min(p.get(a, 0.0) / valid / fa for a, fa in f.items())) if valid > 0 else 0.0
 
 
-def _dice(a: np.ndarray, b: np.ndarray) -> float:
-    s = np.count_nonzero(a) + np.count_nonzero(b)
-    return 2.0 * np.count_nonzero(a & b) / s if s else 1.0
+def soft_dice(soft: np.ndarray) -> float:
+    """Mean over THRESHOLDS of Dice(P_t, R_t) from the counts (T, 3) = |P_t|, |R_t|, |P_t & R_t| (two empty: 1)."""
+    return float(np.mean([2.0 * pr / (p + r) if p + r else 1.0 for p, r, pr in soft.tolist()]))
 
 
-def soft_dice(samples: np.ndarray, raters: np.ndarray) -> float:
-    """Mean over THRESHOLDS t of Dice(mean(samples) >= t, mean(raters) >= t); masks (n, H, W) and (k, H, W)."""
-    p, r = samples.mean(0), raters.mean(0)
-    return float(np.mean([_dice(p >= t, r >= t) for t in THRESHOLDS]))
-
-
-def _joint_box(masks: np.ndarray) -> tuple[slice, slice] | None:
-    """Bounding box (row slice, column slice) of the foreground of all masks (n, H, W); None if there is none."""
-    rows, cols = np.flatnonzero(masks.any((0, 2))), np.flatnonzero(masks.any((0, 1)))
-    return (slice(rows[0], rows[-1] + 1), slice(cols[0], cols[-1] + 1)) if rows.size else None
-
-
-def _pairwise_iou(masks: np.ndarray) -> np.ndarray:
-    """IoU of every pair of masks (n, H, W); two empty masks: 1. One matrix product over the distinct masks on their
-    joint bounding box (duplicates, e.g. a deterministic model's K samples, are computed once)."""
-    box = _joint_box(masks)
-    if box is None:
-        return np.ones((len(masks), len(masks)))
-    crop = masks[(slice(None), *box)].reshape(len(masks), -1)
-    _, first, inv = np.unique(np.packbits(crop, axis=1), axis=0, return_index=True, return_inverse=True)
-    x = crop[first].astype(np.float64)
-    inter = x @ x.T  # exact: integer counts far below 2**53
+def _iou(inter: np.ndarray) -> np.ndarray:
+    """IoU of every pair of masks from their (n, n) intersection counts, areas on the diagonal; two empty masks: 1.
+    Fortran order, the layout of the host matrix before D7 (a fancy-indexed copy), so GED's means sum in its order."""
     area = np.diag(inter)
     union = area[:, None] + area[None, :] - inter
-    iou = np.where(union > 0, inter / np.where(union > 0, union, 1.0), 1.0)
-    inv = inv.reshape(-1)
-    return iou[inv][:, inv]
+    return np.asfortranarray(np.where(union > 0, inter / np.where(union > 0, union, 1.0), 1.0))
 
 
 def hm_iou(iou: np.ndarray) -> float:
@@ -212,63 +187,23 @@ def hm_iou(iou: np.ndarray) -> float:
     return float(big[r, c].mean())
 
 
-def band(m: np.ndarray, d: int) -> np.ndarray:
-    """The inner d px band of a mask (H, W): the official mask_to_boundary (module docstring); bool."""
-    m = np.asarray(m, bool)
-    e = cv2.erode(np.pad(m, 1).view(np.uint8), np.ones((3, 3), np.uint8), iterations=d)[1:-1, 1:-1]
-    return m & ~e.view(bool)
+def _length(n) -> float:
+    """Contour length of surfel counts by class (sqrt(2)/2, 1, sqrt(2))."""
+    return n[0] * _D + n[1] + n[2] * (2 * _D)
 
 
-def _band_iou(masks: np.ndarray, d: int) -> np.ndarray:
-    """Boundary IoU of every pair of masks (n, H, W): the IoU of their bands, on the joint bounding box."""
-    box = _joint_box(masks)
-    if box is None:
-        return np.ones((len(masks), len(masks)))
-    return _pairwise_iou(np.stack([band(m[box], d) for m in masks]))
-
-
-def boundary_iou(a: np.ndarray, b: np.ndarray, d: int) -> float:
-    """Boundary IoU of two masks at band width d px (module docstring)."""
-    return float(_band_iou(np.stack([np.asarray(a, bool), np.asarray(b, bool)]), d)[0, 1])
-
-
-def _surface(m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """(surfel length on the (H + 1, W + 1) corner grid, 0 off the surface; distance of every corner to the surface,
-    inf for an empty mask)."""
-    p = np.pad(m, 1).astype(np.uint8)
-    code = 8 * p[:-1, :-1] + 4 * p[:-1, 1:] + 2 * p[1:, :-1] + p[1:, 1:]
-    border = (code != 0) & (code != 15)
-    dist = ndimage.distance_transform_edt(~border) if border.any() else np.full(border.shape, np.inf)
-    return _SURFEL[code], dist
-
-
-def _nsd(a: tuple, b: tuple, tau: float) -> float:
-    (la, da), (lb, db) = a, b
-    total = la.sum() + lb.sum()
-    return _unit(1.0 - (la[db > tau].sum() + lb[da > tau].sum()) / total) if total else 1.0  # exactly 1 if all in
-
-
-def nsd(a: np.ndarray, b: np.ndarray, tau: float) -> float:
-    """Normalized surface Dice of two masks at tolerance tau px (module docstring)."""
-    return _nsd(_surface(a), _surface(b), tau)
-
-
-def _nsd_best(drawn: np.ndarray, raters: np.ndarray, tau: float) -> np.ndarray:
-    """Per sample, the maximum NSD over the raters, on the joint bounding box (distances are unchanged by the crop);
-    each distinct mask once."""
-    both = np.concatenate([drawn, raters])
-    box = _joint_box(both)
-    if box is None:
-        return np.ones(len(drawn))
-    crop = both[(slice(None), *box)]
-    rs = [_surface(r) for r in crop[len(drawn):]]
-    seen = {}
-    for m in crop[:len(drawn)]:
-        key = np.packbits(m).tobytes()
-        if key not in seen:
-            s = _surface(m)
-            seen[key] = max(_nsd(s, r, tau) for r in rs)
-    return np.array([seen[np.packbits(m).tobytes()] for m in crop[:len(drawn)]])
+def _nsd_best(c: ItemCounts, K: int) -> np.ndarray:
+    """Per drawn sample, the maximum NSD over the raters from the surfel counts (module docstring)."""
+    k, surf, out = len(c.surf) - K, c.surf.tolist(), c.nsd_out.tolist()
+    best = []
+    for i in range(K):
+        nsd = []
+        for j in range(k):
+            total = _length(surf[i]) + _length(surf[K + j])
+            far = _length(out[i][j][0]) + _length(out[i][j][1])
+            nsd.append(_unit(1.0 - far / total) if total else 1.0)  # exactly 1 if all in
+        best.append(max(nsd))
+    return np.array(best)
 
 
 def _ged(iou: np.ndarray, n: int) -> float:
@@ -277,31 +212,17 @@ def _ged(iou: np.ndarray, n: int) -> float:
     return max(0.0, float(2 * d[:n, n:].mean() - d[:n, :n].mean() - d[n:, n:].mean()))  # BK2-9: -1.1e-16 at 0
 
 
-def ged(samples: np.ndarray, raters: np.ndarray) -> float:
-    """Squared generalized energy distance with d = 1 - IoU (Kohl et al. 2018), all pairs."""
-    return _ged(_pairwise_iou(np.concatenate([samples, raters])), len(samples))
-
-
 def _samples(keys: Sequence[tuple[str, bool]], names, caches, W: int, H: int) -> list[dict]:
     """Training-path terms of distinct completions (text, truncated), scored by the CUDA checker in one score_many
-    call: per completion its terms, per-object terms and masks (empty for a failed sample), and its duplicate hash.
-    The masks (one to_masks call) feed only the item-level comparisons below (pairwise IoU, NSD, soft Dice,
-    duplicates), not the terms."""
+    call: per completion its parse, terms and per-object terms (those of an empty mask for a failed sample)."""
     parsed = [parse(t, names, tr) for t, tr in keys]
-    geoms = iter(to_masks([(p.objs[n], W, H) for p in parsed if p.ok for n in names]))
     empty = {}
     out = []
     for p, (terms, objects) in zip(parsed, score_many([(t, tr, names, caches, W, H) for t, tr in keys]), strict=True):
-        if p.ok:
-            masks = {n: next(geoms).mask for n in names}
-        else:
-            masks = {n: np.zeros((H, W), bool) for n in names}
-            empty = empty or {n: score_mask(masks[n], caches[n]) for n in names}
+        if not p.ok:
+            empty = empty or {n: score_mask(np.zeros((H, W), bool), caches[n]) for n in names}
             objects = empty
-        h = hashlib.sha256(bytes([int(terms["format_ok"]), int(terms["legal"])]))
-        for n in names:
-            h.update(np.packbits(masks[n]).tobytes())
-        out.append({"terms": terms, "masks": masks, "objects": objects, "hash": h.hexdigest()})
+        out.append({"parsed": p, "terms": terms, "objects": objects})
     return out
 
 
@@ -313,8 +234,8 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
             names: Sequence[str] | None = None, truncated: Sequence[bool] | None = None,
             caches: Mapping[str, ExpertCache] | None = None, tokens: Sequence[int] | None = None) -> dict:
     """Metrics of one item: K completions (texts) against the rater masks {name: bool (k, H, W)} on a W x H frame;
-    tokens: completion token counts (optional). The masks come from one
-    CUDA checker call per item (objdel.reward.score_many).
+    tokens: completion token counts (optional). The terms come from one
+    CUDA checker call per item (objdel.reward.score_many), the item-level counts from one more (eval.device).
 
     Returns JSON-native values: per-sample lists under "samples" and "objects"[name], item scalars otherwise
     (module docstring). Raises ValueError for fewer than 2 raters or samples, or mismatched lengths."""
@@ -334,33 +255,32 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
     legal = legal_gate(T)  # the reward's legality gate; legal implies parsed
     gated = {t: np.where(legal, T[t], 0.0) for t, _ in _GEOMETRIC}  # illegal: 0, as advantages_v4 sees the terms
     passed = topology_valid(T)
+    counts = item_counts([r["parsed"] for r in rows], names, caches, W, H, legal, thresholds=THRESHOLDS,
+                         nsd_tau=NSD_TAU, band_d=BIOU_D)
     objects = {}
     for n in names:
-        c, ot = caches[n], [r["objects"][n] for r in rows]
-        masks = np.stack([r["masks"][n] for r in rows])
-        drawn = masks & legal[:, None, None]  # what is scored: illegal rasters count as empty
-        iou = _pairwise_iou(np.concatenate([drawn, c.raters, c.vote[None]]))
-        area, comps = masks.sum((1, 2)), np.array([len(t.sig) for t in ot])
-        hit = (drawn & c.vote).sum((1, 2))  # answer pixels inside the majority outline
+        c, ot, cn = caches[n], [r["objects"][n] for r in rows], counts[n]
+        iou = _iou(cn.inter)  # drawn samples (illegal rasters count as empty), raters, vote
+        area, comps = cn.area_raw, np.array([len(t.sig) for t in ot])
+        hit = cn.inter[:K, -1]  # answer pixels inside the majority outline
         a_min, a_max = min(c.rater_areas), max(c.rater_areas)
         o = {"iou_tc": [t.iou_tc for t in ot], "f5": [t.f5 for t in ot], "g_area": [t.g_area for t in ot],
              "iou_vote": iou[:K, -1], "dice_vote": 2 * iou[:K, -1] / (1 + iou[:K, -1]),  # Dice = 2 IoU / (1 + IoU)
              "d_max": iou[:K, K:K + k].max(1),
-             "precision_vote": hit / np.maximum(drawn.sum((1, 2)), 1), "recall_vote": hit / max(int(c.vote.sum()), 1),
+             "precision_vote": hit / np.maximum(np.diag(cn.inter)[:K], 1), "recall_vote": hit / max(c.n_vote, 1),
              "area": area, "a_amax": area / max(a_max, 1), "a_amin": area / a_min if a_min else np.ones(K),
              "m_e": area / max(int(np.count_nonzero(c.union)), 1),
              "components": comps, "extra_components": comps - max(len(s) for s in c.rater_sigs),
-             "nsd": _nsd_best(drawn, c.raters, NSD_TAU[n])}
-        biou = _band_iou(np.concatenate([drawn, c.raters, c.vote[None]]), BIOU_D[n])
+             "nsd": _nsd_best(cn, K)}
+        biou = _iou(cn.band_inter)
         o |= {"boundary_iou": biou[:K, K:K + k].max(1), "boundary_iou_vote": biou[:K, -1]}
         o = {key: np.asarray(v, np.float64) for key, v in o.items()}
         for key in _ZEROED:
             o[key][~legal] = 0.0
         objects[n] = {**{key: _native(v) for key, v in o.items()},
-                      "soft_dice": soft_dice(drawn, c.raters), "ged": _ged(iou[:-1, :-1], K),
+                      "soft_dice": soft_dice(cn.soft), "ged": _ged(iou[:-1, :-1], K),
                       "hm_iou": hm_iou(iou[:K, K:K + k]), "sample_iou": iou[:K, :K].tolist(),
-                      "pixel_vote_iou_tc": float(score_mask(vote_mask(masks, legal), c).iou_tc),
-                      "vote_area": int(c.vote.sum())}
+                      "pixel_vote_iou_tc": cn.vote_iou_tc, "vote_area": c.n_vote}
 
     # topology answers: the joint size-filtered signature, as score_completion's sig_id; failures share FAIL
     answers = rater_answers(caches, names)
@@ -371,7 +291,7 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
     group = REWARD_V4.group if K % REWARD_V4.group == 0 else K
     starts = range(0, K, group)
     adv = np.concatenate([advantages_v4({t: v[i:i + group] for t, v in T.items()}, group) for i in starts])
-    hashes = [r["hash"] for r in rows]
+    dups = duplicate_keys(T["format_ok"], T["legal"], counts)
     return {
         "k": k, "K": K, "group": group, "modes": len(f),
         "samples": {"format_ok": _native(T["format_ok"]), "legal": _native(T["legal"]),
@@ -383,7 +303,7 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
         "objects": objects,
         "tv": tv, "js": js, "min_mode": min_mode_retention(p, f), "coverage": len(f.keys() & p.keys()) / len(f),
         "pass_at_k": {str(x): pass_at_k(K, int(passed.sum()), x) for x in PASS_KS if x <= K},
-        "groups": {"dup": [1.0 - len(set(hashes[i:i + group])) / group for i in starts],
+        "groups": {"dup": [1.0 - len(set(dups[i:i + group])) / group for i in starts],
                    "signal": [any(float(gated[t][i:i + group].std()) > fl for t, fl in _GEOMETRIC)
                               for i in starts]},  # std of the legality-gated term, as advantages_v4 computes it
     }

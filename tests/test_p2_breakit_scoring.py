@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import probe_models as M
 import pytest
+from oracles.eval_oracle import pairwise_iou
 
 from experiments.phase2 import c2_analyze as C2A
 from experiments.phase2 import prereg as P
@@ -18,7 +19,7 @@ from experiments.phase2 import sample_vllm as V
 from experiments.phase2 import select_ckpt as SC
 from objdel.eval import gates, metrics, probes, summarize
 from objdel.eval import signal as S
-from objdel.eval.metrics import _ged, _pairwise_iou, min_mode_retention, tv_js
+from objdel.eval.metrics import _ged, min_mode_retention, tv_js
 from objdel.reward import ExpertCache
 from objdel.targets import build_target
 from objdel.train import serve
@@ -194,25 +195,6 @@ def test_preload_after_fork_is_refused(tmp_path):
         pool.shutdown(cancel_futures=True)
 
 
-@pytest.mark.data
-def test_pool_scores_equal_serial_on_the_shifted_view():
-    view = VIEWS / "lidc-val-shifted"
-    if not (view / "manifest.json").is_file():
-        pytest.skip("no data/eval_views/lidc-val-shifted")
-    serve.preload(view, ("lidc",))
-    recs = [json.loads(x) for x in (view / "lidc" / "val.jsonl").read_text().splitlines()[:6]]
-    root = str(view.resolve())
-    jobs = [(r["item_id"], (r["targets"] * 8)[:7] + ["garbage"], [False] * 7 + [True], None, r["W"], r["H"],
-             ["nodule"], root) for r in recs]  # None: no token counts
-    serial = [json.dumps(SC._score(j)) for j in jobs]
-    pool = serve.fork_pool(2)
-    try:
-        pooled = [json.dumps(x) for x in pool.map(SC._score, jobs)]
-    finally:
-        pool.shutdown()
-    assert pooled == serial
-
-
 # ================================================================ metrics / summarize
 
 
@@ -265,7 +247,7 @@ def test_summarize_mixed_tokens_and_mixed_k():
 def test_ged_is_never_negative():
     m = np.random.default_rng(1).random((4, 12, 12)) > 0.5
     s = np.concatenate([m, m])  # 8 samples = each of the 4 raters twice: GED is exactly 0
-    assert _ged(_pairwise_iou(np.concatenate([s, m])), 8) >= 0.0  # actually -1.1e-16
+    assert _ged(pairwise_iou(np.concatenate([s, m])), 8) >= 0.0  # actually -1.1e-16
 
 
 def test_divergences_and_retention_stay_in_range():
@@ -319,7 +301,7 @@ def test_topology_probe_on_select_ckpt_items_subset_can_pass(monkeypatch, tmp_pa
     monkeypatch.setattr(probes, "score_topology", lambda rows, root: topo(rows, root, B=200))
     a = SimpleNamespace(run=tmp_path, items=256, k=8, shifted=VIEWS / "lidc-val-shifted", rescaled=None,
                         rotated=None, prepared=None, probes=VIEWS)  # --items 256 (the HF path)
-    rep = SC.judge(a, {"name": "e1", "vision": {}, "panel": {}}, tmp_path, None)
+    rep = SC.judge(a, {"name": "e1", "vision": {}, "panel": {}}, tmp_path)
     assert seen["probe-topology"] == 680 and rep["probes"]["topology"]["pass"]  # every probe record, a perfect model
 
 

@@ -8,8 +8,8 @@ Without --answers only the doctor side (model keys null). With it, the K answers
 answers.jsonl, joined by item_id; ValueError naming the missing items, before any output) are scored against every
 leave-one-out cache and against all doctors. Writes <out>/ceiling.json (ceiling.summarize with patient draws from the
 records' group_id, plus view, split, answers and seconds) and <out>/ceiling_items.jsonl (one row per item).
-Items are spread over serve.fork_pool workers, each uploading its own cache tables; on a CUDA build one worker, so
-no forked child opens a device context. Reads untrusted data: run with python -I.
+Items are scored in this process, one after another (D7: no forked worker, one device context). Reads untrusted
+data: run with python -I.
 """
 
 import argparse
@@ -17,13 +17,12 @@ import json
 import time
 from pathlib import Path
 
-from objdel import _gpucheck
 from objdel.eval import ceiling
 from objdel.train import dataset, serve
 
 
 def _item(job) -> dict:
-    """One item's ceiling row on the preloaded caches (runs in a pool worker)."""
+    """One item's ceiling row on the preloaded caches."""
     item_id, root, texts, truncated, W, H = job
     return ceiling.item(serve.CacheRef(item_id, root)["nodule"], texts, truncated, W, H)
 
@@ -47,13 +46,8 @@ def main(argv=None) -> None:
             raise ValueError(f"{len(lost)} items of the view have no answers in {a.answers}: {lost}")
     root = str(a.view.resolve())
     serve.preload(root, ["lidc"])
-    pool = serve.fork_pool(1 if _gpucheck.build() == "cuda" else serve.pool_size(), ["objdel.eval.ceiling"])
-    try:
-        jobs = [(r["item_id"], root, *ans.get(r["item_id"], (None, None)), r["W"], r["H"]) for r in recs]
-        rows = [{"item_id": r["item_id"], "group_id": r["group_id"]} | row
-                for r, row in zip(recs, pool.map(_item, jobs, chunksize=4), strict=True)]
-    finally:
-        pool.shutdown()
+    jobs = [(r["item_id"], root, *ans.get(r["item_id"], (None, None)), r["W"], r["H"]) for r in recs]
+    rows = [{"item_id": r["item_id"], "group_id": r["group_id"]} | _item(j) for r, j in zip(recs, jobs, strict=True)]
     doc = {"view": str(a.view), "split": a.split, "answers": a.answers and str(a.answers),
            **ceiling.summarize(rows, {r["item_id"]: r["group_id"] for r in recs}), "seconds": time.time() - t0}
     a.out.mkdir(parents=True, exist_ok=True)

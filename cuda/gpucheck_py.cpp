@@ -173,6 +173,7 @@ NB_MODULE(_gpucheck, m) {
     d["arena_bytes"] = s.arena_bytes, d["table_bytes"] = s.table_bytes;
     d["live_device_bytes"] = s.live_device_bytes, d["contexts"] = s.contexts;
     d["pool_reserved"] = s.pool_reserved, d["default_pool_reserved"] = s.default_pool_reserved;
+    d["eval_scratch_peak"] = s.eval_scratch_peak;
     return d;
   });
   m.def("reset_stats", &gpucheck::reset_stats);
@@ -323,6 +324,21 @@ NB_MODULE(_gpucheck, m) {
         return d;
       },
       nb::arg("raters"), nb::arg("t5").noconvert(), nb::arg("min_area").noconvert());
+  // objdel.reward.cache.edt: (H, W) uint8, nonzero = not a source -> float32 (H, W).
+  m.def(
+      "edt",
+      [](const In<u8, 2>& nonzero) {
+        const i64 H = i64(nonzero.shape(0)), W = i64(nonzero.shape(1));
+        if (H > gpucheck::kMaxEdtDim || W > gpucheck::kMaxEdtDim)
+          throw std::invalid_argument("edt: the map must be (H, W) with 0 <= H, W <= 32767");
+        std::vector<float> r;
+        {
+          nb::gil_scoped_release release;
+          r = gpucheck::edt(nonzero.data(), i32(H), i32(W));
+        }
+        return to_numpy(std::move(r), {size_t(H), size_t(W)});
+      },
+      nb::arg("nonzero").noconvert());
   m.def("drop_tables", &gpucheck::drop_tables, nb::arg("handle"));
   m.def("resident", &gpucheck::resident);
 
@@ -392,6 +408,56 @@ NB_MODULE(_gpucheck, m) {
       },
       nb::arg("bits").noconvert(), nb::arg("hw").noconvert(), nb::arg("start").noconvert(),
       nb::arg("min_area").noconvert(), nb::arg("want_masks") = false);
+
+  // objdel.eval.device: the item-level counts of metrics() for sets of K sample polygons (gpucheck.h EvalSets).
+  m.def(
+      "eval_sets",
+      [](const XY& xy, const In<i64, 1>& ring_start, const In<i64, 1>& shape_start, std::optional<In<i32, 1>> roles,
+         const In<i32, 1>& W, const In<i32, 1>& H, i64 G, const In<i64, 1>& tables, i32 K, const In<u8, 1>& legal,
+         const In<i32, 3>& soft_cuts, const In<i64, 1>& nsd_cut, const In<i32, 1>& band_d, i64 max_scratch_bytes) {
+        const PolygonsIn p(xy, ring_start, shape_start, roles, W, H, G);
+        const i64 n = i64(tables.shape(0)), T = i64(soft_cuts.shape(1));
+        if (K < 1 || K > 256) throw std::invalid_argument("eval_sets: K must be in [1, 256]");
+        if (p.in.n != n * K || i64(legal.shape(0)) != n * K)
+          throw std::invalid_argument("eval_sets: K shapes and K legal flags per set");
+        if (i64(soft_cuts.shape(0)) != n || i64(soft_cuts.shape(2)) != 2 || T < 1 || T > gpucheck::kMaxThresholds)
+          throw std::invalid_argument("eval_sets: soft_cuts must be (sets, 1..16 thresholds, 2)");
+        if (i64(nsd_cut.shape(0)) != n || i64(band_d.shape(0)) != n)
+          throw std::invalid_argument("eval_sets: one nsd_cut and one band_d per set");
+        if (max_scratch_bytes < 1) throw std::invalid_argument("eval_sets: max_scratch_bytes must be >= 1");
+        const gpucheck::EvalSets es{n,           K,           i32(T), tables.data(), legal.data(), soft_cuts.data(),
+                                    nsd_cut.data(), band_d.data(), max_scratch_bytes};
+        for (i64 s = 0; s < n; ++s) {
+          if (nsd_cut(s) < 0 || band_d(s) < 1 || band_d(s) > 31)
+            throw std::invalid_argument("eval_sets: nsd_cut >= 0 and 1 <= band_d <= 31 are required");
+          for (i64 t = 0; t < T; ++t)
+            if (soft_cuts(s, t, 0) < 0 || soft_cuts(s, t, 0) > K || soft_cuts(s, t, 1) < 0)
+              throw std::invalid_argument("eval_sets: cuts must be in [0, K] and [0, k]");
+        }
+        gpucheck::EvalCounts r;
+        {
+          nb::gil_scoped_release release;
+          r = gpucheck::eval_sets(p.in, es);
+        }
+        const size_t N = size_t(n), k = size_t(r.k), M = size_t(K) + k + 1, Kz = size_t(K);
+        std::vector<i64> area_raw(N * Kz);
+        for (size_t q = 0; q < N * Kz; ++q) area_raw[q] = r.inter_raw[(q / Kz * Kz + q % Kz) * Kz + q % Kz];
+        nb::dict d;
+        d["inter"] = to_numpy(std::move(r.inter), {N, M, M});
+        d["inter_raw"] = to_numpy(std::move(r.inter_raw), {N, Kz, Kz});
+        d["area_raw"] = to_numpy(std::move(area_raw), {N, Kz});
+        d["band_inter"] = to_numpy(std::move(r.band_inter), {N, M, M});
+        d["soft"] = to_numpy(std::move(r.soft), {N, size_t(T), 3});
+        d["surf"] = to_numpy(std::move(r.surf), {N, Kz + k, 3});
+        d["nsd_out"] = to_numpy(std::move(r.nsd), {N, Kz, k, 2, 3});
+        d["vote_iou_tc"] = to_numpy(std::move(r.vote_iou_tc), {N});
+        return d;
+      },
+      nb::arg("xy").noconvert(), nb::arg("ring_start").noconvert(), nb::arg("shape_start").noconvert(),
+      nb::arg("roles").noconvert().none(), nb::arg("W").noconvert(), nb::arg("H").noconvert(), nb::arg("G"),
+      nb::arg("tables").noconvert(), nb::arg("K"), nb::arg("legal").noconvert(), nb::arg("soft_cuts").noconvert(),
+      nb::arg("nsd_cut").noconvert(), nb::arg("band_d").noconvert(), nb::kw_only(),
+      nb::arg("max_scratch_bytes") = i64(256) << 20);
 
   // The target builder's ladder: every rung of one name against its reference mask in one call (gpucheck.h).
   m.def(

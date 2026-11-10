@@ -10,16 +10,14 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from oracles import reward_harness as H
+from oracles.eval_oracle import band, boundary_iou, pairwise_iou
 
 from objdel.eval import gates, hack_audit, metrics, select, summarize
 from objdel.eval.metrics import (
     _ZEROED,
     BIOU_D,
-    _band_iou,
-    _pairwise_iou,
-    band,
-    boundary_iou,
-    ged,
+    _ged,
+    _iou,
     min_mode_retention,
     pass_at_k,
     soft_dice,
@@ -102,31 +100,36 @@ def test_min_mode_retention():
 
 
 def test_soft_dice_mrnet_protocol_hand_case():
-    """Raters {0, 1} and {0}: mean 1 / 0.5. One sample {0}: Dice 2/3 at t = 0.1, 0.3, 0.5 and 1 at 0.7, 0.9."""
-    raters = np.array([[[1, 1]], [[1, 0]]], bool)
-    assert soft_dice(np.array([[[1, 0]]], bool), raters) == pytest.approx(0.8)
-    assert soft_dice(raters, raters) == 1.0
-    assert soft_dice(np.zeros((1, 1, 2), bool), np.zeros((2, 1, 2), bool)) == 1.0  # empty vs empty agrees
+    """Raters {0, 1} and {0}: mean 1 / 0.5. One sample {0}: Dice 2/3 at t = 0.1, 0.3, 0.5 and 1 at 0.7, 0.9 (counts
+    |P_t|, |R_t|, |P_t & R_t| per threshold, as eval_sets returns them)."""
+    assert soft_dice(np.array([[1, 2, 1]] * 3 + [[1, 1, 1]] * 2)) == pytest.approx(0.8)
+    assert soft_dice(np.array([[2, 2, 2]] * 3 + [[1, 1, 1]] * 2)) == 1.0  # the raters against themselves
+    assert soft_dice(np.zeros((5, 3), np.int64)) == 1.0  # empty vs empty agrees
+
+
+def gram(masks):
+    x = masks.reshape(len(masks), -1).astype(np.int64)
+    return x @ x.T
 
 
 def test_ged_hand_cases():
     a, b = np.eye(4, dtype=bool)[None], np.ones((1, 4, 4), bool)
     Y = np.concatenate([a, b])
-    assert ged(Y, Y) == pytest.approx(0.0)
-    assert ged(np.concatenate([a, a]), Y) == pytest.approx(0.75 / 2)  # d(a, b) = 1 - 4/16; GED = d / 2
+    assert _ged(_iou(gram(np.concatenate([Y, Y]))), 2) == pytest.approx(0.0)
+    assert _ged(_iou(gram(np.concatenate([a, a, Y]))), 2) == pytest.approx(0.75 / 2)  # d(a, b) = 1 - 4/16; GED = d / 2
     z = np.zeros((1, 3, 3), bool)
-    assert ged(z, np.concatenate([z, z])) == 0.0  # two empty masks are at distance 0 (Kohl et al., App. B)
+    assert _ged(_iou(gram(np.concatenate([z, z, z]))), 1) == 0.0  # two empty masks are at distance 0 (Kohl, App. B)
 
 
 @settings(max_examples=100, deadline=None)
 @given(st.integers(0, 2**31 - 1))
 def test_pairwise_iou_equals_brute_force(seed):
-    """Random masks with duplicates and empty masks; the dedup + crop + matrix product path is exact."""
+    """Random masks with duplicates and empty masks: the IoU from integer intersections is exact."""
     rng = np.random.default_rng(seed)
     base = rng.random((rng.integers(1, 5), 7, 9)) < rng.uniform(0, 0.6)
     masks = base[rng.integers(0, len(base), rng.integers(1, 9))]
     want = np.array([[np.sum(a & b) / np.sum(a | b) if np.any(a | b) else 1.0 for b in masks] for a in masks])
-    assert np.array_equal(_pairwise_iou(masks), want)
+    assert np.array_equal(_iou(gram(masks)), want) and np.array_equal(pairwise_iou(masks), want)
 
 
 # ---------------------------------------------------------------- R10: perfect values on the raters' own targets
@@ -646,22 +649,3 @@ def test_boundary_iou_is_the_max_over_raters():
     text = text_of({"nodule": r[2]}, ("nodule",), {"nodule": r})
     for p in ([0, 1, 2], [2, 0, 1], [1, 2, 0]):
         assert metrics([text, text], {"nodule": r[p]}, S, S)["objects"]["nodule"]["boundary_iou"] == [1.0, 1.0]
-
-
-def test_boundary_iou_speed():
-    """Q02: one pair on 512 x 512 at d = 16 under 20 ms; one item (K = 8, 4 raters, the vote: 13 masks of a 40 x 40
-    nodule) under 20 ms and over 3x faster than the same bands on the full frame. Best of 5 runs."""
-    import timeit
-
-    rng = np.random.default_rng(2)
-    ms = np.zeros((13, 512, 512), bool)
-    for i, (y, x) in enumerate(rng.integers(-3, 4, (13, 2))):
-        ms[i, 200 + y:240 + y, 200 + x:240 + x] = True
-    assert np.array_equal(_band_iou(ms, 16), _pairwise_iou(np.stack([official_band(m, 16) for m in ms])))
-
-    def best(f):
-        return min(timeit.repeat(f, number=5, repeat=5)) / 5
-
-    item = best(lambda: _band_iou(ms, 16))
-    full = best(lambda: _pairwise_iou(np.stack([official_band(m, 16) for m in ms])))
-    assert best(lambda: boundary_iou(ms[0], ms[1], 16)) < 0.02 and item < 0.02 and full > 3 * item, (item, full)

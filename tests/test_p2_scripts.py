@@ -367,7 +367,7 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
     if select:
         vision = json.dumps({"prepared": ev, "reference": str(ref)})  # the run's block
         sel = _module("experiments.phase2.select_ckpt", "--run", str(run), "--shifted", ev, "--sampler", "hf",
-                      "--procs", "1", "--prepared", ev, "--vision", vision, env=env)
+                      "--prepared", ev, "--vision", vision, env=env)
         assert sel.returncode == 0, sel.stderr[-4000:]
         doc = json.loads((run / "select/selected.json").read_text())
         assert set(doc["branches"]) == {"e0.5", "e1"} and doc["sampler"] == "hf" and doc["cuda_initialized"] is False
@@ -382,7 +382,7 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
         assert k16["samples"] == 16 * k16["items"] and "hm_iou" in k16["objects"]["nodule"]
     best = run / "branches" / (doc["selected"] or "e1") if select else run / "branches/e1"
     gp = _module("experiments.phase2.g_probe", "--model", name, "--ckpt", str(best), "--train", ev,
-                 "--probe", ev, "--out", str(run / "gp"), "--procs", "1", "--grpo", json.dumps(GRPO_SMOKE), env=env)
+                 "--probe", ev, "--out", str(run / "gp"), "--grpo", json.dumps(GRPO_SMOKE), env=env)
     assert gp.returncode == 0, gp.stderr[-4000:]
     res = json.loads((run / "gp/g_probe.json").read_text())
     assert res["verdict"] in ("PASS", "FAIL", "INCONCLUSIVE") and res["steps"] == 20

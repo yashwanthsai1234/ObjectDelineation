@@ -290,7 +290,7 @@ def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, 
         (run / "branches" / n).mkdir(parents=True)
     calls = []
 
-    def score_view(a, branch, view, out, pool, k):
+    def score_view(a, branch, view, out, k):
         calls.append({"branch": branch.name, "view": view.name, "items": a.items, "k": k})
         out.mkdir(parents=True, exist_ok=True)  # as sample_view does
         lidc = {"format": 1.0, "legal": 1.0 if eligible else 0.5, "dup_rate": 0.0, "signal_share": 0.9, "group": 8}
@@ -298,10 +298,9 @@ def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, 
 
     monkeypatch.setattr(SC, "exited", lambda run: {"config": {"model": "lfm2.5-vl-450m"}})
     monkeypatch.setattr(serve, "preload", lambda *a, **k: 0)
-    monkeypatch.setattr(serve, "fork_pool", lambda n: SimpleNamespace(shutdown=lambda: None))
     monkeypatch.setattr(SC, "score_view", score_view)
     monkeypatch.setattr(SC, "vision_check", lambda b, cfg: {"pass": True} if cfg else {})
-    monkeypatch.setattr(SC, "hf_check", lambda a, name, out, pool: {"branch": name, "vllm_minus_hf": {},
+    monkeypatch.setattr(SC, "hf_check", lambda a, name, out: {"branch": name, "vllm_minus_hf": {},
                                                                     "pass": hf_check})
     monkeypatch.setattr(
         prereg, "select_rb", lambda bs: (next((b["name"] for b in bs[::-1] if b["eligible"]), None), {"eligible": []})

@@ -15,8 +15,8 @@
 Every RL-eligible item of the view's <split> records (the G-probe uses a 128-item subset of the val view; this uses
 all of them, and runs on the test split's view built by build_eval_views --split test). Samples with vLLM through
 g_probe.make_trainer and objdel.train.sample (T = 1, as the G-probe; torch seeded before each view; vLLM's engine seed
-is set once, at build), scores with select_ckpt.score_items (one pool worker on a CUDA build: no forked CUDA
-context). Write order per view, so a crash in scoring keeps the paid sampling:
+is set once, at build), scores with select_ckpt.score_items in this process (D7: one CUDA context, after
+sampling). Write order per view, so a crash in scoring keeps the paid sampling:
 1. <out>/answers.jsonl (item_id, group_id, W, H, samples, truncated, tokens per item) and a partial
    <out>/final_eval.json ("partial": true, the run keys, seconds.load_and_sample);
 2. after scoring, <out>/metrics.jsonl (the whole metrics() result per item), <out>/items.jsonl (per-item metrics) and
@@ -51,18 +51,23 @@ Reads untrusted data: run with python -I.
 """
 
 import argparse
+import contextlib
 import json
+import os
+import re
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import numpy as np
 
 from experiments.phase2.freeze_views import render_files
-from experiments.phase2.select_ckpt import score_items  # imported before the pool forks (no import in a child)
+from experiments.phase2.select_ckpt import score_items
 from objdel import _gpucheck
 from objdel.data import quality as Q
-from objdel.eval import select, signal
+from objdel.eval import device, select, signal
 from objdel.hashing import file_sha256
 from objdel.io import git, read_jsonl
 from objdel.io import write_atomic as _write
@@ -78,6 +83,7 @@ METRICS = {"legal": ("samples", True), "iou_tc": ("samples", True), "f5": ("samp
            "soft_dice": ("item", True), "hm_iou": ("item", True), "ged": ("item", False)}
 SELECTION = ("sel_mean_of_k", "sel_legal_mean", "sel_medoid", "sel_medoid_legal", "sel_oracle", "sel_vote")
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
+TOPOLOGY_PERIOD_S = 5.0  # D-G17 (a): the sampler thread's period during scoring
 GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
 
 
@@ -348,11 +354,80 @@ def sample_items(trainer, rows: list[dict], a) -> list[dict]:
     return sample.sample(trainer, rows, a.k, items=a.per_call)
 
 
-def score(pool, view: Path, split: str, out: Path, rows: list[dict], answers: list[dict], run: dict, t0: float):
-    """Scores the answers and writes metrics.jsonl, items.jsonl and the full final_eval.json (schema 2)."""
-    results, _ = score_items(pool, rows, {d["item_id"]: d for d in answers}, view.resolve())
+def _smi(query: str) -> list[str]:
+    """The non-empty CSV rows of one nvidia-smi query."""
+    out = subprocess.run(["nvidia-smi", query, "--format=csv,noheader"], capture_output=True, text=True, check=True)
+    return [x for x in out.stdout.splitlines() if x.strip()]
+
+
+def _proc_count() -> int:
+    """Processes in /proc that hold /dev/nvidia<N> open: the container's own view (D-G17 (a))."""
+    n = 0
+    for p in Path("/proc").glob("[0-9]*"):
+        with contextlib.suppress(OSError):
+            n += any(re.fullmatch(r"/dev/nvidia\d+", os.readlink(f)) for f in (p / "fd").iterdir())
+    return n
+
+
+def _sample(method: str) -> tuple[int, int]:
+    """(device processes by the method, memory.used in MiB summed over the GPUs)."""
+    used = sum(int(x.split()[0]) for x in _smi("--query-gpu=memory.used"))
+    return (len(_smi("--query-compute-apps=pid,used_memory")) if method == "nvidia-smi" else _proc_count()), used
+
+
+@contextlib.contextmanager
+def topology(name: str):
+    """D-G17 (a), (c) around one view's scoring, only on a CUDA build with OBJDEL_RUN_DIR set: the device process
+    count before scoring (nvidia-smi's compute-apps rows; when there are none, as in many containers, the /proc
+    count), a sampler thread every TOPOLOGY_PERIOD_S during it and one sample at its end. Adds the view's method,
+    count before, largest count during and peak memory.used (MiB) to $OBJDEL_RUN_DIR/d/topology.json. In this
+    process because "before scoring" is a point inside final_eval, after sampling."""
+    run_dir = os.environ.get("OBJDEL_RUN_DIR")
+    if not run_dir or _gpucheck.build() != "cuda":
+        yield
+        return
+    method = "nvidia-smi" if _smi("--query-compute-apps=pid,used_memory") else "proc"
+    seen, stop = [_sample(method)], threading.Event()
+
+    def run():
+        while not stop.wait(TOPOLOGY_PERIOD_S):
+            seen.append(_sample(method))
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+    seen.append(_sample(method))
+    path = Path(run_dir) / "d" / "topology.json"
+    doc = json.loads(path.read_text()) if path.exists() else {}
+    doc[name] = {"method": method, "before": seen[0][0], "max_during": max(c for c, _ in seen[1:]),
+                 "peak_memory_used_mib": max(u for _, u in seen)}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write(path, json.dumps(doc, indent=1))
+
+
+def engine_record() -> dict:
+    """D-G14: the view's eval_sets wall time, the scratch cap the loop passed and the engine's memory counters, read
+    after its scoring (the counters were reset just before it)."""
+    s, torch = _gpucheck.stats(), sys.modules.get("torch")  # a rescore imports no torch
+    return {"eval_sets_s": device.eval_sets_s, "max_scratch_bytes": device.MAX_SCRATCH_BYTES,
+            **{k: s[k] for k in ("arena_bytes", "table_bytes", "eval_scratch_peak", "live_device_bytes")},
+            "max_memory_reserved": torch.cuda.max_memory_reserved() if torch else 0}
+
+
+def score(view: Path, split: str, out: Path, rows: list[dict], answers: list[dict], run: dict, t0: float):
+    """Scores the answers (engine counters reset first, the topology sampler around it) and writes metrics.jsonl,
+    items.jsonl and the full final_eval.json (schema 2, with the view's engine record)."""
+    _gpucheck.reset_stats()
+    device.eval_sets_s = 0.0
+    with topology(view.name):
+        results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view.resolve())
     items, groups = [per_item(r) for r in results], view_groups(view, split)
-    doc = run | summarize(items, groups) | {"noise_floor": noise_floor(results, groups), "partial": False}
+    doc = run | summarize(items, groups) | {"noise_floor": noise_floor(results, groups), "partial": False,
+                                            "engine": engine_record()}
     doc["seconds"] = run["seconds"] | {"total": time.time() - t0}
     _write(out / "metrics.jsonl", _lines(results))
     _write(out / "items.jsonl", _lines(items))
@@ -365,12 +440,6 @@ def _identity(view: Path, split: str) -> dict:
     return {"view": str(view), "split": split, "view_manifest_sha256": view_manifest_sha256(view),
             "view_content_sha256": Q.view_content_sha256(view), "code_sha": code_sha(),
             "checker_build": _gpucheck.build()}
-
-
-def _pool():
-    from objdel.train import serve
-
-    return serve.fork_pool(1 if _gpucheck.build() == "cuda" else serve.pool_size())  # no CUDA context in a fork
 
 
 def rescore(src: Path, view: Path, split: str, out: Path) -> None:
@@ -392,12 +461,8 @@ def rescore(src: Path, view: Path, split: str, out: Path) -> None:
     run = {k: old[k] for k in ("ckpt", "K", "seed")} | _identity(view, split) | {"rescored_from": str(src),
                                                                                  "seconds": {}}
     serve.preload(view, ["lidc"])
-    pool = _pool()
-    try:
-        _write(out / "answers.jsonl", _lines(answers))
-        score(pool, view, split, out, rows, answers, run, t0)
-    finally:
-        pool.shutdown()
+    _write(out / "answers.jsonl", _lines(answers))
+    score(view, split, out, rows, answers, run, t0)
 
 
 def main(argv=None) -> None:
@@ -450,24 +515,20 @@ def main(argv=None) -> None:
     t0 = time.time()
     for root in dict.fromkeys(Path(r).resolve() for r in (a.train, *views)):
         serve.preload(root, ["lidc"])
-    pool = _pool()
-    try:
-        trainer = load_trainer(a)
-        for view, split, out in zip(views, splits, outs, strict=True):
-            rows = limit_rows(dataset.prompts(view, "lidc", split), a.limit)
-            answers = sample_items(trainer, rows, a)
-            groups = view_groups(view, split)
-            lines = [{"item_id": r["key"], "group_id": groups[r["key"]], "W": r["W"], "H": r["H"],
-                      **{k: d[k] for k in ("samples", "truncated", "tokens")}}
-                     for r, d in zip(rows, answers, strict=True)]
-            run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed} | _identity(view, split) | {
-                "seconds": {"load_and_sample": time.time() - t0}} | ({"limit": a.limit} if a.limit else {})
-            _write(out / "answers.jsonl", _lines(lines))  # before scoring: a scoring crash keeps the sampling
-            _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
-            score(pool, view, split, out, rows, lines, run, t0)
-            t0 = time.time()
-    finally:
-        pool.shutdown()
+    trainer = load_trainer(a)
+    for view, split, out in zip(views, splits, outs, strict=True):
+        rows = limit_rows(dataset.prompts(view, "lidc", split), a.limit)
+        answers = sample_items(trainer, rows, a)
+        groups = view_groups(view, split)
+        lines = [{"item_id": r["key"], "group_id": groups[r["key"]], "W": r["W"], "H": r["H"],
+                  **{k: d[k] for k in ("samples", "truncated", "tokens")}}
+                 for r, d in zip(rows, answers, strict=True)]
+        run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed} | _identity(view, split) | {
+            "seconds": {"load_and_sample": time.time() - t0}} | ({"limit": a.limit} if a.limit else {})
+        _write(out / "answers.jsonl", _lines(lines))  # before scoring: a scoring crash keeps the sampling
+        _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
+        score(view, split, out, rows, lines, run, t0)
+        t0 = time.time()
 
 
 if __name__ == "__main__":

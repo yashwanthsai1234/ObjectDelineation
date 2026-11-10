@@ -90,9 +90,10 @@ def reward_fingerprint(spec) -> str:
 def fingerprint() -> str:
     """SHA-256 of everything a stored ExpertCache value depends on besides the rater masks: CACHE_SPEC, the size rule
     (probed at fixed union areas) and the versions of the libraries that compute tau and T5: numpy (percentile,
-    sums), OpenCV (contour erosion) and scipy (distance transforms; quad and the normal law in S_m beyond the frozen
-    m <= 8). Plan §6: caches are rebuilt when a pin changes. Signatures, the vote and the band are rederived on load
-    and need no fingerprint; reward weights are not stored, so they are not in it."""
+    sums), OpenCV (contour erosion) and scipy (quad and the normal law in S_m beyond the frozen m <= 8; until D7 also
+    the distance transforms, which the engine's bit-identical EDT replaced without a fingerprint change, runs/d7).
+    Plan §6: caches are rebuilt when a pin changes. Signatures, the vote and the band are rederived on load and need
+    no fingerprint; reward weights are not stored, so they are not in it."""
     parts = (astuple(CACHE_SPEC), [min_area(a) for a in (0, 999, 1001, 10**4, 10**6)], np.__version__, cv2.__version__,
              scipy.__version__)
     return hashlib.sha256(repr(parts).encode()).hexdigest()

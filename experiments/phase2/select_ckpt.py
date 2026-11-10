@@ -5,15 +5,15 @@
         [--sampler vllm|hf] [--items 256] [--rescaled V] [--rotated V] [--prepared P] [--probes DIR]
     python -I -m experiments.phase2.select_ckpt --run runs/c2 --probes DIR --only topology [--sampler hf]
 
-Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches
-and fork the reward pool before anything imports CUDA; per branch, export the prompts and run the sampler child
+Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches;
+per branch, export the prompts and run the sampler child
 (`sample_vllm.py` under /opt/vllm, or `hf_sample`; one JSONL bridge) with CUDA asserted untouched here, a timeout
 of 600 s + --timeout_s per item-sample, and a completeness check (every prompt id has its n samples). The
 completions' `.meta.json` stamp (prompts SHA-256, child command) is written before the child starts: a matching
 stamp means the file is reused when complete and resumed otherwise (hf_sample keeps whole finished batches), on a
 retry or a rerun alike; another stamp empties it. An attempt that finishes no new item counts against TRIES.
-SIGTERM / SIGINT (the run cap's `timeout`) kill the child's process group before select_ckpt exits. Score them on
-the pool (objdel.eval.metrics), build the B2 signal panel and run G-vision on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
+SIGTERM / SIGINT (the run cap's `timeout`) kill the child's process group before select_ckpt exits. Score them in
+this process (objdel.eval.metrics: the device work runs in one process, D7), build the B2 signal panel and run G-vision on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
 G-vision; an unmeasured G-vision fails (--vision is required, --no-vision makes every branch ineligible). Rule R-B
 (prereg.select_rb) picks; none eligible -> the deepest is gated (§6.3). --items N: a seeded subset (SUBSET_SEED)
 for selection only (D13 HF path).
@@ -48,7 +48,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel import _gpucheck
-from objdel.eval import gates, metrics  # imported before the pool forks: a forked child must not import (macOS objc)
+from objdel.eval import gates, metrics
 from objdel.train import serve
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -170,7 +170,7 @@ def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: flo
 
 
 def _score(job) -> dict:
-    """One item's metrics on the preloaded caches (runs in a pool worker)."""
+    """One item's metrics on the preloaded caches."""
     item_id, texts, truncated, tokens, W, H, names, root = job
     m = metrics(texts, {}, W, H, names, truncated, caches=serve.CacheRef(item_id, root), tokens=tokens)
     return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
@@ -220,24 +220,24 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
 
 
-def score_items(pool, rows: list[dict], done: dict, root: Path) -> tuple[list[dict], list[dict]]:
-    """_score on the pool for every row (done: {key: completions row with samples, truncated and tokens}) ->
-    (per-item metrics, signal groups); one CUDA checker call per item."""
+def score_items(rows: list[dict], done: dict, root: Path) -> tuple[list[dict], list[dict]]:
+    """_score in this process for every row (done: {key: completions row with samples, truncated and tokens}) ->
+    (per-item metrics, signal groups); two CUDA checker calls per item (score_many, eval_sets), no forked worker."""
     from objdel.eval import signal
 
     jobs = [(r["key"], *(done[r["key"]][k] for k in ("samples", "truncated", "tokens")), r["W"], r["H"], r["names"],
              str(root)) for r in rows]  # fmt: skip
-    results = list(pool.map(_score, jobs, chunksize=4))
+    results = [_score(j) for j in jobs]
     return results, [signal.group(r["item_id"], done[r["item_id"]]["samples"], r) for r in results]
 
 
-def score_view(a, branch: Path, view: Path, out: Path, pool, k: int) -> dict:
-    """sample_view on the view (a.items: subset), then metrics on the pool -> summarize (eval_run's report form), the
+def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:
+    """sample_view on the view (a.items: subset), then metrics -> summarize (eval_run's report form), the
     signal panel and the per-item K-sample mean IoU_tc per structure (G-prior)."""
     from objdel.eval import signal, summarize
 
     rows = view_rows(view, a.items)
-    results, groups = score_items(pool, rows, sample_view(a, branch, rows, out, k), view.resolve())
+    results, groups = score_items(rows, sample_view(a, branch, rows, out, k), view.resolve())
     (out / "items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in results))
     iou = {r["item_id"]: {n: float(np.mean(o["iou_tc"])) for n, o in r["objects"].items()} for r in results}
     return {"summary": summarize(results), "panel": signal.panel(groups), "iou": iou}
@@ -266,7 +266,7 @@ def score_probe(a, branch: Path, p: str, out: Path) -> dict:
     return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # c2_analyze pairs seeds
 
 
-def judge(a, sel: dict, out: Path, pool) -> dict:
+def judge(a, sel: dict, out: Path) -> dict:
     """The §5.1 report of the selected (or gated) branch, on the full views (--items never applies here, D13)."""
     from experiments.phase2 import baselines
     from objdel.eval import signal
@@ -274,7 +274,7 @@ def judge(a, sel: dict, out: Path, pool) -> dict:
     best, whole = a.run / "branches" / sel["name"], argparse.Namespace(**vars(a) | {"items": None})
 
     def full(view, sub, k=a.k):
-        return score_view(whole, best, view, out / sub, pool, k)
+        return score_view(whole, best, view, out / sub, k)
 
     scored = {"shifted": full(a.shifted, "shifted-full") if a.items else sel}
     scored |= {"rescaled": full(a.rescaled, "rescaled")} if a.rescaled else {}
@@ -294,7 +294,7 @@ def judge(a, sel: dict, out: Path, pool) -> dict:
     return report
 
 
-def hf_check(a, name: str, out: Path, pool) -> dict:
+def hf_check(a, name: str, out: Path) -> dict:
     """D13 (owner 2026-11-05): with --sampler vllm, do vLLM's answers score like HF's on the trained model? HF samples
     branch `name` on HF_CHECK_ITEMS seeded shifted-val items at K; vLLM's answers are that branch's shifted samples
     (<out>/<name>/shifted/items.jsonl). Per metric, the per-item mean difference vLLM - HF with the nodule-cluster
@@ -304,7 +304,7 @@ def hf_check(a, name: str, out: Path, pool) -> dict:
     rows = view_rows(a.shifted, HF_CHECK_ITEMS)
     hf = argparse.Namespace(**vars(a) | {"sampler": "hf"})
     done = sample_view(hf, a.run / "branches" / name, rows, out / name / "hf-check", a.k)
-    got = {"hf": {r["item_id"]: r["samples"] for r in score_items(pool, rows, done, a.shifted.resolve())[0]}}
+    got = {"hf": {r["item_id"]: r["samples"] for r in score_items(rows, done, a.shifted.resolve())[0]}}
     lines = (out / name / "shifted" / "items.jsonl").read_text().splitlines()
     got["vllm"] = {r["item_id"]: r["samples"] for r in map(json.loads, lines)}
     ids = [i for i in got["hf"] if i in got["vllm"]]
@@ -371,7 +371,6 @@ def main(argv=None) -> int:
     ap.add_argument("--items", type=int, help="seeded subset size for branch selection only (HF path: 256)")
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0, help="sampler seed")
-    ap.add_argument("--procs", type=int, default=serve.pool_size(), help="scoring workers (default: usable CPUs - 1)")
     ap.add_argument("--timeout_s", type=float, help="sampler timeout per sample, plus 600 s (default: TIMEOUT_S)")
     vis = ap.add_mutually_exclusive_group()
     vis.add_argument("--vision", help='G-vision JSON {"prepared": root, "reference": R0 value or JSON} (required)')
@@ -386,11 +385,10 @@ def main(argv=None) -> int:
         return topology_only(a, out)
     vision_cfg = vision_cfg and {"model": a.model} | vision_cfg  # train_sft.reference checks R0's JSON model
     for v in filter(None, (a.shifted, a.rescaled, a.rotated)):
-        serve.preload(v, ["lidc"])  # every scored root before the fork: workers see STORE as of fork time
-    pool = serve.fork_pool(a.procs)  # before torch / CUDA (D14)
+        serve.preload(v, ["lidc"])
     branches = []
     for b in sorted((a.run / "branches").iterdir(), key=lambda p: float(p.name[1:])):
-        res = score_view(a, b, a.shifted, out / b.name / "shifted", pool, a.k)
+        res = score_view(a, b, a.shifted, out / b.name / "shifted", a.k)
         res["vision"] = vision_check(b, vision_cfg)
         res["eligible"] = gates.eligible(res["summary"], res["vision"])  # D12: G-format, G-signal, G-vision
         branches.append({"name": b.name, "depth": float(b.name[1:]), **res})
@@ -399,16 +397,15 @@ def main(argv=None) -> int:
     name, why = prereg.select_rb(branches)
     gate, judged = None, name or (branches[-1]["name"] if branches else None)  # none eligible: the deepest (§6.3)
     if judged:
-        report = judge(a, next(x for x in branches if x["name"] == judged), out / judged, pool)
+        report = judge(a, next(x for x in branches if x["name"] == judged), out / judged)
         gate = prereg.entry(report, ["lidc"])  # phase2_entry with the pre-registered G-prior (a) slot
         if a.sampler == "vllm":  # D13: the gates stand only if vLLM's answers score like HF's
-            report["hf_check"] = check = hf_check(a, judged, out, pool)
+            report["hf_check"] = check = hf_check(a, judged, out)
             gate["gates"]["G-hf-check"] = {"requirement": "every vLLM - HF metric difference: 0 inside its 95 % CI",
                                            "values": check["vllm_minus_hf"], "pass": check["pass"]}
             gate["passed"]["G-hf-check"], gate["pass"] = check["pass"], gate["pass"] and check["pass"]
         dump(out / "report.json", report)
         dump(out / "gates.json", gate)
-    pool.shutdown()
     torch = sys.modules.get("torch")
     dump(out / "selected.json", {
         "cuda_initialized": bool(torch and torch.cuda.is_initialized()),

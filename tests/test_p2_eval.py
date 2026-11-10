@@ -8,11 +8,12 @@ import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from oracles.eval_oracle import nsd
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment, linprog
 
 from objdel.eval import gates, metrics, summarize
-from objdel.eval.metrics import NSD_TAU, hm_iou, min_mode_retention, nsd, tv_js
+from objdel.eval.metrics import NSD_TAU, hm_iou, min_mode_retention, tv_js
 from objdel.reward import ExpertCache
 from objdel.targets import build_target, min_areas
 

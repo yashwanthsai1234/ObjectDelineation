@@ -56,7 +56,6 @@ def test_g_probe_with_passing_gates_keeps_the_d12c_repair(tmp_path, monkeypatch)
     from objdel.train import dataset
 
     monkeypatch.setattr(serve, "preload", lambda *a, **k: 0)
-    monkeypatch.setattr(serve, "fork_pool", lambda n: SimpleNamespace(shutdown=lambda: None))
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: [])
     monkeypatch.setattr(GP, "view_rows", lambda *a, **k: [])
     verdicts = iter(["INCONCLUSIVE", "PASS"])
@@ -113,13 +112,13 @@ def test_hf_check_compares_vllm_and_hf_metrics_per_item(tmp_path, monkeypatch, s
     monkeypatch.setattr(SC, "view_rows", lambda view, items=None: seen.setdefault("items", items) and
                         [{"key": i} for i in keys])  # fmt: skip
     monkeypatch.setattr(SC, "sample_view", lambda a, b, rows, out, k: seen.update(sampler=a.sampler, out=out) or {})
-    monkeypatch.setattr(SC, "score_items", lambda pool, rows, done, root: (
+    monkeypatch.setattr(SC, "score_items", lambda rows, done, root: (
         [{"item_id": r["key"], "samples": samples(r["key"], 0.0)} for r in rows], []))
     (tmp_path / "e1/shifted").mkdir(parents=True)
     (tmp_path / "e1/shifted/items.jsonl").write_text(
         "".join(json.dumps({"item_id": i, "samples": samples(i, shift)}) + "\n" for i in keys))
     a = SimpleNamespace(shifted=tmp_path / "view", run=tmp_path / "run", k=8, sampler="vllm")
-    r = SC.hf_check(a, "e1", tmp_path, None)
+    r = SC.hf_check(a, "e1", tmp_path)
     assert seen == {"items": SC.HF_CHECK_ITEMS, "sampler": "hf", "out": tmp_path / "e1/hf-check"}
     assert r["items"] == SC.HF_CHECK_ITEMS and r["pass"] is ok and set(r["vllm_minus_hf"]) == set(SC.HF_CHECK_KEYS)
     assert r["vllm_minus_hf"]["iou_tc"][0] == pytest.approx(shift)
@@ -147,7 +146,6 @@ def _c2_run(tmp_path, monkeypatch, names=("e1",)):
     monkeypatch.setattr(SC, "score_view", _boom)
     monkeypatch.setattr(SC, "vision_check", _boom)
     monkeypatch.setattr(serve, "preload", _boom)
-    monkeypatch.setattr(serve, "fork_pool", _boom)
     monkeypatch.setattr(probes, "score_precision", _boom)
     topo = {"bins": [[1.0], [0.5], [0.0]], "false_nonsimple": 0.0, "legal": 1.0, "pass": True}
     monkeypatch.setattr(probes, "score_topology", lambda rows, root: topo | {"rows": len(rows), "root": str(root)})

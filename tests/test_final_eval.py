@@ -540,7 +540,7 @@ def rescore(src, ev, out, split="val"):
 
 
 def strip_seconds(doc):
-    return {k: v for k, v in doc.items() if k not in ("seconds", "rescored_from")}
+    return {k: v for k, v in doc.items() if k not in ("seconds", "rescored_from", "engine")}
 
 
 def test_rescore_is_bit_identical(ev, tmp_path, monkeypatch):
@@ -976,7 +976,7 @@ def test_rescore_of_300_items_is_fast(tmp_path, clean_store, monkeypatch, synthe
 
 def test_rescore_is_repeatable_across_processes(ev, tmp_path, monkeypatch):
     """E02 (A3 part): two fresh processes with other hash seeds and thread counts write the same final_eval.json,
-    apart from seconds and code_sha."""
+    apart from seconds, code_sha and the engine record's eval_sets wall time."""
     src = tmp_path / "src"
     run_fe(ev, src, monkeypatch)
     docs = []
@@ -987,21 +987,9 @@ def test_rescore_is_repeatable_across_processes(ev, tmp_path, monkeypatch):
                         str(ev), "--split", "val", "--out", str(out)], cwd=ROOT, env=env, check=True,
                        capture_output=True)
         doc = json.loads((out / "final_eval.json").read_text())
+        doc["engine"].pop("eval_sets_s")  # a wall time, as seconds
         docs.append({k: v for k, v in doc.items() if k not in ("seconds", "code_sha")})
     assert docs[0] == docs[1]
-
-
-def test_a_cuda_build_scores_on_one_worker(monkeypatch):
-    """A3: on the CUDA build final_eval forks one scoring worker (no forked CUDA context), else serve.pool_size()."""
-    from objdel.train import serve
-
-    sizes = []
-    monkeypatch.setattr(serve, "fork_pool", lambda n, *a: sizes.append(n))
-    monkeypatch.setattr(serve, "pool_size", lambda: 5)
-    for build in ("cuda", "cpu"):
-        monkeypatch.setattr(FE._gpucheck, "build", lambda b=build: b)
-        FE._pool()
-    assert sizes == [1, 5]
 
 
 # --------------------------------------------------------------------------------- frozen views (B1.6, E05, I28)

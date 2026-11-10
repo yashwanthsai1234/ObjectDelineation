@@ -8,7 +8,7 @@ prompts per step (disagreement items x4), vLLM colocate generation (owner 2026-1
 sequences needs 20-51 GiB of KV cache; needs the Phase 3 single-venv image, D15), sampling from
 configs.sampling(model, "grpo") (D13);
 fast.FastGRPO (per-chunk trimmed forwards, a per-step vision cache: perf C1, C6), TRLReward on the
-preloaded caches and a fork pool made before the model loads. Probe set: a seeded subset of `items`
+preloaded caches; the probe metrics run in this process (D7). Probe set: a seeded subset of `items`
 (128) shifted-val records (select_ckpt.view_rows), K = 8 through the trainer's own generation (sample.sample), twice
 at step 0 (the null, h0) and once at step 20; per item the raw composite R. Verdict: prereg.g_probe, step-0 legal =
 the mean of both draws. Also: Spearman of step-0 sd_geom / r_std / mixed with the gain (D12 veto, §6.2), the
@@ -32,20 +32,20 @@ from pathlib import Path
 import numpy as np
 
 from experiments.phase2.prereg import G_PROBE, g_probe
-from experiments.phase2.select_ckpt import score_items, view_rows  # before the pool forks (no import in a child)
+from experiments.phase2.select_ckpt import score_items, view_rows
 from objdel.eval import signal
 
 SEEDS = (11, 12, 13)  # step-0 draw a, step-0 draw b, step 20
 
 
-def score(trainer, rows, probe_root: Path, pool, seed: int) -> dict:
+def score(trainer, rows, probe_root: Path, seed: int) -> dict:
     """K = 8 samples per probe row -> per-item panel metrics."""
     import torch
 
     from objdel.train import sample
 
     torch.manual_seed(seed)
-    _, groups = score_items(pool, rows, {d["item_id"]: d for d in sample.sample(trainer, rows, 8)}, probe_root)
+    _, groups = score_items(rows, {d["item_id"]: d for d in sample.sample(trainer, rows, 8)}, probe_root)
     m = signal.per_item(groups)
     ids = [g["item_id"] for g in groups]
     return {"ids": ids, "per_item": m, "legal": float(np.mean(m["legal"])), "sigma_share": float(np.mean(m["sigma"]))}
@@ -134,16 +134,16 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     return trainer, proc, lr
 
 
-def probe(a, ckpt: Path, train, rows, pool) -> dict:
+def probe(a, ckpt: Path, train, rows) -> dict:
     """One G-probe run on one checkpoint."""
     trainer, _, lr = make_trainer(a, ckpt, train, G_PROBE["steps"])
     cfg = trainer.args
     t0 = time.time()
-    s0a, s0b = (score(trainer, rows, a.probe.resolve(), pool, s) for s in SEEDS[:2])
+    s0a, s0b = (score(trainer, rows, a.probe.resolve(), s) for s in SEEDS[:2])
     t1 = time.time()
     trainer.train()
     t2 = time.time()
-    s20 = score(trainer, rows, a.probe.resolve(), pool, SEEDS[2])
+    s20 = score(trainer, rows, a.probe.resolve(), SEEDS[2])
     r0a, r0b, r20 = (s["per_item"]["r_mean"] for s in (s0a, s0b, s20))
     step0 = {k: (s0a["per_item"][k] + s0b["per_item"][k]) / 2 for k in ("sd_geom", "r_std", "mixed")}
     log = trainer.state.log_history
@@ -169,7 +169,6 @@ def main(argv=None) -> int:
     ap.add_argument("--probe", type=Path, required=True, help="shifted-val eval view")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--items", type=int, help="probe items (default prereg.G_PROBE['items'])")
-    ap.add_argument("--procs", type=int, default=serve.pool_size(), help="scoring workers (default: usable CPUs - 1)")
     ap.add_argument("--grpo", default="{}", help="JSON overrides of configs.grpo_config (smoke tests)")
     ap.add_argument("--compile", choices=["default", "reduce-overhead"],
                     help="Stage F arm: torch.compile the text decoder layers (measured; off by default)")
@@ -187,7 +186,6 @@ def main(argv=None) -> int:
         ckpts = [Path(sel["run"]) / "branches" / n for n in candidates(sel)]
     for root in (a.train, a.probe):
         serve.preload(root, ["lidc"])
-    pool = serve.fork_pool(a.procs)  # before the model and CUDA (D14)
     from PIL import Image
 
     from objdel.train import dataset
@@ -197,11 +195,10 @@ def main(argv=None) -> int:
     rows = [r | {"image": Image.open(r["image"]).convert("RGB")} for r in rows]
     docs = []
     for ckpt in ckpts:  # at most the selected branch and one repair branch
-        docs.append(probe(a, ckpt, train, rows, pool))
+        docs.append(probe(a, ckpt, train, rows))
         gc.collect()  # the trainer's reference cycles hold the model
         if docs[-1]["verdict"] == "PASS":
             break
-    pool.shutdown()
     return save(a.out, docs[-1] | {"probed": [c.name for c in ckpts[: len(docs)]], "earlier": docs[:-1]})
 
 

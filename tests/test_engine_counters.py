@@ -21,7 +21,8 @@ from objdel.reward import ExpertCache
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = (4, 2)  # (waits, drain_syncs) per score_polygons call before D5 (gpucheck.cpp score_polygons, score_words)
-EVENTS = ("waits", "drain_syncs", "label_pairs", "sync_alloc", "sync_free", "pool_allocs", "pool_frees", "pinned_grows")
+EVENTS = ("waits", "drain_syncs", "label_pairs", "sync_alloc", "sync_free", "pool_allocs", "pool_frees", "pinned_grows",
+          "eval_scratch_peak")
 STATE = ("arena_bytes", "table_bytes", "live_device_bytes", "contexts", "pool_reserved", "default_pool_reserved")
 OUT_BOUND = 512 * 64 * 4  # the out staging bound (gpucheck.cpp kStageObjects x kStageComps signature entries)
 
