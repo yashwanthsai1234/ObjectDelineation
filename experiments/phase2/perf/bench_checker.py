@@ -43,7 +43,6 @@ from pathlib import Path
 import numpy as np
 
 from objdel import _gpucheck as gc
-from objdel.hashing import file_sha256
 
 SEED = 20261108
 REPLAY_ROWS = 256
@@ -57,6 +56,13 @@ TABLE_ARGS = ("raters", "uni", "core", "vote", "dist", "rater_area", "voter", "s
 
 def data_root() -> Path:
     return Path(os.environ.get("OBJDEL_DATA_ROOT") or "data").resolve()
+
+
+def file_sha256(path: Path) -> str:
+    """SHA-256 hex digest of the file. Not objdel.hashing: --engine old runs this module in the pre-D2 venv, whose
+    objdel has no hashing module (only the standard library, numpy and objdel._gpucheck; tests/test_bench_checker S10)."""
+    with open(path, "rb") as f:
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def need(root: Path, rels) -> dict:
