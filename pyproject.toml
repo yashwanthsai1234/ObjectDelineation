@@ -152,18 +152,19 @@ root_package = "objdel"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-id = "layers-interim"  # each move commit sets its own list (Implementation.md E0 table); E2 appends "core"
-name = "objdel layers (current packages)"
+id = "layers"  # the E8 target form (Implementation.md E0 table, E8.4): exhaustive, no ignore_imports
+name = "objdel layers"
 type = "layers"
 containers = ["objdel"]
 layers = ["infra", "rl | sft", "policy", "data", "verify", "geom", "core"]
-exhaustive = false
-broken_contract_guidance = "Move the import down or the code up."
+exhaustive = true
+exhaustive_ignores = ["_gpucheck"]
+broken_contract_guidance = "Move the import down or the code up, or inject the dependency (docs/architecture/layers.md)."
 
 [[tool.importlinter.contracts]]
 id = "pure-core"
 name = "the verifier side never imports the ML stack"
 type = "forbidden"
-source_modules = ["objdel.geom", "objdel.verify", "objdel.data"]
+source_modules = ["objdel.core", "objdel.geom", "objdel.verify", "objdel.data"]
 forbidden_modules = ["torch", "trl", "transformers", "peft", "vllm", "datasets", "accelerate"]
-broken_contract_guidance = "torch and friends live in objdel.policy / rl / sft only."
+broken_contract_guidance = "torch and friends live in objdel.policy / rl / sft only (docs/architecture/layers.md)."
