@@ -477,6 +477,26 @@ def test_step_time_is_the_gap_between_logs_without_a_sync(monkeypatch):
     assert [x.get("time/step_s") for x in logged] == [None, [30.0], [35.0]]
 
 
+def test_sync_calls_is_the_count_of_syncs_between_logs(monkeypatch):
+    """G-SP2: time/sync_calls is one value per log, the sync calls since the previous log (a step with none logs 0);
+    a trainer whose phases are not timed logs no such key."""
+    from types import SimpleNamespace
+
+    logged = capture_log(monkeypatch)
+    t = fake_trainer()
+    t.log({})
+    t._metrics["train"].clear()
+    t.vllm_generation = SimpleNamespace(llm=SimpleNamespace(wake_up=lambda tags=None: None, sleep=lambda level=1: None),
+                                        sync_weights=lambda: None)  # fmt: skip
+    t.time_vllm_phases()
+    for calls in (1, 2, 0):
+        for _ in range(calls):
+            t.vllm_generation.sync_weights()
+        t.log({})
+        t._metrics["train"].clear()
+    assert [x.get("time/sync_calls") for x in logged] == [None, [1], [2], [0]]
+
+
 def test_log_adds_no_host_read(monkeypatch):
     """Q03: with the counters, the step time and the NVTX range, log reads the device once (the stats), as before."""
     from objdel.train import fast

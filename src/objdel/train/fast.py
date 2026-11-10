@@ -922,6 +922,7 @@ class FastGRPO(FastForward, GRPOTrainer):
     count_syncs = False  # C0, train_rl --count-syncs: perf/host_syncs/<phase> per timed phase
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
+    sync_calls = None  # weight syncs since the previous `log`, counted once time_vllm_phases wraps sync_weights
     group_requests = False  # C6, train_rl --group-requests: vLLM gets one n = G request per prompt (vllm_requests)
     opsm_watch = None  # B2.4 rule 4: callbacks.OpsmDelta, fed the train-mode per-sequence (seq_kl, advantage) rows
     log_by_prompt = False  # B2.3: train logs also hold rewards/iou_tc/by_prompt (one mean per prompt of the step)
@@ -1125,6 +1126,9 @@ class FastGRPO(FastForward, GRPOTrainer):
                 end.synchronize()  # long done: TRL's loss read and the stats read above waited for the stream
                 self._metrics[mode][f"time/{phase}_s"].append(start.elapsed_time(end) / 1e3)
             self.cuda_times = None
+            if self.sync_calls is not None:
+                m["time/sync_calls"].append(self.sync_calls)
+                self.sync_calls = 0
             if self.log_by_prompt and train:  # B2.3; reward_funcs read only when asked (fake trainers have none)
                 reward = next((f.trl_reward for f in self.reward_funcs if hasattr(f, "trl_reward")), None)
                 if reward is not None:
@@ -1238,11 +1242,12 @@ class FastGRPO(FastForward, GRPOTrainer):
                 self._metrics[mode][f"time/{phase}_s"].append(time.perf_counter() - t)
 
     def time_vllm_phases(self):
-        """time/sync_s (weight push, with its weights wake-up), time/wake_weights_s and time/wake_kv_s (by the wake_up
-        `tags`; any other call charges time/wake_s, so no wake time is lost) and time/sleep_s: the colocate handovers
-        where the GPU idles between generation and training. Idempotent; the engine exists only after TRL's vLLM
-        init."""
+        """time/sync_s (weight push, with its weights wake-up), time/sync_calls (pushes per step, logged by `log`),
+        time/wake_weights_s and time/wake_kv_s (by the wake_up `tags`; any other call charges time/wake_s, so no wake
+        time is lost) and time/sleep_s: the colocate handovers where the GPU idles between generation and training.
+        Idempotent; the engine exists only after TRL's vLLM init."""
         vg = self.vllm_generation
+        self.sync_calls = self.sync_calls or 0
         hooks = ((vg, "sync_weights", "sync"), (vg.llm, "wake_up", "wake"), (vg.llm, "sleep", "sleep"))
         for host, name, phase in hooks:
             fn = getattr(host, name)
@@ -1250,6 +1255,8 @@ class FastGRPO(FastForward, GRPOTrainer):
                 continue
 
             def wrapped(*args, _fn=fn, _phase=phase, **kwargs):
+                if _phase == "sync":
+                    self.sync_calls += 1
                 if _phase == "wake":
                     _phase = WAKE_PHASE.get(tuple((args[0] if args else kwargs.get("tags")) or ()), _phase)
                 with self.timed(_phase):
