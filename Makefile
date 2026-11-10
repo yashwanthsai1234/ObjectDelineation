@@ -3,7 +3,7 @@ PY := .venv/bin/python
 EXT_SRC := CMakeLists.txt cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
 EXT_STAMP := build/.gpucheck-stamp
 
-.PHONY: setup build test test-all cov lint dead sweep fmt wheels cuda preflight docs docs-serve headline
+.PHONY: setup build test test-all cov lint dead sweep fmt wheels cuda gpu-check preflight docs docs-serve headline
 
 setup:            ## create .venv and install the package (editable, all extras); builds the C++ extension
 	uv venv --python 3.12
@@ -51,6 +51,9 @@ cuda:             ## rebuild objdel._gpucheck with nvcc (CUDA box; nvcc = $CUDAC
 		$(if $(CUDA_ARCHS),-C "cmake.define.CMAKE_CUDA_ARCHITECTURES=$(CUDA_ARCHS)")
 	$(PY) -I -c "from objdel import _gpucheck as g; assert g.build() == 'cuda'; print('_gpucheck: cuda build,', g.device_count(), 'device(s)')"
 	@mkdir -p build && touch $(EXT_STAMP)
+
+gpu-check:        ## the GPU check chain on a CUDA box (run_box.sh --gpu-check); DRY=1 prints it and collects its tests
+	PY=$(PY) bash experiments/cuda_checker/run_box.sh --gpu-check $(if $(DRY),--dry)
 
 docs:             ## build the docs site into site/ (strict: any warning fails)
 	.venv/bin/zensical build --strict

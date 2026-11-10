@@ -76,8 +76,6 @@ def test_gpu_check_step_follows_the_d8_form():
                           "--gpu-check;")
     assert f"echo $rc > {RD}/gpu_check.exit" in cmd and cmd.endswith("exit $rc")
     box = (ROOT / "experiments/cuda_checker/run_box.sh").read_text()
-    if "--gpu-check" not in box:
-        pytest.skip("D8 (lane L3b) adds --gpu-check to run_box.sh; the step joins it at the merge")
     assert "OBJDEL_RUN_DIR" in box  # $OUT = $OBJDEL_RUN_DIR/d, which pull.sh brings back
 
 

@@ -1,0 +1,9 @@
+# Phase D's GPU test (Implementation.md D8, R-D2; run file of run.sh, never stamped). Runs only after the LIDC bundle
+# sync (sync_up.sh <run>), whose {data} holds checker_eval/masks.npz. Outputs: {rd}/d/ (gpu.xml, sanitize.jsonl).
+#   1  make gpu-check = run_box.sh --gpu-check: CUDA build, pytest on D_GPU_TESTS (determinism included, no skip
+#      allowed), the 4 compute-sanitizer tools on the sanitizer corpus
+#   2  A's two box tests G02b and G03 on the CUDA build step 1 left in /opt/venv (A.9.6): not in D_GPU_TESTS, because
+#      tests/test_a_gpu.py also holds G08, which skips while the boundary IoU is CPU-only
+steps:
+  - [bash, -c, "OBJDEL_DATA_ROOT={data} PY=/opt/venv/bin/python bash experiments/cuda_checker/run_box.sh --gpu-check"]
+  - [bash, -c, "/opt/venv/bin/python -I -c 'import objdel._gpucheck as g; assert g.build() == \"cuda\"' && OBJDEL_DATA_ROOT={data} /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_a_gpu.py::test_g02b_builds tests/test_a_gpu.py::test_g03_device_bytes"]
