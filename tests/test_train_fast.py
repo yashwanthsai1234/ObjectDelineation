@@ -6,12 +6,15 @@ run on a tiny random Qwen3-VL (CPU, fp32) with TRL's fused LM head.
 
 import collections
 import contextlib
+import functools
 import json
 import math
 import time
 
 import numpy as np
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
@@ -1226,6 +1229,71 @@ def test_rope_positions_equal_get_rope_index_and_flag_rows_off_the_template():
     assert fast.rope_positions(tmpl, odd, mask, mm)[1].tolist() == [True, False, False, False, False]
     assert fast.rope_positions(tmpl, ids, mask, mm_odd)[1].tolist() == [False, False, True, False, False]
     assert fast.rope_positions(tmpl, ids, short, mm * short)[1].tolist() == [False, True, False, False, False]
+
+
+@functools.cache
+def rope_model():
+    return tiny_model()
+
+
+@settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(rows=st.lists(st.tuples(st.integers(0, 40), st.integers(0, 6), st.booleans()), min_size=1, max_size=6),
+       seed=st.integers(0, 2**16))  # fmt: skip
+def test_rope_positions_equal_get_rope_index_on_random_rows(rows, seed):
+    """C2 property: any answer lengths, left pads, a mask hole or a masked (truncated) answer: rope_positions equals
+    get_rope_index on every column and no row is bad."""
+    m, g = rope_model(), torch.Generator().manual_seed(seed)
+    prompt = [5, 6, START, *[IMG] * 4, END, 7, 8, 9]
+    answers = [torch.randint(0, 99, (n,), generator=g).tolist() for n, _, _ in rows]
+    ids, mask, mm = rope_rows(prompt, answers, [p for _, p, _ in rows], W=6 + len(prompt) + 40)
+    for r, (n, p, odd) in enumerate(rows):
+        if odd and n > 1:
+            mask[r, p + len(prompt) + int(torch.randint(0, n, (1,), generator=g))] = 0  # a hole in the answer
+        elif odd:
+            mask[r, p + len(prompt):] = 0  # a truncated answer, masked
+    mm = mm * mask
+    grid = torch.tensor([[1, 4, 4]])
+    tmpl = fast.rope_template(m.model, torch.tensor(prompt), (torch.tensor(prompt) == IMG).long(), grid)
+    pos, bad = fast.rope_positions(tmpl, ids, mask, mm)
+    want, _ = m.model.get_rope_index(ids, mm_token_type_ids=mm, image_grid_thw=grid.repeat(len(rows), 1),
+                                     attention_mask=mask)  # fmt: skip
+    assert torch.equal(pos, want) and not bad.any()
+
+
+def test_rope_positions_equal_get_rope_index_on_the_real_lidc_prompt():
+    """C2: the real processor's LIDC prompt (325 tokens, grid (1, 32, 32)) on a model with the real vision token ids:
+    answers of 0, 1, 131 and 1,536 tokens, left pads, a mask hole and a truncated masked row equal get_rope_index;
+    an image pad in an answer sets bad."""
+    import PIL.Image
+    from transformers import AutoConfig, AutoProcessor
+
+    from objdel.train import dataset
+
+    try:
+        name = "Qwen/Qwen3-VL-2B-Instruct"
+        proc, cfg = AutoProcessor.from_pretrained(name, local_files_only=True), AutoConfig.from_pretrained(
+            name, local_files_only=True)
+    except OSError:
+        pytest.skip("the Qwen3-VL processor is not in the local HF cache")
+    text = proc.apply_chat_template([dataset._user("lidc")], add_generation_prompt=True, tokenize=False)
+    one = proc(text=[text], images=[PIL.Image.new("RGB", (512, 512))], return_tensors="pt")
+    prompt, grid = one["input_ids"][0].tolist(), one["image_grid_thw"]
+    assert len(prompt) == 325 and grid.tolist() == [[1, 32, 32]]
+    m = tiny_model(vocab_size=cfg.text_config.vocab_size, img=cfg.image_token_id, video=cfg.video_token_id,
+                   start=cfg.vision_start_token_id, end=cfg.vision_end_token_id)  # fmt: skip
+    g = torch.Generator().manual_seed(5)
+    answers = [torch.randint(0, 151000, (n,), generator=g).tolist() for n in (0, 1, 131, 1536, 131)]
+    ids, mask, _ = rope_rows(prompt, answers, [3, 0, 2, 0, 1], W=325 + 1536 + 3)
+    mm = (ids == cfg.image_token_id).long() * mask
+    mask[2, 2 + 325 + 7] = 0  # a hole
+    mask[4, 1 + 325:] = 0  # truncated and masked
+    mm = mm * mask
+    tmpl = fast.rope_template(m.model, torch.tensor(prompt), one["mm_token_type_ids"][0], grid)
+    pos, bad = fast.rope_positions(tmpl, ids, mask, mm)
+    want, _ = m.model.get_rope_index(ids, mm_token_type_ids=mm, image_grid_thw=grid.repeat(5, 1), attention_mask=mask)
+    assert torch.equal(pos, want) and not bad.any()
+    mm[3, 325 + 10] = 1  # an image token in an answer
+    assert fast.rope_positions(tmpl, ids, mask, mm)[1].tolist() == [False, False, False, True, False]
 
 
 def test_rope_bad_rows_routes_on_host_data_only():
