@@ -130,6 +130,7 @@ class TRLReward:
         self.aggregator = aggregator(spec)
         self.codes: set[str] = set()
         self._last = (None, None)
+        self.by_prompt: list[float] | None = None  # the last call's gated IoU_tc, mean per prompt (B2.3 bootstrap)
         self._ahead, self._thread = None, None
 
     def funcs(self) -> tuple[list[Callable], list[float]]:
@@ -181,6 +182,7 @@ class TRLReward:
                 i = int(np.flatnonzero(~np.isfinite(v).reshape(len(v), -1).all(1))[0])
                 raise ValueError(f"reward term {n} is not finite ({v[i]}) for key {keys[i]}")
         legal = legal_gate(T)
+        self.by_prompt = (T["iou_tc"] * legal).reshape(-1, g).mean(1).tolist()
         out = {n: (T[n] * legal if n in GATED else T[n]).tolist() for n in LOGGED[:-1]}
         out["r_topo"] = topology_reward(T, g, self.spec).tolist()
         adv = advantages_v5(T, g, self.spec) if isinstance(self.spec, RewardV5) else advantages_v4(T)

@@ -77,6 +77,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     `over` and a.grpo's JSON overrides. check(config) runs before the model loads (train_rl's sampler guards); calls:
     more callbacks; reward: the reward spec (objdel.reward.REWARDS; None: reward v4); eval_dataset: rows of the view
     a.heldout (its caches resolve first). Shared by the G-probe and the full run (train_rl)."""
+    import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl import GRPOTrainer
 
@@ -91,7 +92,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     cfg = configs.grpo_config(a.model, str(a.out / "trainer"), reward=reward, **over)
     if check:
         check(cfg)
-    model = AutoModelForImageTextToText.from_pretrained(ckpt)
+    model = AutoModelForImageTextToText.from_pretrained(ckpt, **({"dtype": torch.float16} if cfg.fp16 else {}))
     proc = AutoProcessor.from_pretrained(ckpt, **configs.processor_kwargs(a.model, "lidc"))
     roots = [a.train] if eval_dataset is None else [a.heldout, a.train]
     funcs, _ = rewards.TRLReward(serve.loader(*roots), rewards.stop_ids(model, proc), spec=reward).funcs()
@@ -107,6 +108,7 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     # FastGRPO: pack each group's prompt once; off when compiled (packed widths are not bucketed: a recompile each)
     trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)
     trainer.group_requests = bool(getattr(a, "group_requests", False))  # C6: one n = G vLLM request per prompt
+    trainer.runaway_cap = bool(getattr(a, "runaway_cap", 0))  # C11: each prompt's max_tokens from the rows' `cap`
     if getattr(a, "fast_sync", False) and not vllm_sync.install(trainer):  # C5: one load_weights call per sync
         raise ValueError("--fast-sync needs a colocate vLLM on one process with a LoRA model")
     trainer.count_syncs = bool(getattr(a, "count_syncs", False))  # C0
@@ -115,6 +117,10 @@ def make_trainer(a, ckpt: Path, train, steps: int, eval_dataset=None, check=None
     if getattr(a, "gpu_pixels", "off") == "auto":  # C1: 8 training images for the start-up self-check
         imgs = [train[i]["image"] for i in range(min(8, len(train)))]
         print(f"gpu_pixels/backend={trainer.use_gpu_pixels(imgs, getattr(a, 'allow_cpu_pixels', False))}")
+    trainer.log_by_prompt = bool(getattr(a, "log_by_prompt", False))
+    if cfg.off_policy_mask_threshold is not None and cls is fast.FastGRPO:  # bf16-tis-opsm: B2.4 rule 4's live delta
+        trainer.opsm_watch = callbacks.OpsmDelta(trainer, cfg.output_dir)
+        trainer.add_callback(trainer.opsm_watch)
     if getattr(a, "compile", None):
         fast.compile_text_layers(trainer.model, a.compile)
         trainer.buckets = fast.BUCKETS  # few shapes for the compiled layers

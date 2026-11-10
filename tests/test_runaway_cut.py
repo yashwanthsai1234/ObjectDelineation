@@ -117,3 +117,18 @@ def test_sizing_refuses_a_test_split(tmp_path):
     runaway_cut.refuse_test(fixture(tmp_path, [10], [0.5]) / "answers.jsonl", "val")
     with pytest.raises(ValueError, match="test"):
         runaway_cut.refuse_test(tmp_path / "eval_val" / "answers.jsonl", "test")
+
+
+def test_row_caps_follow_each_rows_own_outline():
+    """C11 start-up: one cap per RL row, from the record of the row's key (a view has its own record and targets)."""
+    records = [{"item_id": "a", "targets": ["x" * 10, None]}, {"item_id": "b", "targets": ["y" * 1000, "y"]}]
+    caps = runaway.row_caps(["b", "a", "a"], records, len, 1536, 1.5, 64)
+    assert caps == [1536, 81, 81]  # a: ceil(1.5 x 11) = 17, + 64; b: capped by L
+
+
+def test_runaway_cap_refuses_group_requests():
+    """One request of n = G has one max_tokens: it cannot carry a cap per row."""
+    with pytest.raises(ValueError, match="group-requests"):
+        a = args(runaway_cap="1.5", grpo='{"mask_truncated_completions": false}')
+        a.group_requests = True
+        train_rl.check_flags(a)

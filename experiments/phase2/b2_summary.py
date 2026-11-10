@@ -5,7 +5,7 @@
     python -I -m experiments.phase2.b2_summary summary --fp16 RD/b2-fp16 --b1 RD/b1-rows
 
 The fp16 arm's bootstrap needs the per-prompt `rewards/iou_tc/by_prompt` (32 values per step) in each rl.json log
-entry; TRL's own log holds only the step mean (see impl-log/B2.md).
+entry (train_rl --log-by-prompt).
 
 The functions are pure over the B1 run's records: `<run>/rl.json` (the `cf/*` stats of B2.1 per step),
 `<run>/trainer/seq_gaps.f32` (steps x rows x 3 float32: seq_kl, advantage, valid_tokens) and B2.0's table.

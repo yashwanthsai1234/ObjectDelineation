@@ -54,8 +54,8 @@ def test_budget_stop_threshold(rate, cap, hours):
 
 
 def test_budget_stop_edges():
-    with pytest.raises(ValueError, match="must be > 0"):  # cap 0 is refused (BR1-rl), not a stop at the first step
-        budget(1.0, 0.0, start=50.0)
+    cb, now = budget(1.0, 0.0, start=50.0)
+    assert step(cb, now, 50.0).should_training_stop  # cap 0: the first step
     cb, now = budget(1.0, 1.0, start=1000.0)
     assert not step(cb, now, 0.0).should_training_stop  # a clock behind the session start never trips
     for rate in (0.0, -1.0):
@@ -426,9 +426,12 @@ def test_unknown_numerics_is_refused(capsys, monkeypatch):
     assert "bf16-fp8" in refused(capsys, *TRAIN, "--numerics", "bf16-fp8", monkeypatch=monkeypatch)
 
 
-@pytest.mark.parametrize("name", ["fp16-seqmask", "lora-seqmask"])
-def test_presets_that_need_fastgrpo_plumbing_are_refused_until_it_lands(capsys, monkeypatch, name):
-    assert "FastGRPO" in refused(capsys, *TRAIN, "--numerics", name, monkeypatch=monkeypatch)
+def test_lora_seqmask_is_refused_until_the_lora_serving_plumbing_lands(capsys, monkeypatch):
+    assert "FastGRPO" in refused(capsys, *TRAIN, "--numerics", "lora-seqmask", monkeypatch=monkeypatch)
+
+
+def test_fp16_seqmask_parses(monkeypatch):
+    assert parse(*TRAIN, "--numerics", "fp16-seqmask", monkeypatch=monkeypatch).numerics == "fp16-seqmask"
 
 
 def test_opsm_start_delta_only_with_the_opsm_preset(capsys, monkeypatch):

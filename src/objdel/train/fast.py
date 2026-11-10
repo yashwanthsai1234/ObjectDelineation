@@ -29,7 +29,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
-from objdel.train import nvtx, trl_adapter, vllm_requests
+from objdel.train import nvtx, runaway, trl_adapter, vllm_requests
 from objdel.train.dataset import OpenOnce
 
 BUCKETS = (256, 384, 512, 768, 1024, 1280, 1536, 2048)  # total prompt + completion widths, compiled layers
@@ -803,6 +803,23 @@ class ImageMemo:
             return BatchFeature(data, tensor_type=kwargs.get("return_tensors"))
 
 
+@contextlib.contextmanager
+def vllm_kwargs(**kw):
+    """Inside the block TRL's module-level `LLM` (imported at trl/generation/vllm_generation.py top) gets these
+    keyword arguments; no `kw` leaves it alone."""
+    if not kw:
+        yield
+        return
+    import trl.generation.vllm_generation as vg
+
+    orig = vg.LLM
+    vg.LLM = functools.partial(orig, **kw)
+    try:
+        yield
+    finally:
+        vg.LLM = orig
+
+
 class FastGRPO(FastForward, GRPOTrainer):
     """GRPOTrainer with the per-chunk windows, the vision cache (cleared per generation batch), rewards scored while
     the old and reference logprobs run (C9), phase timers and no FLOP count."""
@@ -820,10 +837,16 @@ class FastGRPO(FastForward, GRPOTrainer):
     cuda_times = None  # OBJDEL_NVTX_SYNC=0: (mode, phase, start, end) CUDA event pairs of `timed`, read by `log`
     last_log = None  # perf_counter at the previous `log` (time/step_s)
     group_requests = False  # C6, train_rl --group-requests: vLLM gets one n = G request per prompt (vllm_requests)
+    opsm_watch = None  # B2.4 rule 4: callbacks.OpsmDelta, fed the train-mode per-sequence (seq_kl, advantage) rows
+    log_by_prompt = False  # B2.3: train logs also hold rewards/iou_tc/by_prompt (one mean per prompt of the step)
+    runaway_cap = False  # C11, train_rl --runaway-cap: max_tokens per prompt from the rows' `cap` (runaway)
 
     def __init__(self, *args, **kwargs):
         trl_adapter.check()  # the private TRL names this class relies on, before TRL builds anything
-        super().__init__(*args, **kwargs)
+        fp16 = getattr(kwargs.get("args"), "fp16", False)
+        with vllm_kwargs(**({"dtype": "float16"} if fp16 else {})):  # TRL builds its vLLM engine without a dtype
+            super().__init__(*args, **kwargs)
+        self.check_engine_dtype()
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
         self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
@@ -855,9 +878,18 @@ class FastGRPO(FastForward, GRPOTrainer):
         vg._iter_named_params = lambda: lora_merged_params(vg.model)
         return True
 
+    def check_engine_dtype(self) -> None:
+        """fp16 runs only: the vLLM engine must hold float16 (the vllm_kwargs patch took effect)."""
+        vg = getattr(self, "vllm_generation", None)
+        if vg is None or not getattr(self.args, "fp16", False):
+            return
+        got = vg.llm.llm_engine.model_config.dtype
+        if got != torch.float16:
+            raise RuntimeError(f"fp16 run, but the vLLM engine dtype is {got}, not torch.float16")
+
     def drop_lora_input_cast(self) -> bool:
-        """no_lora_input_cast when TRL trains in bf16 (Accelerate then runs every forward under bf16 autocast)."""
-        if not getattr(self.args, "bf16", False):
+        """no_lora_input_cast when TRL trains in bf16 or fp16 (Accelerate then runs every forward under autocast)."""
+        if not (getattr(self.args, "bf16", False) or getattr(self.args, "fp16", False)):
             return False
         no_lora_input_cast(self.model)
         return True
@@ -963,7 +995,10 @@ class FastGRPO(FastForward, GRPOTrainer):
         new = is_summary(logps, sampling, mask, r, adv, mode, lo, hi, self.off_policy_mask_threshold)
         self.is_stats = merge_summary(self.is_stats, new)
         if self.model.training:  # eval rows inform the eval metrics only; they never enter seq_gaps (B2.1, R01c)
-            rows = torch.stack([seq_kl(logps, sampling, mask), adv.to(logps.dtype), mask.sum(-1).to(logps.dtype)], 1)
+            kl = seq_kl(logps, sampling, mask)
+            rows = torch.stack([kl, adv.to(logps.dtype), mask.sum(-1).to(logps.dtype)], 1)
+            if self.opsm_watch is not None:
+                self.opsm_watch.add(kl, adv)
             self.seq_gaps = [*self.seq_gaps, rows.float()]
 
     def log(self, logs, start_time=None):
@@ -998,6 +1033,10 @@ class FastGRPO(FastForward, GRPOTrainer):
                 end.synchronize()  # long done: TRL's loss read and the stats read above waited for the stream
                 self._metrics[mode][f"time/{phase}_s"].append(start.elapsed_time(end) / 1e3)
             self.cuda_times = None
+            if self.log_by_prompt and train:  # B2.3; reward_funcs read only when asked (fake trainers have none)
+                reward = next((f.trl_reward for f in self.reward_funcs if hasattr(f, "trl_reward")), None)
+                if reward is not None:
+                    logs = {**logs, "rewards/iou_tc/by_prompt": reward.by_prompt}
             return super().log(logs, start_time)
 
     def _generate(self, prompts):
@@ -1013,7 +1052,15 @@ class FastGRPO(FastForward, GRPOTrainer):
             self.meta = row_meta(out[0], out[1], image_ids(self.rows), self.num_generations,
                                  self.mask_truncated_completions, eos_and_pad)  # fmt: skip
         self.prefetch_rewards(out[3], out[1])
+        self.log_capped(out[1])
         return out
+
+    def log_capped(self, completion_ids):
+        """C11: completions/capped_share, the share of this batch's answers that reached their row's cap."""
+        if self.runaway_cap and self.rows is not None:
+            hit = [len(ids) >= r["cap"] for ids, r in zip(completion_ids, self.rows, strict=True)]
+            self._metrics["train" if self.model.training else "eval"]["completions/capped_share"].append(
+                sum(hit) / len(hit))
 
     def prefetch_rewards(self, completions, completion_ids):
         """Start scoring (objdel.train.rewards.TRLReward.prefetch) on the answers vLLM just returned, with the
@@ -1111,6 +1158,17 @@ class FastGRPO(FastForward, GRPOTrainer):
 
         one_pad.one_pad = True
         llm.generate = one_pad
+        if self.runaway_cap:  # C11: the generation batch's rows hold the caps; outside one (g_probe) the limit stays
+
+            def capped(prompts, *args, sampling_params=None, **kwargs):
+                if self.rows is not None:
+                    if len(self.rows) != len(prompts):
+                        raise ValueError(f"{len(self.rows)} caps for {len(prompts)} prompts")
+                    sampling_params = runaway.per_row_params(sampling_params, [r["cap"] for r in self.rows])
+                return one_pad(prompts, *args, sampling_params=sampling_params, **kwargs)
+
+            capped.one_pad = True
+            llm.generate = capped
         if self.group_requests:  # C6: outside one_pad, so its check compares the 32 sent prompts
 
             def by_group(prompts, *args, **kwargs):

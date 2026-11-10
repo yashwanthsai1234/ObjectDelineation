@@ -204,13 +204,8 @@ OPTIONS = ["-h", "--help", "--model", "--ckpt", "--train", "--out", "--steps", "
            "--lr", "--resume", "--merge-last", "--rows-revision", "--rows-manifest-sha256", "--budget-usd",
            "--session-start", "--rate-usd-per-h", "--fixed-usd", "--heldout", "--heldout-items", "--heldout-every",
            "--procs", "--grpo", "--profile-window", "--trace"]  # pre-CLEAN literal (ap._actions at 08e6455)
-LANE_OPTIONS = {"--shared-prefix": ["--fast-sync", "--group-requests", "--no-ckpt-layers"],  # C5, C6, C9
-                "--grpo": ["--runaway-cap", "--reward", "--numerics", "--opsm-start-delta"],  # C11, B3, B2.2
-                "--trace": ["--count-syncs", "--host-meta", "--check-meta-every",  # C0, C4
-                            "--gpu-pixels", "--allow-cpu-pixels"]}  # C1
 RL_KEYS = ["beta", "budget_stopped", "ckpt", "eval", "final", "log", "lr", "mask_truncated_completions", "model",
            "numerics", "resumed_from", "rows", "steps", "timing_s", "train_rows"]  # pre-CLEAN literal, same stub
-LANE_RL_KEYS = ["loc_guard_stopped", "loss_scale", "max_completion_length", "opsm_start_delta", "reward"]  # B2.2, B3
 
 
 @pytest.fixture
@@ -264,7 +259,7 @@ def test_procs_is_an_argparse_error_before_any_preload(stub, capsys, extra):
 
 
 def test_help_has_no_procs_and_keeps_the_other_options(stub, capsys, monkeypatch):
-    """CT-33: --help names no pool; the option list is the pre-CLEAN one minus --procs (plus the lane flags)."""
+    """CT-33: --help names no pool; the option list is the pre-CLEAN one minus --procs."""
     import argparse
 
     seen, orig = [], argparse.ArgumentParser.parse_args
@@ -274,8 +269,9 @@ def test_help_has_no_procs_and_keeps_the_other_options(stub, capsys, monkeypatch
         stub.main(["--help"])
     out = capsys.readouterr().out
     assert e.value.code == 0 and "procs" not in out and "scoring workers" not in out
-    want = [x for o in OPTIONS if o != "--procs" for x in [o, *LANE_OPTIONS.get(o, [])]]
-    assert [s for act in seen[0]._actions for s in act.option_strings] == want
+    now = [s for act in seen[0]._actions for s in act.option_strings]
+    assert "--procs" not in now  # every pre-CLEAN option but --procs, in order; later lanes add their own flags
+    assert [o for o in now if o in OPTIONS] == [o for o in OPTIONS if o != "--procs"]
 
 
 def test_no_pool_and_one_freeze_after_the_last_preload(stub):
@@ -288,7 +284,7 @@ def test_no_pool_and_one_freeze_after_the_last_preload(stub):
     assert stub.calls == ["preload", "freeze", "train"]
     with_heldout = stub.calls.clear() or stub.run(*stub.train, "--heldout", str(stub.out.parent / "root"))
     assert with_heldout == 0 and stub.calls == ["preload", "preload", "freeze", "train"]
-    assert sorted(json.loads((stub.out / "rl.json").read_text())) == sorted(RL_KEYS + LANE_RL_KEYS)
+    assert set(RL_KEYS) <= set(json.loads((stub.out / "rl.json").read_text()))  # lanes add keys (B2, B3, C7)
     stub.calls.clear()
     assert stub.run(*stub.train) == 0 and stub.calls.count("freeze") == 1  # each main call freezes once
     assert gc.get_freeze_count() == frozen

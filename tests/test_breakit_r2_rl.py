@@ -1,0 +1,163 @@
+"""Break-it round 2, the RL loop off the GPU: edge cases of the round-1 fixes and the parts round 1 did not reach
+(TraceStep, merge_last, stale checkpoints, the --grpo overrides, the env defaults). Each test proves one finding
+and stays xfail(strict) until it is fixed."""
+
+import json
+import sys
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+
+def _trace_steps(tmp_path, wait: int, start: int, steps: int) -> list[int]:
+    """Run TraceStep over global steps start+1..steps; return the global steps at which it wrote a trace."""
+    from objdel.train.callbacks import TraceStep
+
+    cb, state, wrote = TraceStep(str(tmp_path / "trace"), wait=wait), SimpleNamespace(global_step=start), []
+    cb.write = lambda prof: wrote.append(state.global_step)
+    cb.on_train_begin(None, state, None)
+    for s in range(start + 1, steps + 1):
+        state.global_step = s
+        cb.on_step_end(None, state, None)
+    cb.on_train_end(None, state, None)
+    return wrote
+
+
+@pytest.mark.xfail(strict=True, reason="BR2-rl-1: TraceStep's torch.profiler schedule has repeat=0 (cycle forever): "
+                                       "a --trace run profiles every wait+2 steps for the whole run and overwrites "
+                                       "trace.json.gz each cycle, not one step")
+def test_trace_step_profiles_one_step_only(tmp_path):
+    assert len(_trace_steps(tmp_path, wait=1, start=0, steps=12)) == 1
+
+
+@pytest.mark.xfail(strict=True, reason="BR2-rl-2: TraceStep counts steps from the resume, not global_step: resumed "
+                                       "at 3 with --profile-window 5 E, nsys captures step 5 but the trace is step 8")
+def test_trace_step_matches_nvtx_window_after_resume(tmp_path):
+    s = 5  # make_trainer: TraceStep(wait=S - 2); NvtxSteps opens the capture at the end of step S - 1 = 4
+    assert _trace_steps(tmp_path, wait=s - 2, start=3, steps=12)[:1] == [s]
+
+
+@pytest.mark.xfail(strict=True, reason="BR2-rl-3: merge_last rmtree's a complete <out>/final when only rl.json is "
+                                       "missing (box died between save_final and save_json) and re-merges an older "
+                                       "checkpoint: the 260-step model is lost, rl.json then says 250 partial")
+def test_merge_last_keeps_a_complete_final_without_rl_json(tmp_path, monkeypatch):
+    import transformers  # noqa: F401
+    import transformers.trainer_utils  # noqa: F401  (imported before the fake peft below)
+    from transformers import AutoModelForImageTextToText, AutoProcessor  # noqa: F401
+
+    import experiments.phase2.g_probe  # noqa: F401
+    import objdel.train.configs  # noqa: F401  (imports the real peft)
+    from experiments.phase2 import train_rl
+
+    out = tmp_path / "out"
+    (out / "trainer" / "checkpoint-250").mkdir(parents=True)
+    (out / "final_adapter").mkdir()
+    (out / "final").mkdir()
+    (out / "final" / "config.json").write_text("{}")
+    (out / "final" / "model.safetensors").write_bytes(b"weights of step 260")
+
+    class Peft:
+        @staticmethod
+        def from_pretrained(*a, **k):
+            raise RuntimeError("fake: no merge in the test")
+
+    monkeypatch.setitem(sys.modules, "peft", SimpleNamespace(PeftModel=Peft))
+    a = train_rl.parse(["--merge-last", "--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "c"), "--out", str(out)])
+    try:
+        train_rl.merge_last(a)
+    except (RuntimeError, OSError):  # the fake merge, or no base model at --ckpt
+        pass
+    assert (out / "final" / "model.safetensors").read_bytes() == b"weights of step 260"
+
+
+@pytest.fixture
+def stub(tmp_path, monkeypatch):
+    """train_rl.main with no model, engine or preload (as round 1's stub); body(start, steps) runs in train()."""
+    import gc
+
+    import experiments.phase2.g_probe as g_probe
+    from experiments.phase2 import train_rl
+    from objdel.train import dataset, serve
+
+    monkeypatch.setattr(serve, "preload", lambda root, ds: None)
+    monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: ["k1", "k2"])
+    monkeypatch.setattr(train_rl, "save_final", lambda model, proc, out: None)
+    monkeypatch.setattr(gc, "freeze", lambda: None)
+    state = SimpleNamespace(global_step=0, log_history=[])
+    body = {"fn": lambda start, steps: None}
+
+    def train(resume_from_checkpoint=None):
+        start = int(resume_from_checkpoint.rsplit("-", 1)[1]) if resume_from_checkpoint else 0
+        body["fn"](start, state.max_steps)
+        state.global_step = state.max_steps
+
+    trainer = SimpleNamespace(train=train, model=None, accelerator=SimpleNamespace(unwrap_model=lambda m: m),
+                              state=state, args=SimpleNamespace(beta=1e-3, mask_truncated_completions=True))
+
+    def make(a, ckpt, train_rows, steps, **k):
+        state.max_steps = steps
+        return trainer, None, 5e-5
+
+    monkeypatch.setattr(g_probe, "make_trainer", make)
+    (tmp_path / "root").mkdir()
+    (tmp_path / "root/manifest.json").write_text("{}")
+    out = tmp_path / "out"
+    base = ["--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "c"), "--out", str(out), "--train",
+            str(tmp_path / "root")]
+    return SimpleNamespace(main=train_rl.main, base=base, out=out, body=body)
+
+
+class _Crash(Exception):
+    pass
+
+
+@pytest.mark.xfail(strict=True, reason="BR2-rl-4: a fresh run (no --resume) into an --out that holds an old run's "
+                                       "checkpoint-250 neither refuses nor clears it; after a crash at step 7, "
+                                       "--resume picks checkpoint-250 (highest number), not the new checkpoint-5")
+def test_fresh_run_then_resume_ignores_stale_checkpoints(stub):
+    trainer_dir = stub.out / "trainer"
+    (trainer_dir / "checkpoint-250").mkdir(parents=True)  # an earlier run in the same --out
+
+    def crash(start, steps):
+        (trainer_dir / "checkpoint-5").mkdir()
+        raise _Crash
+
+    stub.body["fn"] = crash
+    try:
+        stub.main([*stub.base, "--steps", "10", "--save-steps", "5"])
+    except _Crash:
+        pass
+    except Exception:  # a fixed version may refuse the stale --out up front: also fine
+        return
+    seen = []
+    stub.body["fn"] = lambda start, steps: seen.append(start)
+    stub.main([*stub.base, "--steps", "10", "--save-steps", "5", "--resume"])
+    assert seen == [5]
+
+
+@pytest.mark.xfail(strict=True, reason="BR2-rl-5: --grpo '{\"logging_steps\": 5}' is accepted; FastGRPO.log then "
+                                       "writes 5 steps per seq_gaps block (rows_per_step 5R), and cut_seq_gaps on "
+                                       "--resume from checkpoint-5 keeps step 6-10 rows: file step i != step i")
+def test_seq_gaps_stay_one_block_per_step_with_logging_steps_override(tmp_path):
+    from experiments.phase2 import train_rl
+    from objdel.train.fast import write_seq_gaps
+
+    d, rows, k = tmp_path / "trainer", 4, 5  # logging_steps 5: one write per 5 optimizer steps
+    write_seq_gaps(str(d), [1.0] * rows * k * 3, rows * k)  # steps 1-5
+    write_seq_gaps(str(d), [2.0] * rows * k * 3, rows * k)  # steps 6-10, then the box dies before checkpoint-10
+    train_rl.cut_seq_gaps(d, 5)  # --resume from checkpoint-5
+    data = np.fromfile(d / "seq_gaps.f32", "<f4")
+    assert data.size == 5 * rows * 3 and json.loads((d / "seq_gaps.json").read_text())["steps"] == 5
+
+
+@pytest.mark.xfail(strict=True, reason="BR2-rl-6: argparse runs type=float on the env defaults, so an exported but "
+                                       "empty OBJDEL_FIXED_USD / OBJDEL_SESSION_START / OBJDEL_RATE_USD_PER_H makes "
+                                       "every train_rl call exit 2, even one without --budget-usd")
+@pytest.mark.parametrize("var", ["OBJDEL_FIXED_USD", "OBJDEL_SESSION_START", "OBJDEL_RATE_USD_PER_H"])
+def test_empty_budget_env_does_not_break_a_run_without_budget(monkeypatch, var):
+    from experiments.phase2 import train_rl
+
+    monkeypatch.setenv(var, "")
+    a = train_rl.parse(["--model", "qwen3-vl-2b", "--ckpt", "c", "--out", "o", "--train", "t", "--steps", "10"])
+    assert a.budget_usd is None

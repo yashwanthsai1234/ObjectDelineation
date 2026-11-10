@@ -17,7 +17,6 @@ import numpy as np
 from objdel.train import configs, dataset, runaway
 
 FOUND = 0.1  # a found answer: IoU_tc at or above this (the BRIEF counts IoU < 0.1 as a miss)
-MARGIN = 64
 SECONDS_PER_TOKEN = 0.0043  # B_gpu_audit.md:40
 
 
@@ -38,7 +37,7 @@ def size(records, answer_rows, metric_rows, tok, limit: int, factors, block: int
     ans = [(a["item_id"], np.asarray(a["tokens"]), np.asarray(met[a["item_id"]]["iou_tc"])) for a in answer_rows]
     out = {}
     for f in factors:
-        caps = dict(zip(outline, runaway.runaway_caps(outline.values(), limit, f, MARGIN), strict=True))
+        caps = dict(zip(outline, runaway.runaway_caps(outline.values(), limit, f, runaway.MARGIN), strict=True))
         assert all(outline[i] <= caps[i] for i in outline), f"factor {f}: a doctor outline is longer than its cap"
         found = above = 0
         longest, capped, saved = [], [], []

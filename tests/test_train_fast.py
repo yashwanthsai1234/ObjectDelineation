@@ -4,6 +4,7 @@ The reference for every equality test is TRL 1.17's own `_get_per_token_logps_an
 run on a tiny random Qwen3-VL (CPU, fp32) with TRL's fused LM head.
 """
 
+import collections
 import contextlib
 import json
 import math
@@ -1233,3 +1234,131 @@ def test_rope_bad_rows_routes_on_host_data_only():
     bad = fast.rope_bad_rows([(1, 2, 3), (1, 2, 4), (1, 2, 3), (1, 2, 3)], [[7, 8], [7], [7, IMG], [START]],
                              [tmpl] * 4, vision)  # fmt: skip
     assert bad.dtype == bool and bad.tolist() == [False, True, True, True]
+
+
+def test_vllm_kwargs_wraps_trls_llm_only_inside_the_block(monkeypatch):
+    import trl.generation.vllm_generation as vg
+
+    seen = []
+    monkeypatch.setattr(vg, "LLM", lambda **kw: seen.append(kw) or "engine", raising=False)
+    outer = vg.LLM
+    with fast.vllm_kwargs(dtype="float16"):
+        assert vg.LLM(model="m") == "engine"
+    assert seen == [{"dtype": "float16", "model": "m"}] and vg.LLM is outer
+    with fast.vllm_kwargs():  # nothing to add: TRL's name is left alone
+        assert vg.LLM is outer
+
+
+def _fp16_trainer(engine_dtype, fp16=True):
+    from types import SimpleNamespace
+
+    t = object.__new__(fast.FastGRPO)
+    t.args = SimpleNamespace(fp16=fp16)
+    t.vllm_generation = SimpleNamespace(llm=SimpleNamespace(
+        llm_engine=SimpleNamespace(model_config=SimpleNamespace(dtype=engine_dtype))))  # fmt: skip
+    return t
+
+
+def test_fp16_run_refuses_an_engine_that_is_not_float16():
+    _fp16_trainer(torch.float16).check_engine_dtype()
+    with pytest.raises(RuntimeError, match="float16"):
+        _fp16_trainer(torch.bfloat16).check_engine_dtype()
+    _fp16_trainer(torch.bfloat16, fp16=False).check_engine_dtype()  # other presets are not checked
+    t = _fp16_trainer(torch.bfloat16)
+    t.vllm_generation = None  # use_vllm False
+    t.check_engine_dtype()
+
+
+def test_lora_input_cast_is_dropped_under_fp16_autocast_too():
+    m = _lora_bf16()
+    t = trainer(fast.FastGRPO, vision=None, rope=None, args=type("A", (), {"bf16": False, "fp16": True})(), model=m)
+    assert fast.FastGRPO.drop_lora_input_cast(t) is True
+    assert all(not mod.cast_input_dtype_enabled for _, mod in m.named_modules()
+               if hasattr(mod, "cast_input_dtype_enabled"))  # fmt: skip
+
+
+@pytest.mark.gpu
+@CUDA
+def test_g08b_fp16_dtype():
+    """G08b fp16 part: vllm_kwargs makes TRL's LLM build a float16 engine on the start checkpoint (a missing
+    folder fails, never skips)."""
+    import os
+
+    import trl.generation.vllm_generation as vg
+
+    ckpt = os.environ["OBJDEL_RUN_DIR"] + "/ckpt"
+    with fast.vllm_kwargs(dtype="float16"):
+        llm = vg.LLM(model=ckpt, gpu_memory_utilization=0.3, max_model_len=2048, enforce_eager=True)
+    assert llm.llm_engine.model_config.dtype == torch.float16
+
+
+def test_log_by_prompt_adds_the_per_prompt_rewards_to_train_logs_only(monkeypatch):
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    seen = []
+    monkeypatch.setattr(GRPOTrainer, "log", lambda self, logs, start_time=None: seen.append(dict(logs)))
+    reward = SimpleNamespace(by_prompt=[0.5, 0.25])
+    t = object.__new__(fast.FastGRPO)
+    t.model, t.is_stats, t.cuda_times, t.last_log = SimpleNamespace(training=True), None, None, None
+    t._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    t.reward_funcs = [SimpleNamespace(trl_reward=reward)]
+    t.log({})  # the default keeps the B1 log
+    t.log_by_prompt = True
+    t.log({})
+    t.model.training = False
+    t.log({})
+    assert seen == [{}, {"rewards/iou_tc/by_prompt": [0.5, 0.25]}, {}]
+
+
+def capped_trainer(caps):
+    """vllm_trainer with the runaway cap on (train_rl --runaway-cap), its engine recording the sampling params."""
+    t, _ = vllm_trainer(expand=1)
+    t.runaway_cap = True
+    t.rows = [{"cap": c} for c in caps] if caps is not None else [{}] * 2
+    seen, llm = [], t.vllm_generation.llm
+    generate = llm.generate
+    llm.generate = lambda prompts, sampling_params=None, **kw: seen.append(sampling_params) or generate(prompts, **kw)
+    fast.FastGRPO.patch_vllm_prompts(t)
+    return t, seen
+
+
+def test_runaway_cap_gives_each_prompt_its_own_max_tokens():
+    class Params:
+        def __init__(self, max_tokens):
+            self.max_tokens = max_tokens
+
+        def clone(self):
+            return Params(self.max_tokens)
+
+    t, seen = capped_trainer([5, 9])
+    prompts = [{"prompt_token_ids": [START, END]}] * 2
+    base = Params(1536)
+    t.vllm_generation.llm.generate(prompts, sampling_params=base)
+    assert [p.max_tokens for p in seen[0]] == [5, 9] and base.max_tokens == 1536
+    t.rows = [{"cap": 1}]
+    with pytest.raises(ValueError, match="1 caps for 2 prompts"):
+        t.vllm_generation.llm.generate(prompts, sampling_params=base)
+    t.rows = None  # g_probe samples outside a generation batch: the global limit stays
+    t.vllm_generation.llm.generate(prompts, sampling_params=base)
+    assert seen[1] is base
+
+
+def test_capped_share_counts_answers_that_reached_their_cap():
+    t = object.__new__(fast.FastGRPO)
+    t.runaway_cap, t._metrics = True, {"train": collections.defaultdict(list)}
+    t.model = type("M", (), {"training": True})()
+    t.rows = [{"cap": 3}, {"cap": 3}, {"cap": 4}, {"cap": 2}]
+    t.log_capped([[1, 2, 3], [1], [1, 2, 3, 4], [1, 2]])
+    assert t._metrics["train"]["completions/capped_share"] == [0.75]
+
+
+def test_beta_zero_runs_only_the_update_forward(monkeypatch, tmp_path):
+    """C8: beta 0 loads no reference adapter and runs no reference pass; with one generation per step the old-logprob
+    pass is skipped too (C10): one forward per update micro-batch (8 rows, micro-batch 8: one) and nothing else."""
+    calls = []
+    real = fast.FastGRPO._get_per_token_logps_and_entropies
+    monkeypatch.setattr(fast.FastGRPO, "_get_per_token_logps_and_entropies",
+                        lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
+    t = tiny_loop_vllm_fake(monkeypatch, tmp_path, steps=2)
+    assert t.args.beta == 0.0 and len(calls) == 2
