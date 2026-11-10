@@ -49,7 +49,7 @@ def test_every_listed_entry_collects_a_test_and_the_sanitizer_corpus_is_selected
     assert {g.split("[")[0] for g in san} == {"tests/test_gpu_sanitize.py::test_san", "tests/test_gpu_sanitize.py::"
                                              "test_san_no_leak", "tests/test_gpu_sanitize.py::test_san_pool",
                                              "tests/test_scorer_sums.py::test_g07_sanitize_sums"}
-    assert len(san) == 9
+    assert len(san) == 11
 
 
 def test_junit_skips_lists_each_skip(tmp_path):
