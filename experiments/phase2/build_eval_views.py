@@ -35,7 +35,7 @@ import platform
 from dataclasses import replace
 from importlib.metadata import version
 from itertools import batched
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.data import store
@@ -83,7 +83,7 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
     from objdel.reward import fingerprint
     from objdel.train import dataset as D  # lazy: needs the train extra (BK4-2)
     manifests = {}
-    with Pool(procs) as pool:
+    with get_context("spawn").Pool(procs) as pool:
         for ds in datasets:
             for kind in (k for k in kinds if k != "rotated" or ds in ROTATION):
                 name = f"{ds}-{split}-{kind}"
