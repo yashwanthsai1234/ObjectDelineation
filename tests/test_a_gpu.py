@@ -2,8 +2,13 @@
 tests run on the box's CUDA build (d_gpu_test.yaml step 2) and skip on the CPU build; `data` tests read data/ and
 runs/ on the Mac."""
 
+import hashlib
 import json
 import os
+import resource
+import subprocess
+import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -170,3 +175,96 @@ def test_g02a_rescore(folder, tmp_path, clean_store):
         assert a["item_id"] == b["item_id"]
         for k in ("legal", "iou_tc", "f5", "g_area"):
             assert a["samples"][k] == b["samples"][k], (a["item_id"], k)
+
+
+@pytest.mark.data
+def test_g05_outline_lengths(tmp_path):
+    """G05 (A8, A-G8): the CLI over the real LIDC train roots: 7,341 records, 23,469 targets, longest outline 1,182
+    tokens (with the end token), none above 1,200; the target count equals the independent sum over the records; the
+    shifted and rescaled view roots carry their manifest's SHA-256; under 120 s of CPU
+    time (the child's user + system time, so a busy host does not fail it)."""
+    prep = ROOT / "data" / "prepared"
+    views = [ROOT / "data" / "views" / n for n in ("lidc-train-shifted", "lidc-train-rescaled")]
+    for p in (prep, *views):
+        _need(p / "manifest.json")
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.outline_lengths", "--train", prep, "--views",
+                    *views, "--model", "qwen3-vl-2b", "--datasets", "lidc", "--splits", "train", "--out", tmp_path],
+                   cwd=ROOT, check=True, capture_output=True)
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    assert after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime < 120
+    roots = json.loads((tmp_path / "outline_lengths.json").read_text())["roots"]
+    row = roots[str(prep)]["lidc"]["train"]
+    recs = _jsonl(prep / "lidc" / "train.jsonl")
+    assert (row["n_records"], row["n_targets"], row["max"], row["above"]["1200"]) == (7341, 23469, 1182, 0)
+    assert row["n_targets"] == sum(t is not None for r in recs for t in r["targets"])
+    for v in views:
+        assert roots[str(v)]["manifest_sha256"] == hashlib.sha256((v / "manifest.json").read_bytes()).hexdigest()
+
+
+@pytest.mark.data
+def test_g06_nsys_baseline():
+    found = sorted((ROOT / "runs").glob("*/nsys/nsys_baseline.json"))
+    if not found:
+        pytest.skip("missing runs/<V2 run>/nsys/nsys_baseline.json (C0 baseline arm of V2 item 3)")
+    for path in found:
+        doc = json.loads(path.read_text())
+        assert [s["step"] for s in doc["steps"]] == [16, 17]
+        for s in doc["steps"]:
+            assert s["coverage"] >= 0.90 and {"step", "loader", "micro", "optimizer", "log", "generate"} <= set(
+                s["per_range_s"])  # every step generates once (steps_per_generation = GA)
+            assert {"gpu_idle", "graph_rows", "host_syncs", "host_sync_parts"} <= set(s)
+        assert "overhead_affected" in doc["overhead"]
+        assert (path.parent / "c0_base_tables.txt").exists() and (path.parent / "version.txt").exists()
+        rl = path.parents[1] / "c0_base" / "rl.json"
+        if rl.exists():
+            steps = [h for h in json.loads(rl.read_text())["log"] if "time/step_s" in h]
+            keys = [f"sampling/importance_sampling_ratio/{k}_share" for k in ("zero", "hi", "lo")]
+            assert steps and all(k in steps[-1] for k in keys)
+
+
+@pytest.mark.gpu
+@CUDA
+def test_g07_repeat(tmp_path):
+    """G07 (A3; optional box test, `OBJDEL_G07_CKPT` names the checkpoint folder): two final_eval runs with --seed 11
+    on 16 items write answers of one schema, and scoring the same answers twice (--rescore) gives byte-identical
+    metrics. Texts that differ between the runs are reported, not failed (the vLLM build state can differ)."""
+    from objdel.io import read_jsonl
+
+    ckpt = os.environ.get("OBJDEL_G07_CKPT")
+    assert ckpt, "set OBJDEL_G07_CKPT to the checkpoint folder"
+    final_eval = [sys.executable, "-I", "-m", "experiments.phase2.final_eval", "--view", PREPARED]
+    runs = [tmp_path / n for n in "ab"]
+    for out in runs:
+        subprocess.run([*final_eval, "--train", PREPARED, "--ckpt", ckpt, "--seed", "11", "--limit", "16",
+                        "--out", out], cwd=ROOT, check=True)
+    a, b = (read_jsonl(r / "answers.jsonl") for r in runs)
+    assert len(a) == len(b) == 16 and [sorted(x) for x in a] == [sorted(x) for x in b]
+    if differ := [x["item_id"] for x, y in zip(a, b, strict=True) if x["samples"] != y["samples"]]:
+        warnings.warn(f"{len(differ)} of 16 items sampled other texts on the second run: {differ}", stacklevel=2)
+    scored = []
+    for n in "cd":
+        subprocess.run([*final_eval, "--rescore", runs[0], "--out", tmp_path / n], cwd=ROOT, check=True)
+        scored.append((tmp_path / n / "metrics.jsonl").read_bytes())
+    assert scored[0] == scored[1]
+
+
+@pytest.mark.gpu
+@CUDA
+def test_g08_biou_device():
+    """G08 (A5, D7): the build's boundary-IoU bands (gc.eval_sets) equal the host reference to the bit on 320 random
+    masks (10 sets of 16 samples against 16 raters on a 512 frame), a full-frame sample among them, at d = 2 and 16."""
+    from tests.test_eval_device import _cache, _call, _expect, _polys
+
+    rng = np.random.default_rng(8)
+    sets = []
+    for i in range(10):
+        objs = _polys(rng, 16, 512, 512, "random")
+        if i == 0:  # touches every frame edge
+            objs[0] = ([(np.array([[0, 0], [1000, 0], [1000, 1000], [0, 1000]]), [])], 512, 512)
+        sets.append({"objs": objs, "cache": _cache(rng, 16, 512, 512), "legal": np.ones(16, bool)})
+    for d in (2, 16):
+        got = _call(sets, 16, d=d)
+        for i, s in enumerate(sets):
+            for key, v in _expect(s, 16, d=d).items():
+                assert np.array_equal(got[key][i], v), (d, i, key)
