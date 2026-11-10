@@ -1,4 +1,5 @@
-"""GPU group of the CUDA checker, for the preflight on a rented box (skipped where `nvidia-smi -L` lists no GPU).
+"""GPU group of the CUDA checker, for the preflight on a rented box (the gpu hook in tests/conftest.py skips it on the
+CPU build).
 
 On a GPU box objdel._gpucheck must be the nvcc build (`make cuda`): these tests fail, not skip, when it is not.
 They then run large batches in one call each (many shapes per kernel launch) and compare with the CPU checker's
@@ -26,7 +27,7 @@ def _gpus() -> int:
     return sum(line.startswith("GPU ") for line in out.splitlines())
 
 
-pytestmark = [pytest.mark.gpu, pytest.mark.skipif(_gpus() == 0, reason="no CUDA device (nvidia-smi -L)")]
+pytestmark = pytest.mark.gpu
 
 
 def test_module_is_the_cuda_build():
