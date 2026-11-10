@@ -67,6 +67,7 @@ CLAUDE.md
 # Internal working records: plans, reviews, agent notes and retired code stay on the owner's machine.
 # The public repo holds the product (src, cuda, tests, experiment scripts and results) and its user docs.
 /ROADMAP.md
+/archive/
 /docs/plan/
 /docs/research/notes/
 /docs/research/records/**/PLAN*.md
