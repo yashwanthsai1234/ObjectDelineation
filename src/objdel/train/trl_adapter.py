@@ -1,9 +1,11 @@
 """Start-up check of the private TRL names and the silent couplings that FastGRPO relies on (TRL pinned to 1.17.1).
 
 `check()` runs first in `FastGRPO.__init__` and in the preflight ("CODE TRL private names"). It reads signatures and
-source text only, so it runs on the Mac without vLLM or a GPU. A TRL change that breaks one item fails in seconds,
-naming the item and the place in `fast.py` that overrides or reads it. The version is checked last: with
-OBJDEL_TRL_UNPINNED=1 a different TRL version only warns, so an upgrade can be tried on the contract alone.
+source text only, so it runs on the Mac without vLLM or a GPU. Under lora-seqmask, `check_lora(llm)` also checks the
+option-F vLLM names (LORA_POINTS) on the live engine, in `FastGRPO.__init__` once TRL built it (the preflight's
+configs are train_sft runs with no numerics preset, and the Mac has no vLLM engine). A TRL change that breaks one
+item fails in seconds, naming the item and the place in `fast.py` that overrides or reads it. The version is checked
+last: with OBJDEL_TRL_UNPINNED=1 a different TRL version only warns, so an upgrade can be tried on the contract alone.
 """
 
 import inspect
@@ -70,8 +72,20 @@ BEHAVIOURS = {  # C10: TRL skips the old-logprob pass when the IS correction is 
     "completion_ids to reward functions": (("GRPOTrainer._calculate_rewards",), "completion_ids=completion_ids_list",
                                            "TRLReward.funcs"),
 }  # fmt: skip
+# Option F (lora-seqmask, B2.2 F step 3): vLLM names on the live engine (vg.llm), checked by check_lora at FastGRPO
+# start-up under lora-seqmask only (vLLM is not on the Mac, so check() cannot read them).
+# name -> (attribute path from vg.llm, what must hold, the place that relies on it)
+LORA_POINTS = {
+    "add_lora": ("llm_engine.add_lora", "callable", "vllm_sync.sync_lora, train_rl --f-check (load count)"),
+    "remove_lora": ("llm_engine.remove_lora", "callable", "f_check.run_comparator (restore)"),
+    "lora_index_to_id": ("llm_engine.model_executor.driver_worker.model_runner.lora_manager._adapter_manager"
+                         ".lora_index_to_id", "a sequence", "f_check.lora_slot_index"),
+    "lora_a_stacked / lora_b_stacked": ("llm_engine.model_executor.driver_worker.model_runner.model",
+                                        "a module holding both", "f_check.lora_equal"),
+}  # fmt: skip
 _SIGNED = {"method": METHODS, "global": GLOBALS, "VLLMGeneration method": VLLM_METHODS}
 _TEXT = {"private attribute": PRIVATE_ATTRS, "attribute": ATTRS, "key": KEYS, "behaviour": BEHAVIOURS}
+_LIVE = {"option-F vLLM name": LORA_POINTS}
 
 
 class TRLContractError(RuntimeError):
@@ -113,3 +127,23 @@ def check() -> None:
         if os.environ.get("OBJDEL_TRL_UNPINNED") != "1":
             raise TRLContractError(msg + " Set OBJDEL_TRL_UNPINNED=1 to try this version.")
         warnings.warn(msg, UserWarning, stacklevel=2)
+
+
+def check_lora(llm) -> None:
+    """Under lora-seqmask (B2.2 F step 3): raise TRLContractError on the first option-F vLLM name missing from the
+    live engine `llm` (vg.llm): add_lora and remove_lora callable, the adapter manager's lora_index_to_id a
+    sequence, and at least one engine module holding lora_a_stacked and lora_b_stacked."""
+    for name, (path, want, place) in LORA_POINTS.items():
+        obj = llm
+        for attr in path.split("."):
+            obj = getattr(obj, attr, None)
+        if name == "lora_a_stacked / lora_b_stacked":
+            ok = obj is not None and any(hasattr(m, "lora_a_stacked") and hasattr(m, "lora_b_stacked")
+                                         for _, m in obj.named_modules())  # fmt: skip
+        elif want == "callable":
+            ok = callable(obj)
+        else:
+            ok = obj is not None and hasattr(obj, "__len__") and hasattr(obj, "__getitem__")
+        if not ok:
+            _fail("option-F vLLM name", name, f"{path}: {want}", "absent" if obj is None else type(obj).__name__,
+                  place)

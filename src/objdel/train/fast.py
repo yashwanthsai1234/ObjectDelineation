@@ -963,6 +963,8 @@ class FastGRPO(FastForward, GRPOTrainer):
         with vllm_kwargs(**vllm_engine_kwargs(kwargs.get("args"))):  # TRL builds its vLLM engine without these
             super().__init__(*args, **kwargs)
         self.check_engine_dtype()
+        if getattr(self.args, "vllm_lora", False) and getattr(self, "vllm_generation", None) is not None:
+            trl_adapter.check_lora(self.vllm_generation.llm)  # option F's vLLM names (B2.2 F step 3)
         self.vision, self.rope = VisionCache.install(self.model), RopeCache.install(self.model)
         self.images = ImageMemo.install(self.processing_class)
         self.drop_lora_input_cast()
