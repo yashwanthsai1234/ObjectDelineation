@@ -1,9 +1,8 @@
 """NVTX ranges for an Nsight Systems capture (plan A6), off unless OBJDEL_NVTX=1 and CUDA is present.
 
 Fork safe: the import reads only the environment. It imports no torch and asks no CUDA question, because
-`torch.cuda.is_available()` runs cuInit (unless PYTORCH_NVML_BASED_CUDA_CHECK=1), which poisons a later fork, and
-serve.fork_pool's guard sees only `torch.cuda.is_initialized()`. The CUDA query runs at the first `enabled()` call
-(the first range, after the fork) and is cached for the process.
+`torch.cuda.is_available()` runs cuInit (unless PYTORCH_NVML_BASED_CUDA_CHECK=1), which poisons a later fork. The
+CUDA query runs at the first `enabled()` call (the first range) and is cached for the process.
 
 OBJDEL_NVTX_SYNC (read once, here): "1" (default) keeps FastGRPO.timed's end-of-phase device sync, as production
 runs; "0" times each phase with a CUDA event pair instead, so a trace shows the real overlap between phases.

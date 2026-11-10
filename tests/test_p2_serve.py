@@ -1,24 +1,18 @@
-"""objdel.train.serve (M3, plan D14): preloaded caches, CacheRef, the warmed fork pool (exam metrics), TRLReward on
+"""objdel.train.serve (M3, plan D14): preloaded caches, CacheRef, TRLReward on
 preloaded caches, and the K3/K4 harness. CI-safe: a mini prepared layout is written from the conftest synthetic items
 (no datasets, no torch); the real-data K3 run is evidence in experiments/phase2/impl/M3.md."""
 
-import gc
 import hashlib
 import json
-import os
 import pickle
 import shutil
-import signal
 import subprocess
 import sys
-import time
-import types
-from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 import pytest
 
-from experiments.phase1.reward_gates import digest, make_jobs
+from experiments.phase1.reward_gates import make_jobs
 from objdel.geometry import SCHEMAS
 from objdel.reward import ExpertCache, advantages_v4, rl_eligible, score_batch
 from objdel.train import serve
@@ -60,13 +54,6 @@ def prepared(tmp_path_factory, synthetic_items):
 
 
 pytestmark = pytest.mark.usefixtures("clean_store")  # conftest: an empty serve.STORE per test
-
-
-@pytest.fixture
-def pool():
-    ex = serve.fork_pool(2)
-    yield ex
-    ex.shutdown(cancel_futures=True)
 
 
 def _prompts(root, ds):
@@ -137,93 +124,11 @@ def test_cache_ref_pickles_as_its_key_and_roots_stay_apart(prepared, tmp_path):
     assert serve.loader(prepared)(key)["cup"] is not serve.loader(other)(key)["cup"]
 
 
-def test_forked_workers_cannot_score(prepared):
-    """D7 (I18): device work runs in one process. A worker forked after the preload resolves CacheRefs in its copy
-    of STORE, but its first device() raises RuntimeError (no second device context); the parent scores."""
-    serve.preload(prepared, ("riga", "lidc"))
-    batches = _workloads(prepared)
-    jobs = next(iter(batches.values()))
-    ex = serve.fork_pool(2)
-    try:
-        with pytest.raises(RuntimeError, match="device\\(\\) in a forked child"):
-            ex.submit(_digest_of, jobs).result()
-    finally:
-        ex.shutdown()
-    assert digest(score_batch(jobs))
-
-
-def _digest_of(jobs):
-    return digest(score_batch(jobs))
-
-
 def test_trl_reward_on_preloaded_caches(prepared):
     serve.preload(prepared, ("riga", "lidc"))
     for jobs in _workloads(prepared).values():
         out = _trl_call(TRLReward(serve.loader(prepared), {EOS}), jobs)
         assert out["advantage_v4"] == advantages_v4(score_batch(jobs)).tolist()
-
-
-def test_fork_pool_forks_every_worker_now(pool):
-    assert len(pool._processes) == 2 and gc.get_freeze_count() > 0
-    assert set(pool.map(int, ["1", "2"])) == {1, 2}
-
-
-def test_killed_worker_raises_broken_process_pool_within_1s(prepared):
-    serve.preload(prepared, ("lidc",))  # before the fork (BK2-11)
-    pool = serve.fork_pool(2)
-    try:
-        jobs = make_jobs(_prompts(prepared, "lidc"), 4)
-        fut = pool.submit(time.sleep, 30)
-        os.kill(next(iter(pool._processes)), signal.SIGKILL)
-        t0 = time.perf_counter()
-        with pytest.raises(BrokenProcessPool):
-            fut.result(timeout=5)
-        assert time.perf_counter() - t0 < 1.0
-        with pytest.raises(BrokenProcessPool):
-            list(pool.map(_digest_of, [jobs]))
-    finally:
-        pool.shutdown(cancel_futures=True)
-
-
-def test_preload_is_refused_while_a_forked_pool_is_alive(prepared):
-    """BK2-11: workers keep STORE as it was at the fork, so a later preload (a new root, or rebuilt caches of the same
-    root) would be scored on the old caches; it is refused until the pool is shut down."""
-    serve.preload(prepared, ("lidc",))
-    ex = serve.fork_pool(1)
-    try:
-        with pytest.raises(RuntimeError, match="fork_pool"):
-            serve.preload(prepared, ("lidc",))
-    finally:
-        ex.shutdown()
-    assert serve.preload(prepared, ("lidc",)) > 0
-
-
-def test_fork_pool_imports_the_scorer_modules_before_forking(monkeypatch):
-    """S1-11: on macOS a worker importing a module after the fork can crash the pool; fork_pool imports the scorer
-    modules (and any extra `modules`) in the parent first, so the workers inherit them."""
-    monkeypatch.delitem(sys.modules, "json.tool", raising=False)  # (scorers stay: re-importing them splits classes)
-    ex = serve.fork_pool(1, modules=("json.tool",))
-    try:
-        assert all(name in sys.modules for name in (*serve.SCORERS, "json.tool"))
-        assert ex.submit(_imported, ("json.tool", *serve.SCORERS)).result()
-    finally:
-        ex.shutdown()
-
-
-def _imported(names):
-    return all(n in sys.modules for n in names)
-
-
-def test_fork_pool_refuses_after_cuda_init(monkeypatch):
-    def fake(initialized):
-        return types.SimpleNamespace(cuda=types.SimpleNamespace(is_initialized=lambda: initialized))
-
-    monkeypatch.setitem(sys.modules, "torch", fake(True))
-    with pytest.raises(RuntimeError, match="CUDA"):
-        serve.fork_pool(1)
-    monkeypatch.setitem(sys.modules, "torch", fake(False))
-    ex = serve.fork_pool(1)
-    ex.shutdown()
 
 
 def test_k3_harness_help():
@@ -260,29 +165,6 @@ def test_k3_harness_smoke(prepared, tmp_path):
     for w in ("riga", "mixed", "lidc"):
         assert {"serial", "per_rollout", "hashes", "hash_equal"} <= set(res[w])
     assert {"K3_pass", "K4_pass", "K4_p99_ms", "all_hashes_equal"} <= set(res["gate"])
-
-
-def test_scoring_pool_is_sized_from_the_cpus_this_process_may_use(tmp_path, monkeypatch):
-    """EV-5: the pool was fixed at 4; now the CPUs left by the affinity mask and the container's CPU quota (cgroup v2
-    cpu.max, or v1 cpu.cfs_quota_us as on the P1 box, which had no cpu.max and nproc 128), minus one for the main
-    process, capped at 16 (each worker holds a forked copy of the expert caches)."""
-    monkeypatch.setattr(serve.os, "sched_getaffinity", lambda pid: set(range(32)), raising=False)
-    v2 = tmp_path / "v2"
-    v2.mkdir()
-    (v2 / "cpu.max").write_text("400000 100000\n")  # a 4-CPU quota
-    assert serve.cpus(v2) == 4 and serve.pool_size(v2) == 3
-    (v2 / "cpu.max").write_text("max 100000\n")
-    assert serve.cpus(v2) == 32 and serve.pool_size(v2) == 16
-    (v2 / "cpu.max").write_text("50000 100000\n")  # half a CPU: one worker still
-    assert serve.cpus(v2) == 1 and serve.pool_size(v2) == 1
-    v1 = tmp_path / "v1" / "cpu,cpuacct"
-    v1.mkdir(parents=True)
-    (v1 / "cpu.cfs_quota_us").write_text("2400000\n")
-    (v1 / "cpu.cfs_period_us").write_text("100000\n")
-    assert serve.cpus(tmp_path / "v1") == 24
-    (v1 / "cpu.cfs_quota_us").write_text("-1\n")  # no limit
-    assert serve.cpus(tmp_path / "v1") == 32
-    assert serve.cpus(tmp_path / "absent") == 32
 
 
 def test_sampler_timeout_is_three_times_the_measured_time():

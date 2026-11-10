@@ -227,7 +227,7 @@ def stub(tmp_path, monkeypatch):
         raise AssertionError("train_rl started a process pool")
 
     for owner, name in [(multiprocessing, "Pool"), (multiprocessing.pool, "Pool"), (multiprocessing, "get_context"),
-                        (concurrent.futures, "ProcessPoolExecutor"), (os, "fork"), (serve, "fork_pool")]:
+                        (concurrent.futures, "ProcessPoolExecutor"), (os, "fork")]:
         monkeypatch.setattr(owner, name, boom)
     monkeypatch.setattr(serve, "preload", lambda root, ds: calls.append("preload"))
     monkeypatch.setattr(gc, "freeze", lambda: calls.append("freeze"))
@@ -311,18 +311,15 @@ def test_train_rl_source_names_no_pool():
     src = (ROOT / "experiments/phase2/train_rl.py").read_text()
     names = {n.id for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Name)}
     names |= {n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute)}
-    assert not names & {"fork_pool", "pool_size", "Pool", "pool"}
+    assert not names & {"Pool", "pool"}
     assert '"--procs"' not in src and src.count("gc.freeze()") == 1
 
 
 def test_no_stale_procs_for_train_rl():
-    """CT-84: no RL plan passes --procs to train_rl; the runbook names the three pool users."""
+    """CT-84: no RL plan passes --procs to train_rl."""
     for f in sorted((ROOT / "experiments/phase2/configs").glob("*.yaml")):
         for line in f.read_text().splitlines():
             assert not ("train_rl" in line and "--procs" in line), (f.name, line)
-    text = (ROOT / "docs/runbooks/troubleshooting.md").read_text()
-    row = next(x for x in text.splitlines() if "BrokenProcessPool" in x)
-    assert all(m in row for m in ("select_ckpt", "g_probe", "final_eval")) and "train_rl" not in row
 
 
 def test_resume_truncates_seq_gaps_to_the_checkpoint_step(stub):

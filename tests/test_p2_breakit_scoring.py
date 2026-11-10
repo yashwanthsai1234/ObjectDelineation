@@ -163,38 +163,6 @@ def test_preload_refuses_tampered_jsonl_stray_jsonl_and_cache(tmp_path):
         serve.preload(root, ("lidc",))
 
 
-def _score_ref(key_root):
-    key, root = key_root
-    raters, texts = item()
-    return json.dumps(metrics(texts + texts[:1] * 5, {}, SIDE, SIDE, ("nodule",), caches=serve.CacheRef(key, root)))
-
-
-def test_pool_worker_after_a_later_preload_fails_loudly(tmp_path):
-    a, b = _mini_root(tmp_path / "a"), tmp_path / "b"
-    serve.preload(a, ("lidc",))
-    pool = serve.fork_pool(1)
-    try:
-        shutil.copytree(a, b)
-        # BK2-11: preload after the fork is refused (RuntimeError); a root never preloaded fails loudly in the worker
-        job = ("lidc/1.2.0/n000/z000", str(b.resolve()))
-        with pytest.raises(KeyError):
-            pool.submit(_score_ref, job).result()
-    finally:
-        pool.shutdown(cancel_futures=True)
-
-
-def test_preload_after_fork_is_refused(tmp_path):
-    a = _mini_root(tmp_path / "a")
-    serve.preload(a, ("lidc",))
-    pool = serve.fork_pool(1)
-    try:
-        shutil.copytree(a, tmp_path / "b")
-        with pytest.raises(RuntimeError):
-            serve.preload(tmp_path / "b", ("lidc",))
-    finally:
-        pool.shutdown(cancel_futures=True)
-
-
 # ================================================================ metrics / summarize
 
 

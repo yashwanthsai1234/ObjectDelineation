@@ -101,7 +101,7 @@ def char_model(tmp_path_factory):
 
 @pytest.fixture
 def clean_store():
-    """An empty objdel.train.serve STORE before and after the test, and gc unfrozen (fork_pool freezes it)."""
+    """An empty objdel.train.serve STORE before and after the test, and gc unfrozen (train_rl freezes it)."""
     import gc
 
     from objdel.train import serve
