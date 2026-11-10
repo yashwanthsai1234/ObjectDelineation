@@ -1,12 +1,17 @@
 """experiments.phase2.build_rl_rows (Implementation.md B1.4) on the test_data_quality fixture store: 30 synthetic train
 items, the val and test views, one 13-step block of 2 rows (shares 0.5 / 0.5 / 0, seed 4, draws 1, weight 1), so the
 off-centre rows are the train shifted law and every hard gate passes on a clean build."""
+import io
 import json
+import re
+import shutil
+import sys
 import types
+from dataclasses import replace
 
 import cv2
 import pytest
-from test_data_quality import PLAN, SHARES, Tok, stub_ceiling, world  # noqa: F401 (world: the module fixture)
+from test_data_quality import PLAN, SHARES, Tok, all_items, stub_ceiling, world, write_store  # noqa: F401
 
 from objdel.core.hashing import pixels_sha256
 from objdel.data import quality as Q
@@ -31,8 +36,8 @@ def run(world, tmp_path, monkeypatch):  # noqa: F811
                              "step2": []}))
     out = tmp_path / "rows"
 
-    def go(*extra, steps=PLAN["steps"]):
-        return R.main(["--store", str(world.store), "--out", str(out), "--steps", str(steps),
+    def go(*extra, steps=PLAN["steps"], store=world.store):
+        return R.main(["--store", str(store), "--out", str(out), "--steps", str(steps),
                        "--per-step", str(PLAN["per_step"]), "--block-steps", str(PLAN["block_steps"]),
                        "--draws-options", "1", "--shares", *map(str, SHARES.values()), "--seed", str(PLAN["seed"]),
                        "--disagreement-weight", "1.0", "--procs", "1", "--exclude", str(ex),
@@ -125,3 +130,108 @@ def test_hash_gate_rebuilds_a_rows_root(built, world):  # noqa: F811
     m["sets"]["lidc/train"]["target_set_sha256"] = "0" * 64
     (built.out / "manifest.json").write_text(json.dumps(m))
     assert V.main([str(built.out / "manifest.json"), "--store", str(world.store), "--procs", "1"]) == 1
+
+
+def test_e02_cross_split_patient_fails_dg1_then_a_clean_rerun_writes_the_manifest(run, tmp_path, capsys):
+    """E02: a val item of a train patient fails DG1 (exit 1, no manifest, stderr names DG1); the re-run into the same
+    --out on the clean store writes the manifest and keeps nothing of the failed run."""
+    train, other = all_items()
+    other[0] = replace(other[0], group_id=train[0].group_id)  # val item 0 belongs to train patient 0
+    assert run.go(store=write_store(tmp_path / "bad_store", train + other)) == 1
+    assert re.search(r"\bDG1\b", capsys.readouterr().err) and not (run.out / "manifest.json").exists()
+    (run.out / "images" / "stale.png").write_bytes(b"")
+    assert run.go() == 0 and (run.out / "manifest.json").is_file()
+    assert not (run.out / "images" / "stale.png").exists()
+
+
+def test_e02_a_finished_root_or_a_foreign_folder_is_never_touched(built, tmp_path):
+    with pytest.raises(SystemExit, match="manifest.json"):
+        built.go()
+    foreign = tmp_path / "foreign"
+    (foreign / "notes").mkdir(parents=True)
+    with pytest.raises(SystemExit, match="notes"):
+        built.R.main(["--out", str(foreign), "--steps", "20", "--exclude", "{}"])
+    assert (foreign / "notes").is_dir()
+
+
+def test_i20_e02_a_pool_too_small_for_every_draws_value_names_the_last_kind_and_cell(run, capsys):
+    """I20, E02: every draws value fails (the pool is too small for --steps): non-zero exit, no manifest, and the
+    message names the last value's failing kind and cell."""
+    assert run.go("--draws-options", "1", "2", steps=13 * 40) != 0
+    err = capsys.readouterr().err
+    assert re.search(r"draws 2: no (free )?(centred|shifted|rescaled) window in cell \(?\d", err), err
+    assert not (run.out / "manifest.json").exists()
+
+
+class Hub:
+    """The HfApi calls hf.push_rows makes, recorded; nothing leaves the machine."""
+
+    def __init__(self, private=True):
+        self.private, self.calls, self.remote = private, [], []
+
+    def repo_info(self, repo, repo_type):
+        return types.SimpleNamespace(private=self.private)
+
+    def create_branch(self, repo, branch, repo_type, exist_ok):
+        self.calls.append(("create_branch", repo, branch))
+
+    def upload_folder(self, *, repo_id, folder_path, path_in_repo, revision, repo_type, ignore_patterns,
+                      commit_message):
+        self.calls.append(("upload_folder", repo_id, path_in_repo, revision))
+        root = folder_path
+        self.remote += [f"{path_in_repo}/{f.relative_to(root).as_posix()}" for f in sorted(root.rglob("*"))
+                        if f.is_file() and f.relative_to(root).as_posix() not in ignore_patterns]
+        return types.SimpleNamespace(oid="a" * 40)  # a part commit: never the recorded revision
+
+    def upload_file(self, *, path_or_fileobj, path_in_repo, repo_id, revision, repo_type, commit_message):
+        self.calls.append(("upload_file", repo_id, path_in_repo, revision))
+        self.remote.append(path_in_repo)
+        return types.SimpleNamespace(oid="b" * 40)
+
+
+TOKEN = "hf_secretTokenValue123"
+
+
+def push(monkeypatch, root, hub):
+    from experiments.phase2 import hf_push
+    from objdel.infra import hf
+    monkeypatch.setattr(hf, "api", lambda token: hub if token == TOKEN else None)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(TOKEN + "\n"))
+    return hf_push.main(["--rows", str(root), "--repo", hf.REPO, "--revision", "main"])
+
+
+def test_i21_rows_upload_goes_to_the_one_place_with_the_manifest_last(built, tmp_path, monkeypatch, capsys):
+    """I21, B1.4 step 5: one upload_folder call for the root without its manifest, then the manifest; the printed
+    rows_revision is the last commit (it holds every file) and rows_manifest_sha256 the manifest's SHA-256."""
+    from objdel.core.hashing import file_sha256
+    from objdel.infra import hf
+    root = shutil.copytree(built.out, tmp_path / "lidc-train-b1")
+    hub = Hub()
+    assert push(monkeypatch, root, hub) == 0
+    assert [c[0] for c in hub.calls] == ["create_branch", "upload_folder", "upload_file"]
+    assert hub.calls[1][1:] == (hf.REPO, "rows/lidc-train-b1", "main")
+    assert hub.remote[-1] == "rows/lidc-train-b1/manifest.json"
+    local = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+    assert sorted(hub.remote) == [f"rows/lidc-train-b1/{r}" for r in local]
+    out, err = capsys.readouterr()
+    assert f"rows_revision: {'b' * 40}" in out and f"rows_manifest_sha256: {file_sha256(root / 'manifest.json')}" in out
+    assert TOKEN not in out + err
+
+
+def test_i21_nothing_is_uploaded_after_a_hard_gate_failure(run, world, monkeypatch, capsys):  # noqa: F811
+    item = world.sched[0].item_id
+    s = item.split("/")[1]
+    run.z.write_text(json.dumps({"train_sha256": Q.file_sha256(world.store / "lidc/train.parquet"), "step2": [s],
+                                 "series": {s: {"split": "train", "items": 1, "item_ids": [item]}}}))
+    assert run.go() == 1
+    hub = Hub()
+    with pytest.raises(SystemExit, match="manifest.json"):
+        push(monkeypatch, run.out, hub)
+    assert hub.calls == [] and TOKEN not in "".join(capsys.readouterr())
+
+
+def test_i21_nothing_is_uploaded_to_a_public_repo(built, monkeypatch, capsys):
+    hub = Hub(private=False)
+    with pytest.raises(SystemExit, match="not private"):
+        push(monkeypatch, built.out, hub)
+    assert hub.calls == [] and TOKEN not in "".join(capsys.readouterr())

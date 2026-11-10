@@ -4,6 +4,7 @@ are experiments.phase2.hf_push and experiments.phase2.hf_pull (argument parsing,
 
     python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
     python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
+    python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1 --repo svenk029/objdel-sft --revision main
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
     be the run's)
 
@@ -232,6 +233,33 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
     hub.create_commit(repo, operations=ops, commit_message=f"{run.name}: branch {sel['selected']}",
                       revision=revision, repo_type="model")  # fmt: skip
     print(f"hf_push: {src} -> {repo}@{revision}")
+    return 0
+
+
+def push_rows(root: Path, repo: str, revision: str, token: str) -> int:
+    """--rows (B1.4 step 5): a build_rl_rows root to rows/<root name>/ on branch `revision` of `repo`. Refused without
+    its manifest.json (written only when every hard data gate passed), for a set that is not LIDC, or to a public
+    repo. One upload_folder call holds every file but the manifest (it may commit in parts), then the manifest alone,
+    last; so the printed rows_revision, the last commit, holds every file. It and rows_manifest_sha256 are the rl
+    stage's pins (specs/b1_rows.yaml)."""
+    from objdel.core.hashing import file_sha256
+
+    man = root / "manifest.json"
+    if not man.is_file():
+        sys.exit(f"hf_push: {man} missing (build_rl_rows writes it only when every hard gate passes); nothing uploaded")
+    if bad := [k for k in read_json(man)["sets"] if not k.startswith("lidc/")]:
+        sys.exit(f"hf_push: {root} holds {bad}: only LIDC rows are uploaded (RIGA's licence forbids redistribution)")
+    hub = api(token)
+    if not hub.repo_info(repo, repo_type="model").private:
+        sys.exit(f"hf_push: {repo} is not private")
+    prefix = f"rows/{root.name}"
+    hub.create_branch(repo, branch=revision, repo_type="model", exist_ok=True)
+    hub.upload_folder(repo_id=repo, folder_path=root, path_in_repo=prefix, revision=revision, repo_type="model",
+                      ignore_patterns=["manifest.json"], commit_message=f"{prefix}: rows root")
+    info = hub.upload_file(path_or_fileobj=str(man), path_in_repo=f"{prefix}/manifest.json", repo_id=repo,
+                           revision=revision, repo_type="model", commit_message=f"{prefix}: manifest")
+    print(f"hf_push: {root} -> {repo}@{revision} {prefix}/\nrows_revision: {info.oid}\n"
+          f"rows_manifest_sha256: {file_sha256(man)}")
     return 0
 
 
