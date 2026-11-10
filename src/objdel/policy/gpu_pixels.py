@@ -71,7 +71,8 @@ def patchify(images, image_processor, *, device=None, out_dtype=torch.float32, b
     image_processor(list(images), return_tensors="pt"). images: a uint8 tensor (N, H, W, 3) / (N, H, W), or a
     sequence of PIL RGB / L images or uint8 (H, W, 3) / (H, W) arrays; a grey image becomes R = G = B, as PIL's
     convert("RGB") does. Raises UnsupportedImage for another mode, a size the processor would resize, or unchecked
-    processor settings. backend "auto": the one pick_backend picked (RuntimeError before it ran or after it failed)."""
+    processor settings (a PIL image's size before its pixels are read), ValueError for no image. backend "auto": the
+    one pick_backend picked (RuntimeError before it ran or after it failed)."""
     if backend == "auto":
         if picked is None:
             raise RuntimeError('backend "auto": no backend passed pick_backend on this process')
@@ -79,9 +80,14 @@ def patchify(images, image_processor, *, device=None, out_dtype=torch.float32, b
     if backend not in BACKENDS:
         raise ValueError(f"backend {backend!r}: one of {BACKENDS}")
     ip, device = image_processor, torch.device(device or "cpu")
-    arrays = [_array(x) for x in images]
-    for a in arrays:
-        _check(ip, *a.shape[:2])
+    arrays = []
+    for x in images:
+        if not isinstance(x, (np.ndarray, torch.Tensor)):  # PIL: size from the header, pixels unread
+            _check(ip, x.height, x.width)
+        arrays.append(_array(x))
+        _check(ip, *arrays[-1].shape[:2])
+    if not arrays:
+        raise ValueError("patchify of no image")
     p, m, t = (CHECKED[k] for k in ("patch_size", "merge_size", "temporal_patch_size"))
     grid = torch.tensor([[1, a.shape[0] // p, a.shape[1] // p] for a in arrays], dtype=torch.int64)
     groups: dict[tuple, list[int]] = {}
