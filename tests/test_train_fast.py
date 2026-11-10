@@ -571,8 +571,8 @@ def test_uncompiled_chunks_round_widths_to_64_not_to_the_compile_buckets():
 def test_compiled_layers_go_back_to_the_compile_buckets():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
-    assert "fast.compile_text_layers(trainer.model, a.compile)" in src and "trainer.buckets = fast.BUCKETS" in src
+    src = (Path(__file__).resolve().parents[1] / "src/objdel/rl/build.py").read_text()
+    assert "fast.compile_text_layers(trainer.model, flags.compile)" in src and "trainer.buckets = fast.BUCKETS" in src
 
 
 def test_vllm_sync_wake_and_sleep_are_timed():
@@ -749,8 +749,8 @@ def test_train_rl_and_g_probe_turn_on_shared_prefix_by_flag(capsys):
     with pytest.raises(SystemExit):
         train_rl.main(["--help"])
     assert "--shared-prefix" in capsys.readouterr().out
-    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
-    assert 'trainer.shared_prefix = bool(getattr(a, "shared_prefix", False))' in src
+    src = (Path(__file__).resolve().parents[1] / "src/objdel/rl/build.py").read_text()
+    assert "trainer.shared_prefix = flags.shared_prefix" in src
 
 
 @pytest.mark.parametrize("impl", ["eager", "sdpa"])
@@ -811,8 +811,8 @@ def test_update_order_keeps_trls_shuffle_under_a_per_micro_batch_entropy_cut(mon
 def test_shared_prefix_is_off_when_the_text_layers_are_compiled():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
-    assert 'trainer.shared_prefix = bool(getattr(a, "shared_prefix", False)) and not getattr(a, "compile", None)' in src
+    src = (Path(__file__).resolve().parents[1] / "src/objdel/rl/build.py").read_text()
+    assert "trainer.shared_prefix = flags.shared_prefix and not flags.compile" in src
 
 
 # B2.1: what the IS correction loses, and what every other mode would do ------------------------------------------

@@ -128,7 +128,7 @@ def test_g01_answers(folder, view, split, n, r5):
     val-selection items, the new test mean against R5's nodule CI, noise_floor.mean_sd. Before V3 the test part
     skips ("open (V3)")."""
     from experiments.phase2 import final_eval as FE
-    from experiments.phase2.select_ckpt import view_rows
+    from objdel.policy.evaluate import view_rows
 
     run = _need(A3 / folder) if split == "val" else A3 / folder
     if not run.exists():

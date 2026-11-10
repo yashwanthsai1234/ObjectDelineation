@@ -172,6 +172,9 @@ def test_same_stage_ignores_only_name_and_soft():
 
 CLI_STAGES = {"train_rl": S.RlStage, "g_probe": S.ProbeStage, "final_eval": S.EvalStage, "select_ckpt": S.SelectStage,
               "train_sft": S.SftStage}
+# CLEAN8 (full fine-tuning retired): train_sft drops freeze_vision (its D7 repair); select_ckpt gains max_tokens (the
+# CPU smoke's completion cap on a random Qwen3-VL). The golden is recorded once, so the changes are listed here.
+CLEAN8_DROPPED, CLEAN8_ADDED = {"train_sft": {"freeze_vision"}}, {"select_ckpt": {"max_tokens"}}
 
 
 @pytest.mark.parametrize("cli", CLI_STAGES)
@@ -180,9 +183,11 @@ def test_cli_dest_names_equal_stage_fields(cli):
     trainer flags its CLI did not have (the TrainerFlags mixin). A `negated` dest (argparse BooleanOptionalAction:
     --x and --no-x on one dest) is two bool fields, x and no_x."""
     g = json.loads((ROOT / "tests/goldens/phase_e/cli_dests.json").read_text())[cli]
-    dests, dropped = set(g["dests"]) | {f"no_{d}" for d in g.get("negated", ())}, set(g["dropped"])
+    dests = set(g["dests"]) | {f"no_{d}" for d in g.get("negated", ())}
+    dropped = set(g["dropped"]) | CLEAN8_DROPPED.get(cli, set())
     fields = set(CLI_STAGES[cli].model_fields) - {"kind", "name", "soft"}
     added = set(S.TrainerFlags.model_fields) - dests if cli in ("train_rl", "g_probe") else set()
+    added |= CLEAN8_ADDED.get(cli, set())
     assert dests - dropped == fields - added and dropped <= dests and not dropped & fields
 
 
@@ -231,3 +236,9 @@ def test_a_bool_field_named_no_x_parses_its_bare_flag_as_true():
     assert sel.no_vision is True and S.same_stage(S.cli_parse(S.SelectStage, S.to_argv(sel, "R", "D")[2:]), sel)
     assert all(i.default is False for c in S.STAGE_CLASSES.values() for i in c.model_fields.values()
                if i.annotation is bool)
+
+
+def test_an_rl_stage_without_save_steps_saves_every_50():
+    """E2.7: train_rl's CLI default (save_steps 50) is the stage default."""
+    st = S.RlStage(model="m", ckpt="c", train="t", out="o", steps=260)
+    assert st.save_steps == 50 and "save_steps" not in st.model_fields_set

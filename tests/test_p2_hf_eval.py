@@ -1,7 +1,7 @@
 """R1 / C2 evaluation on the D13 HF path (V1 R0, RTX 4090: vLLM failed H-A5-2, so `sampler: hf`): hf_sample batches
 items with left padding and resumes; sample.sample batches items; select_ckpt kills its sampler child on SIGTERM and
-retries without losing finished items; the R0 HF rate step (its reader project_r1 is archived, E6.6); k3_harness's
-exit code; c2_analyze on select_ckpt --only topology's report.json; rx8's sampler; g_probe.json without NaN."""
+retries without losing finished items; k3_harness's exit code; rx8's sampler; g_probe.json without NaN. The R0 HF
+rate step and c2_analyze are archived with their tests (archive/phase2_runs/, CLEAN8)."""
 
 import json
 import os
@@ -15,6 +15,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from objdel.policy import sampler
+from objdel.sft import select as sft_select
+
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "experiments/phase2/configs"
 
@@ -26,16 +29,16 @@ def _yaml(path):
 # ---------------------------------------------------------------- hf_sample: batches of items, resume
 
 
-@pytest.fixture(params=["lfm2.5-vl-450m", "qwen3-vl-2b"])
-def tiny_prompts(tmp_path, request):
-    """A random tiny model and 4 prompts on images of 3 sizes (different image-token counts, so left padding; for
-    Qwen3-VL also different rotary position grids)."""
+@pytest.fixture
+def tiny_prompts(tmp_path):
+    """A random tiny Qwen3-VL and 4 prompts on images of 3 sizes (different image-token counts, so left padding, and
+    different rotary position grids)."""
     pytest.importorskip("trl")
     from PIL import Image
     from test_p2_scripts import _tiny_vlm
     from transformers import AutoProcessor
 
-    model = _tiny_vlm(tmp_path / "tiny", request.param)
+    model = _tiny_vlm(tmp_path / "tiny")
     proc = AutoProcessor.from_pretrained(model)
     msg = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Outline the nodule."}]}]
     text = proc.apply_chat_template(msg, add_generation_prompt=True, tokenize=False)
@@ -143,8 +146,8 @@ def test_sigterm_to_select_kills_the_sampler_group(tmp_path):
     pytest.importorskip("trl")
     pid = tmp_path / "child.pid"
     child = f"import os, time; open({str(pid)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
-    code = (f"import sys; from experiments.phase2 import select_ckpt as SC; "
-            f"SC.run_group([sys.executable, '-c', {child!r}], 60)")
+    code = (f"import sys; from objdel.sft import select; "
+            f"select.run_group([sys.executable, '-c', {child!r}], 60)")
     p = subprocess.Popen([sys.executable, "-I", "-c", code], cwd=ROOT)
     for _ in range(600):
         if pid.exists() and pid.read_text():
@@ -167,7 +170,6 @@ def test_sampler_retry_keeps_finished_items(tmp_path, monkeypatch):
     """The completions file is kept across attempts (the child resumes); an attempt that finished items does not
     count against TRIES; other prompts or another child command start from an empty file."""
     pytest.importorskip("trl")
-    from experiments.phase2 import select_ckpt as SC
 
     prompts, comps, seen = tmp_path / "p.jsonl", tmp_path / "c.jsonl", []
     prompts.write_text("".join(json.dumps({"id": i, "n": 1}) + "\n" for i in "abc"))
@@ -178,15 +180,15 @@ def test_sampler_retry_keeps_finished_items(tmp_path, monkeypatch):
         comps.write_text("".join(x + "\n" for x in have) + json.dumps({"id": "abc"[len(have)], "k": 0}) + "\n")
         raise subprocess.TimeoutExpired(cmd, timeout)
 
-    monkeypatch.setattr(SC, "run_group", run)
-    SC.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # 3 timed-out attempts, each finishing an item: done
+    monkeypatch.setattr(sft_select, "run_group", run)
+    sft_select.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # 3 timed-out attempts, each finishing an item: done
     assert seen == [0, 1, 2]
-    SC.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # reused, no attempt
+    sft_select.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # reused, no attempt
     assert seen == [0, 1, 2]
-    monkeypatch.setattr(SC, "run_group", lambda cmd, timeout: seen.append(-1) or _raise(cmd, timeout))
+    monkeypatch.setattr(sft_select, "run_group", lambda cmd, timeout: seen.append(-1) or _raise(cmd, timeout))
     prompts.write_text(prompts.read_text() + json.dumps({"id": "d", "n": 1}) + "\n")  # other prompts
     with pytest.raises(RuntimeError, match="failed 2 times"):
-        SC.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # two stalled attempts
+        sft_select.run_sampler("hf", prompts, tmp_path, comps, 1.0)  # two stalled attempts
     assert seen[3:] == [-1, -1] and not comps.exists()  # the old prompts' completions were not resumed
 
 
@@ -196,59 +198,22 @@ def _raise(cmd, timeout):
 
 def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
     pytest.importorskip("trl")
-    from experiments.phase2 import select_ckpt as SC
 
     got = []
-    monkeypatch.setattr(SC, "run_sampler", lambda kind, p, m, c, timeout, extra=(): got.append(timeout))
-    monkeypatch.setattr(SC, "stop_ids", lambda path, proc: {7})
+    monkeypatch.setattr(sft_select, "run_sampler", lambda kind, p, m, c, timeout, extra=(): got.append(timeout))
+    monkeypatch.setattr(sampler, "stop_ids", lambda path, proc: {7})
     import transformers
 
     from objdel.train import sample
 
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda path: None)
-    monkeypatch.setattr(sample, "export_prompts", lambda *a, **k: None)
+    caps = []
+    monkeypatch.setattr(sample, "export_prompts", lambda *a, **k: caps.append(k["max_tokens"]))
     monkeypatch.setattr(sample, "import_completions", lambda *a, **k: [])
-    a = SimpleNamespace(model="lfm2.5-vl-450m", seed=0, sampler="hf", timeout_s=None)
-    SC.sample_view(a, tmp_path, [{"key": str(i)} for i in range(100)], tmp_path / "o", 8)
-    assert got == [600 + 3.0 * 800] and SC.TIMEOUT_S["hf"] == 3.0  # EV-5: 3x HF's ~1 s per answer
-
-
-# ---------------------------------------------------------------- R0 HF rate step
-
-
-def test_hf_rate_step_samples_base_weights_and_writes_the_rate(tmp_path, monkeypatch):
-    pytest.importorskip("trl")
-    from experiments.phase2 import hf_rate as HR
-    from experiments.phase2 import r0_parity
-    from experiments.phase2 import select_ckpt as SC
-
-    seen = []
-
-    def sample_view(a, branch, rows, out, k, extra=()):
-        seen.append({"branch": branch, "rows": len(rows), "k": k, "sampler": a.sampler, "extra": extra})
-        Path(extra[1]).write_text(json.dumps({"items": len(rows), "samples": len(rows) * k, "generate_s": 64.0,
-                                              "s_per_sample": 0.25, "load_s": 9.0, "batch_items": 16,
-                                              "tokens_mean": 90.0, "length_share": 0.0}))
-        return {}
-
-    monkeypatch.setattr(r0_parity, "weights", lambda model: tmp_path / "base")
-    monkeypatch.setattr(SC, "view_rows", lambda view, items=None, rl_only=True: [{"key": str(i)} for i in range(items)])
-    monkeypatch.setattr(SC, "sample_view", sample_view)
-    out = tmp_path / "hf-rate-lfm"
-    assert HR.main(["--model", "lfm2.5-vl-450m", "--view", str(tmp_path / "v"), "--out", str(out)]) == 0
-    (s,) = seen
-    assert s["branch"] == tmp_path / "base" and s["rows"] == 32 and s["k"] == 8 and s["sampler"] == "hf"
-    assert s["extra"][0] == "--timing"
-    doc = json.loads((out / "hf_rate.json").read_text())
-    assert doc["model"] == "lfm2.5-vl-450m" and doc["s_per_sample"] == 0.25 and doc["load_s"] == 9.0
-
-
-def test_r0_measures_the_hf_rate_of_the_rung():
-    steps = _yaml(CONFIGS / "r0.yaml")["steps"]
-    rate = [s for s in steps if "experiments.phase2.hf_rate" in s]
-    assert [s[s.index("--model") + 1] for s in rate] == ["qwen3-vl-2b"]
-    assert all(s[0] == "~" for s in rate)  # a failure leaves project_r1 without a rate (exit 2), not R0 stopped
-    assert all(s[s.index("--view") + 1] == "{data}/eval_views/lidc-val-shifted" for s in rate)
+    a = SimpleNamespace(model="qwen3-vl-2b", seed=0, sampler="hf", timeout_s=None, max_tokens=32)
+    sft_select.sample_view(a, tmp_path, [{"key": str(i)} for i in range(100)], tmp_path / "o", 8)
+    assert got == [600 + 3.0 * 800] and sft_select.TIMEOUT_S["hf"] == 3.0  # EV-5: 3x HF's ~1 s per answer
+    assert caps == [32]  # CLEAN8: the stage's completion cap reaches the prompts
 
 
 # ---------------------------------------------------------------- k3_harness exit code
@@ -270,34 +235,6 @@ def test_k3_harness_exits_1_on_a_failed_gate(tmp_path, monkeypatch, rollout_ms, 
         K3.serve.STORE.pop(root, None)
         K3.serve.STORE.pop("synthetic", None)  # main's synthetic RIGA caches
     assert json.loads((tmp_path / "k3.json").read_text())["gate"]["K4_pass"] is (code == 0)
-
-
-# ---------------------------------------------------------------- c2_analyze on select_ckpt's report.json
-
-
-def _report(tmp_path, name, level, ids, rng):
-    topo = {"bins": [np.clip(level + 0.1 * rng.standard_normal(120), 0, 1).tolist() for _ in range(3)],
-            "false_nonsimple": 0.01, "legal": 0.95, "ids": ids}
-    p = tmp_path / f"{name}.json"
-    p.write_text(json.dumps({"only": "topology", "branch": "e1", "sampler": "hf", "k": 8,
-                             "probes": {"topology": topo}}))
-    return str(p)
-
-
-def test_c2_analyze_reads_select_ckpts_topology_report(tmp_path, monkeypatch):
-    pytest.importorskip("scipy")
-    from experiments.phase2 import c2_analyze as C2
-
-    rng, ids = np.random.default_rng(2), [f"lidc/p{i}" for i in range(680)]
-    paths = [_report(tmp_path, f"s{i}", v, ids, rng) for i, v in enumerate((0.7, 0.68, 0.72))]
-    out = tmp_path / "c2.json"
-    monkeypatch.setattr(sys, "argv", ["c2_analyze", "--seeds", *paths, "--out", str(out)])
-    C2.main()
-    assert json.loads(out.read_text())["outcome"] == "pass"
-    bad = _report(tmp_path, "other", 0.7, ids[::-1], rng)  # other items: per-item means could not be paired
-    monkeypatch.setattr(sys, "argv", ["c2_analyze", "--seeds", *paths[:2], bad, "--out", str(out)])
-    with pytest.raises(SystemExit, match="items"):
-        C2.main()
 
 
 def test_topology_report_carries_the_probe_item_ids(tmp_path, monkeypatch):

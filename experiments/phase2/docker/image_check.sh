@@ -2,7 +2,7 @@
 # PLAN §4.7 step 3 (A3 §8.3, D15): first-session image check, run ON THE BOX after sync_up (code in /workspace/src).
 #   image_check.sh [OUT_JSON]   (default /workspace/runs/image_check.json; exit 1 unless every check passes)
 # Records: CUDA available; bf16 8192^3 matmul TFLOPS vs the card's dense BF16 peak (pass >= 0.6; A3 §3.1);
-# objdel._gpucheck and the vLLM import (/opt/vllm when the image has two venvs, else /opt/venv); the size of /dev/shm (BK4-19).
+# objdel._gpucheck, pydantic (objdel.core.spec) and the vLLM import (/opt/vllm when the image has two venvs, else /opt/venv); the size of /dev/shm (BK4-19).
 set -euo pipefail
 OUT=${1:-/workspace/runs/image_check.json}
 mkdir -p "$(dirname "$OUT")"
@@ -26,6 +26,7 @@ if r["cuda"]:
     r.update(gpu=name, bf16_tflops=round(tf, 1), peak=peak, matmul_ok=bool(peak and tf >= 0.6 * peak))
 importlib.import_module("objdel._gpucheck")
 r["gpucheck"] = True
+r["pydantic"] = importlib.import_module("pydantic").VERSION  # objdel.core.spec (--no-deps install: E2)
 r["shm_bytes"] = shutil.disk_usage("/dev/shm").total  # RIGA decrypts into /dev/shm (~280 MB; Docker default 64 MB)
 r["pass"] = bool(r["cuda"] and r.get("matmul_ok"))
 json.dump(r, open(sys.argv[1], "w"), indent=1)

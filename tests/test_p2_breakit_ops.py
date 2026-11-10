@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from experiments.phase2.vast import policy as P
+from objdel.sft import train as sft_train
 from tests import test_vast as V
 from tests.test_p2_scripts import stage
 
@@ -129,29 +130,27 @@ def config_value(path: Path, key: str) -> str | None:
 def test_config_outputs_land_where_pull_reads(monkeypatch):
     # run.sh: `cd /workspace/src && ... python -m <module>`; pull.sh: rsync /workspace/runs/<RUN_ID>/ only.
     # train_sft resolves output_dir under run_dir = $OBJDEL_RUN_DIR (run.sh's /workspace/runs/<RUN_ID>), else runs/.
-    from experiments.phase2 import train_sft as TS
 
     assert all(config_value(c, "output_dir") and config_value(c, "run_dir") is None for c in CONFIGS)
     monkeypatch.setenv("OBJDEL_RUN_DIR", "/workspace/runs/v1")
     for c in CONFIGS:
-        out = TS.resolve(stage("m", "v", config_value(c, "output_dir"), vision=False)).output_dir
+        out = sft_train.resolve(stage("m", "v", config_value(c, "output_dir"), vision=False)).output_dir
         assert PurePosixPath("/workspace/runs/v1") in PurePosixPath("/workspace/src", out).parents, c.name
     monkeypatch.delenv("OBJDEL_RUN_DIR")
-    assert TS.resolve(stage("m", "v", "r1-lfm", vision=False)).output_dir == str(Path("runs/r1-lfm"))
+    assert sft_train.resolve(stage("m", "v", "r1-x", vision=False)).output_dir == str(Path("runs/r1-x"))
 
 
 def test_config_data_root_is_the_box_bundle_dir(tmp_path, monkeypatch):
     # sync_up extracts the bundle to /workspace/data/lidc: the default data_root there, data/ on the Mac.
-    from experiments.phase2 import train_sft as TS
 
     assert not [c.name for c in CONFIGS if config_value(c, "data_root")]
     monkeypatch.delenv("OBJDEL_DATA_ROOT", raising=False)
-    monkeypatch.setattr(TS, "BOX_DATA", tmp_path / "missing")
-    assert TS.resolve(stage("m", "v", "o")).data_root == "data"
-    monkeypatch.setattr(TS, "BOX_DATA", tmp_path)
-    assert TS.resolve(stage("m", "v", "o")).data_root == str(tmp_path)
+    monkeypatch.setattr(sft_train, "BOX_DATA", tmp_path / "missing")
+    assert sft_train.resolve(stage("m", "v", "o")).data_root == "data"
+    monkeypatch.setattr(sft_train, "BOX_DATA", tmp_path)
+    assert sft_train.resolve(stage("m", "v", "o")).data_root == str(tmp_path)
     monkeypatch.setenv("OBJDEL_DATA_ROOT", "/elsewhere")
-    assert TS.resolve(stage("m", "v", "o")).data_root == "/elsewhere"
+    assert sft_train.resolve(stage("m", "v", "o")).data_root == "/elsewhere"
 
 
 # --- cost guard (G9, G10) --------------------------------------------------------------------------------------------

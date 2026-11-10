@@ -2,7 +2,7 @@
 
 cap_i = min(L, ceil(factor x T_i) + margin), with T_i the longest doctor outline of the row's view in tokens, end
 token counted (the sft_rows rule). A capped answer is cut mid-text: it is unparseable, gets R = 0 and a negative
-advantage, so `--runaway-cap` needs mask_truncated_completions=False (train_rl.check_flags)."""
+advantage, so `--runaway-cap` needs mask_truncated_completions=False (rl.run.check_flags)."""
 import math
 
 MARGIN = 64  # tokens added to factor x T_i (the first value to test, runaway_cut step 1)

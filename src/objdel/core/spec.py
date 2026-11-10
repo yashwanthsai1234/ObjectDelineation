@@ -51,7 +51,7 @@ class StageBase(Base):
 
 
 class TrainerFlags(BaseModel, frozen=True, extra="forbid"):
-    """Flags of the trainer that train_rl and g_probe build alike (g_probe.make_trainer reads each one)."""
+    """Flags of the trainer that train_rl and g_probe build alike (rl.build.build_trainer reads each one)."""
 
     lr: float | None = None  # None: configs.rl_lr(model)
     shared_prefix: bool = False
@@ -146,7 +146,6 @@ class SftStage(StageBase, frozen=True, extra="forbid"):  # train_sft, minus the 
     model_path: str | None = None
     branches: tuple[float, ...] = (0.5, 1.0, 2.0)
     a0: bool = False
-    freeze_vision: bool = False
     seed: int = 1
     rolling_minutes: float = 10.0
     vision: dict[str, JsonValue] | Literal[False] = {}
@@ -202,6 +201,7 @@ class SelectStage(StageBase, frozen=True, extra="forbid"):  # select_ckpt
     k: int = 8
     seed: int = 0
     timeout_s: float | None = None
+    max_tokens: int | None = Field(None, ge=1)  # sampled completion cap (CPU smoke); None: configs.MAX_COMPLETION
     out: str | None = None
 
     @model_validator(mode="after")
@@ -288,11 +288,11 @@ FLAG_ORDER = {
            "rows_revision", "rows_manifest_sha256", "budget_usd", "session_start", "rate_usd_per_h", "fixed_usd",
            "heldout", "heldout_items", "heldout_every", *TRAINER_ORDER, "record_batches", "expect_step1",
            "encode_check"),
-    "sft": ("model", "view", "output_dir", "data_root", "run_dir", "model_path", "branches", "a0", "freeze_vision",
-            "seed", "rolling_minutes", "vision", "vision_reference_only", "resume", "steps_per_epoch", "sft",
+    "sft": ("model", "view", "output_dir", "data_root", "run_dir", "model_path", "branches", "a0", "seed",
+            "rolling_minutes", "vision", "vision_reference_only", "resume", "steps_per_epoch", "sft",
             "deterministic", "branches_from", "profile"),
     "select": ("run", "prepared", "probes", "sampler", "shifted", "rescaled", "rotated", "items", "vision",
-               "no_vision", "only", "model", "k", "seed", "timeout_s", "out"),
+               "no_vision", "only", "model", "k", "seed", "timeout_s", "max_tokens", "out"),
     "probe": ("model", "ckpt", "select", "train", "probe", "out", "items", "grpo", "compile", "shared_prefix", "plain",
               "trace", "lr", "log_by_prompt", *(f for f in TRAINER_ORDER if f not in ("compile", "plain",
                                                                                                "trace"))),

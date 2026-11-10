@@ -71,7 +71,7 @@ FIELDS = tuple(
 SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
-IMPORT_CHECK = "import objdel._gpucheck, experiments.phase1.reward_gates, tests.oracles.reward_harness"
+IMPORT_CHECK = "import objdel._gpucheck, pydantic, experiments.phase1.reward_gates, tests.oracles.reward_harness"
 LIVE_CLIS = ("experiments.phase2.train_rl", "experiments.phase2.g_probe", "experiments.phase2.select_ckpt",
              "experiments.phase2.final_eval")  # the CLIs the box runs; test_bundle_imports_standalone imports them
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
@@ -532,8 +532,8 @@ def cmd_run(a) -> None:
         if a.module.startswith("specs/"):  # E6.5: the spec, code and versions beside the log, before any stage
             guard = [f"/opt/venv/bin/python -I -m experiments.phase2.vast.policy run_spec {shlex.quote(a.module)} "
                      f"/workspace/runs/{a.run_id}/run_spec.json"]
-        guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} "
-                 f"experiments/phase2/configs/r0.yaml first' >&2; false; }}; }}"
+        guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run train_sft "
+                 f"--vision-reference-only first' >&2; false; }}; }}"
                  for r in vision_refs(ROOT / a.module, a.run_id)]  # fmt: skip
     elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
         stages, name = [["-m", a.module, *a.args]], a.module.rsplit(".", 1)[1]

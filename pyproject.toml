@@ -11,7 +11,7 @@ dependencies = [
     "opencv-python-headless==5.0.0.93",  # Spaghetti labeling; pinned because topology results are hashed (plan §6)
     "pyarrow>=20",  # data store (Parquet); imported by objdel.data
     "numba==0.68.0",  # target simplifier kernels; pinned because the target-set hash depends on it
-    "pydantic>=2.11", "pydantic-settings>=2.16,<3", "pyyaml>=6.0",  # objdel.core.spec: the typed run spec (specs/*.yaml)
+    "pydantic>=2.14,<3", "pydantic-settings>=2.16,<3", "pyyaml>=6.0",  # objdel.core.spec: the typed run spec (specs/*.yaml)
 ]
 
 [project.optional-dependencies]
@@ -154,11 +154,11 @@ root_package = "objdel"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-id = "layers-interim"  # E0 -> E2; each move commit sets its own list (Implementation.md E0 table)
+id = "layers-interim"  # each move commit sets its own list (Implementation.md E0 table); E2 appends "core"
 name = "objdel layers (current packages)"
 type = "layers"
 containers = ["objdel"]
-layers = ["train", "eval", "reward | targets", "data", "geom"]
+layers = ["train", "eval", "reward | targets", "data", "geom", "core"]
 exhaustive = false
 ignore_imports = [
     "objdel.eval.vision -> objdel.train.dataset",  # cycle edge; E5 removes it (vision moves to policy)

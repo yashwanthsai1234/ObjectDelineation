@@ -7,6 +7,8 @@ import json
 
 import pytest
 
+from objdel.rl import run as rl_run
+
 H = 3600.0
 
 
@@ -156,13 +158,12 @@ def test_train_views_is_gone(capsys, monkeypatch):
 
 def test_budget_flags_need_a_session_start_and_a_rate(monkeypatch):
     """U54: the check lives in session_budget (run time on the box), not in the stage: a spec loads on the Mac."""
-    from experiments.phase2 import train_rl
 
     for argv, missing in ((["--rate-usd-per-h", "0.68"], "--session-start"),
                           (["--session-start", "100"], "--rate-usd-per-h")):
         a = parse(*TRAIN, "--budget-usd", "2.05", *argv, monkeypatch=monkeypatch)
-        with pytest.raises(train_rl.BudgetFlagError, match=missing):
-            train_rl.session_budget(a, {})
+        with pytest.raises(rl_run.BudgetFlagError, match=missing):
+            rl_run.session_budget(a, {})
     a = parse(*TRAIN, "--budget-usd", "2.05", "--session-start", "100", "--rate-usd-per-h", "0.68",
               "--fixed-usd", "0.0975", monkeypatch=monkeypatch)
     assert (a.budget_usd, a.session_start, a.rate_usd_per_h, a.fixed_usd) == (2.05, 100.0, 0.68, 0.0975)
@@ -172,19 +173,18 @@ def test_budget_flags_need_a_session_start_and_a_rate(monkeypatch):
 def test_budget_flags_default_to_the_run_sh_environment(monkeypatch):
     """I42 (train_rl side), U54: run.sh exports the active run's start, rate and fixed cost; session_budget reads them
     when the flag is left out (the stage holds None), and a flag wins."""
-    from experiments.phase2 import train_rl
 
     env = {"OBJDEL_SESSION_START": "1700000000", "OBJDEL_RATE_USD_PER_H": "0.68", "OBJDEL_FIXED_USD": "0.0975"}
     a = parse(*TRAIN, "--budget-usd", "2.05", env=env, monkeypatch=monkeypatch)
     assert a.session_start is None
-    cb = train_rl.session_budget(a, env)
+    cb = rl_run.session_budget(a, env)
     assert (cb.rate, cb.cap, cb.start, cb.fixed) == (0.68, 2.05, 1700000000.0, 0.0975)
     a = parse(*TRAIN, "--budget-usd", "2.05", "--fixed-usd", "0", env=env, monkeypatch=monkeypatch)
-    assert train_rl.session_budget(a, env).fixed == 0
-    assert train_rl.session_budget(parse(*TRAIN, env=env, monkeypatch=monkeypatch), env) is None
+    assert rl_run.session_budget(a, env).fixed == 0
+    assert rl_run.session_budget(parse(*TRAIN, env=env, monkeypatch=monkeypatch), env) is None
     for bad in ("x", "inf", "-1"):
-        with pytest.raises(train_rl.BudgetFlagError, match="OBJDEL_SESSION_START"):
-            train_rl.session_budget(a, env | {"OBJDEL_SESSION_START": bad})
+        with pytest.raises(rl_run.BudgetFlagError, match="OBJDEL_SESSION_START"):
+            rl_run.session_budget(a, env | {"OBJDEL_SESSION_START": bad})
 
 
 def test_merge_last_needs_neither_steps_nor_train(capsys, monkeypatch):
@@ -206,21 +206,19 @@ def make_root(tmp_path, steps=4, per_step=32, block_steps=2, schedule=True):
 
 
 def test_schedule_root_needs_the_pinned_manifest(tmp_path):
-    from experiments.phase2 import train_rl
 
     root, _, sha = make_root(tmp_path)
-    assert train_rl.rows_schedule(root, sha)["per_step"] == 32
+    assert rl_run.rows_schedule(root, sha)["per_step"] == 32
     with pytest.raises(ValueError, match="rows-manifest-sha256"):
-        train_rl.rows_schedule(root, None)  # a schedule root without the flag
+        rl_run.rows_schedule(root, None)  # a schedule root without the flag
     with pytest.raises(ValueError, match="SHA-256"):
-        train_rl.rows_schedule(root, "0" * 64)  # the box loaded a different upload
+        rl_run.rows_schedule(root, "0" * 64)  # the box loaded a different upload
 
 
 def test_root_without_schedule_takes_the_old_path(tmp_path):
-    from experiments.phase2 import train_rl
 
     root, _, _ = make_root(tmp_path, schedule=False)
-    assert train_rl.rows_schedule(root, None) is None
+    assert rl_run.rows_schedule(root, None) is None
 
 
 @pytest.mark.parametrize("mutate,match", [
@@ -230,13 +228,12 @@ def test_root_without_schedule_takes_the_old_path(tmp_path):
     (lambda k: k[1:2] + k[:1] + k[2:], "ids_sha256"),  # same ids, two reordered
 ])
 def test_rows_must_be_the_schedule_in_order(tmp_path, mutate, match):
-    from experiments.phase2 import train_rl
 
     root, ids, sha = make_root(tmp_path)
-    schedule = train_rl.rows_schedule(root, sha)
-    train_rl.check_rows(ids, schedule)
+    schedule = rl_run.rows_schedule(root, sha)
+    rl_run.check_rows(ids, schedule)
     with pytest.raises(ValueError, match=match):
-        train_rl.check_rows(mutate(list(ids)), schedule)
+        rl_run.check_rows(mutate(list(ids)), schedule)
 
 
 def sampler(tmp_path, **over):
@@ -260,22 +257,20 @@ def sampler(tmp_path, **over):
     ({}, 3, "block"),  # not whole blocks (U61: --steps 30 with block_steps 20)
 ])
 def test_sampler_shape_and_steps_are_refused(tmp_path, over, steps, match):
-    from experiments.phase2 import train_rl
 
     root, _, sha = make_root(tmp_path)
-    schedule = train_rl.rows_schedule(root, sha)
-    train_rl.check_sampler(sampler(tmp_path), schedule, 4)  # the real config fits a 32-prompt schedule
-    train_rl.check_sampler(sampler(tmp_path), schedule, 2)  # one whole block of two
+    schedule = rl_run.rows_schedule(root, sha)
+    rl_run.check_sampler(sampler(tmp_path), schedule, 4)  # the real config fits a 32-prompt schedule
+    rl_run.check_sampler(sampler(tmp_path), schedule, 2)  # one whole block of two
     with pytest.raises(ValueError, match=match):
-        train_rl.check_sampler(sampler(tmp_path, **over), schedule, steps)
+        rl_run.check_sampler(sampler(tmp_path, **over), schedule, steps)
 
 
 def test_u61_thirty_steps_with_blocks_of_twenty(tmp_path):
-    from experiments.phase2 import train_rl
 
     root, _, sha = make_root(tmp_path, steps=40, per_step=32, block_steps=20)
     with pytest.raises(ValueError, match="block"):
-        train_rl.check_sampler(sampler(tmp_path), train_rl.rows_schedule(root, sha), 30)
+        rl_run.check_sampler(sampler(tmp_path), rl_run.rows_schedule(root, sha), 30)
 
 
 # --- train_rl main on a real rows root: refusals come first (R04), kind / cell columns (U43) ----------------------
@@ -374,7 +369,6 @@ def test_heldout_holds_val_shape_items_only(prepared, tmp_path, monkeypatch):
     out, and a view with no val-shape item is refused."""
     import shutil
 
-    from experiments.phase2 import train_rl
 
     view = tmp_path / "view"
     shutil.copytree(prepared, view)
@@ -384,11 +378,11 @@ def test_heldout_holds_val_shape_items_only(prepared, tmp_path, monkeypatch):
     (view / "lidc/val.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
     halves = {"LIDC-IDRI-0002": "shape", "LIDC-IDRI-9999": "select"}
     monkeypatch.setattr("objdel.data.splits.val_half", halves.__getitem__, raising=False)
-    rows = train_rl.heldout_rows(view, 64)
+    rows = rl_run.heldout_rows(view, 64)
     assert rows["key"] == ["lidc/1.2.2/n000/z001"] and planted["item_id"] not in rows["key"]
     halves["LIDC-IDRI-0002"] = "select"
     with pytest.raises(ValueError, match="val-shape"):
-        train_rl.heldout_rows(view, 64)
+        rl_run.heldout_rows(view, 64)
 
 
 def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp_path, monkeypatch):
@@ -398,7 +392,6 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
 
     from test_vast import Env
 
-    from experiments.phase2 import train_rl
     from experiments.phase2.vast import policy
 
     E = Env(tmp_path)
@@ -410,7 +403,7 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
     assert float(env["OBJDEL_RATE_USD_PER_H"]) == pytest.approx(run["dph"] + 6 * run["inet_up_cost"])
     assert float(env["OBJDEL_FIXED_USD"]) == pytest.approx(15 * run["inet_down_cost"])
     a = parse(*TRAIN, "--budget-usd", "2.05", env=env, monkeypatch=monkeypatch)
-    cb = train_rl.session_budget(a, env)
+    cb = rl_run.session_budget(a, env)
     t = run["started"] + 1.7 * H
     cb.clock = lambda: t
     monkeypatch.setenv("VAST_HOME", E.env["VAST_HOME"])
@@ -424,11 +417,10 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
 
 
 def test_numerics_defaults_to_the_b1_control(monkeypatch):
-    from experiments.phase2 import train_rl
 
     a = parse(*TRAIN, monkeypatch=monkeypatch)  # E6.4: an unset field is None, the B1 control resolved at use
     assert a.numerics is None and a.opsm_start_delta is None
-    assert train_rl.numerics_overrides(a) == {"numerics": "bf16-seqmask"}
+    assert rl_run.numerics_overrides(a) == {"numerics": "bf16-seqmask"}
 
 
 def test_numerics_takes_the_presets_that_need_only_a_config(capsys, monkeypatch):
@@ -470,9 +462,8 @@ def test_the_grpo_json_cannot_set_the_opsm_threshold(capsys, monkeypatch):
 
 
 def test_numerics_reach_the_grpo_config(tmp_path, monkeypatch):
-    from experiments.phase2 import train_rl
 
     a = parse(*TRAIN, "--numerics", "bf16-tis-opsm", "--opsm-start-delta", "0.8", monkeypatch=monkeypatch)
-    assert train_rl.numerics_overrides(a) == {"numerics": "bf16-tis-opsm", "off_policy_mask_threshold": 0.8}
+    assert rl_run.numerics_overrides(a) == {"numerics": "bf16-tis-opsm", "off_policy_mask_threshold": 0.8}
     a = parse(*TRAIN, "--numerics", "bf16-tis-opsm", monkeypatch=monkeypatch)
-    assert train_rl.numerics_overrides(a) == {"numerics": "bf16-tis-opsm"}  # the preset's 0.5 stays
+    assert rl_run.numerics_overrides(a) == {"numerics": "bf16-tis-opsm"}  # the preset's 0.5 stays

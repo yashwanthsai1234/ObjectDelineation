@@ -47,10 +47,10 @@ def test_refusal_of_a_wrongly_typed_stamp_is_a_string(tmp_path, monkeypatch, sta
 
 @pytest.fixture
 def stub(tmp_path, monkeypatch):
-    """train_rl.main in process: no preload, no model; make_trainer records its arguments."""
+    """train_rl.main in process: no preload, no model; build_trainer records its arguments."""
     import gc
 
-    import experiments.phase2.g_probe as g_probe
+    from objdel.rl import build
     from objdel.train import dataset, serve
 
     seen = SimpleNamespace(rows_calls=[], trainers=[], trained=[])
@@ -65,7 +65,7 @@ def stub(tmp_path, monkeypatch):
         state=SimpleNamespace(global_step=2, log_history=[]),
         args=SimpleNamespace(beta=0.0, mask_truncated_completions=True),
     )
-    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: seen.trainers.append(k) or (trainer, saver, 5e-5))
+    monkeypatch.setattr(build, "build_trainer", lambda *a, **k: seen.trainers.append(k) or (trainer, saver, 5e-5))
     root = tmp_path / "root"
     root.mkdir()
     seen.root, seen.out = root, tmp_path / "out"

@@ -1,5 +1,5 @@
 """Break-it BK2 (Phase 2 Stage 1, wave 2): the scoring and decision path, JSONL bridge -> serve -> metrics / summarize
--> probes -> signal -> prereg / c2_analyze -> gates.phase2_entry -> select_ckpt / eval_run. Findings are recorded in
+-> probes -> signal -> prereg -> gates.phase2_entry -> select_ckpt / eval_run. Findings are recorded in
 experiments/phase2/impl/BK2.md; a real defect is an xfail(strict=True) "BK2-<n>", every other test is a guard that
 passes today. Real-data tests are marked `data` (data/eval_views)."""
 
@@ -13,14 +13,15 @@ import probe_models as M
 import pytest
 from oracles.eval_oracle import pairwise_iou
 
-from experiments.phase2 import c2_analyze as C2A
 from experiments.phase2 import prereg as P
 from experiments.phase2 import sample_vllm as V
 from experiments.phase2 import select_ckpt as SC
 from objdel.eval import gates, metrics, probes, summarize
 from objdel.eval import signal as S
 from objdel.eval.metrics import _ged, min_mode_retention, tv_js
+from objdel.policy import evaluate
 from objdel.reward import ExpertCache
+from objdel.sft import select as sft_select
 from objdel.targets import build_target
 from objdel.train import serve
 
@@ -200,7 +201,7 @@ def test_select_ckpt_eligibility_needs_groups_of_8():
 
 def test_select_ckpt_eligibility_needs_a_vision_result():
     summary = {"format": 1.0, "legal": 1.0, "dup_rate": 0.0, "signal_share": 1.0, "group": 8}
-    for vision in ({}, SC.vision_check(Path("b"), None)):  # unmeasured; --no-vision
+    for vision in ({}, sft_select.vision_check(Path("b"), None)):  # unmeasured; --no-vision
         assert gates.eligible({"datasets": {"lidc": summary}}, vision) is False
 
 
@@ -262,8 +263,8 @@ def test_topology_probe_on_select_ckpt_items_subset_can_pass(monkeypatch, tmp_pa
         seen[out.name] = len(rows)
         return {r["key"]: exact.get(r["key"], {"item_id": r["key"], "samples": []}) for r in rows}
 
-    monkeypatch.setattr(SC, "sample_view", sample_view)
-    monkeypatch.setattr(SC, "score_view", lambda *a: {"summary": {}, "panel": {}, "iou": {}})
+    monkeypatch.setattr(sft_select, "sample_view", sample_view)
+    monkeypatch.setattr(sft_select, "score_view", lambda *a: {"summary": {}, "panel": {}, "iou": {}})
     monkeypatch.setattr(probes, "score_precision", lambda rows, root: {"rows": len(rows)})
     topo = probes.score_topology
     monkeypatch.setattr(probes, "score_topology", lambda rows, root: topo(rows, root, B=200))
@@ -279,14 +280,8 @@ def test_select_ckpt_probe_rows_are_the_probe_items():
     root = VIEWS / "probe-topology"
     if not (root / "lidc" / "val.jsonl").is_file():
         pytest.skip("no probe-topology view")
-    rows = SC.view_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
+    rows = evaluate.view_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
     assert len(rows) == len(probes.records(root)) == 680
-
-
-def test_topology_probe_c2_input_keys_match_c2_analyze():
-    seed = {"bins": [[0.5] * 6] * 3, "false_nonsimple": 0.0, "legal": 1.0}  # score_topology's keys
-    res = C2A.analyze([seed] * 3, boot=50)
-    assert res["pooled"] == [0.5, 0.5, 0.5] and res["outcome"] == "pass"
 
 
 # ================================================================ signal: R-B
@@ -359,29 +354,6 @@ def test_fourth_seed_eligibility_boundaries():
     assert not P.fourth_seed_eligible([0.5, 0.49, 0.6, 0.7], 0.55, other)
 
 
-def _bins(hits_per_bin, n=120, K=8):
-    """Per-item K-sample means whose bin totals are exactly the given hit counts."""
-    out = []
-    for h in hits_per_bin:
-        x = np.zeros(n * K)
-        x[:h] = 1
-        out.append(x.reshape(n, K).mean(1).tolist())
-    return out
-
-
-def test_c2_pooled_exactly_on_the_floor_is_not_a_fail():
-    seed = {"bins": _bins((349, 349, 44)), "false_nonsimple": 0.0, "legal": 1.0}
-    # exact pooled = 0.8 * 349 / 960 + 0.2 * 44 / 960 = 288 / 960 = 0.30; float: 0.29999999999999993
-    res = C2A.analyze([seed] * 3, boot=50)
-    assert res["outcome"] != "fail"
-
-
-def test_c2_pooled_exactly_on_the_pass_line_counts_as_050():
-    seed = {"bins": _bins((597, 597, 12)), "false_nonsimple": 0.0, "legal": 1.0}
-    res = C2A.analyze([seed] * 3, boot=50)
-    assert res["pooled"][0] >= 0.5
-
-
 # ================================================================ gates <-> prereg <-> select_ckpt
 
 
@@ -397,7 +369,7 @@ def test_gate_names_agree_with_prereg():
 def test_empty_report_passes_no_c1_gate():
     rep = gates.phase2_entry({"vision": {"pass": True}})  # e.g. eval_run --view centred, or a missing shifted view
     assert rep["pass"] is False
-    assert P.c1_stop([("lfm", rep["passed"])])[0] is None
+    assert P.c1_stop([("qwen", rep["passed"])])[0] is None
 
 
 def _good_report(win_share=0.0):
@@ -415,14 +387,14 @@ def _good_report(win_share=0.0):
 def test_prior_a_stays_report_only_and_probe_warning():
     rep = gates.phase2_entry(_good_report(win_share=0.0), ["lidc"])
     assert rep["pass"] and rep["reported"]["G-prior-a"] == {"lidc/nodule": 0.0}
-    assert P.c1_stop([("lfm", rep["passed"])]) == ("lfm", ["G-probe warning"])
+    assert P.c1_stop([("qwen", rep["passed"])]) == ("qwen", ["G-probe warning"])
 
 
 def test_prior_a_threshold_is_applied_when_set():
     rep = gates.phase2_entry(_good_report(win_share=0.9), ["lidc"], prior_a_threshold=0.6)
-    assert P.c1_stop([("lfm", rep["passed"])], prior_a_threshold=0.6)[0] == "lfm"
+    assert P.c1_stop([("qwen", rep["passed"])], prior_a_threshold=0.6)[0] == "qwen"
     rep = gates.phase2_entry(_good_report(win_share=0.5), ["lidc"], prior_a_threshold=0.6)
-    assert not rep["pass"] and P.c1_stop([("lfm", rep["passed"])], prior_a_threshold=0.6)[0] is None
+    assert not rep["pass"] and P.c1_stop([("qwen", rep["passed"])], prior_a_threshold=0.6)[0] is None
 
 
 def test_nan_and_missing_values_fail_their_gates():

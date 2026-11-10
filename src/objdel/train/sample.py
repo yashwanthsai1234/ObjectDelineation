@@ -20,7 +20,7 @@
   export_prompts.py and vllm_parity.py). The
   prompt is TRL GRPO's generation prompt as text (prepare_multimodal_messages, then the processor's
   apply_chat_template with add_generation_prompt=True, tokenize=False; B5: vLLM's prompt ids equal the training
-  env's in 64 / 64 LFM items and through the renderer for Qwen3.5), the image path, the processor
+  env's in 64 / 64 items of a retired 450M model and through the renderer for Qwen3.5), the image path, the processor
   kwargs minus padding_side (vLLM's mm_processor_kwargs) and every sampling field (configs.sampling, seed,
   stop_token_ids). Completions come back as token ids; truncation is rewards.truncated, the reward's rule.
   sample() (HF generate through TRL) stays the reference and the Qwen3.5 fallback.
@@ -112,9 +112,10 @@ def _path(image) -> str:
 
 
 def export_prompts(rows, path, model: str, dataset: str, n: int, processor=None, stop_ids=None,
-                   seed: int = 0) -> None:
+                   seed: int = 0, max_tokens: int | None = None) -> None:
     """rows: prompt, image (a path; grpo_rows' decoded Image column is read as paths), key (unique) -> the prompts
-    JSONL. processor: AutoProcessor of the sampled checkpoint (default: MODELS[model] with processor_kwargs)."""
+    JSONL. processor: AutoProcessor of the sampled checkpoint (default: MODELS[model] with processor_kwargs).
+    max_tokens: a completion cap below the model's budget (the CPU smoke), else MAX_COMPLETION."""
     kw = configs.processor_kwargs(model, dataset)
     if processor is None:
         from transformers import AutoProcessor
@@ -122,7 +123,7 @@ def export_prompts(rows, path, model: str, dataset: str, n: int, processor=None,
     if hasattr(rows, "cast_column"):  # a datasets.Dataset: paths, not decoded images
         from datasets import Image
         rows = rows.cast_column("image", Image(decode=False))
-    sampling = configs.sampling(model) | {"seed": seed}
+    sampling = configs.sampling(model) | {"seed": seed} | ({"max_tokens": max_tokens} if max_tokens else {})
     if stop_ids is not None:
         sampling["stop_token_ids"] = sorted(stop_ids)
     mm = {k: v for k, v in kw.items() if k != "padding_side"}

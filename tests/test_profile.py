@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from experiments.phase2 import profile as PS
+from objdel.sft import train as sft_train
 
 
 def test_rl_arms_are_short_g_probe_runs_of_256_answers(tmp_path):
@@ -85,10 +86,9 @@ def test_train_sft_profile_writes_a_trace_of_one_step(tmp_path, synthetic_items)
     pytest.importorskip("trl")
     from test_p2_v1_train import _tiny_args
 
-    from experiments.phase2 import train_sft as TS
-
     prof = tmp_path / "prof"
-    assert TS.train(_tiny_args(TS, tmp_path, synthetic_items, branches=[], steps_per_epoch=7, profile=str(prof))) == 0
+    args = _tiny_args(sft_train, tmp_path, synthetic_items, branches=[], steps_per_epoch=7, profile=str(prof))
+    assert sft_train.train(args) == 0
     with gzip.open(prof / "trace.json.gz", "rt") as f:
         b = PS.busy(json.load(f))
     assert b["step_ms"] > 0 and b["kernels"] == 0 and b["gpu_busy"] == 0  # CPU run: no CUDA activity
@@ -97,11 +97,10 @@ def test_train_sft_profile_writes_a_trace_of_one_step(tmp_path, synthetic_items)
 
 def test_train_sft_refuses_profile_with_branches(tmp_path):
     pytest.importorskip("trl")
-    from experiments.phase2 import train_sft as TS
     from objdel.core.spec import SftStage
 
     with pytest.raises(ValueError, match="profile is for timing runs"):
-        TS.train(SftStage(model="m", view="v", output_dir=str(tmp_path / "o"), vision=False,
+        sft_train.train(SftStage(model="m", view="v", output_dir=str(tmp_path / "o"), vision=False,
                           profile=str(tmp_path / "p")))
 
 

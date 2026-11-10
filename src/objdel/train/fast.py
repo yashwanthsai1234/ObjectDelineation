@@ -210,7 +210,7 @@ def packing_wins(prompt_len, lens, groups) -> bool:
 class FastForward:
     """GRPOTrainer mixin: each forward chunk runs on its own window (see the module docstring)."""
 
-    buckets = FINE  # make_trainer sets BUCKETS when it compiles the text layers
+    buckets = FINE  # build_trainer sets BUCKETS when it compiles the text layers
     shared_prefix = False  # pack each group's shared prompt once per chunk (packed_chunk); needs the RopeCache
 
     def _get_per_token_logps_and_entropies(self, model, input_ids, attention_mask, logits_to_keep, batch_size=None,

@@ -172,8 +172,8 @@ def test_train_rl_and_g_probe_carry_check_rope_every(capsys):
     with pytest.raises(SystemExit):
         train_rl.main(["--help"])
     assert "--check-rope-every" in capsys.readouterr().out
-    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
-    assert 'trainer.check_rope_every = getattr(a, "check_rope_every", 50)' in src
+    src = (Path(__file__).resolve().parents[1] / "src/objdel/rl/build.py").read_text()
+    assert "trainer.check_rope_every = flags.check_rope_every" in src
 
 
 def test_row_meta_counts_each_rows_pixel_rows_from_its_image_pads():

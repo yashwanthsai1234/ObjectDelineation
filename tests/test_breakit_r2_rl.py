@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from objdel.rl import run as rl_run
+
 
 def _trace_steps(tmp_path, wait: int, start: int, steps: int) -> list[int]:
     """Run TraceStep over global steps start+1..steps; return the global steps at which it wrote a trace."""
@@ -27,7 +29,7 @@ def test_trace_step_profiles_one_step_only(tmp_path):
 
 
 def test_trace_step_matches_nvtx_window_after_resume(tmp_path):
-    s = 5  # make_trainer: TraceStep(wait=S - 2); NvtxSteps opens the capture at the end of step S - 1 = 4
+    s = 5  # build_trainer: TraceStep(wait=S - 2); NvtxSteps opens the capture at the end of step S - 1 = 4
     assert _trace_steps(tmp_path, wait=s - 2, start=3, steps=12)[:1] == [s]
 
 
@@ -36,7 +38,7 @@ def test_merge_last_keeps_a_complete_final_without_rl_json(tmp_path, monkeypatch
     import transformers.trainer_utils  # noqa: F401  (imported before the fake peft below)
     from transformers import AutoModelForImageTextToText, AutoProcessor  # noqa: F401
 
-    import experiments.phase2.g_probe  # noqa: F401
+    import objdel.rl.run  # noqa: F401
     import objdel.train.configs  # noqa: F401  (imports the real peft)
     from experiments.phase2 import train_rl
 
@@ -55,7 +57,7 @@ def test_merge_last_keeps_a_complete_final_without_rl_json(tmp_path, monkeypatch
     monkeypatch.setitem(sys.modules, "peft", SimpleNamespace(PeftModel=Peft))
     a = train_rl.parse(["--merge-last", "--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "c"), "--out", str(out)])
     try:
-        train_rl.merge_last(a)
+        rl_run.merge_last(a)
     except (RuntimeError, OSError):  # the fake merge, or no base model at --ckpt
         pass
     assert (out / "final" / "model.safetensors").read_bytes() == b"weights of step 260"
@@ -66,13 +68,13 @@ def stub(tmp_path, monkeypatch):
     """train_rl.main with no model, engine or preload (as round 1's stub); body(start, steps) runs in train()."""
     import gc
 
-    import experiments.phase2.g_probe as g_probe
     from experiments.phase2 import train_rl
+    from objdel.rl import build
     from objdel.train import dataset, serve
 
     monkeypatch.setattr(serve, "preload", lambda root, ds: None)
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: ["k1", "k2"])
-    monkeypatch.setattr(train_rl, "save_final", lambda model, proc, out: None)
+    monkeypatch.setattr(rl_run, "save_final", lambda model, proc, out: None)
     monkeypatch.setattr(gc, "freeze", lambda: None)
     state = SimpleNamespace(global_step=0, log_history=[])
     body = {"fn": lambda start, steps: None}
@@ -85,11 +87,11 @@ def stub(tmp_path, monkeypatch):
     trainer = SimpleNamespace(train=train, model=None, accelerator=SimpleNamespace(unwrap_model=lambda m: m),
                               state=state, args=SimpleNamespace(beta=1e-3, mask_truncated_completions=True))
 
-    def make(a, ckpt, train_rows, steps, **k):
+    def make(model, ckpt, rows, out, roots, steps, flags, **k):
         state.max_steps = steps
         return trainer, None, 5e-5
 
-    monkeypatch.setattr(g_probe, "make_trainer", make)
+    monkeypatch.setattr(build, "build_trainer", make)
     (tmp_path / "root").mkdir()
     (tmp_path / "root/manifest.json").write_text("{}")
     out = tmp_path / "out"

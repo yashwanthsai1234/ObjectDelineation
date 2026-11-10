@@ -63,7 +63,7 @@ def run_dir(tmp: Path, dataset="lidc", selected="e1") -> Path:
     view = tmp / "views" / f"{dataset}-bundle"
     view.mkdir(parents=True)
     (view / "manifest.json").write_text(json.dumps({"dataset": dataset, "view_hash": "vh"}))
-    run = tmp / "runs" / "v1" / "r1-lfm"
+    run = tmp / "runs" / "v1" / "r1-qwen3vl2b"
     for b in ("e0.5", "e1"):
         (run / "branches" / b).mkdir(parents=True)
         (run / "branches" / b / "model.safetensors").write_bytes(b"w-" + b.encode())
@@ -73,7 +73,7 @@ def run_dir(tmp: Path, dataset="lidc", selected="e1") -> Path:
         "selected": selected, "gates_branch": selected or "e1", "gates_pass": True, "gates_failed": [],
         "sampler": "hf", "k": 8, "items": 256}))  # fmt: skip
     (run / "manifest.json").write_text(json.dumps({
-        "config": {"model": "lfm2.5-vl-450m", "seed": 1, "lora": False, "branches": [0.5, 1.0, 2.0],
+        "config": {"model": "qwen3-vl-2b", "seed": 1, "branches": [0.5, 1.0, 2.0],
                    "view": str(view)},
         "view": {"view_hash": "vh"}, "code": {"objdel_and_script_sha256": "c0de"}, "status": "done"}))  # fmt: skip
     return run
@@ -84,14 +84,13 @@ def fake(monkeypatch):
     pytest.importorskip("trl")  # hf_push.main reads objdel.train.configs (the training stack)
     api = FakeApi()
     monkeypatch.setattr(H, "api", lambda tok: api.calls.append(("token", tok)) or api)
-    monkeypatch.setattr(H, "base_card", lambda base: (b"LFM OPEN LICENSE", {"license": "other",
-                                                                             "license_name": "lfm1.0"}))
+    monkeypatch.setattr(H, "base_card", lambda base: (b"BASE LICENSE", {"license": "apache-2.0"}))
     return api
 
 
 def push(run, monkeypatch, ok=True):
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
-    argv = ["--run", str(run), "--repo", REPO, "--revision", "r1-lfm"]
+    argv = ["--run", str(run), "--repo", REPO, "--revision", "r1-qwen3vl2b"]
     if ok:
         return H.main(argv)
     with pytest.raises(SystemExit) as e:
@@ -103,14 +102,14 @@ def test_push_uploads_the_selected_branch_with_licence_and_card_in_one_commit(tm
     assert push(run_dir(tmp_path), monkeypatch) == 0
     (commit,) = [c for c in fake.calls if c[0] == "create_commit"]
     _, repo, rev, files, _ = commit
-    assert repo == REPO and rev == "r1-lfm" and ("token", "hf_secret") in fake.calls
-    assert ("create_branch", REPO, "r1-lfm", True) in fake.calls
+    assert repo == REPO and rev == "r1-qwen3vl2b" and ("token", "hf_secret") in fake.calls
+    assert ("create_branch", REPO, "r1-qwen3vl2b", True) in fake.calls
     assert files["model.safetensors"] == b"w-e1" and set(files) == {"model.safetensors", "config.json", "README.md",
                                                                     "LICENSE"}  # fmt: skip
-    assert files["LICENSE"] == b"LFM OPEN LICENSE"
+    assert files["LICENSE"] == b"BASE LICENSE"
     card = files["README.md"].decode()
-    for want in ("LiquidAI/LFM2.5-VL-450M", "license_name: lfm1.0", "base_model: LiquidAI/LFM2.5-VL-450M", "e1",
-                 "full fine-tune", "LIDC-IDRI", "10.7937/K9/TCIA.2015.LO9QL9SX", "c0de"):
+    for want in ("Qwen/Qwen3-VL-2B-Instruct", "license: apache-2.0", "base_model: Qwen/Qwen3-VL-2B-Instruct", "e1",
+                 "LoRA, merged", "LIDC-IDRI", "10.7937/K9/TCIA.2015.LO9QL9SX", "c0de"):
         assert want in card, want
 
 
@@ -143,17 +142,17 @@ def _mac(monkeypatch, who):
 
 def test_push_hf_streams_the_token_over_stdin_only(monkeypatch):
     sent = _mac(monkeypatch, token())
-    P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/r1_lfm.yaml"))
+    P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/r1_qwen3vl2b.yaml"))
     ((cmd, stdin, what),) = sent
     assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.secrets" in what
-    assert "-m experiments.phase2.hf_push --run /workspace/runs/v1/r1-lfm" in cmd
-    assert f"--repo {REPO} --revision r1-lfm" in cmd
+    assert "-m experiments.phase2.hf_push --run /workspace/runs/v1/r1-qwen3vl2b" in cmd
+    assert f"--repo {REPO} --revision r1-qwen3vl2b" in cmd
 
 
 def test_push_hf_refuses_an_over_broad_token_before_touching_the_box(monkeypatch):
     sent = _mac(monkeypatch, token(role="write"))
     with pytest.raises(SystemExit, match="objdel-hf-write.*role write"):
-        P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/r1_lfm.yaml"))
+        P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/r1_qwen3vl2b.yaml"))
     assert sent == []
 
 
@@ -170,11 +169,11 @@ def test_push_from_the_mac_takes_a_local_copy_of_the_view_with_the_same_hash(tmp
     man["config"]["view"] = "/workspace/data/lidc/views/lidc-bundle"  # the box path
     (run / "manifest.json").write_text(json.dumps(man))
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
-    assert H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-lfm", "--view", str(local)]) == 0
+    assert H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-qwen3vl2b", "--view", str(local)]) == 0
     (local / "manifest.json").write_text(json.dumps({"dataset": "lidc", "view_hash": "other"}))
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     with pytest.raises(SystemExit, match="view_hash"):
-        H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-lfm", "--view", str(local)])
+        H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-qwen3vl2b", "--view", str(local)])
 
 
 @pytest.mark.parametrize("license", ["apache-2.0", "other"])

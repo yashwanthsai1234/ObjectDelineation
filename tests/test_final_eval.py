@@ -210,9 +210,9 @@ def tree(path):
 
 def test_resummarize_writes_schema_2_beside_the_run(tmp_path, monkeypatch):
     """U08b: no model is loaded, DIR is untouched, metrics_absent lists the METRICS keys the items lack."""
-    from experiments.phase2 import g_probe
+    from objdel.rl import build
 
-    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model")))
+    monkeypatch.setattr(build, "build_trainer", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model")))
     run, store, items = finished_run(tmp_path)
     before = tree(run)
     FE.main(["--resummarize", str(run), "--store", str(store), "--out", str(tmp_path / "out")])
@@ -756,7 +756,7 @@ def test_view_content_hash(tmp_path, monkeypatch, capsys):
     """U54: SHA-256 of the newline-joined (item_id, offset, side, image_sha256) tuples; manifest versions and the
     reward fingerprint do not enter it; an offset, an image SHA or the record order does. --hash-view writes its
     record and exits 0 without a model."""
-    from experiments.phase2 import g_probe
+    from objdel.rl import build
 
     recs = [{"item_id": f"lidc/p/n000/z{i}", "view": {"offset": [i, 2 * i], "side": 50}, "image_sha256": f"{i:064x}",
              "W": 50, "H": 50} for i in range(3)]
@@ -776,7 +776,7 @@ def test_view_content_hash(tmp_path, monkeypatch, capsys):
         else:
             r2[0], r2[1] = r2[1], r2[0]
         assert FE.Q.view_content_sha256(content_view(tmp_path / change, r2)) != want, change
-    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model")))
+    monkeypatch.setattr(build, "build_trainer", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model")))
     out = tmp_path / "pre" / "pre_rental.json"
     assert FE.main(["--hash-view", str(v), "--out", str(out)]) in (None, 0)
     doc = json.loads(out.read_text())
@@ -1119,13 +1119,13 @@ def test_load_trainer_serves_the_adapter_under_option_f_and_loads_its_weights(tm
     import sys
     from types import SimpleNamespace as NS
 
-    from experiments.phase2 import g_probe
+    from objdel.rl import build
     from objdel.train import dataset
 
     made, loaded = [], []
     trainer = NS(model="M")
     monkeypatch.setattr(dataset, "grpo_rows", lambda *a, **k: None)
-    monkeypatch.setattr(g_probe, "make_trainer", lambda *a, **k: made.append(k) or (trainer,))
+    monkeypatch.setattr(build, "build_trainer", lambda *a, **k: made.append(k) or NS(trainer=trainer))
     monkeypatch.setitem(sys.modules, "peft", NS(set_peft_model_state_dict=lambda m, sd: loaded.append((m, sd))))
     monkeypatch.setitem(sys.modules, "safetensors.torch", NS(load_file=lambda p: {"k": str(p)}))
     base = dict(model="qwen3-vl-2b", ckpt="c", train=str(tmp_path), view=[str(tmp_path)], out=[str(tmp_path)])

@@ -342,8 +342,8 @@ def test_train_rl_and_g_probe_carry_encoder_once(capsys):
     with pytest.raises(SystemExit):
         train_rl.main(["--help"])
     assert "--encoder-once" in capsys.readouterr().out
-    src = (Path(__file__).resolve().parents[1] / "experiments/phase2/g_probe.py").read_text()
-    assert 'getattr(a, "encoder_once", False)' in src and "trainer.use_encoder_once()" in src
+    src = (Path(__file__).resolve().parents[1] / "src/objdel/rl/build.py").read_text()
+    assert "flags.encoder_once" in src and "trainer.use_encoder_once()" in src
 
 
 def test_log_reads_the_peak_memory_on_cuda(monkeypatch):

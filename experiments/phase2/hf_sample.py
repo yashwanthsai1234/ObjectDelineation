@@ -5,13 +5,13 @@
 
 A child of select_ckpt in its own process (select_ckpt never touches CUDA). Every D13 sampling field is passed
 explicitly (configs.as_names(sampling, "hf"), eos_token_id = the stop ids) over a fresh GenerationConfig, so nothing
-comes from the checkpoint's (LFM's card: min_p 0.15, repetition 1.05); HF has no presence / frequency penalty
+comes from the checkpoint's (Qwen3-VL's card: T 0.7, top_p 0.8, top_k 20); HF has no presence / frequency penalty
 (as_names refuses one). Output per sample: {"id", "k", "token_ids" (cut after the row's own first stop id),
 "finish_reason", "text"}.
 
 Batches: --batch_items prompts per generate call (each expanded to its n samples, num_return_sequences), padded on
 the left (the processor is loaded with padding_side="left"; each item's text carries its own image tokens and the
-models mask the padding, LFM2's short convolutions included), so a small model is not overhead-bound at one item
+models mask the padding), so a small model is not overhead-bound at one item
 per call. 8 items x 8 samples = 64 sequences: the KV cache of Qwen3-VL-2B (112 KB per token) is then 13 GB at 1,856
 tokens, so one runaway sample (1,536 tokens) cannot overflow a 24 GB card; 16 items would need 27 GB. All prompts must share sampling, n and processor_kwargs.
 
@@ -100,7 +100,7 @@ def main(argv=None) -> int:
     ap.add_argument("--model", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--batch_items", type=int, default=8, help="prompts per generate call (x n samples each)")
-    ap.add_argument("--timing", type=Path, help="write generate seconds per item-sample here (R0 rate, hf_rate)")
+    ap.add_argument("--timing", type=Path, help="write generate seconds per item-sample here (R0 rate)")
     a = ap.parse_args(argv)
     ps = [json.loads(x) for x in a.prompts.read_text().splitlines()]
     if len({json.dumps([p["sampling"], p["n"], p["processor_kwargs"]], sort_keys=True) for p in ps}) > 1:

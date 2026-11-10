@@ -64,3 +64,11 @@ E3a (impl2-emoves2): module_strings_stale re-recorded: the e_moves_manual target
 new; geom/engine.py re-exports count as its names (test_layers.top_level_names), so objdel.geom.engine.<name> resolves.
 old_names: unchanged (record_old_names keeps the recorded names of modules the moves removed; test_move_complete checks
 that each has a home).
+E2 (impl2-E2f, on 2db0bcb): old_names re-recorded: the five scripts keep only their CLI names (train_rl: parse, main;
+train_sft: main; select_ckpt: main, judge, topology_only, vision_config, dump, PATHS; g_probe: SEEDS, score, verdict,
+train_log, candidates, probe, main, save); the moved names live in objdel.rl.build, objdel.rl.run, objdel.sft.train,
+objdel.sft.select, objdel.policy.evaluate, objdel.policy.sampler and objdel.core.provenance (CODE, code_hashes).
+Goldens 4 and 6 unchanged (build_trainer resolves the same GRPOConfig and update).
+CLEAN8 (impl2-CLEAN8f, on a0e41f7): old_names re-recorded: train/configs.py loses dtype and param_groups (full
+fine-tuning retired with the 450M model; every model is LoRA). Goldens 1-6 unchanged (no reward, target, chain of a
+live plan or GRPOConfig value changes: CLEAN8 deletes only the 450M key and the full fine-tuning branches).

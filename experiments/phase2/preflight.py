@@ -100,10 +100,10 @@ def spec_inputs(spec) -> list[str]:
 
 
 def hashes(cfg: Path) -> dict:
-    """code: as run manifests (train_sft.code_hashes); data: each T's view hash, each exam view's manifest, the CUDA
+    """code: as run manifests (core.provenance.code_hashes); data: each T's view hash, each exam view's manifest, the CUDA
     checker eval set's (it ships in the LIDC bundle), each rows root's manifest.json and the manifest.json of each
     spec input that has one; config: the spec file's bytes."""
-    from experiments.phase2 import train_sft as TS
+    from objdel.core.provenance import code_hashes
 
     s = inputs(cfg)
     views = [json.loads((t / "manifest.json").read_text())["view_hash"] for t in s.views]
@@ -114,7 +114,7 @@ def hashes(cfg: Path) -> dict:
         with contextlib.suppress(OSError, ValueError):
             if (p := local(t)) is not None and (p / "manifest.json").is_file():
                 manifests.append(file_sha256(p / "manifest.json"))
-    return {"code": TS.code_hashes()["objdel_and_script_sha256"], "config": file_sha256(cfg),
+    return {"code": code_hashes()["objdel_and_script_sha256"], "config": file_sha256(cfg),
             "data": hashlib.sha256("".join(views + exams + manifests).encode()).hexdigest()}  # fmt: skip
 
 

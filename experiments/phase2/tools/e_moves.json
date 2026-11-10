@@ -249,8 +249,8 @@
     "src/objdel/geom/__init__.py": "\"\"\"Geometry layer: outline text, shapes, rings, topology and the CUDA engine.\n\nRe-exports only `polygonize` (the polygonizer seam).\n\"\"\"\n\nfrom objdel.geom.rings import polygonize\n\n__all__ = [\"polygonize\"]\n",
     "src/objdel/verify/__init__.py": "\"\"\"Verify layer: reward, metrics, statistics, gates and the doctor-store loader. No torch, no TRL.\"\"\"\n",
     "src/objdel/policy/__init__.py": "\"\"\"Policy layer: models, prompts, rows, caches, sampling and marks shared by RL and SFT.\"\"\"\n",
-    "src/objdel/rl/__init__.py": "\"\"\"RL layer: GRPO rows, the reward adapter, forward helpers and the one TRL adapter.\"\"\"\n",
-    "src/objdel/sft/__init__.py": "\"\"\"SFT layer: SFT rows and config.\"\"\"\n"
+    "src/objdel/rl/__init__.py": "\"\"\"RL layer: GRPO rows, the reward adapter, forward helpers, the one TRL adapter, the trainer builder, run_rl.\"\"\"\n",
+    "src/objdel/sft/__init__.py": "\"\"\"SFT layer: SFT rows and config, the SFT run and checkpoint selection.\"\"\"\n"
   },
   "engine": {
     "path": "src/objdel/geom/engine.py",

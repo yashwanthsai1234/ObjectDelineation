@@ -58,6 +58,13 @@ def test_export_schema_kwargs_and_sampling(rows, tmp_path):
     assert x["sampling"] == configs.sampling("qwen3-vl-2b") | {"seed": 3, "stop_token_ids": [1, 2]}
 
 
+def test_export_caps_the_completion_only_when_asked(rows, tmp_path):
+    """CLEAN8: select_ckpt's max_tokens (the CPU smoke's cap on a random Qwen3-VL) replaces the model's budget."""
+    from objdel.train import configs
+    assert export(rows, tmp_path, max_tokens=32)[1][0]["sampling"]["max_tokens"] == 32
+    assert export(rows, tmp_path)[1][0]["sampling"]["max_tokens"] == configs.MAX_COMPLETION["qwen3-vl-2b"]
+
+
 def test_export_takes_image_paths_from_a_dataset(rows, tmp_path):
     datasets = pytest.importorskip("datasets")
     from PIL import Image
@@ -196,7 +203,7 @@ def test_logprob_parity_on_a_tiny_model(tmp_path):
     for i in range(2):
         Image.fromarray(rng.integers(0, 256, (64, 64, 3), np.uint8)).save(tmp_path / f"im{i}.png")
         rows.append({"prompt": [_user("lidc")], "image": str(tmp_path / f"im{i}.png"), "key": f"k{i}"})
-    sample.export_prompts(rows, tmp_path / "p.jsonl", "lfm2.5-vl-450m", "lidc", 2, processor=proc)
+    sample.export_prompts(rows, tmp_path / "p.jsonl", "qwen3-vl-2b", "lidc", 2, processor=proc)
     comps = []
     for r in rows:
         conv = prepare_multimodal_messages(r["prompt"], images=[Image.open(r["image"]).convert("RGB")])

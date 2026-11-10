@@ -1,11 +1,10 @@
 """Break-it BK3 (Phase 2 Stage 1): the runner pipeline train_sft -> select_ckpt -> g_probe, its YAML configs and the
 configs / vision pieces it wires. Real defects are strict xfails "BK3-<n>" (experiments/phase2/impl/BK3.md);
-passing guards stay. Slow tests train a tiny random LFM2-VL on the CPU (test_p2_scripts._tiny_vlm, no download).
+passing guards stay. Slow tests train a tiny random Qwen3-VL on the CPU (test_p2_scripts._tiny_vlm, no download).
 """
 
 import dataclasses
 import json
-import os
 import socket
 import subprocess
 from pathlib import Path
@@ -15,6 +14,8 @@ import numpy as np
 import pytest
 from test_p2_scripts import CONFIGS, CPU_SFT, ROOT, stage, stage_of
 
+from objdel.sft import select as sft_select
+
 
 def _yaml(path):
     yaml = pytest.importorskip("yaml")
@@ -23,7 +24,7 @@ def _yaml(path):
 
 def _train_sft():
     pytest.importorskip("trl")
-    from experiments.phase2 import train_sft as TS
+    from objdel.sft import train as TS
 
     return TS
 
@@ -46,17 +47,16 @@ def test_every_config_builds_its_sft_config(path):
 
 @pytest.mark.parametrize("path", CONFIGS, ids=[p.stem for p in CONFIGS])
 def test_configs_carry_the_plan_values(path):
-    """PLAN D5 / D6 / D13 / §5.1: LR 5e-5 full FT and 5e-4 LoRA (Qwen3-VL-2B), the model's completion budget, probe
-    LRs 5e-6 / 5e-5, WSD."""
+    """PLAN D5 / D6 / D13 / §5.1: LR 5e-4 LoRA, the model's completion budget, the pre-registered probe LRs (5e-6
+    for full fine-tuning stays a frozen record), WSD."""
     _train_sft()
     from experiments.phase2.prereg import G_PROBE
     from objdel.train import configs
 
     a = stage_of(path)
     cfg = configs.sft_config(a.model, "o", 100, **({"dataloader_prefetch_factor": None} | a.sft))
-    assert cfg.learning_rate == (5e-4 if configs.lora(a.model) else 5e-5)
-    assert configs.MAX_COMPLETION[a.model] == configs.sampling(a.model)["max_tokens"] == {
-        "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}[a.model]
+    assert cfg.learning_rate == 5e-4
+    assert configs.MAX_COMPLETION[a.model] == configs.sampling(a.model)["max_tokens"] == 1536
     assert G_PROBE["lr_full"] == 5e-6 and G_PROBE["lr_lora"] == 5e-5 and G_PROBE["steps"] == 20
     assert cfg.lr_scheduler_type == "warmup_stable_decay" and not cfg.packing and cfg.max_length is None
     assert set(a.sft) <= {f.name for f in dataclasses.fields(type(cfg))}
@@ -66,18 +66,18 @@ def test_unknown_keys_are_rejected():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError, match="brnaches"):
-        stage("lfm2.5-vl-450m", "v", "o", brnaches=[0.5])
+        stage("qwen3-vl-2b", "v", "o", brnaches=[0.5])
 
 
 @pytest.mark.parametrize("vision", [{"prepared": "prepared"}, {"prepared": "prepared", "reference": "<R0 value>"}])
 def test_vision_config_is_validated_up_front(vision):
     _train_sft()
     with pytest.raises(ValueError, match="reference"):
-        stage("lfm2.5-vl-450m", "views/v", "o", vision=vision)
+        stage("qwen3-vl-2b", "views/v", "o", vision=vision)
 
 
 def test_lora_runs_are_merged():
-    src = (ROOT / "experiments/phase2/train_sft.py").read_text()
+    src = (ROOT / "src/objdel/sft/train.py").read_text()
     assert "merge_and_unload" in src  # D6: "merged after SFT"; the vLLM sampler loads a full model dir
 
 
@@ -97,13 +97,13 @@ def test_plan_at_odd_epoch_sizes(spe):
     TS = _train_sft()
     from objdel.train import configs
 
-    p = TS.plan(stage("lfm2.5-vl-450m", "v", "o"), spe)
+    p = TS.plan(stage("qwen3-vl-2b", "v", "o"), spe)
     at = [b["at"] for b in p["branches"].values()]
     assert len(set(at)) == 3 and p["stable"] == max(at) == 2 * spe
     assert abs(p["warmup"] - 0.03 * p["stable"]) <= 0.5
     for b in p["branches"].values():
         assert abs(b["decay"] - 0.15 * b["at"]) <= 0.5
-        cfg = configs.sft_config("lfm2.5-vl-450m", "o", p["stable"], b["at"])
+        cfg = configs.sft_config("qwen3-vl-2b", "o", p["stable"], b["at"])
         assert cfg.max_steps == b["at"] + b["decay"] and cfg.warmup_steps == p["warmup"] < b["at"]
     deepest = max(b["at"] + b["decay"] for b in p["branches"].values())
     assert 2 * spe < deepest <= 3 * spe
@@ -112,16 +112,16 @@ def test_plan_at_odd_epoch_sizes(spe):
 def test_plan_refuses_colliding_branch_points():
     TS = _train_sft()
     with pytest.raises(ValueError, match="collide"):  # e0.5 and e1 both at step 1
-        TS.plan(stage("lfm2.5-vl-450m", "v", "o"), 1)
+        TS.plan(stage("qwen3-vl-2b", "v", "o"), 1)
     with pytest.raises(ValueError, match="decay is 0"):  # e0.5 at step 2, decay round(0.3) = 0
-        TS.plan(stage("lfm2.5-vl-450m", "v", "o", branches=[0.5, 1.0]), 4)
+        TS.plan(stage("qwen3-vl-2b", "v", "o", branches=[0.5, 1.0]), 4)
 
 
 def test_timing_runs_are_stable_only():
     """BK3-14: branches [] = one stable epoch, no branch, no decay; the timing / arm configs use it with vision off."""
     TS = _train_sft()
     want = {"steps_per_epoch": 30, "stable": 30, "warmup": 1, "branches": {}}
-    assert TS.plan(stage("lfm2.5-vl-450m", "v", "o", branches=[]), 30) == want
+    assert TS.plan(stage("qwen3-vl-2b", "v", "o", branches=[]), 30) == want
     for p in CONFIGS:
         a = stage_of(p)
         timing = p.stem.startswith("r0_")
@@ -135,14 +135,14 @@ def test_train_sft_refuses_without_g_vision_and_reads_the_r0_reference(tmp_path)
     (tmp_path / "v").mkdir()
     (tmp_path / "v/manifest.json").write_text(json.dumps({"config": {"epochs": 3}}))
     with pytest.raises(ValueError, match="G-vision"):
-        TS.train(stage("lfm2.5-vl-450m", str(tmp_path / "v"), str(tmp_path / "o")))
+        TS.train(stage("qwen3-vl-2b", str(tmp_path / "v"), str(tmp_path / "o")))
     for p in CONFIGS:
         v = _yaml(p).get("vision")
         assert v is False or v["reference"] == f"vision_ref/{_yaml(p)['model']}.json", p.stem
     ref = tmp_path / "ref.json"
-    ref.write_text(json.dumps({"model": "lfm2.5-vl-450m", "set_sha256": "abc", "reference": 0.47}))
-    assert TS.reference(str(ref), "lfm2.5-vl-450m", "abc") == 0.47 and TS.reference(0.3, "x", "y") == 0.3
-    for model, sha in (("qwen3-vl-2b", "abc"), ("lfm2.5-vl-450m", "other")):
+    ref.write_text(json.dumps({"model": "qwen3-vl-2b", "set_sha256": "abc", "reference": 0.47}))
+    assert TS.reference(str(ref), "qwen3-vl-2b", "abc") == 0.47 and TS.reference(0.3, "x", "y") == 0.3
+    for model, sha in (("other-model", "abc"), ("qwen3-vl-2b", "other")):
         with pytest.raises(ValueError, match="not this run"):
             TS.reference(str(ref), model, sha)
 
@@ -152,38 +152,13 @@ def test_train_sft_refuses_a_view_with_too_few_epochs(tmp_path):
     TS = _train_sft()
     (tmp_path / "v").mkdir()
     (tmp_path / "v/manifest.json").write_text(json.dumps({"config": {"epochs": 2}}))
-    a = stage("lfm2.5-vl-450m", str(tmp_path / "v"), str(tmp_path / "o"), vision=False)
+    a = stage("qwen3-vl-2b", str(tmp_path / "v"), str(tmp_path / "o"), vision=False)
     with pytest.raises(ValueError, match="--epochs 3"):
         TS.train(a)
     assert not (tmp_path / "o").exists()
 
 
-# ---------------------------------------------------------------- param groups / sampling
-
-
-@pytest.mark.parametrize("name", ["lfm2.5-vl-450m", "qwen3-vl-2b"])
-def test_param_groups_cover_every_parameter_once(name):
-    """Full-size models on the meta device (cached configs): every trainable parameter in exactly one group, the
-    0.1x group = exactly the vision tower + projector parameters."""
-    torch = pytest.importorskip("torch")
-    pytest.importorskip("trl")
-    from transformers import AutoConfig, AutoModelForImageTextToText
-
-    from objdel.train import configs
-
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    try:
-        cfg = AutoConfig.from_pretrained(configs.MODELS[name])
-    except OSError:
-        pytest.skip(f"{name} config not cached")
-    with torch.device("meta"):
-        model = AutoModelForImageTextToText.from_config(cfg)
-    lm, vis = configs.param_groups(model, 5e-5)
-    ids = [id(p) for g in (lm, vis) for p in g["params"]]
-    named = dict(model.named_parameters())
-    assert len(ids) == len(set(ids)) == len(named) and vis["lr"] == 5e-6
-    want = {n for n in named if any(k in n for k in ("visual", "vision_tower", "multi_modal_projector"))}
-    assert {id(named[n]) for n in want} == {id(p) for p in vis["params"]} and want
+# ---------------------------------------------------------------- sampling
 
 
 def test_grpo_and_bridge_get_the_same_sampling_fields():
@@ -191,7 +166,7 @@ def test_grpo_and_bridge_get_the_same_sampling_fields():
     pytest.importorskip("trl")
     from objdel.train import configs
 
-    for m in ("lfm2.5-vl-450m", "qwen3-vl-2b"):
+    for m in configs.MODELS:
         s = configs.sampling(m)
         same = {k: s[k] for k in ("temperature", "top_p", "top_k", "min_p", "repetition_penalty")}
         g = configs.grpo_config(m, "o", use_vllm=False, bf16=False, max_completion_length=s["max_tokens"], **same)
@@ -236,7 +211,7 @@ def _hf_sample_kwargs(tmp_path, monkeypatch):
     monkeypatch.setattr(transformers.AutoModelForImageTextToText, "from_pretrained", lambda *a, **k: Model())
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda *a, **k: Proc())
     Image.new("RGB", (8, 8)).save(tmp_path / "i.png")
-    s = configs.sampling("lfm2.5-vl-450m") | {"seed": 0, "stop_token_ids": [7]}
+    s = configs.sampling("qwen3-vl-2b") | {"seed": 0, "stop_token_ids": [7]}
     line = {"id": "a", "prompt": "p", "image": str(tmp_path / "i.png"), "processor_kwargs": {}, "sampling": s, "n": 2}
     (tmp_path / "p.jsonl").write_text(json.dumps(line) + "\n")
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
@@ -247,7 +222,7 @@ def _hf_sample_kwargs(tmp_path, monkeypatch):
 def test_hf_sample_passes_the_sampling_fields(tmp_path, monkeypatch):
     kw, s = _hf_sample_kwargs(tmp_path, monkeypatch)
     assert (kw["temperature"], kw["top_p"], kw["top_k"], kw["repetition_penalty"]) == (1.0, 1.0, 0, 1.0)
-    assert kw["max_new_tokens"] == s["max_tokens"] == 1024 and kw["do_sample"] is True
+    assert kw["max_new_tokens"] == s["max_tokens"] == 1536 and kw["do_sample"] is True
 
 
 def test_hf_sample_min_p_is_explicit(tmp_path, monkeypatch):
@@ -266,15 +241,15 @@ def _sc():
 
 
 def test_exited_treats_permission_error_as_alive(tmp_path, monkeypatch):
-    SC = _sc()
+    _sc()
     (tmp_path / "manifest.json").write_text(json.dumps({"status": "done", "pid": 12345}))
 
     def kill(pid, sig):
         raise PermissionError
 
-    monkeypatch.setattr(SC.os, "kill", kill)
+    monkeypatch.setattr(sft_select.os, "kill", kill)
     with pytest.raises(RuntimeError, match="must exit first"):
-        SC.exited(tmp_path)
+        sft_select.exited(tmp_path)
 
 
 def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, hf_check=True):
@@ -295,11 +270,11 @@ def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, 
         lidc = {"format": 1.0, "legal": 1.0 if eligible else 0.5, "dup_rate": 0.0, "signal_share": 0.9, "group": 8}
         return {"summary": {"datasets": {"lidc": lidc}}, "panel": {"summary": {}}, "iou": {}}
 
-    monkeypatch.setattr(SC, "exited", lambda run: {"config": {"model": "lfm2.5-vl-450m"}})
+    monkeypatch.setattr(sft_select, "exited", lambda run: {"config": {"model": "qwen3-vl-2b"}})
     monkeypatch.setattr(serve, "preload", lambda *a, **k: 0)
-    monkeypatch.setattr(SC, "score_view", score_view)
-    monkeypatch.setattr(SC, "vision_check", lambda b, cfg: {"pass": True} if cfg else {})
-    monkeypatch.setattr(SC, "hf_check", lambda a, name, out: {"branch": name, "vllm_minus_hf": {},
+    monkeypatch.setattr(sft_select, "score_view", score_view)
+    monkeypatch.setattr(sft_select, "vision_check", lambda b, cfg: {"pass": True} if cfg else {})
+    monkeypatch.setattr(sft_select, "hf_check", lambda a, name, out: {"branch": name, "vllm_minus_hf": {},
                                                                     "pass": hf_check})
     monkeypatch.setattr(
         prereg, "select_rb", lambda bs: (next((b["name"] for b in bs[::-1] if b["eligible"]), None), {"eligible": []})
@@ -351,8 +326,8 @@ def test_import_completions_refuses_a_partial_group(tmp_path):
 
 def test_sampler_child_failure_stops_select(tmp_path, monkeypatch):
     """A crashing sampler child is not swallowed (subprocess.run(check=True))."""
-    SC = _sc()
-    cmd = SC.sampler_cmd("hf", tmp_path / "p", tmp_path / "m", tmp_path / "c")
+    _sc()
+    cmd = sft_select.sampler_cmd("hf", tmp_path / "p", tmp_path / "m", tmp_path / "c")
     with pytest.raises(subprocess.CalledProcessError):
         subprocess.run(cmd[:2] + ["-c", "raise SystemExit(1)"], check=True)
     assert cmd[2:4] == ["-m", "experiments.phase2.hf_sample"]
@@ -389,7 +364,7 @@ def tiny_run(tmp_path, synthetic_items, monkeypatch):
     TS = _train_sft()
 
     def args(out, **kw):
-        base = dict(model="lfm2.5-vl-450m", model_path=str(model), view=str(tmp_path / "view"),
+        base = dict(model="qwen3-vl-2b", model_path=str(model), view=str(tmp_path / "view"),
                     output_dir=str(tmp_path / out), branches=[0.5, 1.0], rolling_minutes=0.0, vision=False, sft=CPU_SFT,
                     steps_per_epoch=8)  # e0.5 at 4, e1 at 8, each with a 1-step decay (decay 0 is refused, BK3-10)
         return stage(**(base | kw))
@@ -401,14 +376,14 @@ def tiny_run(tmp_path, synthetic_items, monkeypatch):
 
 
 def _weights(d):
-    from safetensors.numpy import load_file
+    from safetensors.torch import load_file  # torch: the LoRA base is bf16, which numpy cannot read
 
     return {k: v for f in sorted(Path(d).glob("*.safetensors")) for k, v in load_file(f).items()}
 
 
 def _same_weights(a, b) -> bool:
     wa, wb = _weights(a), _weights(b)
-    return wa.keys() == wb.keys() and all(np.array_equal(wa[k], wb[k]) for k in wa)
+    return wa.keys() == wb.keys() and all(wa[k].equal(wb[k]) for k in wa)
 
 
 @pytest.mark.slow
@@ -430,7 +405,7 @@ def test_two_runs_are_bit_identical_and_rolling_keeps_three(tiny_run, monkeypatc
     assert all(_same_weights(tmp / "a/branches" / b, tmp / "b/branches" / b) for b in ("e0.5", "e1"))
     man = json.loads((tmp / "a/manifest.json").read_text())
     assert man["status"] == "done" and not (tmp / "a/rolling").exists() and len(man["vision"]) >= 4
-    assert {(v["device"], v["dtype"]) for v in man["vision"]} == {("cpu", "torch.float32")}  # BK3-12
+    assert {(v["device"], v["dtype"]) for v in man["vision"]} == {("cpu", "torch.bfloat16")}  # BK3-12: LoRA base
 
 
 @pytest.mark.slow
@@ -443,7 +418,7 @@ def test_deepest_branch_decay_moves_the_weights(tiny_run, monkeypatch):
     man = json.loads((tmp / "d/manifest.json").read_text())
     assert man["plan"]["branches"]["e1"] == {"at": 8, "decay": 1}
     wa, ws = _weights(tmp / "d/branches/e1"), _weights(tmp / "d/stable/e1")
-    assert any(not np.array_equal(wa[k], ws[k]) for k in wa)
+    assert any(not wa[k].equal(ws[k]) for k in wa)
 
 
 @pytest.mark.slow
@@ -459,7 +434,7 @@ def test_g_vision_abort_stops_before_the_branches(tiny_run, monkeypatch):
     monkeypatch.setattr(TS, "vision_check", check)
     assert TS.train(args("ab", vision={"prepared": "unused", "reference": 1.0})) == TS.ABORTED
     man = json.loads((tmp / "ab/manifest.json").read_text())
-    assert man["status"] == "aborted" and man["abort"]["step"] == 4 and "freeze_vision" in man["abort"]["reason"]
+    assert man["status"] == "aborted" and man["abort"]["step"] == 4 and "G-vision" in man["abort"]["reason"]
     assert [v["action"] for v in man["vision"]] == ["warn"] * 3 + ["abort"]  # warn alone did not stop training
     assert not (tmp / "ab/branches").exists() and (tmp / "ab/stable/e0.5").is_dir()
     assert not list((tmp / "ab/stable").rglob("optimizer.pt"))
@@ -499,13 +474,9 @@ def test_resume_after_a_crash_equals_an_uninterrupted_run(tiny_run, monkeypatch)
 
 @pytest.mark.slow
 def test_lora_branches_are_saved_merged(tiny_run, monkeypatch):
-    """BK3-3 / D6: a LoRA model trains LM-only adapters; branches and stable checkpoints are full merged models.
-    The tiny LFM stands in for Qwen3-VL-2B (the tests/test_p2_scripts.py CPU smoke runs the real architecture)."""
+    """BK3-3 / D6: a LoRA model trains LM-only adapters; branches and stable checkpoints are full merged models."""
     from transformers import AutoModelForImageTextToText
 
-    from objdel.train import configs
-
-    monkeypatch.setattr(configs, "_LORA", {"lfm2.5-vl-450m"})
     TS, args, tmp = tiny_run
     assert TS.train(args("lo")) == 0
     for d in ("branches/e0.5", "branches/e1", "stable/e0.5", "stable/e1"):
@@ -530,8 +501,8 @@ def test_vision_reference_only_writes_the_r0_reference(tiny_run, monkeypatch):
     imgs = [Image.new("RGB", (64, 64), (40 * i, 80, 120)) for i in range(4)]
     monkeypatch.setattr(vision, "fixed_set", lambda prepared: ([{"image": im} for im in imgs], "set-sha"))
     monkeypatch.setattr(vision, "projector_distance", lambda m, p, images: 0.25)
-    a = args("unused", run_dir=str(tmp / "box"), vision={"prepared": "p", "reference": "vision_ref/lfm.json"})
+    a = args("unused", run_dir=str(tmp / "box"), vision={"prepared": "p", "reference": "vision_ref/qwen.json"})
     assert TS.train(a.model_copy(update={"vision_reference_only": True})) == 0
-    doc = json.loads((tmp / "box/vision_ref/lfm.json").read_text())
-    assert doc["reference"] == 0.25 and doc["dtype"] == "float32" and doc["model"] == "lfm2.5-vl-450m"
-    assert TS.reference(str(tmp / "box/vision_ref/lfm.json"), "lfm2.5-vl-450m", "set-sha") == 0.25
+    doc = json.loads((tmp / "box/vision_ref/qwen.json").read_text())
+    assert doc["reference"] == 0.25 and doc["dtype"] == "float32" and doc["model"] == "qwen3-vl-2b"
+    assert TS.reference(str(tmp / "box/vision_ref/qwen.json"), "qwen3-vl-2b", "set-sha") == 0.25
