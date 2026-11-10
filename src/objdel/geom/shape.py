@@ -28,9 +28,8 @@ from typing import NamedTuple
 
 import numpy as np
 
-from objdel import _gpucheck
-
-from .text import GRID, Objects, Part
+from objdel.geom import engine as _gpucheck
+from objdel.geom.text import GRID, Objects, Part
 
 _I32 = np.iinfo(np.int32)
 
@@ -135,7 +134,7 @@ def pack_objects(objs: Sequence[tuple[list[Part], int, int]]) -> tuple[np.ndarra
 
 
 def to_masks(objs: Sequence[tuple[list[Part], int, int]]) -> list[Geometry]:
-    """to_mask of many objects, each (parts, W, H), on the CUDA checker: one objdel._gpucheck.check_polygons call for
+    """to_mask of many objects, each (parts, W, H), on the CUDA checker: one objdel.geom.engine.check_polygons call for
     all of them, which returns the even-odd masks bit-packed (unpack_rows). On a CUDA box it runs on the GPU (`make
     cuda`; policy.chain builds it before any scoring stage); elsewhere the same source is compiled for the CPU. Masks
     and defects equal those of the archived CPU checker, polycore (recorded in tests/goldens/polycore.npz:

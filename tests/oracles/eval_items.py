@@ -70,7 +70,7 @@ def val_items(root, ds: str, n: int = 20) -> list[tuple]:
     import json
     from pathlib import Path
 
-    from objdel.geometry import SCHEMAS
+    from objdel.geom.text import SCHEMAS
     from objdel.reward import ExpertCache
 
     root, names = Path(root), SCHEMAS[ds]

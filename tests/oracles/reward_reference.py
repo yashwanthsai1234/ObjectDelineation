@@ -14,7 +14,8 @@ from itertools import combinations
 import numpy as np
 from scipy import ndimage, stats
 
-from objdel.geometry import parse, to_mask
+from objdel.geom.shape import to_mask
+from objdel.geom.text import parse
 
 from .topology_oracle import signature
 
@@ -83,7 +84,7 @@ def cache(stack) -> dict:
 
 
 def host_tables(raters, t5: float, min_area: int) -> tuple:
-    """The 13 objdel._gpucheck.add_tables arguments of one cache, from the definition on the host (the oracle of
+    """The 13 objdel.geom.engine.add_tables arguments of one cache, from the definition on the host (the oracle of
     add_tables_from_raters, D7b): union, core, strict-majority vote, the distance map (inside the union the distance
     to the complement of the core, outside it the distance to the union; 1e6 when no such pixel exists), the
     perimeter max(1, |boundary(U)|), rater areas, voters (non-empty signature, all if none) and signatures."""

@@ -4,7 +4,7 @@ Implementation.md D.9, B6 and B14 of D.spec.md).
 `gc.eval_sets` returns integer counts per set of K sample polygons against one cache's tables; the oracle is numpy on
 the rasters (tests/oracles/eval_oracle.py: the host code metrics() ran before D7). `metrics()` builds every field from
 the counts and equals its pre-D7 values (tests/goldens/d_r05_metrics.json) exactly, `nsd` within 1e-12, without
-`objdel.geometry.to_masks` or any CPU labelling or EDT.
+`objdel.geom.shape.to_masks` or any CPU labelling or EDT.
 """
 import hashlib
 import importlib
@@ -20,10 +20,10 @@ from oracles import eval_oracle as O
 from oracles.eval_items import BOWTIE, items, val_items
 from scipy import ndimage
 
-from objdel import _gpucheck as gc
 from objdel.eval import device as D
-from objdel.geometry import GRID, parse
-from objdel.geometry.shape import pack_objects, to_masks
+from objdel.geom import engine as gc
+from objdel.geom.shape import pack_objects, to_masks
+from objdel.geom.text import GRID, parse
 from objdel.reward import ExpertCache
 
 M_ = importlib.import_module("objdel.eval.metrics")
@@ -234,9 +234,8 @@ def _no_host_geometry(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("host pixels in metrics()")
     monkeypatch.setattr(M_, "to_masks", boom, raising=False)
-    from objdel import geometry
-    from objdel.geometry import shape
-    for mod, name in ((geometry, "to_masks"), (shape, "to_masks"), (ndimage, "distance_transform_edt"),
+    from objdel.geom import shape
+    for mod, name in ((shape, "to_masks"), (ndimage, "distance_transform_edt"),
                       (ndimage, "label"), (cv2, "connectedComponents"), (cv2, "connectedComponentsWithStats"),
                       (cv2, "connectedComponentsWithAlgorithm"), (cv2, "erode")):
         monkeypatch.setattr(mod, name, boom)

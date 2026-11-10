@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 
 from experiments.phase2.perf import make_a_goldens as GOLD
-from objdel import _gpucheck
 from objdel.eval import ceiling
+from objdel.geom import engine as _gpucheck
 from objdel.reward import score
 from objdel.reward.cache import ExpertCache
 

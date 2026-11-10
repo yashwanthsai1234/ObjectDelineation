@@ -16,9 +16,10 @@ from oracles import score_numpy as host
 
 from experiments.cuda_checker import compare as C
 from experiments.phase2.vast import policy as P
-from objdel import _gpucheck
 from objdel.eval import metrics
-from objdel.geometry import parse, serialize, to_masks
+from objdel.geom import engine as _gpucheck
+from objdel.geom.shape import to_masks
+from objdel.geom.text import parse, serialize
 from objdel.reward import ExpertCache, score_batch, score_many, score_mask
 
 ROOT = P.ROOT

@@ -72,7 +72,7 @@ def test_outline_pixels_belong_to_the_mask():  # P2 (inclusion side)
 
 
 def test_hole_survives_into_the_topology_signature(tmp_path):
-    from objdel.checker import signature
+    from objdel.geom.topology import signature
     ring = nodule_xml([(-10.0, square(0, 0, 10, 10)), (-10.0, square(3, 3, 7, 7), False)])
     _, sessions = lidc.parse(write(tmp_path, [[ring]]))
     assert signature(lidc.rasterize(sessions[0][0], ZVALS)[1], 5) == (1,)

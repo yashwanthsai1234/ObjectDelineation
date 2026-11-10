@@ -7,8 +7,8 @@ import cv2
 import pytest
 from scipy import ndimage
 
-from objdel.checker import certify
 from objdel.eval import metrics
+from objdel.geom.certify import certify
 from objdel.reward import ExpertCache
 from tests.test_eval import nodule_raters, riga_raters, targets
 

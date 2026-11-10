@@ -60,3 +60,7 @@ trl_adapter, vllm_sync, vllm_requests, gpu_pixels, nvtx and policy gain the lane
 Phase E move tool on impl2-emoves2 (from impl2-Emoves-final 7cea44c, staged per sub-move): module_strings_stale gains
 the tool's planted and target names (experiments/phase2/tools/e_moves*.py, tests/test_e_moves.py); each sub-move
 commit below re-records it on its own tree. tests_import_experiments gains test_e_moves.py.
+E3a (impl2-emoves2): module_strings_stale re-recorded: the e_moves_manual targets of later stages and nothing else
+new; geom/engine.py re-exports count as its names (test_layers.top_level_names), so objdel.geom.engine.<name> resolves.
+old_names: unchanged (record_old_names keeps the recorded names of modules the moves removed; test_move_complete checks
+that each has a home).

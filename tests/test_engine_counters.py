@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from objdel import _gpucheck as gc
+from objdel.geom import engine as gc
 from objdel.reward import ExpertCache
 
 ROOT = Path(__file__).resolve().parents[1]

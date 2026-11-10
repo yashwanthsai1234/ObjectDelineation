@@ -12,8 +12,8 @@ import numpy as np
 import pytest
 
 from experiments.cuda_checker import compare as C
-from objdel import _gpucheck as gc
-from objdel.checker import certify
+from objdel.geom import engine as gc
+from objdel.geom.certify import certify
 
 SQ = [(100, 100), (900, 100), (900, 900), (100, 900)]
 HOLE = [(400, 400), (400, 600), (600, 600), (600, 400)]

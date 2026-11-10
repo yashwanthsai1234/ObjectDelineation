@@ -114,12 +114,17 @@ convention = "google"
 "src/objdel/train/vllm_sync.py" = ["TID251"]    # moves into rl/ in E5
 "tests/test_vllm_sync.py" = ["TID251"]
 "tests/test_breakit_r1_rl.py" = ["TID251"]
-"tests/test_c_flags.py" = ["TID251"]            # C5 --lora-sync test patches vllm_generation.LLM
+"tests/test_c_flags.py" = ["TID251"]
+"experiments/phase2/perf/bench_checker.py" = ["TID251"]  # --engine old runs in the pre-E venv (D-G7): no objdel.geom
+"tests/test_bench_checker.py" = ["TID251"]
+"tests/test_geom_engine.py" = ["TID251"]  # compares geom.engine with the extension itself
+"tests/variants.py" = ["TID251"]  # checks which built extension a variant venv loads            # C5 --lora-sync test patches vllm_generation.LLM
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Dotted names that import-linter cannot forbid. Each ban is added when its task lands.
 "trl.trainer.grpo_trainer".msg = "private TRL module: only objdel.rl.trl_adapter may import it"
 "trl.generation.vllm_generation".msg = "private TRL module: only objdel.rl.trl_adapter may import it"
+"objdel._gpucheck".msg = "the CUDA extension: import objdel.geom.engine (E3a)"
 
 [tool.ruff.lint.isort]
 known-first-party = ["objdel", "experiments"]
@@ -153,7 +158,7 @@ id = "layers-interim"  # E0 -> E2; each move commit sets its own list (Implement
 name = "objdel layers (current packages)"
 type = "layers"
 containers = ["objdel"]
-layers = ["train", "eval", "reward | targets", "data", "checker | geometry"]
+layers = ["train", "eval", "reward | targets", "data", "geom"]
 exhaustive = false
 ignore_imports = [
     "objdel.eval.vision -> objdel.train.dataset",  # cycle edge; E5 removes it (vision moves to policy)
@@ -169,6 +174,6 @@ broken_contract_guidance = "Move the import down or the code up."
 id = "pure-core"
 name = "the verifier side never imports the ML stack"
 type = "forbidden"
-source_modules = ["objdel.checker", "objdel.geometry", "objdel.reward", "objdel.targets", "objdel.data"]
+source_modules = ["objdel.geom", "objdel.reward", "objdel.targets", "objdel.data"]
 forbidden_modules = ["torch", "trl", "transformers", "peft", "vllm", "datasets", "accelerate"]
 broken_contract_guidance = "torch and friends live in the train/policy layers only."

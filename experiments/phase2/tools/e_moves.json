@@ -265,6 +265,8 @@
       "check_polygons",
       "device_count",
       "drop_tables",
+      "edt",
+      "eval_sets",
       "reset_stats",
       "resident",
       "score_masks",

@@ -33,7 +33,7 @@ from pathlib import Path
 
 from objdel.data import store
 from objdel.eval import gates, hack_audit, metrics, summarize
-from objdel.geometry import SCHEMAS
+from objdel.geom.text import SCHEMAS
 from objdel.targets import frame
 
 

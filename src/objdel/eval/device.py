@@ -21,9 +21,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from objdel import _gpucheck
-from objdel.geometry import GRID, Parsed
-from objdel.geometry.shape import pack_objects
+from objdel.geom import engine as _gpucheck
+from objdel.geom.shape import pack_objects
+from objdel.geom.text import GRID, Parsed
 from objdel.reward import ExpertCache
 from objdel.reward.cache import device_many
 

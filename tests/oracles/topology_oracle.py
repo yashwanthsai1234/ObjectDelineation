@@ -1,4 +1,4 @@
-"""Slow, independent oracles for objdel.checker.topology (tests only).
+"""Slow, independent oracles for objdel.geom.topology (tests only).
 
 Convention: 8-connected foreground, 4-connected background. A hole is a bounded 4-connected background
 component; the holes of a component are the holes it has when it is the only foreground.
@@ -90,10 +90,10 @@ def instance_topology_bfs(mask) -> list[tuple[int, int]]:
     return sorted(out, reverse=True)
 
 
-# ---- the OpenCV versions of objdel.checker.topology before D4b (same values and types as the engine versions) ----
+# ---- the OpenCV versions of objdel.geom.topology before D4b (same values and types as the engine versions) ----
 import cv2  # noqa: E402
 
-from objdel.checker.topology import InstanceTopology, as_mask, bbox  # noqa: E402
+from objdel.geom.topology import InstanceTopology, as_mask, bbox  # noqa: E402
 
 _EMPTY = np.zeros(0, np.int64)
 _EMPTY.flags.writeable = False

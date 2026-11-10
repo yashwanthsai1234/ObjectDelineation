@@ -4,7 +4,7 @@ answers (objdel.train.fast.FastGRPO._generate)."""
 
 import threading
 
-from objdel import _gpucheck
+from objdel.geom import engine as _gpucheck
 from objdel.train import rewards as R
 from tests.test_reward_one_checker_call import CACHES, EOS, EXPECTED, PAD, batch
 

@@ -31,7 +31,7 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 
-from objdel import _gpucheck
+from objdel.geom import engine as _gpucheck
 from objdel.train import nvtx, record, runaway, trl_adapter, vllm_requests
 from objdel.train.dataset import OpenOnce
 

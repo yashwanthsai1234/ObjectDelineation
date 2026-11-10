@@ -11,9 +11,9 @@ from oracles.raster_oracle import oracle_winding
 from oracles.topology_oracle import signature as oracle_signature
 
 from experiments.cuda_checker import compare as C
-from objdel import _gpucheck
-from objdel.geometry import GRID, MAX_RINGS
-from objdel.geometry.shape import pack_objects
+from objdel.geom import engine as _gpucheck
+from objdel.geom.shape import pack_objects
+from objdel.geom.text import GRID, MAX_RINGS
 from objdel.targets import BuildConfig, build_target, min_areas
 from objdel.targets import build as B
 from tests.oracles.kept_oracle import kept as kept_oracle
@@ -313,7 +313,8 @@ def test_ladder_rungs_of_real_builds_equal_the_host_path(store_dir):
     from itertools import islice
 
     from objdel.data import store
-    from objdel.geometry import MAX_VERTICES, to_masks
+    from objdel.geom.shape import to_masks
+    from objdel.geom.text import MAX_VERTICES
     from objdel.targets import frame
 
     ladder, rungs, rims = BuildConfig().ladder(), 0, 0

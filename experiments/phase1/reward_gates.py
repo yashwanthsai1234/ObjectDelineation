@@ -33,7 +33,8 @@ import cv2
 import numpy as np
 from scipy import stats
 
-from objdel.geometry import canonicalize, serialize
+from objdel.geom.shape import canonicalize
+from objdel.geom.text import serialize
 from objdel.reward import NUMERIC, ExpertCache, advantages_v4, score_batch, score_completion
 from tests.oracles import reward_harness as H
 from tests.oracles import reward_variants as V
@@ -88,7 +89,8 @@ def band_gates(pool, items, rng):
     v, a = np.array([r["f5"] for r in rows]), np.array([r["area"] for r in rows])
     emit(f"\nPooled ρ (reported, not gated): {stats.spearmanr(v, a).statistic:+.3f}. LIDC k = 2 items have no "
          "leave-one-out case (one remaining rater is not RL-eligible; production has no single-rater prior).\n")
-    k8b = dict(zip([k for _, k, _ in items], pool.map(H.k8b_item, [st for _, _, st in items], chunksize=8), strict=True))
+    k8b = dict(zip([k for _, k, _ in items], pool.map(H.k8b_item, [st for _, _, st in items], chunksize=8),
+        strict=True))
     held = {}
     for r in rows:
         held.setdefault(r["key"], []).append(r["f5"])
@@ -112,7 +114,8 @@ def band_gates(pool, items, rng):
     emit("|---|---|---|---|")
     for m in (2, 3, 4, 5):
         x = np.concatenate([s[m] for s in sub])
-        emit(f"| {m} | {np.median(x):.3f} | {np.percentile(x, 10):.3f} | {'PASS' if 0.92 <= np.median(x) <= 0.98 else 'FAIL'} |")
+        emit(f"| {m} | {np.median(x):.3f} | {np.percentile(x,
+            10):.3f} | {'PASS' if 0.92 <= np.median(x) <= 0.98 else 'FAIL'} |")
     emit("\nSingle-rater items: `ExpertCache.build` refuses k = 1 (`rl_eligible`); tested.\n")
 
 
@@ -261,7 +264,8 @@ def throughput(items, rng, n_batches):  # items: all fixture items (RIGA disc + 
     for ds, k, st in items:
         if ds == "riga":
             riga.setdefault(k.rsplit("__", 1)[0], {})[k.rsplit("__", 1)[1]] = st
-    prompts_r = [(("disc", "cup"), {n: ExpertCache.build(v[n]) for n in ("disc", "cup")}) for v in list(riga.values())[:64]]
+    prompts_r = [(("disc", "cup"), {n: ExpertCache.build(v[n]) for n in ("disc",
+        "cup")}) for v in list(riga.values())[:64]]
     prompts_l = [(("nodule",), {"nodule": ExpertCache.build(st)}) for ds, _, st in items if ds == "lidc"][:200]
     emit("\n| K3 / K4 workload (256 completions = 32 prompts × 8) | scorer | batch wall median / max (ms) | "
          "per-completion p50 / p99 (ms) |")

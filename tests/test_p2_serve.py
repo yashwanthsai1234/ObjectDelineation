@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from experiments.phase1.reward_gates import make_jobs
-from objdel.geometry import SCHEMAS
+from objdel.geom.text import SCHEMAS
 from objdel.reward import ExpertCache, advantages_v4, rl_eligible, score_batch
 from objdel.train import serve
 from objdel.train.rewards import TRLReward

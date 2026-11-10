@@ -8,8 +8,8 @@ zero tables, sum_x / sum_y of empty masks, arena reuse after trim); the findings
 import numpy as np
 import pytest
 
-from objdel import _gpucheck as gc
-from objdel.checker import trace
+from objdel.geom import engine as gc
+from objdel.geom.rings import trace
 from objdel.reward.cache import ExpertCache
 
 

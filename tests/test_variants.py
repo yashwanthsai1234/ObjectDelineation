@@ -8,7 +8,7 @@ import os
 import numpy as np
 import pytest
 
-from objdel import _gpucheck as gc
+from objdel.geom import engine as gc
 from tests import variants
 
 DIAG = np.eye(2, dtype=np.uint8)               # two pixels touching at a corner: one 8-connected part
@@ -23,7 +23,7 @@ for m in ({DIAG.tolist()}, {NOTCH.tolist()}):
     print(*out["betti"][0], *out["ring_area"])
 """
 CERTIFY = f"""
-from objdel.checker import certify
+from objdel.geom.certify import certify
 for m in ({DIAG.tolist()}, {NOTCH.tolist()}):
     r = certify(m)
     print(r.certified, r.b0, r.b1, any(f.startswith("rings:") for f in r.failures))
@@ -53,7 +53,7 @@ def test_a_four_adjacent_ring_labeller_breaks_the_topology(mutant):
 
 
 def test_certify_catches_a_four_adjacent_ring_labeller(mutant):
-    from objdel.checker import certify
+    from objdel.geom.certify import certify
     assert [certify(m).certified for m in (DIAG, NOTCH)] == [True, True]  # this build
     got = variants.run_code("mutfg4", CERTIFY, {"K1_MUTATE_FG4"}).split()
     assert got == ["False", "1", "0", "True", "False", "1", "1", "True"]  # the pixel labeller: one part, NOTCH's hole

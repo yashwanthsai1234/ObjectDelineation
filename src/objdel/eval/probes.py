@@ -10,7 +10,7 @@ power_c2) and archive/phase2_lab/A4/probe_proto; REPORT.md P2 and Addendum A hol
 
 Generator 2 (D19): star polygons r(t) = r0 (1 + E e cos(2t + p2) + A sum_{k=3..12} c_k cos(kt + pk)), E = 0.2,
 A = 0.15 (calibrated: centroid-disc IoU 0.822 vs real 0.806), spicules with p = 0.3, rasterized on the 0-1000 grid by
-objdel.geometry.to_mask; frame side = the targets.frame divisor rule with a margin drawn from [8 px, 60 %] (scale
+objdel.geom.shape.to_mask; frame side = the targets.frame divisor rule with a margin drawn from [8 px, 60 %] (scale
 jitter), object placed uniformly with >= 2 px clearance (translation jitter). Families of the precision probe:
 fourier 60 % / lobulated 30 % / hole 5 % / two 5 %, diameters resampled from the LIDC train voting raters.
 Topology probe (D20, v3e): every hole jointly resamples one train hole record (part diameter, hole area, centroid
@@ -45,9 +45,9 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage, stats
 
-from objdel.checker import signature, size_filter
-from objdel.checker.topology import min_area
-from objdel.geometry import GRID, canonicalize, parse, serialize, to_mask
+from objdel.geom.shape import canonicalize, to_mask
+from objdel.geom.text import GRID, parse, serialize
+from objdel.geom.topology import min_area, signature, size_filter
 from objdel.hashing import pixels_sha256
 from objdel.io import read_jsonl
 from objdel.reward.cache import boundary  # foreground pixels with a 4-adjacent background pixel

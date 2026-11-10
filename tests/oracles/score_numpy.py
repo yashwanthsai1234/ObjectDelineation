@@ -5,13 +5,13 @@ bit-identical results from the device on any mask. Masks and the per-completion 
 Reward v5 (B3.2) adds the centroid sums, from np.nonzero of the full-frame mask, and the location terms, with the
 same float64 arithmetic as objdel.reward.score (location, gated_loc).
 
-Numpy and OpenCV: bounding-box crop, Spaghetti-labeled size-filtered signature (objdel.checker.topology), float64
+Numpy and OpenCV: bounding-box crop, Spaghetti-labeled size-filtered signature (objdel.geom.topology), float64
 sums of the float32 band distances.
 """
 import cv2
 import numpy as np
 
-from objdel.checker.topology import signature
+from objdel.geom.topology import signature
 
 
 def iou(a, area_a, b, area_b) -> float:
@@ -75,9 +75,10 @@ def score_mask(mask, cache) -> dict:
 
 
 def score_completion(text, truncated, names, caches, W, H) -> dict:
-    """score_completion's terms, as the host scorer combined them: masks from objdel.geometry.to_masks (the checker's
+    """score_completion's terms, as the host scorer combined them: masks from objdel.geom.shape.to_masks (the checker's
     raster), objects scored by score_mask above."""
-    from objdel.geometry import parse, to_masks
+    from objdel.geom.shape import to_masks
+    from objdel.geom.text import parse
     from objdel.reward import NUMERIC, rater_answers, sig_id
 
     p = parse(text, names, truncated)

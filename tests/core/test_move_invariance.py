@@ -26,7 +26,7 @@ VOLATILE = {"output_dir", "logging_dir", "run_name", "hub_model_id", "hub_token"
 
 def reference_value() -> str:
     """Golden 1: the value part of reward.spec.fingerprint(), without library versions."""
-    from objdel.checker.topology import min_area
+    from objdel.geom.topology import min_area
     from objdel.reward.spec import REWARD_V4
 
     value = (astuple(REWARD_V4), [min_area(a) for a in (0, 999, 1001, 10**4, 10**6)])

@@ -3,7 +3,8 @@ synthetic corpus. Run it on the Mac (arm64) and in the linux/amd64 container (x8
 equal section by section (`--compare a.json b.json`).
 
     .venv/bin/python -I -m experiments.phase1.bench.xarch_hashes --out build/x86/hashes-mac.json
-    .venv/bin/python -I -m experiments.phase1.bench.xarch_hashes --compare build/x86/hashes-mac.json build/x86/hashes-x86.json
+    .venv/bin/python -I -m experiments.phase1.bench.xarch_hashes --compare build/x86/hashes-mac.json
+    build/x86/hashes-x86.json
 
 No data/ is read: the corpus is generated from integer draws of numpy's PCG64 only (integer generation is
 platform-independent; no libm, no float sampling), so it is bit-identical on every machine, and the `corpus` section
@@ -42,11 +43,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from objdel.checker import betti, instance_topology, min_area, signature, size_filter
 from objdel.data import Item, splits
 from objdel.data import riga as riga_mod
 from objdel.eval import metrics
-from objdel.geometry import SCHEMAS, parse, serialize, to_masks
+from objdel.geom.shape import to_masks
+from objdel.geom.text import SCHEMAS, parse, serialize
+from objdel.geom.topology import betti, instance_topology, min_area, signature, size_filter
 from objdel.reward import ExpertCache, advantages_v4, fingerprint, score_batch, topology_reward
 from objdel.targets import BuildConfig, build_target, frame, target_set_hash
 from tests.oracles.polygonize_oracle import polygonize

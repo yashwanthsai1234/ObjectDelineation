@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from importlib.metadata import version
 from pathlib import Path
 
-from objdel import _gpucheck
+from objdel.geom import engine as _gpucheck
 from objdel.reward import REWARD_V4, TERMS, fingerprint
 from objdel.train import rewards, serve
 

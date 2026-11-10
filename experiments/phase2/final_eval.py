@@ -69,9 +69,9 @@ import numpy as np
 
 from experiments.phase2.freeze_views import render_files
 from experiments.phase2.select_ckpt import score_items
-from objdel import _gpucheck
 from objdel.data import quality as Q
 from objdel.eval import device, select, signal
+from objdel.geom import engine as _gpucheck
 from objdel.hashing import file_sha256
 from objdel.io import git, read_jsonl
 from objdel.io import write_atomic as _write
@@ -120,7 +120,8 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
     def unit_draws(sub, key=signal.cluster):
         return signal.point_or_draws(sub, draws, seed, key)
 
-    D = {"ci95_nodule": unit_draws(ids), "ci95_patient": None if groups is None else unit_draws(ids, groups.__getitem__)}
+    D = {"ci95_nodule": unit_draws(ids), "ci95_patient": None if groups is None else unit_draws(ids,
+        groups.__getitem__)}
     idx = np.random.default_rng(seed).integers(0, len(items), (draws, len(items)))
 
     def cis(v: np.ndarray) -> dict:

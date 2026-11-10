@@ -18,7 +18,7 @@ from oracles import reward_harness as H
 from oracles import reward_reference as ref
 
 import objdel.reward as R
-from objdel.geometry import to_mask
+from objdel.geom.shape import to_mask
 from objdel.reward import (
     REWARD_V4,
     ExpertCache,

@@ -23,7 +23,8 @@ outside the view (the bundle stays deterministic, BK1-7). Default 3 epochs: R1's
 (S1-8). Reads untrusted data: run with python -I.
 
 References:
-- plan experiments/phase2/PLAN.md D9, D10, D11, §6.0; promoted from archive/phase2_lab/B3/dihedral.py (P3) and archive/phase2_lab/A4, archive/phase2_lab/B1 shifts
+- plan experiments/phase2/PLAN.md D9, D10, D11, §6.0; promoted from archive/phase2_lab/B3/dihedral.py (P3) and
+archive/phase2_lab/A4, archive/phase2_lab/B1 shifts
 - multiprocessing.Pool.imap (ordered results): https://docs.python.org/3/library/multiprocessing.html
 """
 import argparse
@@ -38,9 +39,10 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.checker import signature
 from objdel.data import store
-from objdel.geometry import SCHEMAS, to_mask
+from objdel.geom.shape import to_mask
+from objdel.geom.text import SCHEMAS
+from objdel.geom.topology import signature
 from objdel.reward import voters
 from objdel.targets import BuildConfig, augment, build_target, frame, min_areas
 
@@ -131,7 +133,8 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
     ctx = [Path(out, "context", i + ".npz") for i in contexts]
     report = {"view": out.name, "wall_s": round(time.time() - t0, 1),
               "parent_cpu_s": round(time.process_time() - cpu0, 1), "procs": procs, "context_files": len(ctx),
-              "context_mb": round(sum(p.stat().st_size for p in ctx) / 2**20, 1), "rows_mb": round(len(text) / 2**20, 1),
+              "context_mb": round(sum(p.stat().st_size for p in ctx) / 2**20, 1), "rows_mb": round(len(text) / 2**20,
+                  1),
               "exact_share": sum(v["exact"] for v in per_op.values()) / max(len(rows), 1)}
     report_path(out).parent.mkdir(exist_ok=True)
     report_path(out).write_text(json.dumps(report, indent=1) + "\n")

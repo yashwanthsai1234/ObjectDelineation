@@ -35,7 +35,7 @@ from operator import attrgetter
 
 import numpy as np
 
-from objdel.geometry import SCHEMAS
+from objdel.geom.text import SCHEMAS
 from objdel.reward import ExpertCache, rater_answers, rl_eligible
 from objdel.targets import augment, frame
 from objdel.targets.frame import CLEARANCE, centred, crowded, union_box

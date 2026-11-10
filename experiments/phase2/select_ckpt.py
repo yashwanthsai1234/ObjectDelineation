@@ -16,7 +16,8 @@ completions' `.meta.json` stamp (prompts SHA-256, child command) is written befo
 stamp means the file is reused when complete and resumed otherwise (hf_sample keeps whole finished batches), on a
 retry or a rerun alike; another stamp empties it. An attempt that finishes no new item counts against TRIES.
 SIGTERM / SIGINT (the run cap's `timeout`) kill the child's process group before select_ckpt exits. Score them in
-this process (objdel.eval.metrics: the device work runs in one process, D7), build the B2 signal panel and run G-vision on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
+this process (objdel.eval.metrics: the device work runs in one process, D7), build the B2 signal panel and run G-vision
+on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
 G-vision; an unmeasured G-vision fails (--vision is required, --no-vision makes every branch ineligible). Rule R-B
 (prereg.select_rb) picks; none eligible -> the deepest is gated (§6.3). --items N: a seeded subset (SUBSET_SEED)
 for selection only (D13 HF path).
@@ -50,8 +51,8 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel import _gpucheck
 from objdel.eval import gates, metrics
+from objdel.geom import engine as _gpucheck
 from objdel.train import serve
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -329,7 +330,8 @@ def topology_only(a, out: Path) -> int:
     if a.probes is None or len(names) != 1:
         raise SystemExit(f"select_ckpt --only topology: needs --probes and one branch, found {names}")
     topo = score_probe(a, a.run / "branches" / names[0], "topology", out / names[0])
-    dump(out / "report.json", {"only": "topology", "branch": names[0], "sampler": a.sampler, "checker": _gpucheck.build(), "k": a.k,
+    dump(out / "report.json", {"only": "topology", "branch": names[0], "sampler": a.sampler,
+        "checker": _gpucheck.build(), "k": a.k,
                                "probes": {"topology": topo}})
     print(json.dumps({"branch": names[0], "pass": topo.get("pass")}))
     return 0

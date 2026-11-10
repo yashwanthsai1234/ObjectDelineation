@@ -41,7 +41,8 @@ the rater masks and rebuild targets (build_target) and caches (ExpertCache.build
 mirror polygon vertices, because the top-left pixel-centre tie rule is not mirror-symmetric.
 
 References:
-- TRL dataset formats (conversational, vision: "image" column + {"type": "image"}): https://huggingface.co/docs/trl/main/en/dataset_formats
+- TRL dataset formats (conversational, vision: "image" column + {"type": "image"}):
+https://huggingface.co/docs/trl/main/en/dataset_formats
 - TRL GRPO (image column, extra columns reach reward functions): https://huggingface.co/docs/trl/main/en/grpo_trainer
 - datasets Image feature (paths decoded on access): https://huggingface.co/docs/datasets/main/en/image_load
 - Python multiprocessing Pool: https://docs.python.org/3/library/multiprocessing.html
@@ -66,7 +67,8 @@ from datasets import Dataset, Image
 from PIL import Image as PILImage
 
 from objdel.data import store
-from objdel.geometry import SCHEMAS, canonicalize, parse, serialize
+from objdel.geom.shape import canonicalize
+from objdel.geom.text import SCHEMAS, parse, serialize
 from objdel.hashing import pixels_sha256
 from objdel.io import read_jsonl
 from objdel.reward import ExpertCache, fingerprint, rater_answers, rl_eligible
@@ -346,7 +348,7 @@ def _inside(ring: np.ndarray, other: np.ndarray) -> bool:
 
 
 def _no_holes(text: str, names) -> str:
-    """A0: every holes list emptied, canonical text (objdel.geometry round trip). A part inside another part's hole
+    """A0: every holes list emptied, canonical text (objdel.geom.text round trip). A part inside another part's hole
     (an island) is dropped with the hole: its outer ring would otherwise nest in the filled part's (illegal, BK1-4)."""
     objs = parse(text, names).objs
     keep = {n: [(o, []) for o, _ in parts if not any(_inside(o, q) for q, _ in parts if q is not o)]

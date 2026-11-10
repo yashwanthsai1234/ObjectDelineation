@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from objdel.checker import betti, certify, certify_many
+from objdel.geom.certify import certify, certify_many
+from objdel.geom.topology import betti
 from tests.oracles.bitquad_oracle import bitquads
 from tests.oracles.polygonize_oracle import polygonize
 
@@ -152,7 +153,7 @@ def test_certify_reports_equal_the_oracles():
     with no failures; empty and below-min_size masks certify with zeros. Field names and types are the pre-D3 ones."""
     from dataclasses import fields
 
-    from objdel.checker.certify import Report
+    from objdel.geom.certify import Report
     from tests.oracles.topology_oracle import size_filter as oracle_filter
     assert [(f.name, f.type) for f in fields(Report)] == [
         ("b0", int), ("b1", int), ("area", int), ("perimeter", int), ("corners", int), ("chi8", int),
@@ -174,7 +175,7 @@ def test_certify_reports_equal_the_oracles():
 
 def test_certify_many_is_certify_of_each():
     """U10: one engine call for the list, the same Reports as certify one by one; min_size per mask (RIGA's rim)."""
-    from objdel import _gpucheck
+    from objdel.geom import engine as _gpucheck
     masks = _certify_masks(seed=12, n=30)
     calls, real = [], _gpucheck.check_masks
     with pytest.MonkeyPatch.context() as mp:

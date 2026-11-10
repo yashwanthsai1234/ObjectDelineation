@@ -1,11 +1,12 @@
-"""objdel.geometry.to_mask: parts -> even-odd mask + legality, on the CUDA checker (to_masks of one object)."""
+"""objdel.geom.shape.to_mask: parts -> even-odd mask + legality, on the CUDA checker (to_masks of one object)."""
 import numpy as np
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from oracles import raster_oracle as RO
 from oracles import validity_oracle as VO
 
-from objdel.geometry import GRID, canonicalize, to_mask
+from objdel.geom.shape import canonicalize, to_mask
+from objdel.geom.text import GRID
 
 SQUARE = np.array([[0, 0], [1000, 0], [1000, 1000], [0, 1000]])  # clockwise on screen
 HOLE = np.array([[250, 250], [250, 750], [750, 750], [750, 250]])  # counter-clockwise

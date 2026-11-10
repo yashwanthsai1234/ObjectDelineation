@@ -57,7 +57,7 @@ def values(prepared: Path, texts: dict[str, list[str]]) -> dict[str, list[str]]:
 
 
 def main(argv=None) -> None:
-    from objdel import _gpucheck
+    from objdel.geom import engine as _gpucheck
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--prepared", type=Path, default=Path("data/prepared"))

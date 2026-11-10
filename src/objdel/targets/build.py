@@ -1,12 +1,12 @@
 """SFT targets: rater masks of one item -> certified, canonical polygon text (plan D11, gates K5-K7, R1).
 
 Per object (structure) of one rater:
-1. exact crack-edge rings (objdel.checker.trace), each ring's holes grouped with its 8-connected component;
+1. exact crack-edge rings (objdel.geom.rings.trace), each ring's holes grouped with its 8-connected component;
 2. every ring simplified by `simplify` at tolerance tau (min-# polygon, lossless or L-inf tau shortcuts);
 3. corners mapped to the 0-1000 grid; every vertex the object uses twice (a pinch: two pixels touching at a corner)
    split into two points one grid unit along the pinch's incoming and outgoing crack steps ("bevel", legal and
    pixel-neutral for crops <= 500 px); repeated and straight-through vertices dropped;
-4. certified on the CUDA engine (objdel._gpucheck.certify_polygons: raster, legality, IoU and the size-filtered
+4. certified on the CUDA engine (objdel.geom.engine.certify_polygons: raster, legality, IoU and the size-filtered
    signatures of the rung and the mask, only numbers leave the device): legal, at most MAX_VERTICES per ring, the
    same per-instance signature as the mask under the size rule (plan §4.2: the rule applies to targets, reward and
    eval), and IoU >= iou_min. The rule is the reward's min_area of the raters' union, which every caller passes
@@ -29,7 +29,7 @@ Per object (structure) of one rater:
    Rungs are certified in engine calls of 1, 2, 4, ... rungs from the current one (one call per start rung); the
    first certified rung wins, so the text is the one rung-by-rung certification gives. Simplifying every remaining
    rung up front would cost 3x the whole build on LIDC, where 99 % pass the first rung (D4).
-The answer is the canonical text of all objects (objdel.geometry.canonicalize / serialize); it must parse.
+The answer is the canonical text of all objects (objdel.geom.shape.canonicalize / serialize); it must parse.
 
 Repair: the lab localized defects (pinning points of offending segments, halving the tolerance per ring, then the
 better of both). On the 3,169 fixture targets the per-object ladder with 0.25 steps needs 0.81x (disc) and 0.77x
@@ -52,10 +52,12 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-from objdel import _gpucheck
-from objdel.checker import as_mask, size_filter, topology, trace
-from objdel.geometry import GRID, MAX_RINGS, MAX_VERTICES, Objects, canonicalize, parse, serialize
-from objdel.geometry.shape import pack_objects
+from objdel.geom import engine as _gpucheck
+from objdel.geom import topology
+from objdel.geom.rings import trace
+from objdel.geom.shape import canonicalize, pack_objects
+from objdel.geom.text import GRID, MAX_RINGS, MAX_VERTICES, Objects, parse, serialize
+from objdel.geom.topology import as_mask, size_filter
 
 from .simplify import STEPS, lattice_path, simplify, to_grid
 

@@ -31,7 +31,7 @@ import cv2
 import numpy as np
 
 from experiments.phase1.reward_gates import digest, make_jobs
-from objdel.geometry import SCHEMAS
+from objdel.geom.text import SCHEMAS
 from objdel.reward import ExpertCache, advantages_v4, score_batch, score_completion
 from objdel.train import serve
 

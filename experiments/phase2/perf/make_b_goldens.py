@@ -20,8 +20,8 @@ from pathlib import Path
 import numpy as np
 
 from experiments.cuda_checker import compare as C
-from objdel import _gpucheck as G
-from objdel.geometry.shape import unpack_rows
+from objdel.geom import engine as G
+from objdel.geom.shape import unpack_rows
 from objdel.reward import ExpertCache
 
 ROOT = Path(__file__).resolve().parents[3]

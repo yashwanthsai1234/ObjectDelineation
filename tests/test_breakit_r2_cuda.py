@@ -3,7 +3,7 @@ now fixed."""
 import numpy as np
 import pytest
 
-from objdel.checker import polygonize, trace
+from objdel.geom.rings import polygonize, trace
 from objdel.reward.cache import ExpertCache
 
 

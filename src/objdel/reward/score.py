@@ -1,6 +1,6 @@
 """Reward-v4 terms of one rollout: completion text -> parse -> the CUDA checker scores it against the expert caches.
 
-All checking and scoring runs in the CUDA checker (objdel._gpucheck.score_polygons, cuda/gpucheck.cpp): polygon ->
+All checking and scoring runs in the CUDA checker (objdel.geom.engine.score_polygons, cuda/gpucheck.cpp): polygon ->
 even-odd mask -> ring defects -> the terms below, against each cache's tables resident on the device
 (ExpertCache.device). Masks never leave the device; only per-object numbers come back. One checker call per
 score_many / score_batch. Per object, against its ExpertCache:
@@ -42,9 +42,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from objdel import _gpucheck
-from objdel.geometry import GRID, parse
-from objdel.geometry.shape import pack_objects
+from objdel.geom import engine as _gpucheck
+from objdel.geom.shape import pack_objects
+from objdel.geom.text import GRID, parse
 
 from .cache import ExpertCache, device_many
 from .spec import REWARD_V5

@@ -45,7 +45,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from objdel.checker import certify_many
+from objdel.geom.certify import certify_many
 
 from .store import Item
 

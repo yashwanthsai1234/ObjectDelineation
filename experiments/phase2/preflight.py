@@ -11,7 +11,8 @@ later stages are not run:
            coverage of every exam view by T (objdel.data.coverage), prompt text identical, T's CT window consistent,
            every T target parses and is legal for the reference checker; per rl stage trained on {data}/rows/<name>
            (B1.3; a train_rl run inside a cmd stage's `bash -c` string, the nsys-wrapped arms of the C specs, counts
-           as the rl stage its words parse to, rl_stages): the root built locally passes the B data gates (experiments.phase2.audit_data) with the manifest
+           as the rl stage its words parse to, rl_stages): the root built locally passes the B data gates
+           (experiments.phase2.audit_data) with the manifest
            SHA-256 the stage pins, and the pinned HF revision holds exactly the local root's files
   CHECKER  tests/test_cuda_checker*.py when they exist, the scorers on the CUDA checker (tests/test_gpu_scoring.py:
            equal to the host scorer it replaced), then the checker's exactness tests (the slow exact oracles, the
@@ -123,7 +124,8 @@ def stamp_path(cfg: Path) -> Path:
 
 
 def refusal(cfg: Path) -> str | None:
-    """Why a launch of this config must be refused (no stamp, a failed one, or code / data / config changed since), else None."""
+    """Why a launch of this config must be refused (no stamp, a failed one, or code / data / config changed since), else
+    None."""
     path = stamp_path(cfg)
     if not path.is_file():
         return f"no preflight stamp: run `make preflight CONFIG={cfg}` first"
@@ -256,7 +258,8 @@ def ct_window(s: Inputs) -> list[str]:
 
 
 def targets(s: Inputs) -> list[str]:
-    from objdel.geometry import parse, to_mask
+    from objdel.geom.shape import to_mask
+    from objdel.geom.text import parse
 
     bad = []
     for t in s.views:
@@ -392,7 +395,8 @@ def runbooks(s: Inputs, root: Path = ROOT) -> list[str]:
     and no hand copy or stale box torch in their runbooks."""
     k = root / "docs/implementation2.0/kernels"
     files = [p for p in k.rglob("*") if p.is_file() and "build" not in p.relative_to(k).parts]
-    bad = [f"{p.relative_to(root)}: scratch path" for p in files if re.search(r"/[p]rivate/tmp", p.read_text("latin-1"))]
+    bad = [f"{p.relative_to(root)}: scratch path" for p in files if re.search(r"/[p]rivate/tmp",
+        p.read_text("latin-1"))]
     return bad + [f"{p.relative_to(root)}: {s.strip()!r}" for p in sorted(k.glob("*/GPU_RUN.md"))
                   for s in ("torch 2.14.1", "scp ", "rsync ") if s in p.read_text()]
 

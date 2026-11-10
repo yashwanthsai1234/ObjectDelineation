@@ -4,7 +4,7 @@ import dataclasses
 import pytest
 from conftest import KEY, SIDE
 
-from objdel import _gpucheck
+from objdel.geom import engine as _gpucheck
 from objdel.reward import REWARD_V4, ExpertCache, fingerprint
 from objdel.train import rewards
 from objdel.verify.api import API_VERSION, ScoreItem, Verifier, VerifyError

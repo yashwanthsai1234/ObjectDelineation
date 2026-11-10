@@ -252,7 +252,7 @@ def test_lidc_train_disagreement_counts_on_the_lab_split(store_dir, fixtures_dir
     under the size rule max(5, ceil(0.5 % of the rater union)) once clusters with a merged reader are left out (as
     the lab's reward fixture did; 308 with them). After the wave-6 rules (copied layers count once, crowded frames
     left out; fixes/F4.md) the same counts are 296 and 242 (291 with merged-reader clusters)."""
-    from objdel.checker import min_area, signature
+    from objdel.geom.topology import min_area, signature
     lab_split = {r["patient"]: r["split"] for r in csv.DictReader(open(fixtures_dir / "lidc_full_meta.csv"))}
     five = rule = 0
     for split in ("train", "val", "test"):

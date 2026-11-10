@@ -1,4 +1,4 @@
-"""Differential test: objdel.geometry.parse vs the lab's hand-written recursive-descent parser (slow oracle,
+"""Differential test: objdel.geom.text.parse vs the lab's hand-written recursive-descent parser (slow oracle,
 archive/phase1_lab/t_stack/prod.py, trimmed to accept/reject and the parsed values).
 
 One fix to the lab code: it tested digits with str.isdigit and converted with int(), so it accepted Unicode digits
@@ -7,7 +7,7 @@ import numpy as np
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from objdel.geometry import GRID, MAX_RINGS, MAX_VERTICES, SCHEMAS, parse, serialize
+from objdel.geom.text import GRID, MAX_RINGS, MAX_VERTICES, SCHEMAS, parse, serialize
 
 
 class _Fail(Exception):

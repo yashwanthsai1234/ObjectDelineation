@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 import scipy
 
-from objdel.checker.topology import min_area
+from objdel.geom.topology import min_area
 
 TERMS = ("iou_tc", "f5", "legal", "g_area")  # the z-scored terms, in weight / floor order
 

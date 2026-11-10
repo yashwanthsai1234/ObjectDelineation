@@ -1,5 +1,5 @@
-"""The polygonizer seam (B1.4a, D3): objdel.checker.rings.trace and polygonize (the engine,
-objdel._gpucheck.check_masks; the CPU build on the Mac) give the numpy oracles' rings and bit-quads
+"""The polygonizer seam (B1.4a, D3): objdel.geom.rings.trace and polygonize (the engine,
+objdel.geom.engine.check_masks; the CPU build on the Mac) give the numpy oracles' rings and bit-quads
 (tests/oracles/polygonize_oracle.py, bitquad_oracle.py): same order, corners and signed area; ring parts are the
 first-pixel ranks of cv2's 8-components and b0, b1 those of cv2 and scipy. The oracle guard keeps every ring reference
 numpy, so a ring test can still fail after the switch."""
@@ -17,9 +17,11 @@ import numpy as np
 import pytest
 import scipy.ndimage as ndi
 
-import objdel.checker
+import objdel.geom.certify
+import objdel.geom.rings
 from experiments.cuda_checker import compare as C
-from objdel.checker import certify, rings
+from objdel.geom import rings
+from objdel.geom.certify import certify
 from tests.oracles import bitquad_oracle as BQ
 from tests.oracles import polygonize_oracle as PO
 from tests.test_cuda_checker import k1_masks
@@ -194,8 +196,8 @@ def test_trace_equals_the_oracle_on_the_lidc_crops():
 # ------------------------------------------------------------------ the seam is production's polygonizer
 def test_production_callers_use_the_engine():
     from objdel.targets import build
-    certify_module = importlib.import_module("objdel.checker.certify")  # the package's `certify` is the function
-    assert objdel.checker.polygonize is rings.polygonize and objdel.checker.trace is rings.trace
+    certify_module = importlib.import_module("objdel.geom.certify")  # the package's `certify` is the function
+    assert objdel.geom.rings.polygonize is rings.polygonize and objdel.geom.rings.trace is rings.trace
     assert certify_module.trace is rings.trace and build.trace is rings.trace
     assert certify(np.ones((3, 3), bool)).certified
 
@@ -211,10 +213,12 @@ def test_the_numpy_oracles_left_the_package():
                 [a.name for a in node.names] if isinstance(node, ast.Import) else []
             assert not any(n.startswith("tests") or "oracle" in n for n in names), path
     with pytest.raises(ImportError):
-        from objdel.checker import bitquads  # noqa: F401
+        from objdel.geom import bitquads  # noqa: F401
     for name in ("trace", "polygonize", "Ring", "MaskRings", "certify", "certify_many", "as_mask", "betti",
                  "instance_topology", "min_area", "signature", "size_filter"):
-        assert name in objdel.checker.__all__ and hasattr(objdel.checker, name), name
+        assert any(hasattr(importlib.import_module(f"objdel.geom.{m}"), name)
+                   for m in ("rings", "certify", "topology")), name
+    assert objdel.geom.__all__ == ["polygonize"]
 
 
 # ------------------------------------------------------------------ oracle guard (final round 12, qa-1)
@@ -227,8 +231,8 @@ def test_mask_reference_imports_the_numpy_oracles():
 
 def test_importing_the_oracle_keeps_the_package_function():
     import tests.oracles.polygonize_oracle  # noqa: F401
-    assert inspect.isfunction(objdel.checker.polygonize)
-    assert objdel.checker.polygonize is rings.polygonize
+    assert inspect.isfunction(objdel.geom.rings.polygonize)
+    assert objdel.geom.rings.polygonize is rings.polygonize
 
 
 def test_the_reference_does_not_come_from_the_seam(monkeypatch):
@@ -236,10 +240,10 @@ def test_the_reference_does_not_come_from_the_seam(monkeypatch):
     m[1:4, 1:4] = m[1:4, 5:8] = True
     want = C.mask_reference(m)
     assert want["n_rings"] == 2
-    for owner in (rings, objdel.checker):
+    for owner in (rings, objdel.geom):
         orig = owner.polygonize
         monkeypatch.setattr(owner, "polygonize", lambda mask, offset=(0, 0), f=orig: f(mask, offset)[:-1])
-    assert len(objdel.checker.polygonize(m)) == 1  # the patch bites
+    assert len(objdel.geom.rings.polygonize(m)) == 1  # the patch bites
     got = C.mask_reference(m)
     assert (got["n_rings"], got["ring_sha"]) == (2, want["ring_sha"])
 

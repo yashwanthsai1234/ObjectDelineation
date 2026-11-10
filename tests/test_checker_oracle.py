@@ -1,4 +1,4 @@
-"""K1 and K2 (plan §7) on the CUDA checker: objdel._gpucheck.check_polygons equals the slow exact oracles in
+"""K1 and K2 (plan §7) on the CUDA checker: objdel.geom.engine.check_polygons equals the slow exact oracles in
 tests/oracles/ (pure Python, no code shared with any checker). These were the CPU checker's oracle tests
 (archive/cpu_checker/tests/test_polycore_oracle.py); the checker returns the even-odd mask and defect totals, so
 those are compared. Fast subsets run by default; the full 10,000-shape K1 and 10,000-ring K2 runs are marked slow.
@@ -12,7 +12,7 @@ from oracles import raster_oracle as RO
 from oracles import validity_oracle as VO
 
 from experiments.cuda_checker import compare as C
-from objdel import _gpucheck
+from objdel.geom import engine as _gpucheck
 
 
 def check(cases, G=1000) -> list[dict]:

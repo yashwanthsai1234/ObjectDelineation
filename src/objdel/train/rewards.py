@@ -66,7 +66,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from objdel._gpucheck import DEFECTS
+from objdel.geom.engine import DEFECTS
 from objdel.reward import (
     REWARD_V4,
     ExpertCache,

@@ -14,8 +14,9 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from scipy import ndimage
 
-from objdel.checker import min_area, signature, size_filter
-from objdel.geometry import MAX_RINGS, canonicalize, parse, serialize, to_mask
+from objdel.geom.shape import canonicalize, to_mask
+from objdel.geom.text import MAX_RINGS, parse, serialize
+from objdel.geom.topology import min_area, signature, size_filter
 from objdel.targets import BuildConfig, build_target, min_areas, target_set_hash
 from tests.oracles.crops_oracle import mask_sha, pad_div
 from tests.oracles.kept_oracle import kept

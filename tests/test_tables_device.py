@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from objdel import _gpucheck as gc
+from objdel.geom import engine as gc
 from objdel.reward import ExpertCache
 from objdel.reward import cache as rc
 from objdel.reward.score import score_many

@@ -13,7 +13,7 @@ pytest.importorskip("pyarrow")
 pytest.importorskip("datasets")
 
 from objdel.data import Item, store  # noqa: E402
-from objdel.geometry import SCHEMAS  # noqa: E402
+from objdel.geom.text import SCHEMAS  # noqa: E402
 from objdel.reward import rater_answers, score_completion  # noqa: E402
 from objdel.train import dataset as D  # noqa: E402
 

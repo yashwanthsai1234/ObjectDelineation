@@ -1,11 +1,11 @@
-"""objdel.checker.volume: slice masks stacked into a voxel volume and its Betti numbers (b0 parts, 26-connected; b1
+"""objdel.geom.volume: slice masks stacked into a voxel volume and its Betti numbers (b0 parts, 26-connected; b1
 tunnels; b2 cavities, 6-connected background), the 3-D form of the per-slice topology. Expected values are worked by
 hand for each shape."""
 
 import numpy as np
 import pytest
 
-from objdel.checker import volume as V
+from objdel.geom import volume as V
 
 
 def box(shape, fill=True):

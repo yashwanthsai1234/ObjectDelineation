@@ -14,7 +14,7 @@ import pytest
 from scipy import ndimage
 
 import objdel.reward as R
-from objdel import _gpucheck as gc
+from objdel.geom import engine as gc
 from objdel.reward import ExpertCache
 from objdel.reward import cache as rc
 

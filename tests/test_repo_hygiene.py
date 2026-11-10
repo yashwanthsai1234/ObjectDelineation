@@ -285,7 +285,7 @@ def test_train_sft_names_its_loader_load_items():
 
 
 def test_topology_any_docstring_does_not_claim_the_reward_uses_it():
-    from objdel.checker import volume
+    from objdel.geom import volume
 
     assert "reward compares" not in volume.__doc__ and "phase G" in volume.__doc__
 
@@ -368,7 +368,6 @@ def test_library_keep_list_adr_matches_pyproject():
 
 
 WAVE = 2  # CLEAN11: D3 (the device `trace`) has landed
-RINGS = ("objdel.geom.rings", "objdel.checker.rings")  # first that exists, so E3a needs no edit
 SRC = ROOT / "src" / "objdel"
 
 
@@ -393,12 +392,11 @@ def test_polygonizer_seam_is_device_only():
         text = f.read_text()
         assert "tests.oracles" not in text and not re.search(r"^\s*(from|import) oracles", text, re.M), f
         assert not ((_functions(f) & names) - allowed), f
-    rel = next(m.replace(".", "/") for m in RINGS if (ROOT / "src" / (m.replace(".", "/") + ".py")).exists())
-    rings = ast.parse((ROOT / "src" / f"{rel}.py").read_text())
+    rings = ast.parse((SRC / "geom" / "rings.py").read_text())
     assert any(getattr(n, "attr", getattr(n, "id", None)) == "check_masks" for n in ast.walk(rings))
-    pkg = SRC / "checker" / "__init__.py"
-    assert "polygonize" in pkg.read_text() and "from .rings import" in pkg.read_text()
-    cert = ast.parse((SRC / "checker" / "certify.py").read_text())
+    pkg = (SRC / "geom" / "__init__.py").read_text()
+    assert "from objdel.geom.rings import polygonize" in pkg
+    cert = ast.parse((SRC / "geom" / "certify.py").read_text())
     assert any(isinstance(n, ast.ImportFrom) and any(a.name == "trace" for a in n.names) for n in ast.walk(cert))
     assert any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "trace" for n in ast.walk(cert))
     assert "certify_many(" in (SRC / "data" / "riga.py").read_text()

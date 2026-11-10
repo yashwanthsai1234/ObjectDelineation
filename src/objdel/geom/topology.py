@@ -5,7 +5,8 @@ Jordan curve theorem holds, so a component's holes are well defined [Rosenfeld 1
 A hole is a bounded 4-connected background component; the holes of component k are those k has when it is
 the only foreground (an island inside a hole of k does not change k's count; the island's holes are its own).
 
-Algorithm, on the CUDA engine (objdel._gpucheck.topology: the reward scorer's pixel label chain, nvcc build on the box,
+Algorithm, on the CUDA engine (objdel.geom.engine.topology: the reward scorer's pixel label chain, nvcc build on the
+box,
 CPU build of the same source on the Mac), O(pixels), one call for many masks:
 1. Crop to the foreground bounding box (holes cannot leave it) and pad by one background pixel, so the whole
    outside is a single background component.
@@ -53,7 +54,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from objdel import _gpucheck
+from objdel.geom import engine as _gpucheck
 
 _EMPTY = np.zeros(0, np.int64)
 _EMPTY.flags.writeable = False  # shared by every empty result

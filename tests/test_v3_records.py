@@ -18,7 +18,7 @@ from transformers import Trainer  # noqa: E402
 from trl import GRPOTrainer  # noqa: E402
 
 from experiments.phase2 import final_eval as FE  # noqa: E402
-from objdel import _gpucheck  # noqa: E402
+from objdel.geom import engine as _gpucheck  # noqa: E402
 from objdel.train import fast  # noqa: E402
 
 STATS = {"arena_bytes": 11, "sync_alloc": 2, "sync_free": 2, "pool_allocs": 5, "pool_frees": 4, "pinned_grows": 0,

@@ -508,7 +508,7 @@ def test_final_eval_json_is_never_half_written(ev, tmp_path, monkeypatch):
 def test_full_run_replaces_the_partial(ev, tmp_path, monkeypatch):
     """I07, I10, I21: four files; items.jsonl is per_item of metrics.jsonl; answers keep types and order; the
     truncated legal answer scores 0; tokens reach metrics."""
-    from objdel import _gpucheck
+    from objdel.geom import engine as _gpucheck
     from objdel.train import dataset as D
 
     out = tmp_path / "out"
@@ -733,7 +733,7 @@ def test_code_sha_of_a_real_repo(tmp_path):
 
 def test_view_manifest_sha_is_over_the_raw_bytes(tmp_path):
     """U48: CRLF, unicode and a reformatted manifest each hash as their bytes."""
-    from objdel import _gpucheck
+    from objdel.geom import engine as _gpucheck
 
     got = set()
     for raw in (b'{"a": 1}\n', b'{"a": 1}\r\n', '{"a": "é"}\n'.encode(), b'{"a":1}'):

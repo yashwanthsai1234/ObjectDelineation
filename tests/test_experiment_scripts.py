@@ -1,8 +1,8 @@
 """Every Phase 1 script has a command line: `--help` prints usage and exits 0 without touching data (B4-7). D3 (S03)
-adds the other non-lab scripts that import objdel.checker or objdel.targets: experiments/phase1/bench,
+adds the other non-lab scripts that import objdel.geom or objdel.targets: experiments/phase1/bench,
 experiments/cuda_checker (not compare.py, a helper module) and experiments/phase2. The Phase 0 scripts fail before
 their command line on names removed in Phase 1 (topology.BG4, reward.AnnotatorSet; CLEAN's to archive), so for them
-only the names they take from the objdel.checker and objdel.targets packages are checked.
+only the names they take from the objdel.geom and objdel.targets packages are checked.
 
 Scripts run as modules in an isolated interpreter, as docs/contributing.md prescribes for anything that reads data/
 (`python -I -m experiments.phase1.<script>`; -I drops the current directory from sys.path, so this also checks that

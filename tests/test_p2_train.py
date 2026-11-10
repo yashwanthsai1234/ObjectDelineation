@@ -15,7 +15,8 @@ pytest.importorskip("datasets")
 pytest.importorskip("trl")
 
 from objdel.data import store  # noqa: E402
-from objdel.geometry import SCHEMAS, canonicalize, parse, serialize, to_mask  # noqa: E402
+from objdel.geom.shape import canonicalize, to_mask  # noqa: E402
+from objdel.geom.text import SCHEMAS, parse, serialize  # noqa: E402
 from objdel.targets import build_target, min_areas  # noqa: E402
 from objdel.train import configs  # noqa: E402
 from objdel.train import dataset as D  # noqa: E402

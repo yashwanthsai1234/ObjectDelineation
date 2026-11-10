@@ -47,7 +47,8 @@ References:
   Dice; tolerance from inter-rater variation), JMIR 2021. https://arxiv.org/abs/1809.04430 ;
   https://github.com/google-deepmind/surface-distance
 - A. G. Cohn, N. M. Gotts, "The 'egg-yolk' representation of regions with indeterminate boundaries", in Geographic
-  Objects with Indeterminate Boundaries (GISDATA 2), Taylor & Francis, 1996. https://www.researchgate.net/publication/2526626
+  Objects with Indeterminate Boundaries (GISDATA 2), Taylor & Francis, 1996.
+  https://www.researchgate.net/publication/2526626
 - S. K. Warfield, K. H. Zou, W. M. Wells, "Simultaneous truth and performance level estimation (STAPLE)",
   IEEE TMI 23(7), 2004. https://doi.org/10.1109/TMI.2004.828354
 - scipy.ndimage.distance_transform_edt (the tests' oracle of edt; C. R. Maurer, R. Qi, V. Raghavan, "A linear time
@@ -88,8 +89,8 @@ import cv2
 import numpy as np
 from scipy import integrate, stats
 
-from objdel import _gpucheck
-from objdel.checker.topology import min_area
+from objdel.geom import engine as _gpucheck
+from objdel.geom.topology import min_area
 
 from .spec import CACHE_SPEC, fingerprint
 
@@ -321,7 +322,7 @@ class ExpertCache:
         return edt(self.core)
 
     def table_args(self) -> tuple:
-        """The 13 arguments of objdel._gpucheck.add_tables for this cache (the checker benchmark's replay dumps them,
+        """The 13 arguments of objdel.geom.engine.add_tables for this cache (the checker benchmark's replay dumps them,
         experiments/phase2/perf/bench_checker.py)."""
         sigs = self.rater_sigs
         return (self.raters.view(np.uint8), self.union.view(np.uint8), self.core.view(np.uint8),

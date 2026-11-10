@@ -105,7 +105,7 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from objdel.eval.device import ItemCounts, duplicate_keys, item_counts
-from objdel.geometry import parse
+from objdel.geom.text import parse
 from objdel.reward import (
     NUMERIC,
     REWARD_V4,

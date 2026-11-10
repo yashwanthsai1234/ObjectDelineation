@@ -10,9 +10,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from objdel.checker import signature
 from objdel.data import store
-from objdel.geometry import SCHEMAS, parse, to_mask
+from objdel.geom.shape import to_mask
+from objdel.geom.text import SCHEMAS, parse
+from objdel.geom.topology import signature
 from objdel.hashing import pixels_sha256
 from objdel.targets import FRAMES, LUNG_WINDOW, FrameConfig, augment, build_target, frame, min_areas, target_set_hash
 from objdel.targets.frame import CLEARANCE, DIVISORS, union_box, upscale

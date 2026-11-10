@@ -26,7 +26,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
-from objdel.checker.topology import betti, size_filter
+from objdel.geom.topology import betti, size_filter
 from objdel.reward import ExpertCache, score_mask
 
 from .reward_harness import FIELDS, G, advantages, packed

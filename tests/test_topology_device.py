@@ -1,4 +1,4 @@
-"""D4b (B17, B8; gates D-G3, D-G4, D-G11): objdel.checker.topology on the engine's pixel label chain (gc.topology)
+"""D4b (B17, B8; gates D-G3, D-G4, D-G11): objdel.geom.topology on the engine's pixel label chain (gc.topology)
 equals the OpenCV versions it replaced (tests/oracles/topology_oracle.py, cv2_*) field by field, in value and type,
 at every min_area; the batched forms are one engine call; certify takes b0, b1 from it; no OpenCV or scipy labelling
 runs in the target builder, the cache or certify."""
@@ -9,9 +9,10 @@ import pytest
 from oracles.topology_oracle import cv2_betti, cv2_components, cv2_instance_topology, cv2_signature, cv2_size_filter
 
 from experiments.cuda_checker import compare as C
-from objdel import _gpucheck
-from objdel.checker import betti, certify_many, instance_topology, signature, signatures, size_filter, topologies
-from objdel.checker import topology as T
+from objdel.geom import engine as _gpucheck
+from objdel.geom import topology as T
+from objdel.geom.certify import certify_many
+from objdel.geom.topology import betti, instance_topology, signature, signatures, size_filter, topologies
 
 MIN_AREAS = (0, 1, 2, 3, 7, 10, 100, 10**6, 10**9)
 
@@ -144,7 +145,7 @@ def test_no_cpu_labelling_in_targets_cache_and_certify(monkeypatch):
     import cv2
     from scipy import ndimage
 
-    from objdel.checker import certify
+    from objdel.geom.certify import certify
     from objdel.reward import ExpertCache
     from objdel.targets import build_target, min_areas
 

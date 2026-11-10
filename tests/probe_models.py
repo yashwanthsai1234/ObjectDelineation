@@ -4,9 +4,9 @@ shifted, centred-prior and hole-free (A0) answers to a probe record, and the ima
 import cv2
 import numpy as np
 
-from objdel.checker.topology import min_area
 from objdel.eval import probes as P
-from objdel.geometry import GRID, parse
+from objdel.geom.text import GRID, parse
+from objdel.geom.topology import min_area
 from objdel.targets import build_target
 
 

@@ -1,4 +1,4 @@
-"""objdel.geometry text spec: serializer, strict parser, canonical form (plan D10, R1 parser part)."""
+"""objdel.geom.text spec: serializer, strict parser, canonical form (plan D10, R1 parser part)."""
 import json
 import re
 import time
@@ -8,7 +8,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from objdel.geometry import GRID, MAX_CHARS, MAX_RINGS, MAX_VERTICES, SCHEMAS, canonicalize, parse, pattern, serialize
+from objdel.geom.shape import canonicalize
+from objdel.geom.text import GRID, MAX_CHARS, MAX_RINGS, MAX_VERTICES, SCHEMAS, parse, pattern, serialize
 
 RIGA, LIDC = SCHEMAS["riga"], SCHEMAS["lidc"]
 
@@ -346,7 +347,7 @@ _box = st.tuples(*[st.integers(0, 20)] * 4).map(
 @settings(max_examples=2000)
 @given(box=_box, others=st.lists(_box, max_size=5))
 def test_boxes_meet_equals_the_half_open_overlap_rule(box, others):
-    from objdel.geometry.box import boxes_meet
+    from objdel.geom.box import boxes_meet
 
     x0, y0, x1, y1 = box
     old = any(a < x1 and x0 < c and b < y1 and y0 < d for a, b, c, d in others)
@@ -355,7 +356,7 @@ def test_boxes_meet_equals_the_half_open_overlap_rule(box, others):
 
 
 def test_boxes_meet_edges_and_empty():
-    from objdel.geometry.box import boxes_meet
+    from objdel.geom.box import boxes_meet
 
     assert boxes_meet((0, 0, 10, 10), []) is False
     assert boxes_meet((0, 0, 10, 10), [(10, 0, 20, 10)]) is False  # touching edge: half-open, no overlap

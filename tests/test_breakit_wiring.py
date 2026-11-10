@@ -96,7 +96,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 
 def _reference_advantages(chain, keys):
     """advantages_v4 of the scripted texts, scored independently of TRL on the prepared caches."""
-    from objdel.geometry import SCHEMAS
+    from objdel.geom.text import SCHEMAS
     from objdel.reward import advantages_v4, score_batch
     from objdel.train import dataset as D
     load, rec, seen, jobs = D.cache_loader(chain["work"] / "prep"), chain["recs"], {}, []
@@ -274,9 +274,9 @@ def test_real_lidc_sample_prepared_equals_store_and_eval_frames(store_dir):
     if not (PREPARED / "manifest.json").is_file():
         pytest.skip("data/prepared absent")
     from experiments.phase1 import eval_run
-    from objdel.checker import min_area
     from objdel.data import store
-    from objdel.geometry import SCHEMAS
+    from objdel.geom.text import SCHEMAS
+    from objdel.geom.topology import min_area
     from objdel.reward import ExpertCache, score_completion
     from objdel.targets import build_target, frame
     from objdel.train import dataset as D

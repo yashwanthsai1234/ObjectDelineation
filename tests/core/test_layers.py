@@ -131,7 +131,8 @@ def top_level_names(path: Path) -> set[str]:
             names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             names.add(node.target.id)
-        elif isinstance(node, ast.ImportFrom) and path.name == "__init__.py":  # a package's re-exports are its names
+        elif isinstance(node, ast.ImportFrom) and (path.name == "__init__.py" or path == SRC / "geom/engine.py"):
+            # a package's re-exports are its names; geom/engine re-exports the CUDA extension (E3a)
             names |= {a.asname or a.name for a in node.names}
     return names
 
@@ -212,10 +213,25 @@ def old_names() -> dict[str, list[str]]:
     return {m: sorted(top_level_names(ROOT / m)) for m in OLD_MODULES if (ROOT / m).exists()}
 
 
+def new_names() -> set[str]:
+    """Top-level names of every library module (the homes of the moved names)."""
+    return set().union(*(top_level_names(p) for p in py_files(SRC)))
+
+
 def record_old_names():
-    (GOLDENS / "old_names.json").write_text(json.dumps(old_names(), indent=1) + "\n")
+    """Re-record the modules that still exist; a module the E moves removed keeps its recorded names."""
+    path = GOLDENS / "old_names.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), **old_names()}, indent=1) + "\n")
 
 
 def test_old_names_recorded_on_this_tree():
     """Re-record after a merge that changes an old module: record_old_names() (goldens README)."""
-    assert json.loads((GOLDENS / "old_names.json").read_text()) == old_names()
+    recorded, now = json.loads((GOLDENS / "old_names.json").read_text()), old_names()
+    assert {m: v for m, v in recorded.items() if m in now} == now
+
+
+def test_move_complete():
+    """E-G16: each recorded name of an old module that the E moves removed has a home in a library module."""
+    recorded, now, homes = json.loads((GOLDENS / "old_names.json").read_text()), old_names(), new_names()
+    lost = {m: sorted(set(v) - homes) for m, v in recorded.items() if m not in now}
+    assert {m: v for m, v in lost.items() if v} == {}

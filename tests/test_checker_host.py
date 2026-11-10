@@ -1,13 +1,14 @@
 """C2 (experiments/phase2/perf/implementation.md; issues CK-1 to CK-3): the checker returns the even-odd mask only,
-bit-packed per row as uint32 words (LSB = leftmost pixel), and objdel.geometry unpacks it. The references here are
+bit-packed per row as uint32 words (LSB = leftmost pixel), and objdel.geom.shape unpacks it. The references here are
 independent of the code under test: masks packed bit by bit in Python, and the results of the archived CPU checker
 (polycore), recorded per case in tests/goldens/polycore.npz."""
 import numpy as np
 import pytest
 
 from experiments.cuda_checker import compare as C
-from objdel import _gpucheck
-from objdel.geometry import shape, to_masks
+from objdel.geom import engine as _gpucheck
+from objdel.geom import shape
+from objdel.geom.shape import to_masks
 
 WIDTHS = (1, 31, 32, 33, 63, 64, 65, 512)
 

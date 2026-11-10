@@ -31,8 +31,8 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.checker import min_area, signature
 from objdel.data import Item, lidc, riga, splits, store
+from objdel.geom.topology import min_area, signature
 from objdel.targets import frame
 
 REPO = Path(__file__).resolve().parents[2]
@@ -179,7 +179,8 @@ def main(argv=None):
     patient_series = {s: scans[s].patient for s in scans}
     rep.update({
         "manifest": manifest,
-        "riga": {"photos": len(photos), "masks": sum(stats["riga_stages"].values()), "splits": dict(sorted(riga_counts.items())),
+        "riga": {"photos": len(photos), "masks": sum(stats["riga_stages"].values()),
+            "splits": dict(sorted(riga_counts.items())),
                  "test_unique_photos": len(test_groups), "stages": dict(stats["riga_stages"].most_common()),
                  "reference": dict(stats["riga_reference"]),
                  "with_image": dict(sorted(stats["riga_with_image"].items())),
@@ -198,7 +199,8 @@ def main(argv=None):
                                "counts follow the grouping: 591 / 64 with the NCC groups only, 592 / 63 with the "
                                "keypoint groups (B3-8). The plan's 590 / 65 is the lab's draw; every draw keeps each "
                                "subset's val share within one group of 10 %."},
-        "lidc": {"series": len(lidc_res), "patients": len(patients), "items": sum(len(sl) for _, _, sl, _, _ in lidc_res),
+        "lidc": {"series": len(lidc_res), "patients": len(patients), "items": sum(len(sl) for _, _, sl, _,
+            _ in lidc_res),
                  "dropped_crowded_frame": dict(sorted(crowded_per_split.items())),
                  "patients_per_split": dict(sorted(Counter(lidc_split.values()).items())),
                  **{k: stats["lidc"][k] for k in sorted(stats["lidc"])},
@@ -211,7 +213,8 @@ def main(argv=None):
                 "riga_cross_split_keypoint_duplicates": [c for c in kcross if c[2] >= splits.ORB_DUP],
                 "riga_max_cross_split_keypoint_inliers": max(n for *_, n in kcross),
                 "riga_max_keypoint_inliers_below_threshold": max(n for *_, n in orb if n < splits.ORB_DUP),
-                "lidc_patient_leaks": splits.leaks({s: lidc_split[p] for s, p in patient_series.items()}, patient_series),
+                "lidc_patient_leaks": splits.leaks({s: lidc_split[p] for s, p in patient_series.items()},
+                    patient_series),
                 "lidc_identical_slices_across_splits": splits.leaks(stats["split_of"], stats["image_sha"])},
     })
     (out / "build_report.json").write_text(json.dumps(rep, indent=1, sort_keys=True) + "\n")

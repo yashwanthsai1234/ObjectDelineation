@@ -1,5 +1,5 @@
 """Exact mask -> rectilinear rings, linked with array operations only: the numpy reference (oracle) of the engine's
-rings, objdel.checker.rings.polygonize (B1.4a moved it here from objdel.checker.polygonize; same signature, its own
+rings, objdel.geom.rings.polygonize (B1.4a moved it here from objdel.geom.rings.polygonize; same signature, its own
 Ring without the engine's part).
 
 This mirrors the planned GPU linker: emit unit boundary edges, link each edge to

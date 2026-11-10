@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from objdel._gpucheck import DEFECTS
+from objdel.geom.engine import DEFECTS
 from objdel.reward import ExpertCache, advantages_v4, legal_gate, score_batch, topology_reward
 from objdel.train import rewards as R
 

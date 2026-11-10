@@ -178,8 +178,8 @@ def test_certified_requires_nesting_and_simple_curves():
 
 def test_certified_makes_one_certify_many_call(monkeypatch):
     """I13: disc, cup and rim (at RIM_MIN_SIZE) in one certify_many call, so one engine call."""
-    from objdel import _gpucheck
-    from objdel.checker import certify_many
+    from objdel.geom import engine as _gpucheck
+    from objdel.geom.certify import certify_many
     calls, engine, real = [], [], _gpucheck.check_masks
     monkeypatch.setattr(riga, "certify_many", lambda masks, sizes: calls.append(sizes) or certify_many(masks, sizes))
     monkeypatch.setattr(_gpucheck, "check_masks", lambda *a, **k: engine.append(1) or real(*a, **k))

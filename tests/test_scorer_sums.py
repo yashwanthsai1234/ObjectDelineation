@@ -14,8 +14,8 @@ import numpy as np
 import pytest
 
 from experiments.phase2.perf.make_b_goldens import b_sets, b_tables, random_masks, score_masks_of
-from objdel import _gpucheck as G
-from objdel.geometry.shape import unpack_rows
+from objdel.geom import engine as G
+from objdel.geom.shape import unpack_rows
 from tests.test_cuda_checker_gpu import _gpus
 
 ROOT = Path(__file__).resolve().parents[1]

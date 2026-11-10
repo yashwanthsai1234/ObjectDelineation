@@ -30,9 +30,10 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.checker import signature
 from objdel.data import store
-from objdel.geometry import SCHEMAS, parse, serialize, to_mask
+from objdel.geom.shape import to_mask
+from objdel.geom.text import SCHEMAS, parse, serialize
+from objdel.geom.topology import signature
 from objdel.targets import FRAMES, BuildConfig, build_target, frame, min_areas, target_set_hash
 from objdel.train.configs import MODELS  # the three screened models; their tokenizers measure answer lengths
 
@@ -107,7 +108,8 @@ def summarize(rows, frames):
                            for k in MODELS}, "objects": {}}
     for n in sorted({n for r in ok for n in r["obj"]}):
         o = [r["obj"][n] for r in ok]
-        e = {"n": len(o), "K5": float(np.mean([x["k5"] for x in o])), "raw_topology": float(np.mean([x["raw"] for x in o]))}
+        e = {"n": len(o), "K5": float(np.mean([x["k5"] for x in o])),
+            "raw_topology": float(np.mean([x["raw"] for x in o]))}
         if "iou" in o[0]:
             iou = np.array([x["iou"] for x in o])
             e.update(legal=float(np.mean([x["legal"] for x in o])), iou_min=float(iou.min()),

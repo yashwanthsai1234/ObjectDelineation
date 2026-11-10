@@ -1,6 +1,6 @@
 """3-D topology of voxel volumes: slice masks stacked along z, and the volume's Betti numbers.
 
-A CT nodule is delineated slice by slice; its outlines, rasterized (`objdel.geometry.shape.to_masks`) and stacked,
+A CT nodule is delineated slice by slice; its outlines, rasterized (`objdel.geom.shape.to_masks`) and stacked,
 form a voxel mask. Each voxel is a closed unit cube, so parts are 26-connected and the background is 6-connected
 (the dual pair that keeps the counts consistent, as 8/4 per slice):
 - b0, parts: 26-connected foreground components;

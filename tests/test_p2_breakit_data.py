@@ -14,9 +14,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from objdel.checker import signature
 from objdel.data import Item, store
-from objdel.geometry import parse, to_mask
+from objdel.geom.shape import to_mask
+from objdel.geom.text import parse
+from objdel.geom.topology import signature
 from objdel.targets import FRAMES, BuildConfig, FrameConfig, augment, build_target, frame, min_areas
 from objdel.targets.frame import CLEARANCE, centred, crowded, union_box, upscale
 
@@ -495,7 +496,7 @@ def test_real_view_rows_match_the_store_reference():
 @pytest.mark.data
 def test_real_a0_targets_stay_legal():
     pytest.importorskip("datasets")
-    from objdel.geometry import SCHEMAS
+    from objdel.geom.text import SCHEMAS
     from objdel.train import dataset as D
     _need(REAL / "rows.jsonl")
     for line in (REAL / "rows.jsonl").read_text().splitlines():

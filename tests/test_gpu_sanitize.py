@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from experiments.cuda_checker import compare as C
-from objdel import _gpucheck as gc
+from objdel.geom import engine as gc
 from tests.test_cuda_checker_gpu import _gpus
 
 pytestmark = [pytest.mark.gpu, pytest.mark.sanitizer,

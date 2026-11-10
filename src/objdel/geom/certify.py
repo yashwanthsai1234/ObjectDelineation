@@ -25,8 +25,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .rings import trace
-from .topology import as_mask, bbox, filtered
+from objdel.geom.rings import trace
+from objdel.geom.topology import as_mask, bbox, filtered
 
 
 @dataclass

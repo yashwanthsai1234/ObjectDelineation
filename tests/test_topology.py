@@ -1,4 +1,4 @@
-"""objdel.checker.topology: exact per-instance topology and the signature size rule (plan D3, §4.2, gate R6)."""
+"""objdel.geom.topology: exact per-instance topology and the signature size rule (plan D3, §4.2, gate R6)."""
 import cv2
 import numpy as np
 import pytest
@@ -8,8 +8,7 @@ from hypothesis.extra.numpy import arrays
 from oracles import topology_oracle as oracle
 from scipy import ndimage
 
-from objdel.checker import as_mask, betti, instance_topology, min_area, signature, size_filter
-from objdel.checker.topology import bbox
+from objdel.geom.topology import as_mask, bbox, betti, instance_topology, min_area, signature, size_filter
 from tests.oracles.bitquad_oracle import bitquads
 
 N_RANDOM = 10_000

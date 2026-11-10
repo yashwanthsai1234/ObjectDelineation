@@ -1,4 +1,4 @@
-"""Mask -> rectilinear rings on the CUDA engine (objdel._gpucheck.check_masks: nvcc build on the box, CPU build of the
+"""Mask -> rectilinear rings on the CUDA engine (objdel.geom.engine.check_masks: nvcc build on the box, CPU build of the
 same source on the Mac). The polygonizer seam of the plan (B1.4a polygonize, D3 trace).
 
 The rings are the cracks between pixels, clockwise on screen (y down) around foreground, so outer rings have positive
@@ -15,9 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from objdel import _gpucheck
-
-from .topology import as_mask
+from objdel.geom import engine as _gpucheck
+from objdel.geom.topology import as_mask
 
 
 @dataclass(frozen=True)

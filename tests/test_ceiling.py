@@ -211,7 +211,8 @@ def _named_shapes(S=125):
 def test_target_text_rasterizes_to_its_rater_mask():
     """A doctor's target text (the repo's writer), parsed and rasterized, is the doctor's mask pixel for pixel: the
     doctor gains nothing from raw masks over the model's grid text. Holes round-trip (no known loss)."""
-    from objdel.geometry import parse, to_mask, to_masks
+    from objdel.geom.shape import to_mask, to_masks
+    from objdel.geom.text import parse
 
     rng = np.random.default_rng(0)
     masks = list(_named_shapes().values())

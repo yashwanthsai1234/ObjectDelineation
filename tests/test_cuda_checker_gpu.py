@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from experiments.cuda_checker import compare as C
-from objdel import _gpucheck as gc
+from objdel.geom import engine as gc
 
 
 def _gpus() -> int:

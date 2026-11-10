@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from scipy import ndimage
 
-from objdel.checker.topology import instance_topology, min_area, signature
+from objdel.geom.topology import instance_topology, min_area, signature
 from objdel.reward import ExpertCache, advantages_v4, score_mask, sig_id, voters
 from objdel.reward.cache import edt  # exact EDT; 1e6 where no zero pixel exists
 

@@ -49,7 +49,7 @@ def test_the_real_tree_keeps_every_contract():
     [
         ("data/__init__.py", "import torch", "never imports the ML stack"),  # (a)
         ("data/__init__.py", "def f():\n    import torch", "never imports the ML stack"),  # (d) function level
-        ("checker/__init__.py", "import objdel.train", "objdel layers (current packages) BROKEN"),  # (b)
+        ("geom/__init__.py", "import objdel.train", "objdel layers (current packages) BROKEN"),  # (b)
         ("data/lidc.py", "import objdel.targets", "objdel layers (current packages) BROKEN"),  # (e): not on the list
     ],
 )

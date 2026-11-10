@@ -19,8 +19,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from objdel import _gpucheck
-from objdel.geometry.shape import pack_rings, unpack_rows
+from objdel.geom import engine as _gpucheck
+from objdel.geom.shape import pack_rings, unpack_rows
 from tests.oracles.bitquad_oracle import bitquads
 from tests.oracles.polygonize_oracle import polygonize
 
@@ -106,7 +106,7 @@ def mask_sha(mask) -> bytes:
 
 
 def object_case(parts) -> tuple[list, list]:
-    """An object's parts [(outer, holes)] -> (rings, roles), as objdel.geometry.shape.pack_objects packs them."""
+    """An object's parts [(outer, holes)] -> (rings, roles), as objdel.geom.shape.pack_objects packs them."""
     rings, roles = [], []
     for outer, holes in parts:
         roles += [-1] + [len(rings)] * len(holes)
@@ -149,7 +149,7 @@ def polygon_reference(rings, roles, W, H, G=1000) -> dict:
 
 
 def geometry_diff(g, ref: dict):
-    """polygon_diff of an objdel.geometry.Geometry (to_mask / to_masks)."""
+    """polygon_diff of an objdel.geom.shape.Geometry (to_mask / to_masks)."""
     return polygon_diff({"defects": np.array([g.defects.get(d, 0) for d in _gpucheck.DEFECTS]), "evenodd": g.mask}, ref)
 
 

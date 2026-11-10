@@ -24,7 +24,7 @@ Policy (plan §4.4, lab t_targets H6):
   OpenCV), which changes pixel values by a few levels but not the geometry. Accepted image layouts:
   gray (H, W) or (H, W, 1), repeated to RGB; RGB (H, W, 3); RGBA (H, W, 4), whose alpha channel is dropped (the
   stores hold opaque photos and CT slices); anything else raises ValueError (break-it B1-6);
-- masks: any nonzero value or byte is foreground (objdel.checker.as_mask), so the frame's masks, which targets and
+- masks: any nonzero value or byte is foreground (objdel.geom.topology.as_mask), so the frame's masks, which targets and
   reward caches read, are canonical bools (issue I1).
 
 Frame semantics: masks are (k, H, W) with W = H = S; the reward rasterizes at W x H. A grid vertex g maps to frame
@@ -54,9 +54,9 @@ from typing import NamedTuple
 import numpy as np
 from PIL import Image
 
-from objdel.checker import as_mask
 from objdel.data import Item
-from objdel.geometry.box import boxes_meet
+from objdel.geom.box import boxes_meet
+from objdel.geom.topology import as_mask
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
 LUNG_WINDOW = (-1000, 400)

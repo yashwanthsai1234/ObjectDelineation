@@ -1205,7 +1205,7 @@ def test_g02_is_summary_no_sync(monkeypatch):
 @CUDA
 def test_g08a_smoke(monkeypatch):
     """G08a: the CUDA checker build (fails, never skips, on the box) and the G02 no-sync run, counterfactuals on."""
-    from objdel import _gpucheck
+    from objdel.geom import engine as _gpucheck
 
     assert _gpucheck.build() == "cuda"
     test_g02_is_summary_no_sync(monkeypatch)

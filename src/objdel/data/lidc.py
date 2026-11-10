@@ -53,7 +53,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from objdel.geometry.box import boxes_meet
+from objdel.geom.box import boxes_meet
 
 from .store import Item
 
@@ -162,7 +162,7 @@ def draw(points) -> np.ndarray:
     img = Image.new("1", (GRID, GRID), 0)
     ImageDraw.Draw(img).polygon(list(points), fill=1, outline=1)
     # Not np.asarray(img, dtype=bool): for mode "1" that keeps byte value 255 for True, which code that reads the
-    # bytes (OpenCV labeling in objdel.checker.topology) misreads.
+    # bytes (OpenCV labeling in objdel.geom.topology) misreads.
     return np.asarray(img, dtype=np.uint8) > 0
 
 

@@ -60,7 +60,8 @@ def data_root() -> Path:
 
 def file_sha256(path: Path) -> str:
     """SHA-256 hex digest of the file. Not objdel.hashing: --engine old runs this module in the pre-D2 venv, whose
-    objdel has no hashing module (only the standard library, numpy and objdel._gpucheck; tests/test_bench_checker S10)."""
+    objdel has no hashing module (only the standard library, numpy and objdel._gpucheck; tests/test_bench_checker
+    S10)."""
     with open(path, "rb") as f:
         return hashlib.file_digest(f, "sha256").hexdigest()
 
@@ -167,8 +168,8 @@ def synthetic_replay(n: int) -> list:
 
 
 def dump_replay(path: Path, synthetic: int | None) -> None:
-    from objdel.geometry import GRID, parse
-    from objdel.geometry.shape import pack_objects
+    from objdel.geom.shape import pack_objects
+    from objdel.geom.text import GRID, parse
     from objdel.reward import ExpertCache
 
     root, meta = data_root(), {}
@@ -240,8 +241,8 @@ def replay(a) -> dict:
 # ------------------------------------------------------------------ rungs (D1 step 3, D6)
 
 def rungs(path: Path) -> None:
-    from objdel.geometry import GRID, parse
-    from objdel.geometry.shape import pack_objects
+    from objdel.geom.shape import pack_objects
+    from objdel.geom.text import GRID, parse
 
     root, out = data_root(), []
     rels = [f"targets/{ds}/train.jsonl" for ds in ("lidc", "riga")]
