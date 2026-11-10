@@ -4,6 +4,8 @@
         --train data/prepared --out runs/eval/val [--k 8] [--seed 11] [--per-call 64]
     python -I -m experiments.phase2.final_eval --ckpt DIR --train data/prepared --view V1 --split val --out O1 \
         --view V2 --split val --out O2          # several views, one model load (one --out: O/<view name>/)
+    python -I -m experiments.phase2.final_eval --ckpt DIR --train data/prepared --view V --split val --out O \
+        --limit 32                              # a GPU smoke: 32 evenly spaced items, not a result
     python -I -m experiments.phase2.final_eval --rescore runs/a3/eval_val --view V --split val --out O
     python -I -m experiments.phase2.final_eval --hash-view data/eval_views/lidc-test-shifted \
         --out runs/a3/pre_rental.json
@@ -234,6 +236,14 @@ def view_identity(results: list[dict], old: dict[str, float], groups: dict[str, 
             "r_sh_ci95_patient": np.nanquantile(reps[:, 1], [.025, .975]).tolist(), "pass": ok, "message": msg}
 
 
+def limit_rows(rows: list[dict], limit: int | None) -> list[dict]:
+    """--limit: at most `limit` rows, evenly spaced through the view in record order (a smoke slice that spans the
+    patients, not the first patient); all rows without a limit. Deterministic: no seed."""
+    if limit is None or limit >= len(rows):
+        return rows
+    return rows[:: -(-len(rows) // limit)][:limit]
+
+
 def view_groups(view: Path, split: str) -> dict[str, str]:
     """{item_id: group_id} of a view's LIDC records (never from the prompt rows: TRL forwards their columns)."""
     from objdel.train import dataset
@@ -407,7 +417,11 @@ def main(argv=None) -> None:
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--per-call", type=int, default=64, help="items per vLLM generation call")
+    ap.add_argument("--limit", type=int, help="smoke runs: sample and score at most N items per view, evenly spaced "
+                    "(limit_rows); the view checks and hashes still cover the whole view")
     a = ap.parse_args(argv)
+    if a.limit is not None and a.limit < 1:
+        ap.error("--limit must be at least 1")
     if a.resummarize:
         if a.out[0].resolve() == a.resummarize.resolve():
             ap.error("--out must not be the --resummarize folder")
@@ -440,14 +454,14 @@ def main(argv=None) -> None:
     try:
         trainer = load_trainer(a)
         for view, split, out in zip(views, splits, outs, strict=True):
-            rows = dataset.prompts(view, "lidc", split)
+            rows = limit_rows(dataset.prompts(view, "lidc", split), a.limit)
             answers = sample_items(trainer, rows, a)
             groups = view_groups(view, split)
             lines = [{"item_id": r["key"], "group_id": groups[r["key"]], "W": r["W"], "H": r["H"],
                       **{k: d[k] for k in ("samples", "truncated", "tokens")}}
                      for r, d in zip(rows, answers, strict=True)]
             run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed} | _identity(view, split) | {
-                "seconds": {"load_and_sample": time.time() - t0}}
+                "seconds": {"load_and_sample": time.time() - t0}} | ({"limit": a.limit} if a.limit else {})
             _write(out / "answers.jsonl", _lines(lines))  # before scoring: a scoring crash keeps the sampling
             _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
             score(pool, view, split, out, rows, lines, run, t0)
