@@ -1,0 +1,53 @@
+# Run spec (objdel.core.spec); notes and history: docs/runbooks/specs.md#impl2_gpu_test_b
+schema_version: 1
+name: impl2_gpu_test_b
+compute: {gpu: RTX_5090, cap_hours: 3.05}
+bundle_view: views/lidc-bundle-v3
+stages:
+- kind: cmd
+  name: build
+  argv: [bash, -c, 'bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c "import objdel._gpucheck
+      as g; assert g.build() == ''cuda''" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/test_gpu_scoring.py']
+- kind: cmd
+  name: env_check
+  argv: [bash, experiments/phase2/docker/env_check.sh, '{rd}/ckpt', '{rd}/env_check.json']
+- kind: eval
+  name: eval_r5
+  soft: true
+  ckpt: '{rd}/ckpt'
+  train: '{data}/prepared'
+  view: ['{data}/eval_views/lidc-val-shifted']
+  split: [val]
+  out: ['{rd}/smoke_eval_r5']
+  limit: 32
+- {kind: rl, name: rl_run1, soft: true, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/rows/lidc-train-b1', out: '{rd}/smoke-rl',
+  steps: 20, save_steps: 10, shared_prefix: true, lr: 5.0e-05, rows_revision: 34213dceb068128f1a1abf9c67aa65dd59bc1220,
+  rows_manifest_sha256: 472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4, budget_usd: 1.85}
+- kind: cmd
+  name: lose_run
+  argv: [bash, -c, 'd={rd}/smoke-rl; [ -f $d/rl.json ] && [ -d $d/trainer/checkpoint-10 ] && [ -d $d/trainer/checkpoint-20
+      ] && mv $d/rl.json {rd}/rl_run1.json && rm -rf $d/final $d/final_adapter $d/trainer/checkpoint-20']
+- {kind: rl, name: merge_last, soft: true, merge_last: true, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', out: '{rd}/smoke-rl'}
+- kind: cmd
+  name: check_partial
+  soft: true
+  argv: [bash, -c, '/opt/venv/bin/python -I -c "import json; d = json.load(open(''{rd}/smoke-rl/rl.json'')); assert d[''partial'']
+      is True and d[''steps''] == 10, d" && mv {rd}/smoke-rl/rl.json {rd}/rl_partial10.json && mv {rd}/smoke-rl/final {rd}/smoke-rl/final_partial10']
+- {kind: rl, name: rl_resume, soft: true, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/rows/lidc-train-b1', out: '{rd}/smoke-rl',
+  steps: 20, save_steps: 10, shared_prefix: true, lr: 5.0e-05, resume: true, rows_revision: 34213dceb068128f1a1abf9c67aa65dd59bc1220,
+  rows_manifest_sha256: 472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4, budget_usd: 1.85}
+- kind: cmd
+  name: check_resume
+  soft: true
+  argv: [bash, -c, '/opt/venv/bin/python -I -c "import json; d = json.load(open(''{rd}/smoke-rl/rl.json'')); assert d[''steps'']
+      == 20 and str(d[''resumed_from'']).endswith(''checkpoint-10''), d" && [ -d {rd}/smoke-rl/final ] && [ -d {rd}/smoke-rl/final_adapter
+      ]']
+- kind: eval
+  name: eval_final
+  soft: true
+  ckpt: '{rd}/smoke-rl/final'
+  train: '{data}/prepared'
+  view: ['{data}/eval_views/lidc-val-shifted']
+  split: [val]
+  out: ['{rd}/smoke_eval_final']
+  limit: 16

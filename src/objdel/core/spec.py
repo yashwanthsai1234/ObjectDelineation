@@ -269,8 +269,8 @@ TRAINER_ORDER = ("fast_sync", "lora_sync", "group_requests", "no_ckpt_layers", "
                  "trace", "count_syncs", "host_meta", "check_meta_every", "check_rope_every", "prompt_memo",
                  "gpu_pixels", "allow_cpu_pixels", "compile", "plain")
 FLAG_ORDER = {
-    "rl": ("merge_last", "model", "ckpt", "train", "out", "steps", "save_steps", "resume", "shared_prefix",
-           "log_by_prompt", "lr", "reward", "numerics", "opsm_start_delta", "grpo", "rows_revision",
+    "rl": ("merge_last", "model", "ckpt", "train", "out", "steps", "save_steps", "shared_prefix", "log_by_prompt",
+           "lr", "resume", "reward", "numerics", "opsm_start_delta", "grpo", "rows_revision",
            "rows_manifest_sha256", "budget_usd", "session_start", "rate_usd_per_h", "fixed_usd", "heldout",
            "heldout_items", "heldout_every", *TRAINER_ORDER),
     "sft": ("model", "view", "output_dir", "data_root", "run_dir", "model_path", "branches", "a0", "freeze_vision",

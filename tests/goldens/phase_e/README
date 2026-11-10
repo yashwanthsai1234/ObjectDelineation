@@ -33,3 +33,7 @@ cli_dests.json             U52: per CLI the argparse dest names (train_sft: the 
                            before E6.4 replaced the argparse tables with cli_parse, and the dests that leave the stage
                            (final_eval reads --hash-view, --resummarize and --store before cli_parse; train_sft's
                            runner-only keys). Recorded once; it cannot be recorded again after E6.4.
+plan_argv.json             E6.2: policy.chain(<old plan>, "x") of each plan file a spec replaced, recorded from the
+                           plan files before E6.6 archived them (b1_rows, a3_*, b2_fp16, b3_v5, rl_full, r5_shared on
+                           impl2-E0 fc86269; impl2_gpu_test* and d_gpu_test on impl2-comb2 b4e1483; c_speed* on
+                           impl2-Cc 1180818). Never re-record: the old files are gone (tests/infra/test_chain.py).

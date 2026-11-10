@@ -12,7 +12,7 @@ yaml = pytest.importorskip("yaml")
 
 ROOT = Path(__file__).resolve().parents[1]
 NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
-CONFIGS = ROOT / "experiments/phase2/configs"
+CONFIGS = ROOT / "specs"  # E6.2: the run specs replaced the plan files
 V1_APPROVED_USD = 2.40  # front 6.4 rule 5: the owner's V1 amount ...
 TAIL_USD = 0.35  # ... minus the tail after train_rl (evals, pull, push, teardown); no later V1 item
 V1_PLANS = ("b1_rows.yaml", "a3_measure.yaml")
@@ -28,12 +28,18 @@ def after(step: list[str], flag: str) -> str:
     return step[step.index(flag) + 1]
 
 
-def test_b1_launch_is_the_run_args_file_of_v1():
-    raw = yaml.safe_load((CONFIGS / "b1_launch.yaml").read_text())
-    r1 = yaml.safe_load((CONFIGS / "r1_qwen3vl2b.yaml").read_text())
-    assert {k: raw[k] for k in ("model", "view", "seed")} == {k: r1[k] for k in ("model", "view", "seed")}
-    assert raw["output_dir"] == "b1-rows" and raw["rows_plan"] == "experiments/phase2/configs/b1_rows.yaml"
-    assert "branches" not in raw and "steps" not in raw
+def test_b1_rows_spec_holds_what_b1_launch_held():
+    """E6.6: b1_launch.yaml (view, output_dir, rows_plan) is archived; the spec's bundle_view is the r1 view, its rl
+    out is the push revision b1-rows, and preflight reads the rows pin from the rl stage itself."""
+    from experiments.phase2.vast import policy
+    from objdel.core.spec import load_spec
+
+    spec, r1 = load_spec(CONFIGS / "b1_rows.yaml"), load_spec(CONFIGS / "r1_qwen3vl2b.yaml")
+    assert spec.bundle_view == next(s.view for s in r1.stages if s.kind == "sft")
+    assert policy.push_target(spec, "x")[1:] == ("b1-rows", True)
+    train = next(s for s in spec.stages if s.kind == "rl" and not s.merge_last)
+    assert (train.rows_revision, train.rows_manifest_sha256) == ("34213dceb068128f1a1abf9c67aa65dd59bc1220",
+                                                                 "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4")
 
 
 def test_b1_rows_holds_the_b1_5_steps_in_order():
@@ -108,8 +114,6 @@ def module_steps(name: str) -> list[list[str]]:
 
 @pytest.mark.parametrize("plan", V1_PLANS)
 def test_every_plan_step_parses_with_its_module(plan):
-    if not (CONFIGS / plan).exists():
-        pytest.skip(f"{plan} is written by another task (A3) and joins at the merge")
     pytest.importorskip("trl")
     found = module_steps(plan)
     assert found
@@ -132,16 +136,17 @@ def test_a_missing_required_flag_fails_the_parse():
     assert e.value.code == 2
 
 
-def test_every_steps_plan_formats():
-    """policy.chain runs str.format on every step: a bash group `{ ...; }` raises on the Mac, `{{ ... }}` is fine."""
+def test_every_spec_formats():
+    """policy.chain fills {rd}/{data} in every stage: a bash group `{ ...; }` raises on the Mac, `{{ ... }}` is fine."""
     from experiments.phase2.vast import policy
 
-    plans = [p for p in sorted(CONFIGS.glob("*.yaml")) if "steps" in (yaml.safe_load(p.read_text()) or {})]
-    assert {"b1_rows.yaml", "r0.yaml", "rl_full.yaml"} <= {p.name for p in plans}
-    for p in plans:
+    specs = sorted(CONFIGS.glob("*.yaml"))
+    assert {"b1_rows.yaml", "rl_full.yaml", "impl2_gpu_test.yaml"} <= {p.name for p in specs}
+    for p in specs:
         policy.chain(p, "r")
     bad = ROOT / "build" / "test_cfgs" / "group.yaml"
     bad.parent.mkdir(parents=True, exist_ok=True)
-    bad.write_text('steps:\n  - [bash, -c, "{ true; }"]\n')
-    with pytest.raises((KeyError, ValueError, IndexError)):
+    bad.write_text("schema_version: 1\nname: g\ncompute: {gpu: RTX_5090, cap_hours: 1.0}\n"
+                   'stages:\n- {kind: cmd, name: g, argv: [bash, -c, "{ true; }"]}\n')
+    with pytest.raises(ValueError):
         policy.chain(bad, "r")

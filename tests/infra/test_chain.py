@@ -24,14 +24,29 @@ def test_r5_shared_keeps_its_soft_steps():
     assert [a[0] == "~" for a in argv] == [True, False, False, True]
 
 
-@pytest.mark.parametrize("plan", ["a3_measure"])
-def test_spec_chain_equals_the_old_plan(plan):
-    assert policy.chain(SPECS / f"{plan}.yaml", "x") == policy.chain(CONFIGS / f"{plan}.yaml", "x")
+PLAN_ARGV = json.loads((ROOT / "tests/goldens/phase_e/plan_argv.json").read_text())
+# (plan, step) pairs whose old text a spec cannot write string for string; the stage they parse to is the same
+SAME_STAGE = {("a3_test", 1): "--train stood after --split", ("b3_v5", 3): "grpo JSON spacing and 2.20",
+              ("c_speed_c6", 1): "the rows pins stood before --out"}
 
 
-def test_a3_test_differs_from_the_old_plan_only_in_where_the_dropped_train_flag_stands():
-    new, old = (policy.chain(d / "a3_test.yaml", "x") for d in (SPECS, CONFIGS))
-    assert new[0] == old[0] and sorted(new[1]) == sorted(old[1])
+@pytest.mark.parametrize("plan", sorted(PLAN_ARGV))
+def test_spec_chain_equals_the_plan_it_replaced(plan):
+    """E6.2: each ported spec runs the argv of the steps plan it replaced (recorded before E6.6 archived them)."""
+    new, old = policy.chain(SPECS / f"{plan}.yaml", "x"), PLAN_ARGV[plan]
+    assert len(new) == len(old)
+    for i, (a, b) in enumerate(zip(new, old, strict=True)):
+        if (plan, i) not in SAME_STAGE:
+            assert a == b, (plan, i)
+            continue
+        assert a != b, f"{plan} step {i} is equal now: drop it from SAME_STAGE"
+        a, b = (x[x[0] == "~":] for x in (a, b))
+        cls = next(S.STAGE_CLASSES[k] for k, m in S.MODULE.items() if a[1] == f"experiments.phase2.{m}")
+        assert S.same_stage(S.cli_parse(cls, a[2:]), S.cli_parse(cls, b[2:])), (plan, i)
+
+
+def test_every_spec_is_ported_or_checked_elsewhere():
+    assert {p.stem for p in SPECS.glob("*.yaml")} == set(PLAN_ARGV) | {"r1_qwen3vl2b"}
 
 
 def r1_spec() -> S.RunSpec:

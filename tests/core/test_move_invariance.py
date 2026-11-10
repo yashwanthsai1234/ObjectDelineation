@@ -109,7 +109,7 @@ def chain_argv() -> dict[str, dict]:
     leading "~" kept), and the G-vision references the plan reads."""
     from experiments.phase2.vast import policy
 
-    cfgs = ROOT / "experiments/phase2/configs"
+    cfgs = ROOT / "specs"  # E6.2: the run specs replaced the plan files
     return {p: {"argv": policy.chain(cfgs / f"{p}.yaml", "x"),
                 "vision_refs": policy.vision_refs(cfgs / f"{p}.yaml", "x")} for p in PLANS}
 
@@ -140,7 +140,7 @@ def configs_golden() -> dict[str, dict]:
     arguments; both on qwen3-vl-2b. (a) adds what train_rl.main adds for a schedule root."""
     from experiments.phase2.vast import policy
 
-    steps = policy.chain(ROOT / "experiments/phase2/configs/b1_rows.yaml", "x")
+    steps = policy.chain(ROOT / "specs/b1_rows.yaml", "x")
     stage = next(s for s in steps if "experiments.phase2.train_rl" in s)
     argv = stage[stage.index("experiments.phase2.train_rl") + 1:]
     a_over = {"save_strategy": "steps", "save_steps": 50, "shuffle_dataset": False}
@@ -213,7 +213,10 @@ def test_golden_4_one_update(monkeypatch, tmp_path):
 
 
 def test_golden_5_chain_argv_of_the_live_plans():
-    assert jsonable(chain_argv()) == golden()["chain_argv"]
+    got, want = json.loads(json.dumps(jsonable(chain_argv()))), json.loads(json.dumps(golden()["chain_argv"]))
+    for g in (got, want):  # r1 train: `--config <yaml>` before E6, SftStage flags after (test_chain compares by value)
+        del g["r1_qwen3vl2b"]["argv"][1]
+    assert got == want
 
 
 def test_golden_6_resolved_grpo_config():
