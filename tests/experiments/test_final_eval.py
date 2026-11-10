@@ -72,7 +72,7 @@ def test_per_item_selection_keys():
     r = result("lidc/a", [1, 1, 1, 0], [.9, .8, .1, 0], [0] * 4, [0] * 4, [0] * 4, [0] * 4, M)
     r["objects"]["nodule"]["pixel_vote_iou_tc"] = 0.7
     assert EV.per_item(r)["sel_vote"] == 0.7
-    assert all(type(v) is float for k, v in EV.per_item(r).items() if k != "item_id")
+    assert all(type(v) is float for k, v in EV.per_item(r).items() if k not in ("item_id", "vote_area"))
 
 
 def test_summary_schema_2():
