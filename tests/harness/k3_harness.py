@@ -3,13 +3,13 @@
 RIGA-like prompts are synthetic (below; caches built at start, ~0.3 s per item); LIDC prompts are the first --lidc
 RL train items of a prepared root, after the production preload of every LIDC cache (serve.preload, timed). Three
 workloads (RIGA-only, mixed 40 % RIGA, LIDC-only), --batches batches of 32 prompts x 8 completions
-(reward_gates.make_jobs). Scoring runs on the CUDA checker (one score_batch call per batch, the caches resident on
+(make_jobs, below). Scoring runs on the CUDA checker (one score_batch call per batch, the caches resident on
 the device), so there is no CPU pool to sweep. Per workload: the warm wall (second of two runs of
-advantages_v4(score_batch)), per-rollout latency, and every batch's hash (reward_gates.digest), which a repeat run
+advantages_v4(score_batch)), per-rollout latency, and every batch's hash (digest, below), which a repeat run
 must reproduce. Gate: K3 = median wall <= 250 ms on RIGA-only and mixed; K4 = per-rollout p99 <= 5 ms; hashes equal.
 Exit 1 unless K3, K4 and the hashes all pass (R0 step 6 stops the chain).
 
-    python -I -m experiments.phase2.k3_harness --out k3.json [--root data/prepared --batches 5]
+    python -I -m tests.harness.k3_harness --out k3.json [--root data/prepared --batches 5]
 
 Synthetic items (lab B4 synth.py, H-K3SYN): 500 x 500 frames, 6 raters' disc and cup, smooth outlines
 r(t) = R (1 + sum of low harmonics) with per-rater perturbations, the cup inside the disc, parameters from the
@@ -30,16 +30,68 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from experiments.phase1.reward_gates import digest, make_jobs
-from objdel.geom.text import SCHEMAS
+from objdel.geom.shape import canonicalize
+from objdel.geom.text import SCHEMAS, serialize
 from objdel.verify import store as serve
 from objdel.verify.reward.advantages import advantages_v4
 from objdel.verify.reward.cache import ExpertCache
-from objdel.verify.reward.score import score_batch, score_completion
+from objdel.verify.reward.score import NUMERIC, score_batch, score_completion
+from tests.oracles import reward_harness as H
 
 SIDE, K, N_VERT = 500, 6, 720
 DISC_HF, CUP_HF = 0.0055, 0.013  # high-harmonic roughness: sets the traced vertex count (completion length)
 WORKLOADS = {"riga": 1.0, "mixed": 0.4, "lidc": 0.0}
+
+
+def to_parts(m, W, Hh, eps=1.0):
+    """Mask -> polygon parts on the 0..1000 grid (findContours + approxPolyDP 1 px): realistic completions."""
+    cs, hier = cv2.findContours(m.astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    if hier is None:
+        return []
+
+    def ring(c):
+        a = cv2.approxPolyDP(c, eps, True).reshape(-1, 2).astype(np.float64)
+        g = np.stack([np.round((a[:, 0] + 0.5) * 1000 / W), np.round((a[:, 1] + 0.5) * 1000 / Hh)], 1)
+        return np.clip(g, 0, 1000).astype(np.int64) if len(g) >= 3 else None
+
+    parts, idx = [], {}
+    for i, (c, h) in enumerate(zip(cs, hier[0], strict=True)):
+        if h[3] < 0 and (r := ring(c)) is not None:
+            idx[i] = len(parts)
+            parts.append((r, []))
+    for c, h in zip(cs, hier[0], strict=True):
+        if h[3] in idx and (r := ring(c)) is not None:
+            parts[idx[h[3]]][1].append(r)
+    return parts
+
+
+def make_jobs(prompts, seed):
+    """32 prompts x 8 completions; RIGA prompts carry disc + cup of one rater, perturbed."""
+    rng = np.random.default_rng(seed)
+    jobs = []
+    for names, caches in prompts:
+        Hh, W = caches[names[0]].union.shape
+        for _ in range(H.G):
+            r = int(rng.integers(caches[names[0]].k))
+            kind = int(rng.integers(0, 4))
+            objs = {}
+            for n in names:
+                m = caches[n].raters[r]
+                m = (H.jitter(m, float(rng.uniform(0.5, 3)), rng, 6.0) if kind == 0 else
+                     H.shift(m, *map(int, rng.integers(-3, 4, 2))) if kind == 1 else
+                     H.grow(m, float(rng.uniform(-2, 2))) if kind == 2 else m)
+                objs[n] = to_parts(m, W, Hh)
+            jobs.append((serialize(canonicalize(objs), names), False, names, caches, W, Hh))
+    return jobs
+
+
+def digest(t) -> str:
+    """SHA-256 of a batch's numeric terms and its advantages (K10)."""
+    h = hashlib.sha256()
+    for k in NUMERIC:
+        h.update(np.ascontiguousarray(t[k], np.float64).tobytes())
+    h.update(np.ascontiguousarray(advantages_v4(t), np.float64).tobytes())
+    return h.hexdigest()
 
 
 def _outline(cy, cx, r, asp, harm) -> np.ndarray:

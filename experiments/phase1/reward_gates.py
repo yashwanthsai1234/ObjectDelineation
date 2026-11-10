@@ -18,7 +18,6 @@ References:
 - Determinism in a fresh interpreter (K10): https://docs.python.org/3/using/cmdline.html#cmdoption-I
 """
 import argparse
-import hashlib
 import os
 import pickle
 import subprocess
@@ -33,11 +32,10 @@ import cv2
 import numpy as np
 from scipy import stats
 
-from objdel.geom.shape import canonicalize
-from objdel.geom.text import serialize
 from objdel.verify.reward.advantages import advantages_v4
 from objdel.verify.reward.cache import ExpertCache
-from objdel.verify.reward.score import NUMERIC, score_batch, score_completion
+from objdel.verify.reward.score import score_batch, score_completion
+from tests.harness.k3_harness import digest, make_jobs
 from tests.oracles import reward_harness as H
 from tests.oracles import reward_variants as V
 
@@ -218,48 +216,6 @@ def loo_g_area(pool, stacks, label):
 
 # ------------------------------------------------------------------ K3 / K4 / K10 (completion text)
 
-def to_parts(m, W, Hh, eps=1.0):
-    """Mask -> polygon parts on the 0..1000 grid (findContours + approxPolyDP 1 px): realistic completions."""
-    cs, hier = cv2.findContours(m.astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-    if hier is None:
-        return []
-
-    def ring(c):
-        a = cv2.approxPolyDP(c, eps, True).reshape(-1, 2).astype(np.float64)
-        g = np.stack([np.round((a[:, 0] + 0.5) * 1000 / W), np.round((a[:, 1] + 0.5) * 1000 / Hh)], 1)
-        return np.clip(g, 0, 1000).astype(np.int64) if len(g) >= 3 else None
-
-    parts, idx = [], {}
-    for i, (c, h) in enumerate(zip(cs, hier[0], strict=True)):
-        if h[3] < 0 and (r := ring(c)) is not None:
-            idx[i] = len(parts)
-            parts.append((r, []))
-    for c, h in zip(cs, hier[0], strict=True):
-        if h[3] in idx and (r := ring(c)) is not None:
-            parts[idx[h[3]]][1].append(r)
-    return parts
-
-
-def make_jobs(prompts, seed):
-    """32 prompts x 8 completions; RIGA prompts carry disc + cup of one rater, perturbed."""
-    rng = np.random.default_rng(seed)
-    jobs = []
-    for names, caches in prompts:
-        Hh, W = caches[names[0]].union.shape
-        for _ in range(H.G):
-            r = int(rng.integers(caches[names[0]].k))
-            kind = int(rng.integers(0, 4))
-            objs = {}
-            for n in names:
-                m = caches[n].raters[r]
-                m = (H.jitter(m, float(rng.uniform(0.5, 3)), rng, 6.0) if kind == 0 else
-                     H.shift(m, *map(int, rng.integers(-3, 4, 2))) if kind == 1 else
-                     H.grow(m, float(rng.uniform(-2, 2))) if kind == 2 else m)
-                objs[n] = to_parts(m, W, Hh)
-            jobs.append((serialize(canonicalize(objs), names), False, names, caches, W, Hh))
-    return jobs
-
-
 def throughput(items, rng, n_batches):  # items: all fixture items (RIGA disc + cup pairs needed)
     cv2.setNumThreads(0)  # OpenCV runs sequentially (on macOS's GCD backend only values <= 0 take effect)
     riga = {}
@@ -298,17 +254,8 @@ def throughput(items, rng, n_batches):  # items: all fixture items (RIGA disc + 
     return batches[0]
 
 
-def digest(t) -> str:
-    """SHA-256 of a batch's numeric terms and its advantages (K10)."""
-    h = hashlib.sha256()
-    for k in NUMERIC:
-        h.update(np.ascontiguousarray(t[k], np.float64).tobytes())
-    h.update(np.ascontiguousarray(advantages_v4(t), np.float64).tobytes())
-    return h.hexdigest()
-
-
 K10_CODE = """import pickle, sys
-from experiments.phase1.reward_gates import digest
+from tests.harness.k3_harness import digest
 from objdel.verify.reward import score_batch
 print(digest(score_batch(pickle.load(open(sys.argv[1], "rb")))))
 """

@@ -399,7 +399,7 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
     E = Env(tmp_path)
     E.launched()
     run = E.active()["r1"]
-    line = E.tmux("experiments.phase2.k3_harness", "--out", "x.json")
+    line = E.tmux("experiments.phase2.final_eval", "--out", "x.json")
     env = dict(re.findall(r"(OBJDEL_SESSION_START|OBJDEL_RATE_USD_PER_H|OBJDEL_FIXED_USD)=([0-9.e+-]+)", line))
     assert float(env["OBJDEL_SESSION_START"]) == run["started"]
     assert float(env["OBJDEL_RATE_USD_PER_H"]) == pytest.approx(run["dph"] + 6 * run["inet_up_cost"])

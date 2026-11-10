@@ -180,7 +180,7 @@ def test_sampler_timeout_is_sized_per_sample(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize(("rollout_ms", "code"), [(1.0, 0), (10.0, 1)])
 def test_k3_harness_exits_1_on_a_failed_gate(tmp_path, monkeypatch, rollout_ms, code):
-    from experiments.phase2 import k3_harness as K3
+    from harness import k3_harness as K3
 
     root = str(tmp_path.resolve())
     monkeypatch.setattr(K3.serve, "preload", lambda r, ds: K3.serve.STORE.setdefault(root, {"lidc/a": None}) and 1)
