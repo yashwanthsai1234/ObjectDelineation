@@ -47,32 +47,31 @@ def test_check_passes_on_the_pin_without_vllm_and_quickly():
 
 
 def test_all_items_is_the_one_count_of_the_contract():
-    ALL_ITEMS = tuple((kind, name) for kinds in (T._SIGNED, T._TEXT, T._LIVE) for kind, items in kinds.items()
-                      for name in items)  # fmt: skip
-    parts = (T.METHODS, T.GLOBALS, T.VLLM_METHODS, T.PRIVATE_ATTRS, T.ATTRS, T.KEYS, T.BEHAVIOURS, T.LORA_POINTS)
-    assert len(ALL_ITEMS) == sum(map(len, parts)) and len(set(ALL_ITEMS)) == len(ALL_ITEMS)
+    parts = (T.METHODS, T.GLOBALS, T.VLLM_METHODS, T.PRIVATE_ATTRS, T.ATTRS, T.KEYS, T.BEHAVIOURS, T.LORA_POINTS,
+             T.SOURCE_SHA256, T.TRAINER_ATTRS)
+    keys = [(kind, name) for kind, name, _ in T.ALL_ITEMS]
+    assert len(keys) == sum(map(len, parts)) and len(set(keys)) == len(keys)
     # Phase A 29 (6 + 1 + 1 + 2 + 13 + 4 + 2), plus C5's _llm_weights_sleeping, plus BR1-rl's 3 reward-kwarg behaviours,
     # plus B2.1's set_is_ratio reads (attribute off_policy_mask_threshold, key advantages), plus B2.2 F step 3's 4
-    # option-F vLLM names (add_lora, remove_lora, lora_index_to_id, lora_a_stacked / lora_b_stacked; lora-seqmask only)
-    assert len(ALL_ITEMS) == 39
-    assert len(T.METHODS) + len(T.GLOBALS) + len(T.VLLM_METHODS) + len(T.PRIVATE_ATTRS) == 10  # private names
+    # option-F vLLM names (add_lora, remove_lora, lora_index_to_id, lora_a_stacked / lora_b_stacked; lora-seqmask only),
+    # plus E5's source hash of each of the 6 overridden methods and the 2 trainer attributes of _prepare_inputs
+    assert set(T.SOURCE_SHA256) == set(T.METHODS) and set(T.TRAINER_ATTRS) == {"_step", "_buffered_inputs"}
     doc = ROOT / "docs/reference/trl-coupling.md"  # A9 writes it: one table row per item (header and rule excluded)
-    if doc.is_file():
-        assert sum(x.startswith("|") for x in doc.read_text().splitlines()) - 2 == len(ALL_ITEMS)
+    assert sum(x.startswith("|") for x in doc.read_text().splitlines()) - 2 == len(T.ALL_ITEMS)
 
 
 def test_the_coupling_page_has_one_row_per_item_with_the_case_that_breaks_it():
     """trl-coupling.md: each row's item, kind and place are the code's; its failing test is a real BREAKS case."""
     rows = [[c.strip().strip("`") for c in ln.strip("|\n").split("|")] for ln in
             (ROOT / "docs/reference/trl-coupling.md").read_text().splitlines() if ln.startswith("| `")]  # fmt: skip
-    code = {(name, kind): spec[-1] for kinds in (T._SIGNED, T._TEXT, T._LIVE) for kind, items in kinds.items()
-            for name, spec in items.items()}  # fmt: skip
+    code = {(name, kind): place for kind, name, place in T.ALL_ITEMS}
     assert {(r[0], r[1]) for r in rows} == set(code) and len(rows) == len(code)
     cases = {b[0] for b in BREAKS}
-    live = {"test_check_lora_names_the_missing_option_f_vllm_name"}  # one parametrized case per option-F name
+    live = {"option-F vLLM name": {"test_check_lora_names_the_missing_option_f_vllm_name"},  # one case per name
+            "trainer attribute": {"test_check_trainer_names_the_missing_attribute"}}
     for name, kind, _, place, tests in rows:
         assert place == code[name, kind].replace(", ", "`, `"), name
-        assert all(t.strip("`") in (live if kind in T._LIVE else cases) for t in tests.split(", ")), name
+        assert all(t.strip("`") in live.get(kind, cases) for t in tests.split(", ")), name
 
 
 def test_no_live_python_file_says_trl_1_16():
@@ -91,6 +90,14 @@ def setsig(monkeypatch, name, fn):
     monkeypatch.setattr(GRPOTrainer, name, fn)
 
 
+def edit(monkeypatch, owner):
+    """inspect.getsource(owner) with one more line: a body that TRL changed (every other object's source unchanged)."""
+    real = inspect.getsource
+    monkeypatch.setattr(inspect, "getsource", lambda o: real(o) + "        pass\n" if o is owner else real(o))
+
+
+METHOD_NAMES = ("_generate_and_score_completions", "_prepare_inputs", "_compute_loss",
+                "_get_per_token_logps_and_entropies", "_generate", "_calculate_rewards")
 GASC, LOSS, CALC = (GRPOTrainer._generate_and_score_completions, GRPOTrainer._compute_loss,
                     GRPOTrainer._calculate_rewards)
 ATTR_NAMES = ("use_vllm", "loss_type", "num_iterations", "num_generations", "top_entropy_quantile",
@@ -142,6 +149,7 @@ BREAKS = [
     *[(f"no {n} to reward functions", lambda m, t=t: drop(m, CALC, t), f"{n} to reward functions")
       for n, t in (("log_metric", 'reward_kwargs["log_metric"]'), ("log_extra", 'reward_kwargs["log_extra"]'),
                    ("completion_ids", "completion_ids=completion_ids_list"))],
+    *[(f"changed source of {n}", lambda m, n=n: edit(m, getattr(GRPOTrainer, n)), n) for n in METHOD_NAMES],
 ]  # fmt: skip
 
 
@@ -295,5 +303,48 @@ def test_fast_grpo_checks_the_option_f_names_only_under_lora_seqmask(monkeypatch
         t = object.__new__(T.FastGRPO)
         t.args, t.vllm_generation, t.model, t.processing_class = SimpleNamespace(vllm_lora=lora), \
             SimpleNamespace(llm="engine"), None, None
+        vars(t).update(_step=0, _buffered_inputs=None)  # TRL's __init__ sets both (check_trainer)
         T.FastGRPO.__init__(t, args=t.args)
     assert seen == ["engine"]
+
+
+def test_a_changed_method_body_names_the_method_its_override_and_the_hash(monkeypatch):
+    monkeypatch.delenv("OBJDEL_TRL_UNPINNED", raising=False)
+    edit(monkeypatch, GRPOTrainer._prepare_inputs)
+    with pytest.raises(T.TRLContractError, match=r"method source _prepare_inputs: expected '[0-9a-f]{64}'.*"
+                                                 r"FastGRPO\._prepare_inputs\. Pin is 1\.17\.1"):
+        T.check()
+
+
+@pytest.mark.parametrize("item", ["_step", "_buffered_inputs"])
+def test_check_trainer_names_the_missing_attribute(item):
+    """At start-up FastGRPO checks the built trainer for the attributes the copied _prepare_inputs body reads."""
+    T.check_trainer(SimpleNamespace(_step=0, _buffered_inputs=None))
+    with pytest.raises(T.TRLContractError, match=rf"trainer attribute {item}:.*Pin is 1\.17\.1"):
+        T.check_trainer(SimpleNamespace(**{n: 0 for n in ("_step", "_buffered_inputs") if n != item}))
+
+
+def test_a_built_grpo_trainer_has_the_trainer_attributes(tmp_path):
+    """The attribute check on a tiny trainer built here (TRL sets both in GRPOTrainer.__init__)."""
+    from tests.rl.test_trl_adapter_equivalence import tiny_loop_vllm_fake
+
+    with pytest.MonkeyPatch.context() as mp:
+        T.check_trainer(tiny_loop_vllm_fake(mp, tmp_path, steps=1))
+
+
+def text_model(*layer_types):
+    text = SimpleNamespace(layer_types=list(layer_types))
+    return SimpleNamespace(config=SimpleNamespace(get_text_config=lambda: text))
+
+
+def test_shared_prefix_refuses_linear_attention_layers():
+    """packed_chunk passes a 4-D mask, and linear-attention layers get none (M2 rec 5): a hybrid model with
+    shared_prefix raises; full attention only, or shared_prefix off, passes."""
+    with pytest.raises(NotImplementedError, match="linear_attention"):
+        T.check_attention(text_model("linear_attention", "full_attention"), shared_prefix=True)
+    T.check_attention(text_model("full_attention", "full_attention"), shared_prefix=True)
+    T.check_attention(text_model("linear_attention", "full_attention"), shared_prefix=False)
+    T.check_attention(SimpleNamespace(config=SimpleNamespace(get_text_config=lambda: SimpleNamespace())), True)
+    fwd = SimpleNamespace(shared_prefix=True)
+    with pytest.raises(NotImplementedError, match="linear_attention"):
+        T.FastForward._get_per_token_logps_and_entropies(fwd, text_model("linear_attention"), None, None, 1)

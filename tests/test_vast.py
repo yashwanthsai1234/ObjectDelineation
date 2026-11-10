@@ -1379,7 +1379,8 @@ def test_image_check_handles_one_and_two_venvs():
     assert "else" in text  # one venv: vLLM in /opt/venv
 
 
-ENV_CHECKS = ("nvidia_smi", "capability", "bf16_matmul", "triton_compile", "torch_compile", "vllm_engine", "nvcc")
+ENV_CHECKS = ("nvidia_smi", "capability", "bf16_matmul", "triton_compile", "torch_compile", "vllm_engine", "nvcc",
+              "trl_private_names")
 
 
 def test_env_check_lists_every_check():

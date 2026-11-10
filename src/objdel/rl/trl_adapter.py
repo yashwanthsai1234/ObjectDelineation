@@ -6,12 +6,16 @@ trainer's own generation), and the start-up check of the private TRL names and t
 source text only, so it runs on the Mac without vLLM or a GPU. Under lora-seqmask, `check_lora(llm)` also checks the
 option-F vLLM names (LORA_POINTS) on the live engine, in `FastGRPO.__init__` once TRL built it (the preflight's
 configs are train_sft runs with no numerics preset, and the Mac has no vLLM engine). A TRL change that breaks one
-item fails in seconds, naming the item and the place in this module that overrides or reads it. The version is checked
-last: with OBJDEL_TRL_UNPINNED=1 a different TRL version only warns, so an upgrade can be tried on the contract alone.
+item fails in seconds, naming the item and the place in this module that overrides or reads it. Each overridden TRL
+method's source is pinned by its SHA-256 (SOURCE_SHA256), because the overrides call super() and depend on its body.
+`check_trainer` checks the built trainer for the attributes the copied `_prepare_inputs` body reads (TRAINER_ATTRS),
+right after TRL's `__init__`. The version is checked last: with OBJDEL_TRL_UNPINNED=1 a different TRL version only
+warns, so an upgrade can be tried on the contract alone.
 """
 
 import contextlib
 import functools
+import hashlib
 import inspect
 import os
 import time
@@ -127,9 +131,25 @@ LORA_POINTS = {
     "lora_a_stacked / lora_b_stacked": ("llm_engine.model_executor.driver_worker.model_runner.model",
                                         "a module holding both", "f_check.lora_equal"),
 }  # fmt: skip
+# METHODS name -> SHA-256 of inspect.getsource(GRPOTrainer.<name>) at the pin: a changed body fails the check
+SOURCE_SHA256 = {
+    "_generate_and_score_completions": "4dd2b8ca73a3c9d82a7d2709f4726c0ca1f823b6401acb9240366a912d453f25",
+    "_prepare_inputs": "f824e7fb0714795697c9b4d574de1e139dd5f4404c2554e92cf1db7f60fa6c96",
+    "_compute_loss": "21469025185061f5703aece592529938147c764df544c0870329828dd5e18901",
+    "_get_per_token_logps_and_entropies": "fb3fb570917471eb5e91c3aa147bae8c09f88f7c1ad6031123d2b1f87295a640",
+    "_generate": "aa81c06f4213af8f70d7869ac32cb08b7d75625cfded82b11c42738f0964ba8a",
+    "_calculate_rewards": "736ae29b083840b5da2638b55ad1258659c644589991fe6a494131354952efef",
+}
+# name -> the place that reads or writes it; checked with hasattr on the built trainer (grpo_trainer.py 995-998, 1582)
+TRAINER_ATTRS = {"_step": "FastGRPO._prepare_inputs", "_buffered_inputs": "FastGRPO._prepare_inputs"}
 _SIGNED = {"method": METHODS, "global": GLOBALS, "VLLMGeneration method": VLLM_METHODS}
 _TEXT = {"private attribute": PRIVATE_ATTRS, "attribute": ATTRS, "key": KEYS, "behaviour": BEHAVIOURS}
 _LIVE = {"option-F vLLM name": LORA_POINTS}
+# every contract item as (kind, name, the place that relies on it): the count the coupling page and its test read
+ALL_ITEMS = (*((kind, name, spec[-1]) for group in (_SIGNED, _TEXT, _LIVE) for kind, items in group.items()
+               for name, spec in items.items()),
+             *(("method source", name, METHODS[name][1]) for name in SOURCE_SHA256),
+             *(("trainer attribute", name, place) for name, place in TRAINER_ATTRS.items()))  # fmt: skip
 
 
 class TRLContractError(RuntimeError):
@@ -143,7 +163,7 @@ def _fail(kind: str, name: str, expected, found, place: str):
 
 def check() -> None:
     """Raise TRLContractError on the first broken item (methods, globals, private attributes, attributes, keys,
-    behaviours), then on a version other than PIN unless OBJDEL_TRL_UNPINNED=1 (then one warning)."""
+    behaviours, method sources), then on a version other than PIN unless OBJDEL_TRL_UNPINNED=1 (then one warning)."""
     import trl
     import trl.trainer.grpo_trainer as grpo
     from trl.generation.vllm_generation import VLLMGeneration  # imports no vLLM module
@@ -166,11 +186,31 @@ def check() -> None:
                     sources[w] = inspect.getsource(obj)
                 if needle not in sources[w]:
                     _fail(kind, name, f"{needle} in the source of {w}", "absent", place)
+    for name, want in SOURCE_SHA256.items():  # after the text items: those name the broken piece more exactly
+        found = hashlib.sha256(inspect.getsource(getattr(grpo.GRPOTrainer, name)).encode()).hexdigest()
+        if found != want:
+            _fail("method source", name, want, found, METHODS[name][1])
     if trl.__version__ != PIN:
         msg = f"TRL {trl.__version__} is installed; every contract item passed. Pin is {PIN}."
         if os.environ.get("OBJDEL_TRL_UNPINNED") != "1":
             raise TRLContractError(msg + " Set OBJDEL_TRL_UNPINNED=1 to try this version.")
         warnings.warn(msg, UserWarning, stacklevel=2)
+
+
+def check_trainer(trainer) -> None:
+    """Raise TRLContractError on the first TRAINER_ATTRS name missing from the built trainer (hasattr)."""
+    for name, place in TRAINER_ATTRS.items():
+        if not hasattr(trainer, name):
+            _fail("trainer attribute", name, "an attribute of the built trainer", "absent", place)
+
+
+def check_attention(model, shared_prefix: bool) -> None:
+    """The shared-prefix forward passes a 4-D mask (packed_chunk), and linear-attention layers get no mask: a hybrid
+    model (layer_types with "linear_attention", such as Qwen3.5) is refused there (Implementation.md section 3, M2
+    rec 5)."""
+    if shared_prefix and any(t == "linear_attention"
+                             for t in getattr(model.config.get_text_config(), "layer_types", None) or []):
+        raise NotImplementedError("shared_prefix needs full attention: the linear_attention layers get no 4-D mask")
 
 
 def check_lora(llm) -> None:
@@ -210,6 +250,7 @@ class FastForward:
 
     def _get_per_token_logps_and_entropies(self, model, input_ids, attention_mask, logits_to_keep, batch_size=None,
                                            compute_entropy=False, compute_aux_loss=False, **kw):  # fmt: skip
+        check_attention(model, self.shared_prefix)
         meta = kw.pop("host_meta", None)  # C4: the micro-batch's RowMeta (FastGRPO._compute_loss), None elsewhere
         if any(kw.get(k) is not None for k in OTHER_VISION) or (
                 kw.get("pixel_values") is not None and kw.get("image_grid_thw") is None):
@@ -472,6 +513,7 @@ class FastGRPO(FastForward, GRPOTrainer):
         check()  # the private TRL names this class relies on, before TRL builds anything
         with vllm_kwargs(**vllm_engine_kwargs(kwargs.get("args"))):  # TRL builds its vLLM engine without these
             super().__init__(*args, **kwargs)
+        check_trainer(self)  # the attributes the copied _prepare_inputs body reads
         self.check_engine_dtype()
         if getattr(self.args, "vllm_lora", False) and getattr(self, "vllm_generation", None) is not None:
             check_lora(self.vllm_generation.llm)  # option F's vLLM names (B2.2 F step 3)
