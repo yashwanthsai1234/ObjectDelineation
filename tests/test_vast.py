@@ -22,8 +22,12 @@ from unittest import mock
 import pytest
 
 from experiments.phase2 import preflight as PF
-from experiments.phase2.vast import bundle as B
 from experiments.phase2.vast import policy as P
+from objdel.infra import bundle as B
+from objdel.infra.vast import chain as CH
+from objdel.infra.vast import ledger as LG
+from objdel.infra.vast import offers as OF
+from objdel.infra.vast import remote as RM
 
 ROOT = Path(__file__).resolve().parents[1]
 VAST = ROOT / "experiments" / "phase2" / "vast"
@@ -132,6 +136,8 @@ class Env:
                         VAST_HOME=str(self.home), VAST_RUNS=str(self.runs), DRY_RUN="1", VAST_POLL_S="0.01",
                         VAST_LAUNCH_TIMEOUT_S="3", OBJDEL_RUN_DIR=str(tmp / "pf"),
                         OBJDEL_DATA_ROOT=str(tmp / "data"))
+        (self.home / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n")  # launch refuses without a ledger
+        (self.home / "watchdog.sh").symlink_to(VAST / "watchdog.sh")  # onstart reads it from the Vast home
         self.config = PF_config(tmp)
         self.stamp()
 
@@ -214,25 +220,25 @@ def all_text(E, *outs):
 
 
 def test_query_per_card():
-    q = P.query("RTX_4090", "lidc")
+    q = OF.query("RTX_4090", "lidc")
     terms = ("num_gpus=1 gpu_name=RTX_4090 gpu_ram<=26 cpu_cores_effective>=12 cpu_ram>=32 cuda_vers>=13.0"
              " verified=true reliability>0.98 direct_port_count>=2 dph<=1.0")  # fmt: skip
     assert set(terms.split()) <= set(q.split()) and "datacenter=True" not in q
-    assert {"datacenter=True", "cpu_ram>=48", "dph<=1.5"} <= set(P.query("RTX_5090", "riga").split())
-    assert "gpu_ram>=79" in P.query("A100_SXM4", "lidc").split()
-    assert "cpu_ram>=48" in P.query("RTX_PRO_6000_WS", "lidc").split()
-    assert "disk_space>=150" in P.query("RTX_PRO_6000_WS", "lidc", disk=150).split()
+    assert {"datacenter=True", "cpu_ram>=48", "dph<=1.5"} <= set(OF.query("RTX_5090", "riga").split())
+    assert "gpu_ram>=79" in OF.query("A100_SXM4", "lidc").split()
+    assert "cpu_ram>=48" in OF.query("RTX_PRO_6000_WS", "lidc").split()
+    assert "disk_space>=150" in OF.query("RTX_PRO_6000_WS", "lidc", disk=150).split()
     with pytest.raises(ValueError):
-        P.query("RTX_2080", "lidc")
+        OF.query("RTX_2080", "lidc")
 
 
 def test_ceilings_are_1p5x_snapshot_median():
     snap = json.loads(SNAP.read_text())["offers"]
     for card in ("RTX_3090", "RTX_4090", "RTX_5090", "RTX_PRO_6000_WS", "RTX_PRO_6000_S"):
         med = snap[f"{card.replace('_', ' ')}|on-demand|any"]["median"]
-        assert abs(P.CARDS[card]["ceiling"] - 1.5 * med) <= 0.08, (card, med)
+        assert abs(OF.CARDS[card]["ceiling"] - 1.5 * med) <= 0.08, (card, med)
     want = {"RTX_4090": 1.00, "RTX_5090": 1.50, "A100_SXM4": 1.80, "RTX_3090": 0.50}
-    assert {c: P.CARDS[c]["ceiling"] for c in want} == want
+    assert {c: OF.CARDS[c]["ceiling"] for c in want} == want
 
 
 @pytest.mark.parametrize("bad,why", [
@@ -242,8 +248,8 @@ def test_ceilings_are_1p5x_snapshot_median():
     ({"verification": None}, "verified"),
 ])  # fmt: skip
 def test_admissible_rejects(bad, why):
-    assert P.reasons(offer(), "RTX_4090", "lidc") == []
-    assert any(why in r for r in P.reasons(offer(**bad), "RTX_4090", "lidc"))
+    assert OF.reasons(offer(), "RTX_4090", "lidc") == []
+    assert any(why in r for r in OF.reasons(offer(**bad), "RTX_4090", "lidc"))
 
 
 def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
@@ -251,17 +257,17 @@ def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
     run_command). The first launch crashed on json.loads("") and lost the message."""
     err = '{"error": true, "status_code": 400, "msg": "offer no longer available"}\n'
     monkeypatch.setenv("VAST_API_KEY", "k")
-    monkeypatch.setattr(P.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", err))
+    monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", err))
     with pytest.raises(SystemExit, match="offer no longer available"):
-        P.vast("create", "instance", "1", "--raw")
+        RM.vast("create", "instance", "1", "--raw")
 
 
 def test_real_offer_from_v0_is_admissible():
     """A 3090 offer as Vast's search returned it at V0 (2026-11-01): `verification` is a string, and cpu_ram is in
     MB with 1 GB = 1000 MB (Vast returned cpu_ram 32160 for the query cpu_ram>=32). All offers failed before."""
     o = json.loads((Path(__file__).parent / "vast_offer_3090.json").read_text()) | {"geolocation": "Texas, US"}
-    assert P.reasons(o, "RTX_3090", "lidc") == []
-    assert any("cpu_ram" in r for r in P.reasons(dict(o, cpu_ram=31999), "RTX_3090", "lidc"))
+    assert OF.reasons(o, "RTX_3090", "lidc") == []
+    assert any("cpu_ram" in r for r in OF.reasons(dict(o, cpu_ram=31999), "RTX_3090", "lidc"))
 
 
 # --- H-GOV on the recorded snapshot (D16) ---------------------------------------------------------------------------
@@ -284,13 +290,13 @@ def test_hgov_snapshot():
     n0, n1 = ([o for o in offers if o["hosting_type"] == h] for h in (0, 1))
     assert (len(n0), len(n1)) == (237, 34)  # recorded 2026-10-20 snapshot (on-demand + bid, 15 cards)
     yes = {"riga_permission": {"granted": True, "evidence": "email 2026-11-01 from depositor"}}
-    assert all(P.governance("riga", o, yes) for o in n0)  # every community offer refused, with a reason
-    assert not any(P.governance("riga", o, yes) for o in n1)  # every datacenter offer allowed
-    assert all(P.governance("riga", o, {"riga_permission": {"granted": False}}) for o in n1)
-    assert all(P.governance("riga", o, {"riga_permission": {"granted": True, "evidence": ""}}) for o in n1)
-    assert all(P.governance("riga", {k: v for k, v in o.items() if k != "hosting_type"}, yes) for o in n1[:3])
-    assert not any(P.governance("lidc", o, {}) for o in n0 + n1)
-    assert P.governance("other", n1[0], yes)
+    assert all(OF.governance("riga", o, yes) for o in n0)  # every community offer refused, with a reason
+    assert not any(OF.governance("riga", o, yes) for o in n1)  # every datacenter offer allowed
+    assert all(OF.governance("riga", o, {"riga_permission": {"granted": False}}) for o in n1)
+    assert all(OF.governance("riga", o, {"riga_permission": {"granted": True, "evidence": ""}}) for o in n1)
+    assert all(OF.governance("riga", {k: v for k, v in o.items() if k != "hosting_type"}, yes) for o in n1[:3])
+    assert not any(OF.governance("lidc", o, {}) for o in n0 + n1)
+    assert OF.governance("other", n1[0], yes)
 
 
 # --- ledger and secrets (G9, D16) -----------------------------------------------------------------------------------
@@ -298,26 +304,26 @@ def test_hgov_snapshot():
 
 def test_ledger_has_no_secret_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
-    assert not [f for f in P.FIELDS if re.search(r"key|token|secret|pass|identity|login|pat\b", f, re.I)]
-    P.ledger(event="offer", run_id="r", dph_total=0.5)
+    assert not [f for f in LG.FIELDS if re.search(r"key|token|secret|pass|identity|login|pat\b", f, re.I)]
+    LG.ledger(event="offer", run_id="r", dph_total=0.5)
     with pytest.raises(KeyError):
-        P.ledger(event="x", api_key="k")
+        LG.ledger(event="x", api_key="k")
     for s in (IDENTITY, PAT, "github_pat_11ABC", "-----BEGIN OPENSSH PRIVATE KEY-----"):
         with pytest.raises(ValueError):
-            P.ledger(event="x", detail=f"oops {s}")
-    assert (tmp_path / "ledger.csv").read_text().splitlines()[0] == ",".join(P.FIELDS)
+            LG.ledger(event="x", detail=f"oops {s}")
+    assert (tmp_path / "ledger.csv").read_text().splitlines()[0] == ",".join(LG.FIELDS)
 
 
 def test_onstart_length_is_checked_and_run_ids_are_short():
     """Vast refuses an onstart over 4048 characters; the run_id appears in it twice and had no length limit."""
-    assert P.RUN_ID_RE.fullmatch("a" * 40) and not P.RUN_ID_RE.fullmatch("a" * 41)
-    assert len(P.onstart_cmd("a" * 40, 10**7, idle_s=10**6)) <= 4048
+    assert RM.RUN_ID_RE.fullmatch("a" * 40) and not RM.RUN_ID_RE.fullmatch("a" * 41)
+    assert len(RM.onstart_cmd("a" * 40, 10**7, idle_s=10**6)) <= 4048
     with pytest.raises(SystemExit, match="4048"):
-        P.onstart_cmd("a" * 1000, 7200)
+        RM.onstart_cmd("a" * 1000, 7200)
 
 
 def test_onstart_carries_no_secret_and_is_the_watchdog():
-    cmd = P.onstart_cmd("r1", 7200)
+    cmd = RM.onstart_cmd("r1", 7200)
     assert len(cmd) <= 4000 and not [s for s in SECRETS.values() if s in cmd]
     b64 = re.search(r"printf %s (\S+) \| base64 -d \| gunzip >", cmd).group(1)
     assert gzip.decompress(base64.b64decode(b64)).decode() == (VAST / "watchdog.sh").read_text()
@@ -375,18 +381,18 @@ def test_launch_destroys_on_sigterm_while_polling(E):
 
 def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     # BK4-18: per-GB bandwidth is in the filter (ceiling), the G10 projection (estimate) and the ledger
-    q = P.query("RTX_4090", "lidc").split()
-    assert f"inet_up_cost<={P.INET_CEIL}" in q and f"inet_down_cost<={P.INET_CEIL}" in q
-    assert P.reasons(offer(inet_up_cost=P.INET_CEIL * 2), "RTX_4090", "lidc") == ["bandwidth fails the §4.2 filter"]
-    assert P.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090", "lidc")
-    E.state(offers=[offer(inet_up_cost=P.INET_CEIL, inet_down_cost=P.INET_CEIL)])
+    q = OF.query("RTX_4090", "lidc").split()
+    assert f"inet_up_cost<={LG.INET_CEIL}" in q and f"inet_down_cost<={LG.INET_CEIL}" in q
+    assert OF.reasons(offer(inet_up_cost=LG.INET_CEIL * 2), "RTX_4090", "lidc") == ["bandwidth fails the §4.2 filter"]
+    assert OF.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090", "lidc")
+    E.state(offers=[offer(inet_up_cost=LG.INET_CEIL, inet_down_cost=LG.INET_CEIL)])
     E.pick()
-    spent(E, P.HARD_STOP - 2.8)  # + 0.55 x 4 = HARD_STOP - 0.6 by price alone; the bandwidth estimate takes it past
+    spent(E, LG.HARD_STOP - 2.8)  # + 0.55 x 4 = HARD_STOP - 0.6 by price alone; the bandwidth estimate takes it past
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
     E.state(offers=[offer()])
     E.pick()
-    (E.home / "ledger.csv").unlink()
+    (E.home / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n")
     E.sh("launch.sh", "111", "r1")
     row = E.ledger()[-1]
     assert row["event"] == "launch" and float(row["inet_up_cost"]) == 0.001 and float(row["inet_down_cost"]) == 0.001
@@ -402,8 +408,8 @@ CHARGES_V0 = json.loads((ROOT / "tests" / "vast_charges_v0.json").read_text())
 def test_billed_reads_the_instance_charges_vast_returned_in_v0():
     """V0: `invoices-v1 --charges --raw` lists one `instance` row per instance, `source` = "instance-<id>", amount in
     USD with gpu (from `running`), disk (from create) and bandwidth items; there is no instance_id key."""
-    assert P.billed(CHARGES_V0, 58715600) == pytest.approx(0.029)
-    assert P.billed(CHARGES_V0, 1) is None and P.billed({"results": []}, 58715600) is None
+    assert LG.billed(CHARGES_V0, 58715600) == pytest.approx(0.029)
+    assert LG.billed(CHARGES_V0, 1) is None and LG.billed({"results": []}, 58715600) is None
 
 
 def test_teardown_records_the_billed_amount_beside_the_estimate(E):
@@ -422,9 +428,9 @@ def test_launch_cap_adds_the_image_pull(E):
     `running`, so the pull costs disk only; --cap-hours is job time and PULL_S is added to the box's cap."""
     E.launched(cap="2")
     (c,) = E.vast("create instance")
-    assert f"WATCHDOG_CAP_S={7200 + P.PULL_S}" in after(c, "--onstart-cmd") and P.PULL_S >= 360
+    assert f"WATCHDOG_CAP_S={7200 + RM.PULL_S}" in after(c, "--onstart-cmd") and RM.PULL_S >= 360
     run = E.active()["r1"]
-    assert run["deadline"] - run["started"] == pytest.approx(7200 + P.PULL_S)
+    assert run["deadline"] - run["started"] == pytest.approx(7200 + RM.PULL_S)
 
 
 def test_riga_decrypt_checks_shm_size(E):
@@ -487,13 +493,13 @@ def test_pick_id_takes_any_admissible_offer_not_only_the_five_shown(E):
 def test_only_north_american_hosts_are_admissible(geo, ok):
     """Owner (2026-11-02): US and CA hosts only. V1: a Thailand host had not pulled the 5.9 GB image in 15 min. A
     fixed rule of the filter, so launch's re-check refuses a saved offer from elsewhere; no location fails."""
-    assert (P.reasons(offer(geolocation=geo), "RTX_4090", "lidc") == []) == ok
+    assert (OF.reasons(offer(geolocation=geo), "RTX_4090", "lidc") == []) == ok
 
 
 def test_a_bad_machine_is_never_admissible():
     """2026-11-03 v2: machine 28360's 4090 was busy and power-capped (7.4 of 165 bf16 TFLOPS)."""
-    assert P.reasons(offer(machine_id=70), "RTX_4090", "lidc") == []
-    assert any("machine 28360" in r for r in P.reasons(offer(machine_id=28360), "RTX_4090", "lidc"))
+    assert OF.reasons(offer(machine_id=70), "RTX_4090", "lidc") == []
+    assert any("machine 28360" in r for r in OF.reasons(offer(machine_id=28360), "RTX_4090", "lidc"))
 
 
 def test_sync_up_checks_the_gpu_before_the_bundle(E):
@@ -513,7 +519,7 @@ def test_sync_up_writes_code_sha_also_with_code_only(E):
         out = E.sh("sync_up.sh", "r1", *args).stdout.splitlines()
         code = next(i for i, ln in enumerate(out) if ln.startswith("DRY_RUN: rsync") and "--files-from" in ln)
         sha = next(i for i, ln in enumerate(out) if "/workspace/src/CODE_SHA" in ln)
-        assert code < sha and P.code_sha_text() in out[sha]
+        assert code < sha and RM.code_sha_text() in out[sha]
 
 
 def test_offers_search_and_launch_keep_to_north_america(E):
@@ -540,15 +546,18 @@ def test_launch_needs_a_picked_admissible_offer(E):
 # --- H-GOV and transfer rules in the scripts -----------------------------------------------------------------------
 
 
-def test_code_snapshot_ships_tests_for_k3_harness(E):
-    files = P.code_files()
-    assert "tests/oracles/reward_reference.py" in files and "experiments/phase1/reward_gates.py" in files
+def test_code_snapshot_ships_the_gpu_scoring_test(E):
+    """E8: the chain runs tests/test_gpu_scoring.py on the box; the install's import check names library modules and
+    the box stack only (no tests.* and no experiments.*)."""
+    files = RM.code_files()
+    assert "tests/test_gpu_scoring.py" in files and "tests/oracles/reward_reference.py" in files
     assert "src/objdel/__init__.py" in files and not [f for f in files if f.startswith(("data/", ".venv/", "build/"))]
     E.launched()
     o = E.sh("sync_up.sh", "r1", "--bundle-dir", E.bundles)
     assert "tests/oracles/reward_reference.py" in (E.home / "code_files.txt").read_text().split()
     (inst,) = [ln for ln in o.stdout.splitlines() if "uv pip install" in ln]
-    assert "-I -c" in inst and "tests.oracles" in inst and "experiments.phase1.reward_gates" in inst
+    assert "-I -c" in inst and RM.IMPORT_CHECK in inst
+    assert "tests." not in RM.IMPORT_CHECK and "experiments." not in RM.IMPORT_CHECK
 
 
 def test_riga_refused_to_community_and_without_permission(E):
@@ -589,7 +598,7 @@ def test_rsync_never_sends_data_raw(E):
     E.launched()
     p = E.sh("sync_up.sh", "r1", "--bundle-dir", ROOT / "data" / "raw" / "bundles", ok=False)
     assert "data/raw" in p.stderr and "rsync" not in p.stdout
-    assert all(not f.startswith("data/") for f in P.code_files())
+    assert all(not f.startswith("data/") for f in RM.code_files())
 
 
 SHIPPED = ("docs/reference/frozen_views.json", "docs/reference/val_halves.json")
@@ -603,14 +612,14 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
     """I50: the code snapshot keeps the two docs/reference records the box reads (final_eval's frozen check, the
     held-out val_half) and drops the rest of docs/; on a copy of the snapshot both lookups find their file."""
     repo = tmp_path / "repo"
-    for f in (*SHIPPED, "docs/a.md", "docs/reference/data.md", "tests/oracles/o.py"):
+    for f in (*SHIPPED, "docs/a.md", "docs/reference/data.md", "tests/test_gpu_scoring.py", "pyproject.toml"):
         (repo / f).parent.mkdir(parents=True, exist_ok=True)
         (repo / f).write_text("{}")
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     with monkeypatch.context() as m:
-        m.setattr(P, "ROOT", repo)
-        assert sorted(P.code_files()) == sorted([*SHIPPED, "tests/oracles/o.py"])
-    files = P.code_files()  # (b) the real repo
+        m.setenv("OBJDEL_REPO", str(repo))
+        assert sorted(RM.code_files()) == sorted([*SHIPPED, "tests/test_gpu_scoring.py", "pyproject.toml"])
+    files = RM.code_files()  # (b) the real repo
     kernels = "docs/implementation2.0/kernels/"  # D1: the K1-K3 drafts ship for the R-D1 runbooks
     assert set(SHIPPED) <= set(files)
     assert not [f for f in files if f.startswith("docs/") and f not in SHIPPED and not f.startswith(kernels)]
@@ -652,19 +661,19 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
 
 def spent(E, usd):
     with mock.patch.dict(os.environ, VAST_HOME=str(E.home)):
-        P.ledger(event="teardown", run_id="old", cost_usd=usd)
+        LG.ledger(event="teardown", run_id="old", cost_usd=usd)
 
 
 def test_cost_guard_hard_stop(E):
     """Owner 2026-11-07: a 10 h cap on the one host that had run the image before (three others failed to pull it)."""
-    spent(E, P.HARD_STOP)
+    spent(E, LG.HARD_STOP)
     E.pick()
     p = E.sh("launch.sh", "111", "r1", "--owner-approved", ok=False)
     assert "hard stop" in p.stderr and not E.vast("create instance")
 
 
 def test_cost_guard_allows_the_owners_extra_7_dollars(E):
-    spent(E, P.HARD_STOP - 1.0)  # + 0.55 x (1 h + the 10 min pull) < HARD_STOP
+    spent(E, LG.HARD_STOP - 1.0)  # + 0.55 x (1 h + the 10 min pull) < HARD_STOP
     E.pick()
     E.sh("launch.sh", "111", "r1", "--cap-hours", "1", "--owner-approved")
     assert E.vast("create instance")
@@ -698,7 +707,7 @@ def test_sweep_destroys_orphans_and_overdue(E):
 
 def test_sweep_hard_stop_destroys_everything(E):
     E.launched()
-    spent(E, P.HARD_STOP)
+    spent(E, LG.HARD_STOP)
     p = E.sh("sweep_orphans.sh")
     assert E.instances() == {} and "hard stop" in p.stderr
 
@@ -710,7 +719,7 @@ def watchdog(E, ok_file, max_ticks=40, **env):
     e = dict(E.env, WATCHDOG_CAP_S="3600", WATCHDOG_IDLE_S="1", WATCHDOG_TICK_S="0.05", CONTAINER_ID="4242",
              WATCHDOG_MAX_TICKS=str(max_ticks), WATCHDOG_PULLED_OK=str(ok_file), CONTAINER_API_KEY="inst-key",
              RUN_ID="r1", WATCHDOG_ENV_FILE=str(E.tmp / "environment"), WATCHDOG_STATE=str(E.tmp / "watchdog.start"),
-             WATCHDOG_SKIP=re.search(r"WATCHDOG_SKIP=(\S+)", P.onstart_cmd("r1", 1)).group(1))
+             WATCHDOG_SKIP=re.search(r"WATCHDOG_SKIP=(\S+)", RM.onstart_cmd("r1", 1)).group(1))
     e.update(env)
     p = subprocess.run(["bash", str(VAST / "watchdog.sh")], env=e, capture_output=True, text=True,
                        stdin=subprocess.DEVNULL, timeout=60)  # fmt: skip
@@ -750,7 +759,7 @@ def test_watchdog_cap_counts_from_the_first_start(E):
     assert p.returncode == 3 and len(curls) == 2  # a fresh start under the cap keeps the box
     env = (E.tmp / "environment").read_text().splitlines()
     assert len(env) == len(set(env))  # restarts do not duplicate /etc/environment lines
-    assert "WATCHDOG_CREATED=" in P.onstart_cmd("r1", 7200)
+    assert "WATCHDOG_CREATED=" in RM.onstart_cmd("r1", 7200)
 
 
 def test_watchdog_keeps_box_when_not_pulled_or_busy(E):
@@ -984,7 +993,7 @@ def test_bundle_real_lidc_selection():
 
 
 def test_bundle_help():
-    p = subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.vast.bundle", "--help"], capture_output=True,
+    p = subprocess.run([sys.executable, "-I", "-m", "objdel.infra.bundle", "--help"], capture_output=True,
                        text=True)  # fmt: skip
     assert p.returncode == 0 and "usage" in p.stdout
 
@@ -994,7 +1003,7 @@ def test_bundle_help():
 
 def test_run_chain_for_an_r1_config(E):
     cfg, box = ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "/workspace/data/lidc"
-    gpu, train, select, probe = P.chain(cfg, "r1")
+    gpu, train, select, probe = CH.chain(cfg, "r1")
     assert gpu[:2] == ["bash", "-c"] and "run_box.sh --build-only" in gpu[2]  # scoring runs on the CUDA checker
     assert train[:2] == ["-m", "experiments.phase2.train_sft"] and "--config" in train
     assert select[:2] == ["-m", "experiments.phase2.select_ckpt"] and "--no-vision" not in select
@@ -1009,7 +1018,7 @@ def test_run_chain_for_an_r1_config(E):
     words = ("experiments.phase2.train_sft", "experiments.phase2.select_ckpt", "--vision", "experiments.phase2.g_probe",
              "/workspace/runs/r1/r1-qwen3vl2b/select", "OBJDEL_RUN_DIR=/workspace/runs/r1")  # fmt: skip
     assert [w for w in words if w not in line] == []
-    (timing,) = P.chain(ROOT / "experiments/phase2/configs/r0_qwen3vl_arm.yaml", "r1")  # branches []: train only
+    (timing,) = CH.chain(ROOT / "experiments/phase2/configs/r0_qwen3vl_arm.yaml", "r1")  # branches []: train only
     assert timing[:2] == ["-m", "experiments.phase2.train_sft"]
 
 
@@ -1018,7 +1027,7 @@ def test_r1_refuses_on_the_box_without_its_g_vision_reference(E):
     line, ref = E.tmux("experiments/phase2/configs/r1_qwen3vl2b.yaml"), "/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"
     assert f"test -f {ref}" in line and "--vision-reference-only first" in line  # refused on the box, with the remedy
     assert line.index(f"test -f {ref}") < line.index("experiments.phase2.train_sft")
-    assert P.vision_refs(ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "r1") == [ref]
+    assert CH.vision_refs(ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "r1") == [ref]
 
 
 def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
@@ -1089,25 +1098,25 @@ def test_c2_chain_trains_then_scores_only_the_topology_probe():
     rotated view reach select_ckpt."""
     c2 = _cfg("c2.yaml", "model: qwen3-vl-2b\noutput_dir: c2-x\nbranches_from: r1-qwen3vl2b/g_probe/g_probe.json\n"
                          "stages: [train, topology]\nsampler: hf\nvision: off\n")  # fmt: skip
-    _, train, topo = P.chain(c2, "v1")
+    _, train, topo = CH.chain(c2, "v1")
     assert train[:2] == ["-m", "experiments.phase2.train_sft"] and train[-1] == "build/test_cfgs/c2.yaml"
     assert topo[:2] == ["-m", "experiments.phase2.select_ckpt"] and after(topo, "--only") == "topology"
     assert after(topo, "--run") == "/workspace/runs/v1/c2-x" and after(topo, "--sampler") == "hf"
     assert "--shifted" not in topo and "--items" not in topo  # --only topology scores the whole probe
-    assert after(P.chain(ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "v1")[2], "--rotated") == \
+    assert after(CH.chain(ROOT / "experiments/phase2/configs/r1_qwen3vl2b.yaml", "v1")[2], "--rotated") == \
         "/workspace/data/lidc/eval_views/lidc-val-rotated"
     hf = _cfg("hf.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nsampler: hf\nvision: off\n")
-    select = P.chain(hf, "v1")[2]
+    select = CH.chain(hf, "v1")[2]
     assert after(select, "--sampler") == "hf"  # D13 HF fallback
     assert after(select, "--items") == "256"  # D13: the HF path selects on a fixed 256-item shifted-val subset
     vllm = _cfg("vllm.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nsampler: vllm\nvision: off\n")
-    assert "--items" not in P.chain(vllm, "v1")[2]
+    assert "--items" not in CH.chain(vllm, "v1")[2]
 
 
 def test_chain_passes_a_numeric_g_vision_reference_as_is():
     """RunArgs accepts R0's base distance as a number; select_ckpt reads a str reference as a file path."""
     num = _cfg("num.yaml", "model: m\noutput_dir: o\nbranches: [1.0]\nvision: {prepared: prepared, reference: 0.25}\n")
-    _, _, select, _ = P.chain(num, "v1")
+    _, _, select, _ = CH.chain(num, "v1")
     assert json.loads(after(select, "--vision")) == {"prepared": "/workspace/data/lidc/prepared", "reference": 0.25}
 
 
@@ -1123,7 +1132,7 @@ def test_code_snapshot_ships_no_local_vast_state():
     """Audit: `git ls-files -co --exclude-standard` also lists untracked files, so the ledger, offers, invoices and run
     records would reach the rented host. They are ignored; the allowlist (image pin, no secret) stays tracked."""
     state = ("ledger.csv", "offers/", "invoices/", "active_runs.json", "code_files.txt", "known_hosts")
-    assert not {f for f in P.code_files() for s in state if f.startswith(f"experiments/phase2/vast/{s}")}
+    assert not {f for f in RM.code_files() for s in state if f.startswith(f"experiments/phase2/vast/{s}")}
 
 
 def test_launch_idle_minutes_reach_the_watchdog(E):
@@ -1133,14 +1142,14 @@ def test_launch_idle_minutes_reach_the_watchdog(E):
     E.sh("launch.sh", "111", "r1", "--idle-minutes", "90")
     (c,) = E.vast("create instance")
     assert "WATCHDOG_IDLE_S=5400" in after(c, "--onstart-cmd") and len(after(c, "--onstart-cmd")) <= 4048
-    assert "WATCHDOG_IDLE_S=1800" in P.onstart_cmd("r2", 600)  # the default, as watchdog.sh's own
+    assert "WATCHDOG_IDLE_S=1800" in RM.onstart_cmd("r2", 600)  # the default, as watchdog.sh's own
 
 
 def test_onstart_repairs_the_ssh_key_file_vast_writes_with_bad_modes():
     """V1 (2026-11-02, Quebec host): sshd refused our registered key, "Authentication refused: bad ownership or modes
     for file /root/.ssh/authorized_keys" (vastai logs); attach ssh said "already associated". Known Vast host issue
     (vast-cli #336): onstart runs after Vast writes the key, so it repairs owner and modes; a no-op on good hosts."""
-    cmd = P.onstart_cmd("v1", 600)
+    cmd = RM.onstart_cmd("v1", 600)
     fix = cmd[: cmd.index("watchdog.sh")]
     for part in ("chown root:root /root/.ssh/authorized_keys", "chmod 600 /root/.ssh/authorized_keys",
                  "chmod 700 /root/.ssh", "chmod go-w /root"):  # fmt: skip
@@ -1152,7 +1161,7 @@ def test_onstart_repairs_the_ssh_key_file_vast_writes_with_bad_modes():
 def test_onstart_turns_off_vast_auto_tmux():
     """V1 (2026-11-02, Texas host): Vast's login script starts tmux on every ssh login, so `ssh host CMD` (remote,
     rsync, sftp) failed with "open terminal failed: not a terminal". ~/.no_auto_tmux is Vast's documented opt-out."""
-    cmd = P.onstart_cmd("v1", 600)
+    cmd = RM.onstart_cmd("v1", 600)
     assert cmd.startswith("touch /root/.no_auto_tmux; ")
 
 
@@ -1162,7 +1171,7 @@ def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path)
     calls = []
     monkeypatch.setattr(P, "home", lambda: tmp_path)
     monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "port": 40022})
-    monkeypatch.setattr(P, "cmd_pull", lambda a: P.die("rsync failed: ..."))
+    monkeypatch.setattr(P, "cmd_pull", lambda a: RM.die("rsync failed: ..."))
     monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
     monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
     monkeypatch.setattr(P, "ledger", lambda **kw: calls.append(kw["event"]))
@@ -1226,19 +1235,19 @@ def test_pull_stamps_its_start_and_skips_full_checkpoints(E):
     argv = shlex.split(out[pull].removeprefix("DRY_RUN: "))
     assert {f"--exclude={x}" for x in ("rolling/", "decay/", "stable/", "PULLED_OK", "PULLED_OK.next")} <= set(argv)
     assert "--exclude=branches/" not in argv  # model-only branch checkpoints: select_ckpt and the Mac need them
-    assert f"WATCHDOG_SKIP={','.join(P.PULL_EXCLUDE)}" in P.onstart_cmd("r1", 600)  # one list for pull and watchdog
+    assert f"WATCHDOG_SKIP={','.join(RM.PULL_EXCLUDE)}" in RM.onstart_cmd("r1", 600)  # one list for pull and watchdog
 
 
 def test_code_files_keep_paths_with_spaces_whole(tmp_path, monkeypatch):
     """V1 (2026-11-02): `git ls-files` output was split on any whitespace, so a tracked path with spaces (docs/research
     notes) became words that rsync --files-from could not stat, and sync_up failed before sending a byte."""
-    for p in ("tests/oracles/o.py", "experiments/my dir/a b.py", "docs/notes with space/x.md"):
+    for p in ("tests/test_gpu_scoring.py", "experiments/my dir/a b.py", "docs/notes with space/x.md", "pyproject.toml"):
         (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / p).write_text("x")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    monkeypatch.setattr(P, "ROOT", tmp_path)
-    assert sorted(P.code_files()) == ["experiments/my dir/a b.py", "tests/oracles/o.py"]
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    assert sorted(RM.code_files()) == ["experiments/my dir/a b.py", "pyproject.toml", "tests/test_gpu_scoring.py"]
 
 
 def _git_repo(root, files):
@@ -1250,16 +1259,17 @@ def _git_repo(root, files):
 
 def test_code_snapshot_drops_agent_and_archive_folders(tmp_path, monkeypatch):
     """CLEAN1: .claude/ and archive/ never ship, even untracked; tracked-but-moved files and look-alikes are handled."""
-    keep = ["tests/oracles/o.py", "src/a.py", "src/archive_util.py", "tests/data_helpers.py", "experiments/p/riga.py"]
+    keep = ["tests/test_gpu_scoring.py", "src/a.py", "src/archive_util.py", "tests/data_helpers.py",
+            "experiments/p/riga.py", "pyproject.toml"]
     drop = [".claude/x", ".claude/worktrees/w/a.py", "archive/x/y.py", "data/d.npz", "docs/a.md",
             "experiments/p/lab/l.py", "experiments/p/results/r.json", "experiments/p/RIGA_x.CSV"]  # fmt: skip
     _git_repo(tmp_path, keep + drop + ["src/gone.py"])
     subprocess.run(["git", "add", "src/gone.py"], cwd=tmp_path, check=True)
     (tmp_path / "src/gone.py").unlink()  # tracked, deleted on disk: rsync --files-from would abort on it
-    monkeypatch.setattr(P, "ROOT", tmp_path)
-    assert sorted(P.code_files()) == sorted(keep)
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    assert sorted(RM.code_files()) == sorted(keep)
     monkeypatch.undo()
-    assert not [f for f in P.code_files() if f.startswith((".claude/", "archive/"))]  # the real repo
+    assert not [f for f in RM.code_files() if f.startswith((".claude/", "archive/"))]  # the real repo
 
 
 def test_agent_worktrees_are_git_ignored():
@@ -1273,13 +1283,13 @@ def test_bundle_imports_standalone(tmp_path):
     import importlib.util
     import site
 
-    for f in P.code_files():
+    for f in RM.code_files():
         (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / f, tmp_path / f)
     ext = Path(importlib.util.find_spec("objdel._gpucheck").origin)
     shutil.copy2(ext, tmp_path / "src" / "objdel" / ext.name)
-    mods = [m.strip() for m in P.IMPORT_CHECK.removeprefix("import ").split(",")] + ["objdel", *P.LIVE_CLIS]
-    mods.remove("vllm")  # the box image's, not the bundle's
+    check = [m.strip() for m in RM.IMPORT_CHECK.removeprefix("import ").split(",")]
+    mods = [m for m in check if m != "vllm"] + ["objdel", *RM.LIVE_CLIS]  # vllm: box only (the image has it)
     # -S: without it the editable install's .pth files serve objdel and tests from the repo, whatever sys.path says
     code = (
         "import sys, json, importlib\n"
@@ -1397,18 +1407,27 @@ def test_teardown_of_a_box_that_never_got_ssh_destroys_it_without_a_pull(monkeyp
 def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp_path, monkeypatch):
     """6.1 step 0: with $16.90 closed spend, a $0.90/h offer and a 2.4 h cap (plus PULL_S) is within HARD_STOP."""
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
-    (tmp_path / "ledger.csv").write_text(",".join(P.FIELDS) + "\n" + "," * 13 + "16.90,\n")
-    assert P.HARD_STOP == 19.9 and P.ALARM == 10.0
+    (tmp_path / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n" + "," * 13 + "16.90,\n")
+    assert LG.HARD_STOP == 19.9 and LG.ALARM == 10.0
     offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
     assert P.launch_refusal(offer, 2.4) == ""
     assert "hard stop" in P.launch_refusal(dict(offer, dph_total=1.5), 2.4)
+
+
+def test_launch_refuses_without_a_ledger(E):
+    """E8.1: a missing ledger.csv is not $0 spend (a moved VAST home would read none): launch refuses before create."""
+    E.pick()
+    (E.home / "ledger.csv").unlink()
+    p = E.sh("launch.sh", "111", "r1", ok=False)
+    assert "no ledger.csv" in p.stderr and not E.vast("create instance")
 
 
 def test_code_files_ship_the_kernel_drafts_but_no_other_docs(tmp_path, monkeypatch):
     """D1 step 0: the kernel drafts ship for R-D1 (K1-K3 runbooks run from /workspace/src/docs/...); their build/ and
     results/ folders and every other docs/ path except the two reference tables do not."""
     keep = ["docs/implementation2.0/kernels/K1/k1poly.cpp", "docs/implementation2.0/kernels/K3/GPU_RUN.md",
-            "docs/reference/frozen_views.json", "docs/reference/val_halves.json", "tests/oracles/o.py"]
+            "docs/reference/frozen_views.json", "docs/reference/val_halves.json", "tests/test_gpu_scoring.py",
+            "pyproject.toml"]
     drop = ["docs/implementation2.0/kernels/K1/build/x", "docs/implementation2.0/kernels/K1/results/x.txt",
             "docs/implementation2.0/kernels/README.md", "docs/implementation2.0/kernels/K4/a.cpp",
             "docs/reference/other.json", "docs/implementation2.0/Implementation.md"]
@@ -1417,8 +1436,8 @@ def test_code_files_ship_the_kernel_drafts_but_no_other_docs(tmp_path, monkeypat
         (tmp_path / p).write_text("x")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    monkeypatch.setattr(P, "ROOT", tmp_path)
-    assert sorted(P.code_files()) == sorted(keep)
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    assert sorted(RM.code_files()) == sorted(keep)
 
 
 # --- E6.5 (I16): runs/<id>/run_spec.json ------------------------------------------------------------------------------
@@ -1438,7 +1457,8 @@ def test_run_spec_json_holds_the_spec_code_and_versions_and_never_overwrites_ano
     from objdel.core.spec import RunSpec, load_spec
     from objdel.reward.spec import fingerprint
 
-    monkeypatch.setattr(P, "ROOT", tmp_path)
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    (tmp_path / "pyproject.toml").touch()  # repo_root refuses an OBJDEL_REPO without one (E2)
     (tmp_path / "specs").mkdir()
     spec = tmp_path / "specs/b1_rows.yaml"
     spec.write_text((ROOT / "specs/b1_rows.yaml").read_text())
@@ -1458,3 +1478,22 @@ def test_run_spec_json_holds_the_spec_code_and_versions_and_never_overwrites_ano
     out.unlink()
     P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
     assert json.loads(out.read_text())["git_sha"] == "unknown"
+
+
+def test_launch_without_an_image_in_the_allowlist_refuses(monkeypatch, tmp_path):
+    """The launch dies on a missing `image` after every money check passed (empty allowlist, empty ledger)."""
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    (tmp_path / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n")
+    (tmp_path / "offers").mkdir()
+    offer = {"_gpu": "RTX_4090", "_dataset": "lidc", "_disk": 80, "dph_total": 0.5, "inet_up_cost": 0.0,
+             "inet_down_cost": 0.0}
+    (tmp_path / "offers/1.json").write_text(json.dumps(offer))
+    compute = SimpleNamespace(cap_hours=4, gpu="RTX_4090")
+    monkeypatch.setattr(P, "load_spec", lambda p: SimpleNamespace(compute=compute))
+    monkeypatch.setattr(P, "reasons", lambda *a: [])
+    monkeypatch.setattr(P, "vast", lambda *a, **k: [])
+    monkeypatch.setattr("experiments.phase2.preflight.refusal", lambda cfg: "")
+    a = SimpleNamespace(run_id="r1", config="c.yaml", offer=1, cap_hours=2.0, owner_approved=False,
+                        allow_parallel=False, idle_minutes=30)
+    with pytest.raises(SystemExit, match="no image in .vast-allowlist"):
+        P.cmd_launch(a)

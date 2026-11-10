@@ -10,9 +10,9 @@ CONFIGS = Path(__file__).resolve().parents[1] / "specs"
 
 
 def steps(name: str) -> list[list[str]]:
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as C
 
-    return policy.chain(CONFIGS / name, "r")
+    return C.chain(CONFIGS / name, "r")
 
 
 def after(step: list[str], flag: str) -> str:

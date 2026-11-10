@@ -8,8 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from experiments.phase2 import hf_push as H
+from experiments.phase2 import hf_push as HP
 from experiments.phase2.vast import policy as P
+from objdel.infra import hf as H
 
 REPO = "svenk029/objdel-sft"
 
@@ -92,9 +93,9 @@ def push(run, monkeypatch, ok=True):
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     argv = ["--run", str(run), "--repo", REPO, "--revision", "r1-qwen3vl2b"]
     if ok:
-        return H.main(argv)
+        return HP.main(argv)
     with pytest.raises(SystemExit) as e:
-        H.main(argv)
+        HP.main(argv)
     return str(e.value)
 
 
@@ -144,7 +145,7 @@ def test_push_hf_streams_the_token_over_stdin_only(monkeypatch):
     sent = _mac(monkeypatch, token())
     P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/r1_qwen3vl2b.yaml"))
     ((cmd, stdin, what),) = sent
-    assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.secrets" in what
+    assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.infra.secrets" in what
     assert "-m experiments.phase2.hf_push --run /workspace/runs/v1/r1-qwen3vl2b" in cmd
     assert f"--repo {REPO} --revision r1-qwen3vl2b" in cmd
 
@@ -169,11 +170,11 @@ def test_push_from_the_mac_takes_a_local_copy_of_the_view_with_the_same_hash(tmp
     man["config"]["view"] = "/workspace/data/lidc/views/lidc-bundle"  # the box path
     (run / "manifest.json").write_text(json.dumps(man))
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
-    assert H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-qwen3vl2b", "--view", str(local)]) == 0
+    assert HP.main(["--run", str(run), "--repo", REPO, "--revision", "r1-qwen3vl2b", "--view", str(local)]) == 0
     (local / "manifest.json").write_text(json.dumps({"dataset": "lidc", "view_hash": "other"}))
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     with pytest.raises(SystemExit, match="view_hash"):
-        H.main(["--run", str(run), "--repo", REPO, "--revision", "r1-qwen3vl2b", "--view", str(local)])
+        HP.main(["--run", str(run), "--repo", REPO, "--revision", "r1-qwen3vl2b", "--view", str(local)])
 
 
 @pytest.mark.parametrize("license", ["apache-2.0", "other"])
@@ -222,9 +223,9 @@ def push_rl(out, monkeypatch, ok=True):
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     argv = ["--rl", str(out), "--repo", REPO, "--revision", "b1-rows"]
     if ok:
-        return H.main(argv)
+        return HP.main(argv)
     with pytest.raises(SystemExit) as e:
-        H.main(argv)
+        HP.main(argv)
     return str(e.value)
 
 
@@ -309,7 +310,7 @@ def card_only(monkeypatch, tmp_path, who=None, private=True):
 def test_card_only_uploads_exactly_the_readme(tmp_path, monkeypatch):
     pytest.importorskip("trl")
     api, argv = card_only(monkeypatch, tmp_path)
-    assert H.main(argv) == 0
+    assert HP.main(argv) == 0
     (up,) = [c for c in api.calls if c[0] == "upload_file"]
     assert up[1:3] == ("README.md", "rl-full-3ep") and b"## Evaluation" in up[3]
 
@@ -318,8 +319,8 @@ def test_card_only_with_a_bad_token_or_public_repo_uploads_nothing(tmp_path, mon
     pytest.importorskip("trl")
     api, argv = card_only(monkeypatch, tmp_path, who=token(role="write"))
     with pytest.raises(SystemExit):
-        H.main(argv)
+        HP.main(argv)
     api, argv = card_only(monkeypatch, tmp_path, private=False)
     with pytest.raises(SystemExit):
-        H.main(argv)
+        HP.main(argv)
     assert not [c for c in api.calls if c[0] == "upload_file"]

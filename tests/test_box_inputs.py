@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from experiments.phase2 import preflight as PF
-from experiments.phase2.vast import bundle as BU
-from experiments.phase2.vast import policy as P
+from objdel.infra import bundle as BU
+from objdel.infra.vast import remote as P
 
 ROOT = Path(__file__).resolve().parents[1]
 R_D1 = ROOT / "experiments/phase2/configs/r_d1.yaml"

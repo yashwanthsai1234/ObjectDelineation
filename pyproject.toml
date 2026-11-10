@@ -109,7 +109,7 @@ convention = "google"
 "src/objdel/train/fast.py" = ["TID251"]          # removed in E5 (file split)
 "src/objdel/train/trl_adapter.py" = ["TID251"]   # becomes rl/trl_adapter.py in E5
 "src/objdel/train/sample.py" = ["TID251"]        # removed in E5 (sample -> rl/trl_adapter.py)
-"tests/test_trl_adapter.py" = ["TID251"]         # becomes tests/rl/test_trl_adapter.py in E5
+"tests/test_trl_adapter.py" = ["TID251"]         # moves to tests/rl/ in E5
 "tests/test_train_fast.py" = ["TID251"]          # removed in E5
 "src/objdel/train/vllm_sync.py" = ["TID251"]    # moves into rl/ in E5
 "tests/test_vllm_sync.py" = ["TID251"]
@@ -158,7 +158,7 @@ id = "layers-interim"  # each move commit sets its own list (Implementation.md E
 name = "objdel layers (current packages)"
 type = "layers"
 containers = ["objdel"]
-layers = ["train", "eval", "reward | targets", "data", "geom", "core"]
+layers = ["infra", "train", "eval", "reward | targets", "data", "geom", "core"]
 exhaustive = false
 ignore_imports = [
     "objdel.eval.vision -> objdel.train.dataset",  # cycle edge; E5 removes it (vision moves to policy)

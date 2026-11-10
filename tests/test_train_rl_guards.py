@@ -1,6 +1,6 @@
 """B1.5 run guards of experiments.phase2.train_rl and objdel.train.callbacks.BudgetStop (U41-U46, U61, I16, I33,
 I34, R04): every refusal happens before a model or a vLLM engine loads, and the budget stop measures session spend
-as policy.accrued does."""
+as LG.accrued does."""
 
 import hashlib
 import json
@@ -67,15 +67,15 @@ def test_budget_stop_edges():
 
 def test_budget_stop_fixed_cost_equals_policy_accrued():
     """fixed 15 x inet_down_cost, rate dph + 6 x inet_up_cost (run.sh exports): (2.05 - 0.0975) / 0.68 h = 2.8713 h,
-    the time at which policy.accrued of the same run reaches 2.05 (front 6.2)."""
-    from experiments.phase2.vast import policy
+    the time at which LG.accrued of the same run reaches 2.05 (front 6.2)."""
+    from objdel.infra.vast import ledger as LG
 
     run = {"dph": 0.641, "inet_up_cost": 0.0065, "inet_down_cost": 0.0065, "started": 0.0}
     rate, fixed = 0.641 + 6 * 0.0065, 15 * 0.0065
     assert (rate, fixed) == pytest.approx((0.68, 0.0975))
     t = (2.05 - fixed) / rate * H
     assert t / H == pytest.approx(2.8713, abs=1e-4)
-    assert policy.accrued(run, t) == pytest.approx(2.05)
+    assert LG.accrued(run, t) == pytest.approx(2.05)
     cb, now = budget(rate, 2.05, fixed=fixed)
     assert not step(cb, now, t - 1.0).should_training_stop and step(cb, now, t + 1e-6).should_training_stop
 
@@ -387,12 +387,12 @@ def test_heldout_holds_val_shape_items_only(prepared, tmp_path, monkeypatch):
 
 def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp_path, monkeypatch):
     """I42: run.sh exports the active run's start, dph + 6 x inet_up_cost and 15 x inet_down_cost; train_rl takes them
-    as its flag defaults; BudgetStop on them gives the session spend that policy.spend() adds to the ledger total."""
+    as its flag defaults; BudgetStop on them gives the session spend that LG.spend() adds to the ledger total."""
     import re
 
     from test_vast import Env
 
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import ledger as LG
 
     E = Env(tmp_path)
     E.launched()
@@ -408,9 +408,9 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
     cb.clock = lambda: t
     monkeypatch.setenv("VAST_HOME", E.env["VAST_HOME"])
     (E.home / "ledger.csv").unlink(missing_ok=True)
-    policy.ledger(event="teardown", run_id="old", cost_usd=3.25)  # a closed session
-    monkeypatch.setattr(policy.time, "time", lambda: t)
-    assert cb.spend() == pytest.approx(policy.accrued(run, t)) == pytest.approx(policy.spend() - 3.25)
+    LG.ledger(event="teardown", run_id="old", cost_usd=3.25)  # a closed session
+    monkeypatch.setattr(LG.time, "time", lambda: t)
+    assert cb.spend() == pytest.approx(LG.accrued(run, t)) == pytest.approx(LG.spend() - 3.25)
 
 
 # --- B2.2: --numerics and --opsm-start-delta --------------------------------------------------------------------

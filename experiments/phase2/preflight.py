@@ -79,6 +79,7 @@ def local(template: str) -> Path | None:
 
 
 def inputs(cfg: Path) -> Inputs:
+    """The spec's inputs on the Mac: the sft views, the rl rows stages and the data root."""
     from objdel.core.spec import load_spec
 
     spec, root = load_spec(cfg), data_root()
@@ -147,6 +148,7 @@ def refusal(cfg: Path) -> str | None:
 
 
 def lines(path):
+    """The JSON records of a JSONL file."""
     return [json.loads(x) for x in Path(path).read_text().splitlines()]
 
 
@@ -163,6 +165,8 @@ def given_inputs(s: Inputs) -> list[str]:
 
 
 def view_integrity(s: Inputs) -> list[str]:
+    """Each training view's rows.jsonl matches its view_hash and its contexts load; each exam view's files match its
+    manifest."""
     from objdel.train import dataset as D
 
     bad = []
@@ -207,6 +211,7 @@ def patients(s: Inputs) -> list[str]:
 
 
 def exam_props(root: Path, v: str) -> list[dict]:
+    """The coverage properties of each record of exam view `v`."""
     from objdel.data import coverage as C
 
     out = []
@@ -216,6 +221,7 @@ def exam_props(root: Path, v: str) -> list[dict]:
 
 
 def coverage(s: Inputs) -> list[str]:
+    """Each training view covers the exam views' properties (objdel.data.coverage)."""
     from objdel.data import coverage as C
 
     bad = []
@@ -231,6 +237,7 @@ def coverage(s: Inputs) -> list[str]:
 
 
 def prompts(s: Inputs) -> list[str]:
+    """Each exam view's prompt text equals the training prompt."""
     from objdel.train import dataset as D
 
     want = next(c["text"] for c in D._user("lidc")["content"] if c.get("type") == "text")
@@ -258,6 +265,7 @@ def ct_window(s: Inputs) -> list[str]:
 
 
 def targets(s: Inputs) -> list[str]:
+    """Each training target parses and rasterizes to a legal mask (the reference checker)."""
     from objdel.geom.shape import to_mask
     from objdel.geom.text import parse
 
@@ -333,8 +341,8 @@ def rows_revision(s: Inputs) -> list[str]:
         return []
     import huggingface_hub as hub
 
-    from experiments.phase2.hf_push import REPO
-    from objdel import secrets
+    from objdel.infra import secrets
+    from objdel.infra.hf import REPO
 
     bad, token = [], secrets.get("objdel-hf-write")
     for st in s.rows:
@@ -355,6 +363,7 @@ def rows_revision(s: Inputs) -> list[str]:
 
 
 def pytest(*args: str) -> list[str]:
+    """Run pytest with `args` in the repo; [] on a pass, else the command and the last 15 output lines."""
     p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *args], cwd=ROOT,
                        capture_output=True, text=True)
     return [] if p.returncode == 0 else ["pytest " + " ".join(args)] + p.stdout.splitlines()[-15:]
@@ -386,6 +395,7 @@ def vastai_problems() -> list[str]:
 
 
 def checker_tests(s: Inputs) -> list[str]:
+    """The CUDA checker tests, the GPU scoring test and CHECKER_TESTS (CUDA equivalence first)."""
     cuda = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "tests").glob("test_cuda_checker*.py"))
     return pytest("-m", "not slow", *cuda, "tests/test_gpu_scoring.py", *CHECKER_TESTS)  # CUDA equivalence first
 
@@ -415,6 +425,7 @@ CHECKS = [
 
 
 def main(argv=None) -> int:
+    """The preflight CLI: run every check on --config and write the stamp only when all pass."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--config", type=Path, required=True, help="a run spec (specs/<name>.yaml)")
     cfg = ap.parse_args(argv).config.resolve()

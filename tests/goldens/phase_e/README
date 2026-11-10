@@ -92,3 +92,12 @@ files row); E2's objdel.policy.sampler (only the checkpoint stop_ids) is deleted
 objdel.train.sample, which the E5 split sends to objdel.policy.sampler. old_names re-recorded on the merge tree
 (select_ckpt and train_sft keep E2's CLI names, configs loses CLEAN8's dtype and param_groups);
 tests_import_experiments loses policy/test_sampler.py (it reads sft.select.sampler_cmd now).
+E8.1 (impl2-E8f, infra move): old_names re-recorded: vast/policy.py keeps only the CLI (cmd_*, launch_refusal, rows_pin,
+ROWS_CHECK, FLAG, CLI, main), hf_push.py and hf_pull.py only main; the library names moved to objdel.infra.vast.{offers,
+ledger,remote,chain}, objdel.infra.hf and objdel.infra.bundle (vast/bundle.py, recorded before, keeps its names and
+resolves there). tests_import_experiments: unchanged (tests/infra/test_secrets.py, test_paths.py, test_hf.py import none).
+Merge of impl2-E8f into impl2-emoves2 (after CLEAN8f with E2 and E4f; 2026-11-10): old_names re-recorded on the merge
+tree (E8's CLI-only vast/policy.py, hf_push.py and hf_pull.py; E2's thin train_rl, train_sft, select_ckpt and g_probe;
+E4's train/sample.py and final_eval names; CLEAN8's configs). core.provenance keeps E2's repo_root (an OBJDEL_REPO
+without pyproject.toml is refused) and code_hashes; IMPORT_CHECK is E8's list plus objdel.train.sample (E4).
+Goldens 1-6, host_syncs and tests_import_experiments unchanged by this merge.

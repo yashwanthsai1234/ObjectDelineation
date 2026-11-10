@@ -14,6 +14,8 @@ from experiments.phase2 import final_eval as FE
 from experiments.phase2 import preflight as PF
 from experiments.phase2 import train_rl as TR
 from experiments.phase2.vast import policy as P
+from objdel.infra.vast import ledger as LG
+from objdel.infra.vast import remote as RM
 from tests.test_final_eval import ev, ev_root, fake_sampler, jsonl  # noqa: F401  (fixtures and helpers)
 
 OFFER = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
@@ -119,16 +121,17 @@ def test_parse_refuses_a_non_positive_save_steps(extra):
 )
 def test_launch_refusal_refuses_negative_money_inputs(tmp_path, monkeypatch, offer, cap):
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
-    assert P.launch_refusal(offer, cap)
+    (tmp_path / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n")
+    assert P.launch_refusal(offer, cap).startswith("refused")
 
 
 def _repo(tmp_path, monkeypatch, files):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    for f in ["tests/oracles/o.py", *files]:
+    for f in ["tests/test_gpu_scoring.py", "pyproject.toml", *files]:  # pyproject.toml: repo_root's OBJDEL_REPO check
         (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / f).write_text("x\n")
-    monkeypatch.setattr(P, "ROOT", tmp_path)
-    return set(P.code_files())
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    return set(RM.code_files())
 
 
 def test_code_files_keep_riga_tables_off_the_box_even_under_kept_folders(tmp_path, monkeypatch):

@@ -418,7 +418,7 @@ def test_view_rows_on_a_riga_view(tmp_path, synthetic_items, D):
 def bundled(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
     from experiments.phase2 import build_views as BV
-    from experiments.phase2.vast import bundle as B
+    from objdel.infra import bundle as B
     from objdel.train import dataset as D
     root = tmp_path_factory.mktemp("bk1bundle")
     data = root / "data"

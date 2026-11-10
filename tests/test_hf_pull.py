@@ -12,16 +12,16 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("huggingface_hub")
+hub = pytest.importorskip("huggingface_hub")
 from experiments.phase2 import hf_pull as L  # noqa: E402
-from experiments.phase2 import hf_push as H  # noqa: E402
 from experiments.phase2.vast import policy as P  # noqa: E402
+from objdel.infra import hf as H  # noqa: E402
 from tests.test_p2_hf_push import REPO, token  # noqa: E402
 
 
 def test_hf_pull_downloads_the_revision_with_the_stdin_token(tmp_path, monkeypatch):
     got = {}
-    monkeypatch.setattr(L, "snapshot_download", lambda **kw: got.update(kw) or str(tmp_path / "m"))
+    monkeypatch.setattr(hub, "snapshot_download", lambda **kw: got.update(kw) or str(tmp_path / "m"))
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     assert L.main(["--repo", REPO, "--revision", "r1-qwen3vl2b", "--out", str(tmp_path / "m")]) == 0
     assert got == {"repo_id": REPO, "revision": "r1-qwen3vl2b", "local_dir": str(tmp_path / "m"), "token": "hf_secret",
@@ -30,7 +30,7 @@ def test_hf_pull_downloads_the_revision_with_the_stdin_token(tmp_path, monkeypat
 
 
 def test_hf_pull_writes_no_revision_marker_for_a_rows_pull(tmp_path, monkeypatch):
-    monkeypatch.setattr(L, "snapshot_download", lambda **kw: str(tmp_path))
+    monkeypatch.setattr(hub, "snapshot_download", lambda **kw: str(tmp_path))
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     assert L.main(["--repo", REPO, "--revision", "a" * 40, "--out", str(tmp_path), "--allow", "rows/x/**"]) == 0
     assert not (tmp_path / "hf_revision.json").exists()
@@ -59,7 +59,7 @@ def test_fetch_hf_streams_the_token_over_stdin_only(monkeypatch):
     sent = box(monkeypatch)
     fetch("r1-qwen3vl2b")
     ((cmd, stdin, what),) = sent
-    assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.secrets" in what
+    assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.infra.secrets" in what
     assert f"-m experiments.phase2.hf_pull --repo {REPO} --revision r1-qwen3vl2b --out /workspace/runs/p1/ckpt" in cmd
 
 
@@ -84,7 +84,7 @@ def test_hf_pull_allow_keeps_repo_paths_under_local_dir(tmp_path, monkeypatch):
         (d / "lidc/train.jsonl").write_text("")
         return local_dir
 
-    monkeypatch.setattr(L, "snapshot_download", fake)
+    monkeypatch.setattr(hub, "snapshot_download", fake)
     monkeypatch.setattr("sys.stdin", io.StringIO("hf_secret\n"))
     data = tmp_path / "data/lidc"
     assert L.main(["--repo", REPO, "--revision", ROWS_REV, "--out", str(data), "--allow", "rows/lidc-train-b1/**"]) == 0

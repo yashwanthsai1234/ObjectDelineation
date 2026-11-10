@@ -1,16 +1,16 @@
 """Data bundles for the Vast box (PLAN §4.4, D16): one deterministic tar per dataset with a SHA256SUMS manifest.
 
-    .venv/bin/python -I -m experiments.phase2.vast.bundle lidc|riga [--view NAME ...] [--data data] [--out build/bundles]
+    .venv/bin/python -I -m objdel.infra.bundle lidc|riga [--view NAME ...] [--data data] [--out build/bundles]
 
 Members (sorted, mtime 0, uid/gid 0, mode 0644; SHA256SUMS first, so two builds of the same tree are byte-identical):
 `prepared/{manifest.json, <ds>/, images/<ds>/, caches/<ds>/}`, `views/<view>/` (the --view names, the run's training
 view; default every `<ds>-*`), and `eval_views/<ds>-*/` (LIDC also `probe-*`; LIDC requires lidc-val-shifted,
 lidc-val-rescaled, probe-precision and probe-topology, and `checker_eval/`, the CUDA checker eval set). Symlinks (also a
 symlinked view or prepared directory, BK4-14) and anything under data/raw are refused; `build_report.json` (wall clock)
-is skipped (BK1-7); `prepared/manifest.json` is rewritten to list only the bundled dataset's files (BK1-2). LIDC writes `bundle-lidc.tar`; RIGA streams the tar straight into
-`age -r <riga_recipient from .vast-allowlist>`, so only `bundle-riga.tar.age` touches the disk (age output is not
-byte-identical: random file key; the tar inside is). Each bundle gets `<bundle>.sha256` (sha256sum -c format);
-sync_up checks it and SHA256SUMS on the box.
+is skipped (BK1-7); `prepared/manifest.json` is rewritten to list only the bundled dataset's files (BK1-2). LIDC writes
+`bundle-lidc.tar`; RIGA streams the tar straight into `age -r <riga_recipient from .vast-allowlist>`, so only
+`bundle-riga.tar.age` touches the disk (age output is not byte-identical: random file key; the tar inside is).
+Each bundle gets `<bundle>.sha256` (sha256sum -c format); sync_up checks it and SHA256SUMS on the box.
 """
 
 import argparse
@@ -21,14 +21,18 @@ import subprocess
 import tarfile
 from pathlib import Path
 
-from experiments.phase2.vast.policy import ROOT, die, is_raw, load
+from objdel.core.provenance import repo_root
 from objdel.hashing import file_sha256
+from objdel.infra.vast.ledger import load
+from objdel.infra.vast.offers import is_raw
+from objdel.infra.vast.remote import die
 
 LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
 SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view would differ (BK1-7)
 
 
 def walk(data: Path, top: Path, prefix: str) -> list[tuple[str, Path]]:
+    """(archive name, path) of every file under `top`; refuses a symlink anywhere between data/ and the files."""
     if top.resolve() != data.resolve() / top.relative_to(data):  # a symlink between data/ and top (BK4-14)
         die(f"refusing symlinked path {top}")
     paths = list(top.rglob("*"))  # lists symlinks without following them
@@ -47,6 +51,7 @@ def manifest(ds: str, prep: Path) -> bytes:
 
 
 def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[str, Path | bytes]]:
+    """The bundle's (archive name, path or bytes) entries for dataset `ds`; refuses anything under data/raw."""
     if is_raw(data):
         die("refusing to bundle anything under data/raw")
     prep = data / "prepared"
@@ -77,6 +82,7 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
 
 
 def sha(p: Path | bytes) -> str:
+    """SHA-256 hex of a file or of bytes."""
     return hashlib.sha256(p).hexdigest() if isinstance(p, bytes) else file_sha256(p)
 
 
@@ -93,6 +99,7 @@ def write_tar(fileobj, files: list[tuple[str, Path | bytes]]) -> None:
 
 
 def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Path:
+    """Write the bundle tar (RIGA: age-encrypted) and its .sha256 under `out`; returns the tar path."""
     files = members(ds, data, views)
     out.mkdir(parents=True, exist_ok=True)
     target = out / ("bundle-riga.tar.age" if ds == "riga" else f"bundle-{ds}.tar")
@@ -116,11 +123,12 @@ def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Pat
 
 
 def main(argv: list[str] | None = None) -> None:
+    """The bundle CLI (dataset, --view, --data, --out)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dataset", choices=["lidc", "riga"])
     ap.add_argument("--view", action="append", help="training view to ship (repeatable; default every <ds>-*)")
-    ap.add_argument("--data", type=Path, default=ROOT / "data")
-    ap.add_argument("--out", type=Path, default=ROOT / "build" / "bundles")
+    ap.add_argument("--data", type=Path, default=repo_root() / "data")
+    ap.add_argument("--out", type=Path, default=repo_root() / "build" / "bundles")
     a = ap.parse_args(argv)
     build(a.dataset, a.data, a.out, a.view)
 

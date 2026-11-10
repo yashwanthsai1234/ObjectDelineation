@@ -12,8 +12,7 @@ from objdel.core import provenance
 SRC = Path(provenance.__file__).resolve().parents[1]  # src/objdel (this test's own path search is allowed)
 E0_FILES = 73  # code_hashes()["files"] at be52b1c [plan E2.5 step 5]
 # __file__-relative roots not yet on repo_root(), each with the task that removes it
-PENDING = {"secrets.py": "E8.1 (secrets -> infra, path() from repo_root)",
-           "data/splits.py": "val_halves.json path; not an E2-owned file"}
+PENDING = {"data/splits.py": "val_halves.json path; not an E2-owned file"}
 
 
 def _copy_module(dest: Path):

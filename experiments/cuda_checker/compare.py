@@ -250,7 +250,7 @@ def blob(rng, n, cx, cy, r, ccw=False):
 
 def rollouts(n: int, seed: int):
     """GRPO-like rollouts -> [(rings, roles, S)]: 1-3 smooth rings (holes or second parts), 16-200 vertices, crops
-    64-512 px (the generator of the archived tests/test_polycore.py; its ground-truth blob is still drawn, so the
+    64-512 px (the generator of the archived test_polycore.py in archive/cpu_checker; its ground-truth blob is still drawn, so the
     cases are the same)."""
     rng = np.random.default_rng(seed)
     out = []

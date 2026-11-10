@@ -53,7 +53,7 @@ SKIP_DIRS = {".venv", "build", "__pycache__", ".git", "data", "runs", "archive",
 
 
 def mod_of(path: str) -> str:
-    """Module name of a repo path: src/objdel/a/b.py -> objdel.a.b; tests/x/y.py -> tests.x.y."""
+    """Module name of a repo path: src/objdel/a/b.py -> objdel.a.b; a tests/ path maps the same way."""
     p = path[4:] if path.startswith("src/") else path
     p = p[: -len(".py")] if p.endswith(".py") else p
     p = p[: -len("/__init__")] if p.endswith("/__init__") else p

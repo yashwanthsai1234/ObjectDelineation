@@ -105,13 +105,13 @@ def update_norms(monkeypatch, tmp_path) -> dict[str, str]:
 
 
 def chain_argv() -> dict[str, dict]:
-    """Golden 5: policy.chain() of each live plan as an ordered list of argv lists (stage index = position, a
+    """Golden 5: C.chain() of each live plan as an ordered list of argv lists (stage index = position, a
     leading "~" kept), and the G-vision references the plan reads."""
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as C
 
     cfgs = ROOT / "specs"  # E6.2: the run specs replaced the plan files
-    return {p: {"argv": policy.chain(cfgs / f"{p}.yaml", "x"),
-                "vision_refs": policy.vision_refs(cfgs / f"{p}.yaml", "x")} for p in PLANS}
+    return {p: {"argv": C.chain(cfgs / f"{p}.yaml", "x"),
+                "vision_refs": C.vision_refs(cfgs / f"{p}.yaml", "x")} for p in PLANS}
 
 
 class _Captured(Exception):
@@ -138,9 +138,9 @@ def grpo_config_dict(argv: list[str], **over) -> dict:
 def configs_golden() -> dict[str, dict]:
     """Golden 6: the resolved GRPOConfig of (a) the train_rl stage of b1_rows.yaml, (b) a G-probe with default
     arguments; both on qwen3-vl-2b. (a) adds what train_rl.main adds for a schedule root."""
-    from experiments.phase2.vast import policy
+    from objdel.infra.vast import chain as C
 
-    steps = policy.chain(ROOT / "specs/b1_rows.yaml", "x")
+    steps = C.chain(ROOT / "specs/b1_rows.yaml", "x")
     stage = next(s for s in steps if "experiments.phase2.train_rl" in s)
     argv = stage[stage.index("experiments.phase2.train_rl") + 1:]
     a_over = {"save_strategy": "steps", "save_steps": 50, "shuffle_dataset": False}

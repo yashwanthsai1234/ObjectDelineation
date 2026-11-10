@@ -11,12 +11,12 @@ import os
 import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from objdel.core.provenance import repo_root
 
 
 def path() -> Path:
     """The secrets file path: `$OBJDEL_SECRETS` if set, else `.secrets` at the repo root."""
-    return Path(os.environ.get("OBJDEL_SECRETS", ROOT / ".secrets"))
+    return Path(os.environ.get("OBJDEL_SECRETS", repo_root() / ".secrets"))
 
 
 @functools.cache

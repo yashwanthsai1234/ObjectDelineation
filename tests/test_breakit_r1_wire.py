@@ -14,6 +14,8 @@ from experiments.phase2 import preflight as PF
 from experiments.phase2 import train_rl as TR
 from experiments.phase2.vast import policy as P
 from objdel.data import quality as Q
+from objdel.infra.vast import ledger as LG
+from objdel.infra.vast import remote as RM
 from objdel.rl import run as rl_run
 from tests.test_final_eval import ev, ev_root, jsonl, run_fe  # noqa: F401  (fixtures and helpers)
 
@@ -51,16 +53,17 @@ OFFER = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
 
 def test_launch_refusal_refuses_a_nan_price(tmp_path, monkeypatch):
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
-    assert P.launch_refusal(dict(OFFER, dph_total=math.nan), 2.4)
+    (tmp_path / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n")
+    assert P.launch_refusal(dict(OFFER, dph_total=math.nan), 2.4).startswith("refused")
 
 
 def _repo(tmp_path, monkeypatch, files):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    for f in ["tests/oracles/o.py", *files]:
+    for f in ["tests/test_gpu_scoring.py", *files]:
         (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / f).write_text("x\n")
-    monkeypatch.setattr(P, "ROOT", tmp_path)
-    return set(P.code_files())
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    return set(RM.code_files())
 
 
 @pytest.mark.xfail(strict=True, reason="BR1-wire-4: code_files drops RIGA tables only by a name pattern "
