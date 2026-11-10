@@ -26,11 +26,13 @@ train = [
     "torchvision==0.29.1",  # pairs with torch 2.14.1; transformers/TRL vision-model image processing
 ]
 data = ["pydicom>=3.0", "pylidc==0.2.3"]
+serve = ["fastapi==0.136.3", "uvicorn==0.54.0"]  # objdel.verify.http, the verifier service (not used by training)
 dev = [
     "pytest>=8.0", "pytest-cov>=6.0", "pytest-xdist==3.8.0", "hypothesis>=6.100", "ruff==0.17.1",
     "matplotlib>=3.9",  # pylidc-parity oracle
     "vulture==2.16",  # `make dead`
     "import-linter==2.16",  # `make lint`: layer contracts
+    "httpx==0.28.1",  # FastAPI TestClient (tests/verify)
 ]
 # Docs site (DOC3, ADR-0012). Rollback, not installed: mkdocs-material==9.8.1, mkdocs-api-autonav==0.4.0.
 docs = ["zensical==0.1.0", "mkdocstrings-python==2.0.10"]
@@ -125,7 +127,7 @@ known-first-party = ["objdel", "experiments"]
 # Dead-code gate (`make dead`, tests/test_repo_hygiene.py). Each group below is used by name from outside the code.
 paths = ["src", "experiments", "tests"]
 min_confidence = 60
-ignore_decorators = ["@pytest.fixture", "@model_validator"]  # autouse fixtures; pydantic validators (core.spec)
+ignore_decorators = ["@pytest.fixture", "@model_validator", "@app.*"]  # autouse fixtures; pydantic validators (core.spec); FastAPI routes (verify/http.py)
 ignore_names = [
   "on_*", "should_save", "should_training_stop",  # transformers TrainerCallback hooks and control flags
   "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes

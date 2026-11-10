@@ -88,11 +88,13 @@
   "lora_merged_params",
   "merge_summary",
   "meta_of",
+  "meta_runs",
   "no_lora_input_cast",
   "one_pad_per_image",
   "packing_wins",
   "per_row",
   "prompt_groups",
+  "prompt_images",
   "raw_ratio",
   "rope_bad_rows",
   "rope_positions",
@@ -100,6 +102,7 @@
   "row_meta",
   "seq_kl",
   "summary_metrics",
+  "vllm_kwargs",
   "window",
   "window_from_meta",
   "write_seq_gaps"
@@ -110,9 +113,10 @@
   "LOGGED",
   "MISS_IOU",
   "TRLReward",
-  "_score",
   "_text",
   "aggregator",
+  "logged_terms",
+  "score_jobs",
   "stop_ids",
   "truncated"
  ],
@@ -121,6 +125,7 @@
   "LocGuard",
   "NoCkptLayers",
   "NvtxSteps",
+  "OpsmDelta",
   "TraceStep",
   "slope_nw"
  ],
@@ -193,6 +198,8 @@
   "PushStats",
   "_load",
   "_wake",
+  "_with_adapter",
+  "engine_kwargs",
   "install",
   "push_weights",
   "sync_lora",
@@ -313,7 +320,8 @@
   "numerics_overrides",
   "parse",
   "rows_schedule",
-  "save_final"
+  "save_final",
+  "with_caps"
  ],
  "experiments/phase2/final_eval.py": [
   "FROZEN_VIEWS",
@@ -332,6 +340,7 @@
   "frozen_entry",
   "gate_a",
   "hash_view",
+  "limit_rows",
   "load_trainer",
   "main",
   "noise_floor",
@@ -429,6 +438,7 @@
   "HF_RATE",
   "QUICK_TESTS",
   "ROOT",
+  "VASTAI_VERSION",
   "ceiling",
   "checker_tests",
   "coverage",
@@ -451,6 +461,7 @@
   "stamp_path",
   "targets",
   "trl_problems",
+  "vastai_problems",
   "view_integrity"
  ],
  "experiments/phase2/hf_push.py": [
