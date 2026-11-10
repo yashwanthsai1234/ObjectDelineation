@@ -4,6 +4,7 @@
  "tests/oracles/reward_variants.py: objdel.reward.annotators",
  "tests/test_bench_checker.py: objdel.__file__.startswith",
  "tests/test_data_coverage.py: objdel.eval.coverage",
+ "tests/test_final_sweep.py: objdel.surface",
  "tests/test_repo_hygiene.py: objdel.geom.rings",
  "tests/test_vast.py: objdel.vast"
 ]

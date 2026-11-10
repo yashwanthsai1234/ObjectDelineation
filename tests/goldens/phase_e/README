@@ -31,3 +31,9 @@ the numpy staging copy, C2 steps 2-3 rope routing check) and train/callbacks.py 
 share and the q99.5 delta); tests_import_experiments gains the GPUprep and C lane test files; old_names re-recorded.
 B2 merge (impl2 dad5ec0, 2026-11-09): old_names re-recorded: fast.vllm_engine_kwargs added (B2.2 option F engine
 kwargs); vllm_sync.engine_kwargs and _with_adapter and train_rl.NEEDS_FASTGRPO removed (one option F path).
+Comb merge (impl2-comb = impl2 4d52eb0 + lanes D7, D8, D9, BR2 Xwire/Xdata/Xrl/Xmath, SWEEP, E7; 2026-11-09):
+tests_import_experiments gains the lanes' test files test_gpu_chain.py and test_gpu_sanitize.py (D8),
+test_final_sweep.py (SWEEP) and test_v3_records.py (D7); module_strings_stale gains objdel.surface, the
+made-up module of test_final_sweep's tmp tree (a string the sweep must flag, not a live name); old_names re-recorded:
+final_eval and eval/device gain D7's single-process eval and device EDT names, final_eval loses _pool, and vllm_sync
+drops _with_adapter and engine_kwargs again (the merge had kept the lane side; B2's one option F path stands).

@@ -30,10 +30,13 @@
  "test_data_quality.py",
  "test_data_windows.py",
  "test_final_eval.py",
+ "test_final_sweep.py",
  "test_fp16_check.py",
  "test_freeze_views.py",
  "test_gate_power.py",
  "test_gpu_active.py",
+ "test_gpu_chain.py",
+ "test_gpu_sanitize.py",
  "test_gpu_scoring.py",
  "test_headline.py",
  "test_hf_pull.py",
@@ -73,5 +76,6 @@
  "test_topology_device.py",
  "test_train_fast.py",
  "test_train_rl_guards.py",
+ "test_v3_records.py",
  "test_vast.py"
 ]
