@@ -219,18 +219,6 @@ def test_view_rows_on_the_real_view_builder(tmp_path, synthetic_items, disc_mask
 # Linear modules of each model (one layer per repeated block), recorded offline from
 # AutoModelForImageTextToText.from_config on the meta device (transformers 5.20.1, impl note M2).
 LINEAR = {
-    "lfm2.5-vl-450m": [
-        "lm_head", "model.language_model.layers.0.conv.in_proj", "model.language_model.layers.0.conv.out_proj",
-        "model.language_model.layers.0.feed_forward.w1", "model.language_model.layers.0.feed_forward.w2",
-        "model.language_model.layers.0.feed_forward.w3", "model.language_model.layers.0.self_attn.k_proj",
-        "model.language_model.layers.0.self_attn.out_proj", "model.language_model.layers.0.self_attn.q_proj",
-        "model.language_model.layers.0.self_attn.v_proj", "model.multi_modal_projector.linear_1",
-        "model.multi_modal_projector.linear_2", "model.vision_tower.embeddings.patch_embedding",
-        "model.vision_tower.encoder.layers.0.mlp.fc1", "model.vision_tower.encoder.layers.0.mlp.fc2",
-        "model.vision_tower.encoder.layers.0.self_attn.k_proj",
-        "model.vision_tower.encoder.layers.0.self_attn.out_proj",
-        "model.vision_tower.encoder.layers.0.self_attn.q_proj",
-        "model.vision_tower.encoder.layers.0.self_attn.v_proj"],
     "qwen3-vl-2b": [
         "lm_head", "model.language_model.layers.0.mlp.down_proj", "model.language_model.layers.0.mlp.gate_proj",
         "model.language_model.layers.0.mlp.up_proj", "model.language_model.layers.0.self_attn.k_proj",
@@ -262,21 +250,7 @@ def toy(names):
 
 def test_models_and_budgets():
     assert configs.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
-    assert {m: configs.MAX_COMPLETION[m] for m in ("lfm2.5-vl-450m", "qwen3-vl-2b")} == {
-        "lfm2.5-vl-450m": 1024, "qwen3-vl-2b": 1536}
-
-
-@pytest.mark.parametrize("model", list(LINEAR))
-def test_full_ft_loads_fp32_master_weights(model, tmp_path):
-    """S1-13: full fine-tuning loads fp32 weights (AdamW's master copy) and trains under bf16 autocast where the
-    hardware has it; only a LoRA run keeps a frozen bf16 base."""
-    assert configs.dtype(lora=False) == "float32" and configs.dtype(lora=True) == "bfloat16"
-    from unittest import mock
-
-    import transformers.training_args
-    with mock.patch.object(configs, "is_torch_bf16_gpu_available", lambda: True), \
-            mock.patch.object(transformers.training_args, "is_torch_bf16_gpu_available", lambda: True):
-        assert configs.sft_config(model, str(tmp_path), use_cpu=True).bf16  # autocast, not bf16 weights
+    assert configs.MAX_COMPLETION["qwen3-vl-2b"] == 1536
 
 
 @pytest.mark.parametrize("model", list(LINEAR))
@@ -290,14 +264,14 @@ def test_sampling_names_for_grpo_and_hf_generate(tmp_path):
     """S1-10: one source, three spellings. GRPOConfig and GenerationConfig have no presence / frequency penalty
     (both must be 0), the length field is renamed, HF samples with do_sample and stops at the exported ids."""
     from transformers import GenerationConfig
-    m = "lfm2.5-vl-450m"
+    m = "qwen3-vl-2b"
     common = {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "min_p": 0.0, "repetition_penalty": 1.0}
-    assert configs.sampling(m, "grpo") == common | {"max_completion_length": 1024}
-    assert configs.sampling(m, "hf") == common | {"max_new_tokens": 1024, "do_sample": True}
+    assert configs.sampling(m, "grpo") == common | {"max_completion_length": 1536}
+    assert configs.sampling(m, "hf") == common | {"max_new_tokens": 1536, "do_sample": True}
     configs.grpo_config(m, str(tmp_path), use_cpu=True, **configs.sampling(m, "grpo"))  # accepted names
     exported = configs.sampling(m) | {"seed": 3, "stop_token_ids": [7]}  # a prompts JSONL "sampling" field
     hf = configs.as_names(exported, "hf")
-    assert hf == common | {"max_new_tokens": 1024, "do_sample": True, "eos_token_id": [7]}
+    assert hf == common | {"max_new_tokens": 1536, "do_sample": True, "eos_token_id": [7]}
     GenerationConfig(**hf).validate(strict=True)
     with pytest.raises(ValueError, match="presence_penalty"):
         configs.as_names(exported | {"presence_penalty": 1.5}, "grpo")
@@ -318,22 +292,9 @@ def test_lora_targets_the_language_model_only(model):
     assert all(re.fullmatch(cfg.exclude_modules, n) for n in names if n.startswith(VISION_PREFIX))
 
 
-def test_lora_only_where_the_plan_needs_it():
+def test_every_model_is_lora():
     assert configs.lora("qwen3-vl-2b") is not None and configs.lora("qwen3-vl-2b").target_modules == "all-linear"
-    assert configs.lora("lfm2.5-vl-450m") is None  # full FT
-
-
-@pytest.mark.parametrize("model", list(LINEAR))
-def test_param_groups_put_vision_and_projector_at_a_tenth(model):
-    m = toy(LINEAR[model])
-    lm, vision = configs.param_groups(m, 5e-5)
-    assert (lm["lr"], vision["lr"]) == (5e-5, 5e-6)
-    names = {id(p): n for n, p in m.named_parameters()}
-    assert {names[id(p)].rsplit(".", 1)[0] for p in vision["params"]} == {
-        n for n in LINEAR[model] if n.startswith(VISION_PREFIX)}
-    assert len(lm["params"]) + len(vision["params"]) == len(names)
-    m.lm_head.weight.requires_grad_(False)
-    assert sum(map(len, (g["params"] for g in configs.param_groups(m, 1.0)))) == len(names) - 1  # frozen: out
+    assert configs._LORA == frozenset(configs.MODELS)  # ADR-0008: no full fine-tuning
 
 
 @pytest.mark.parametrize("model", list(LINEAR))
@@ -344,7 +305,7 @@ def test_sft_config_bundle(model, tmp_path):
     assert (c.dataloader_num_workers, c.dataloader_persistent_workers, c.dataloader_prefetch_factor) == (6, True, 2)
     assert c.gradient_checkpointing == (model == "qwen3-vl-2b")
     assert c.assistant_only_loss and c.max_length is None and not c.remove_unused_columns
-    assert c.learning_rate == (5e-4 if configs.lora(model) else 5e-5)
+    assert c.learning_rate == 5e-4  # LoRA
     assert configs.sft_config(model, str(tmp_path), learning_rate=1e-4).learning_rate == 1e-4  # override
     c = configs.sft_config(model, str(tmp_path), dataloader_num_workers=0)  # BK3-1: R0's workers-0 timing arms
     assert (c.dataloader_num_workers, c.dataloader_persistent_workers, c.dataloader_prefetch_factor) == (0, False,
@@ -368,14 +329,14 @@ def lrs(c, n):
 def test_wsd_branches_follow_the_stable_run_then_decay_to_zero(tmp_path):
     """D5: 3 % warmup, constant LR, a branch at step s decays linearly to 0 over 15 % of s; up to s the branch's
     schedule is the stable run's, so a branch resumes the stable checkpoint without a jump."""
-    stable = configs.sft_config("lfm2.5-vl-450m", str(tmp_path), steps=1000)
-    branch = configs.sft_config("lfm2.5-vl-450m", str(tmp_path), steps=1000, branch_at=500)
+    stable = configs.sft_config("qwen3-vl-2b", str(tmp_path), steps=1000)
+    branch = configs.sft_config("qwen3-vl-2b", str(tmp_path), steps=1000, branch_at=500)
     assert (stable.max_steps, branch.max_steps) == (1000, 575)
     a, b = lrs(stable, 1000), lrs(branch, 575)
-    assert a[:500] == b[:500] and a[0] == 0 and a[30] == a[999] == 5e-5 and max(a) == 5e-5
-    assert b[500] == 5e-5 and b[574] == pytest.approx(5e-5 / 75) and all(np.diff(b[500:]) < 0)
+    assert a[:500] == b[:500] and a[0] == 0 and a[30] == a[999] == 5e-4 and max(a) == 5e-4
+    assert b[500] == 5e-4 and b[574] == pytest.approx(5e-4 / 75) and all(np.diff(b[500:]) < 0)
     with pytest.raises(ValueError):
-        configs.sft_config("lfm2.5-vl-450m", str(tmp_path), branch_at=500)  # a branch needs the stable length
+        configs.sft_config("qwen3-vl-2b", str(tmp_path), branch_at=500)  # a branch needs the stable length
 
 
 def test_qwen3_vl_trains_with_trls_own_template():

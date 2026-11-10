@@ -532,8 +532,8 @@ def cmd_run(a) -> None:
         if a.module.startswith("specs/"):  # E6.5: the spec, code and versions beside the log, before any stage
             guard = [f"/opt/venv/bin/python -I -m experiments.phase2.vast.policy run_spec {shlex.quote(a.module)} "
                      f"/workspace/runs/{a.run_id}/run_spec.json"]
-        guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run.sh {a.run_id} "
-                 f"experiments/phase2/configs/r0.yaml first' >&2; false; }}; }}"
+        guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run train_sft "
+                 f"--vision-reference-only first' >&2; false; }}; }}"
                  for r in vision_refs(ROOT / a.module, a.run_id)]  # fmt: skip
     elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
         stages, name = [["-m", a.module, *a.args]], a.module.rsplit(".", 1)[1]

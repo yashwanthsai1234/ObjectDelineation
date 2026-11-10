@@ -15,7 +15,7 @@ timing). Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor;
 Rolling checkpoints (optimizer included, limit 3; stable/e<b> hard-links one; rolling/ is deleted once every stable/e<b>
 exists, decay/<b> once branches/<b> does) every `rolling_minutes`, each with the G-vision check
 (objdel.eval.vision, §5.1) on the training device and dtype (the reference is CPU float32, B1): ratio < 0.5 **and**
-TV < 0.002 aborts with the reason in manifest.json (exit 3; D7 repair: freeze_vision), one alone warns.
+TV < 0.002 aborts with the reason in manifest.json (exit 3), one alone warns.
 
 G-vision is required (D7, D12): `vision: {prepared, reference}`, reference = the base projector distance, a number or
 the JSON `--vision-reference-only` writes in R0 (§4.7 step 8: base model, CPU, float32, vision.fixed_set).
@@ -32,8 +32,8 @@ log, pid, status and `timing` (stable optimizer steps, mean s/step after WARM st
 CUDA GiB or null, rows per view epoch; a resumed segment keeps the first) and `peak_memory_gib` per
 phase (stable, e<b>). `--resume` continues a crashed run (status "running", same config and view): the newest
 complete rolling checkpoint (refused if it is past a branch point whose stable/e<b> is missing), then each unsaved
-branch (from its own decay checkpoint when there is one). Full-FT checkpoints are loaded through from_pretrained (its
-key conversion; missing or unexpected keys raise). PYTORCH_ALLOC_CONF=expandable_segments:True unless set (D4).
+branch (from its own decay checkpoint when there is one). Every model is LoRA (ADR-0008) over a frozen bf16 base.
+PYTORCH_ALLOC_CONF=expandable_segments:True unless set (D4).
 
 `deterministic: true` (D24, R0 timing arms): CUBLAS_WORKSPACE_CONFIG=:4096:8 unless set, and
 torch.use_deterministic_algorithms(True, warn_only=True), before anything loads; never `sft: full_determinism` (it
@@ -75,7 +75,7 @@ WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator an
 BOX_DATA, BOX_RUNS = Path("/workspace/data/lidc"), Path("/workspace/runs")  # sync_up / pull.sh on a Vast box (M7)
 
 
-SAME_RUN = ("model", "branches", "a0", "freeze_vision", "seed", "steps_per_epoch", "sft")  # resume check
+SAME_RUN = ("model", "branches", "a0", "seed", "steps_per_epoch", "sft")  # resume check
 
 
 TRAINER_FILES = ("optimizer", "scheduler", "rng_state", "trainer_state", "adapter_")
@@ -189,7 +189,7 @@ def record_vision(man: dict, step: int, res: dict) -> bool:
     man["vision"].append({"step": step} | {k: res.get(k) for k in keys})
     if res["action"] == "abort":
         man["abort"] = {"step": step, "reason": f"G-vision (a) ratio {res['ratio']:.4g} < 0.5 and (b) TV "
-                                                f"{res['tv']:.4g} < 0.002 (D7 repair: rerun with freeze_vision)"}
+                                                f"{res['tv']:.4g} < 0.002"}
     return res["action"] == "abort"
 
 
@@ -265,8 +265,8 @@ def train(args) -> int:
     proc = AutoProcessor.from_pretrained(src, **configs.processor_kwargs(args.model, "lidc"))
     rows = dataset.view_rows(args.view, proc.tokenizer, configs.MAX_COMPLETION[args.model], a0=args.a0)
     epochs, lengths = list(rows["epoch"]), list(rows["length"])
-    peft = configs.lora(args.model)  # D6: LM-only LoRA r16 for Qwen3-VL-2B, else full FT
-    dtype = getattr(torch, configs.dtype(peft is not None))  # fp32 for full FT (bf16 autocast), bf16 frozen LoRA base
+    peft = configs.lora(args.model)  # D6: LM-only LoRA r16
+    dtype = torch.bfloat16  # the frozen LoRA base
     gbs = args.sft.get("per_device_train_batch_size", 8) * args.sft.get("gradient_accumulation_steps", 1)  # 1 GPU
     rows0 = epochs.count(min(epochs, default=0))  # rows of one view epoch
     p = man["plan"] = plan(args, args.steps_per_epoch or rows0 // gbs)
@@ -292,20 +292,6 @@ def train(args) -> int:
                 order += [idx[j] for j in get_length_grouped_indices([lengths[i] for i in idx], bs, generator=g)]
             return order
 
-        def _load_from_checkpoint(self, resume_from_checkpoint, model=None):
-            """Full FT through from_pretrained, which applies the checkpoint key conversion: LFM2.5-VL saves its
-            tower as model.vision_tower.vision_model.*, and the parent's load_state_dict(strict=False) skipped all of
-            it with a warning (every branch and crash resume restarted the tower from base). Adapters: the parent."""
-            if (Path(resume_from_checkpoint) / "adapter_config.json").exists():
-                return super()._load_from_checkpoint(resume_from_checkpoint, model)
-            saved, info = AutoModelForImageTextToText.from_pretrained(
-                resume_from_checkpoint, dtype=dtype, output_loading_info=True)
-            bad = {k: sorted(map(str, info[k])) for k in ("missing_keys", "unexpected_keys", "mismatched_keys")}
-            bad["missing_keys"] = [k for k in bad["missing_keys"] if k not in saved.all_tied_weights_keys]
-            if any(bad.values()):
-                raise ValueError(f"{resume_from_checkpoint}: not this model's full checkpoint: {bad}")
-            (model or self.model).load_state_dict(saved.state_dict())  # strict: same class, same keys
-
     class Rolling(TrainerCallback):
         def __init__(self, keep_at=(), stop_at=None):
             self.keep_at, self.stop_at, self.last, self.stamps = dict(keep_at), stop_at, time.monotonic(), []
@@ -329,21 +315,14 @@ def train(args) -> int:
                 write_json(out / "manifest.json", man)
 
     def trainer(out_dir, branch_at=None, keep_at=(), stop_at=None):
-        # this phase's peak (LFM full FT: R0 arm 16.4 GiB, R1 stable 20.9; Qwen3-VL LoRA R1: 6.1)
+        # this phase's peak (Qwen3-VL LoRA R1: 6.1 GiB)
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         model = AutoModelForImageTextToText.from_pretrained(src, dtype=dtype)
         o = {"seed": args.seed, "data_seed": args.seed, "save_strategy": "no", "save_total_limit": 3}
         o |= {"logging_steps": 10}
         cfg = configs.sft_config(args.model, str(out_dir), p["stable"], branch_at, **(o | args.sft))
-        opt = None
-        if not peft:  # full FT: vision tower + projector at 0.1x (D7), or frozen (the D7 repair)
-            lm, vision = configs.param_groups(model, cfg.learning_rate)
-            for prm in vision["params"] if args.freeze_vision else ():
-                prm.requires_grad_(False)
-            groups = [lm] if args.freeze_vision else [lm, vision]
-            opt = torch.optim.AdamW(groups, lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
-        kw = {"train_dataset": rows, "processing_class": proc, "peft_config": peft, "optimizers": (opt, None)}
+        kw = {"train_dataset": rows, "processing_class": proc, "peft_config": peft}
         calls = [Rolling(keep_at, stop_at)] + ([callbacks.TraceStep(args.profile, WARM)] if args.profile else [])
         return Trainer(model=model, args=cfg, callbacks=calls, **kw)
 

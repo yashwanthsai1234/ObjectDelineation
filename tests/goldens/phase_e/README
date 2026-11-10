@@ -69,3 +69,6 @@ train_sft: main; select_ckpt: main, judge, topology_only, vision_config, dump, P
 train_log, candidates, probe, main, save); the moved names live in objdel.rl.build, objdel.rl.run, objdel.sft.train,
 objdel.sft.select, objdel.policy.evaluate, objdel.policy.sampler and objdel.core.provenance (CODE, code_hashes).
 Goldens 4 and 6 unchanged (build_trainer resolves the same GRPOConfig and update).
+CLEAN8 (impl2-CLEAN8f, on a0e41f7): old_names re-recorded: train/configs.py loses dtype and param_groups (full
+fine-tuning retired with the 450M model; every model is LoRA). Goldens 1-6 unchanged (no reward, target, chain of a
+live plan or GRPOConfig value changes: CLEAN8 deletes only the 450M key and the full fine-tuning branches).

@@ -557,7 +557,7 @@ def score_precision(rows, root="data/eval_views/probe-precision", split="val", r
 
 def stratified_ci(per_bin, weights, rng, B=2000):
     """Weighted mean of the bin means and its within-bin percentile bootstrap 95 % CI
-    (archive/phase2_lab/B3 power_c2.pooled; also c2_analyze's pooled CI).
+    (archive/phase2_lab/B3 power_c2.pooled; also the archived c2_analyze's pooled CI).
     Rounded to 12 decimals: an exact 288 / 960 hits sums to 0.29999999999999993 in floats and would miss the
     C2 floor 0.30 (BK2-4; the same tolerance as objdel.eval.signal.DIGITS)."""
     per_bin = [np.asarray(x, float) for x in per_bin]
@@ -593,7 +593,7 @@ def score_topology(rows, root="data/eval_views/probe-topology", split="val", B=2
             false_ns.append(np.mean([s is not None and s != (0,) for s in sigs]))
     pooled = stratified_ci(mean, BIN_WEIGHTS, np.random.default_rng(seed), B)
     res = {
-        "bins": [[float(v) for v in x] for x in mean],  # per-item mean hit (c2_analyze input)
+        "bins": [[float(v) for v in x] for x in mean],  # per-item mean hit (the C2 analysis input)
         "hole_recall": {
             "bins": [float(np.mean(x)) for x in mean],
             "n_bins": [len(x) for x in mean],

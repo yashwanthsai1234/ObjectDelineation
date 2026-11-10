@@ -3,8 +3,9 @@
 `--help` for each script; the WSD step plan; the G-vision abort / warn rule (mocked check results); select_ckpt's
 "train_sft has exited" and "CUDA untouched" guards; R-B with the eligibility floors on the B2 fixture panels; the
 WSD-branch mechanism (stable checkpoint + resumed decay = one uninterrupted WSD run, bit for bit); sample_vllm's
-free-memory refusal (mocked); and a slow CPU smoke on a tiny random LFM2-VL (cached processor, no download):
-synthetic store -> build_views -> train_sft (2 stable steps, 2 branches) -> select_ckpt with the HF sampler.
+free-memory refusal (mocked); and a slow CPU smoke on a tiny random Qwen3-VL (cached processor, no download):
+synthetic store -> build_views -> train_sft (2 stable steps, 2 branches) -> select_ckpt with the HF sampler -> g_probe,
+completions capped at a few tokens (a random model never stops).
 """
 
 import json
@@ -63,7 +64,7 @@ def test_help(script):
 def test_configs_parse_as_sft_stages(path):
     pytest.importorskip("yaml")  # PyYAML comes with the train extra (transformers)
     args = stage_of(path)
-    assert args.model in ("lfm2.5-vl-450m", "qwen3-vl-2b") and args.view.startswith("views/")
+    assert args.model in ("qwen3-vl-2b",) and args.view.startswith("views/")
     assert sft_train.resolve(args).data_root == "data" and all(b > 0 for b in args.branches)
     assert args.sft.get("gradient_accumulation_steps", 4) * args.sft.get("per_device_train_batch_size", 8) == 32  # D5
 
@@ -71,7 +72,7 @@ def test_configs_parse_as_sft_stages(path):
 def test_config_set_complete():
     yaml = pytest.importorskip("yaml")
     names = {p.stem for p in CONFIGS}
-    assert names == {"r1_lfm", "r1_qwen3vl2b", "r0_qwen3vl_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1"}
+    assert names == {"r1_qwen3vl2b", "r0_qwen3vl_arm", "rx8", "c2_a0p_seed2", "c2_a0p_seed3", "c2_a0_seed1"}
     assert yaml.safe_load((ROOT / "experiments/phase2/configs/c2_a0_seed1.yaml").read_text())["a0"] is True
 
 
@@ -79,12 +80,12 @@ def test_plan_branches_decay_warmup():
     pytest.importorskip("trl")
     from objdel.train import configs
 
-    p = sft_train.plan(stage("lfm2.5-vl-450m", "v", "o"), 1000)
+    p = sft_train.plan(stage("qwen3-vl-2b", "v", "o"), 1000)
     assert p["branches"] == {"e0.5": {"at": 500, "decay": 75}, "e1": {"at": 1000, "decay": 150},
                              "e2": {"at": 2000, "decay": 300}}
     assert p["stable"] == 2000 and p["warmup"] == 60  # 3 % of the stable steps
     for b in p["branches"].values():  # the plan is the schedule configs.sft_config builds
-        cfg = configs.sft_config("lfm2.5-vl-450m", "o", p["stable"], b["at"])
+        cfg = configs.sft_config("qwen3-vl-2b", "o", p["stable"], b["at"])
         assert cfg.max_steps == b["at"] + b["decay"] and cfg.warmup_steps == p["warmup"]
 
 
@@ -162,12 +163,13 @@ def test_eligibility_floors():
 
 
 def test_rb_on_fixture_branch_panels():
-    """R-B over the B2 fixture panels (LFM shifted val, 36 vs 150 steps) with the eligibility floors applied."""
+    """R-B over the B2 fixture panels (shifted val of the retired 450M model, 36 vs 150 steps) with the eligibility
+    floors applied."""
     from experiments.phase2 import prereg
     from objdel.eval import signal
 
     fix = json.loads((ROOT / "tests/p2_signal_fixture.json").read_text())["runs"]
-    shallow, deep = (signal.panel(signal.rows(fix[r])) for r in ("lfm2.5-vl-450m_s0", "lfm2.5-vl-450m_s0_n150"))
+    shallow, deep = (signal.panel(signal.rows(fix[r])) for r in sorted(fix, key=len))  # <model>_s0, <model>_s0_n150
     bs = [
         {"name": "e0.5", "depth": 0.5, "panel": shallow, "eligible": _eligible(_summary(), OK)},
         {"name": "e2", "depth": 2.0, "panel": deep, "eligible": _eligible(_summary(), OK)},
@@ -302,11 +304,6 @@ def test_sample_vllm_refuses_below_90_percent_free():
 
 
 TINY = {  # model key -> (cached hub id, config fields of a random 2-layer model)
-    "lfm2.5-vl-450m": ("LiquidAI/LFM2.5-VL-450M", dict(
-        text=dict(hidden_size=32, intermediate_size=64, block_dim=32, block_ff_dim=64, conv_dim=32, conv_dim_out=32,
-                  num_hidden_layers=2, layer_types=["conv", "full_attention"], num_attention_heads=2, num_heads=2,
-                  num_key_value_heads=1),
-        vision=dict(hidden_size=32, intermediate_size=64, num_hidden_layers=1, num_attention_heads=2))),
     "qwen3-vl-2b": ("Qwen/Qwen3-VL-2B-Instruct", dict(
         text=dict(hidden_size=64, intermediate_size=128, num_hidden_layers=2, num_attention_heads=4,
                   num_key_value_heads=2, head_dim=16,
@@ -317,7 +314,7 @@ TINY = {  # model key -> (cached hub id, config fields of a random 2-layer model
 }
 
 
-def _tiny_vlm(out: Path, model: str = "lfm2.5-vl-450m") -> Path:
+def _tiny_vlm(out: Path, model: str = "qwen3-vl-2b") -> Path:
     """A random 2-layer model of `model` with its cached processor (no download)."""
     torch = pytest.importorskip("torch")
     from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
@@ -331,8 +328,6 @@ def _tiny_vlm(out: Path, model: str = "lfm2.5-vl-450m") -> Path:
         pytest.skip(f"{hub} config / processor not in the local HF cache")
     cfg.text_config.update(dims["text"])
     cfg.vision_config.update(dims["vision"])
-    if model == "lfm2.5-vl-450m":
-        cfg.projector_hidden_size = 32
     torch.manual_seed(0)
     AutoModelForImageTextToText.from_config(cfg).save_pretrained(out)
     proc.save_pretrained(out)
@@ -340,17 +335,17 @@ def _tiny_vlm(out: Path, model: str = "lfm2.5-vl-450m") -> Path:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("name, select", [("lfm2.5-vl-450m", True), ("qwen3-vl-2b", False)],
-                         ids=["lfm-full-ft", "qwen3-vl-lora"])  # full FT; LoRA with checkpointing (D6)
-def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
-    """train_sft (G-vision at the branch points, WSD branches) then, for the LFM only, select_ckpt and g_probe: a random
-    Qwen3-VL never stops, so its 1,536-token samples would take hours on a CPU."""
+def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
+    """train_sft (LoRA with checkpointing, D6; G-vision at the branch points, WSD branches), select_ckpt and g_probe.
+    A random Qwen3-VL never stops, so its 1,536-token samples would take hours on a CPU: select_ckpt's max_tokens and
+    g_probe's flags.grpo cap them (CLEAN8)."""
     pytest.importorskip("trl")
     from experiments.phase2 import build_views as BV
     from objdel.core.spec import to_argv
     from objdel.data import store
     from objdel.train import dataset
 
+    name = "qwen3-vl-2b"
     model = _tiny_vlm(tmp_path / "tiny", name)
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
@@ -376,23 +371,23 @@ def test_cpu_smoke_train_then_select(name, select, tmp_path, synthetic_items):
         files = {f.name for f in (run / d).iterdir()}
         assert "model.safetensors" in files and not {f for f in files if f.startswith("adapter_")}, (d, files)
     ev = str(tmp_path / "evalview")
-    if select:
-        vision = json.dumps({"prepared": ev, "reference": str(ref)})  # the run's block
-        sel = _module("experiments.phase2.select_ckpt", "--run", str(run), "--shifted", ev, "--sampler", "hf",
-                      "--prepared", ev, "--vision", vision, env=env)
-        assert sel.returncode == 0, sel.stderr[-4000:]
-        doc = json.loads((run / "select/selected.json").read_text())
-        assert set(doc["branches"]) == {"e0.5", "e1"} and doc["sampler"] == "hf" and doc["cuda_initialized"] is False
-        assert doc["checker"] == "cpu"  # the exam scored through objdel._gpucheck (its CPU build on this machine)
-        for b in ("e0.5", "e1"):
-            lines = (run / "select" / b / "shifted/completions.jsonl").read_text().splitlines()
-            assert lines and all(np.isfinite(json.loads(x)["k"]) for x in lines)
-        gates = json.loads((run / "select/gates.json").read_text())
-        assert "ci_lo/shifted/lidc/nodule" in gates["gates"]["G-prior-b"]["values"]
-        assert gates["gates"]["G-vision"]["values"]["ratio"] is not None  # measured on every branch
-        k16 = json.loads((run / "select/report.json").read_text())["k16"]["datasets"]["lidc"]
-        assert k16["samples"] == 16 * k16["items"] and "hm_iou" in k16["objects"]["nodule"]
-    best = run / "branches" / (doc["selected"] or "e1") if select else run / "branches/e1"
+    vision = json.dumps({"prepared": ev, "reference": str(ref)})  # the run's block
+    sel = _module("experiments.phase2.select_ckpt", "--run", str(run), "--shifted", ev, "--sampler", "hf",
+                  "--prepared", ev, "--vision", vision, "--max-tokens", "16", env=env)
+    assert sel.returncode == 0, sel.stderr[-4000:]
+    doc = json.loads((run / "select/selected.json").read_text())
+    assert set(doc["branches"]) == {"e0.5", "e1"} and doc["sampler"] == "hf" and doc["cuda_initialized"] is False
+    assert doc["checker"] == "cpu"  # the exam scored through objdel._gpucheck (its CPU build on this machine)
+    for b in ("e0.5", "e1"):
+        lines = (run / "select" / b / "shifted/completions.jsonl").read_text().splitlines()
+        assert lines and all(np.isfinite(json.loads(x)["k"]) for x in lines)
+        assert all(len(json.loads(x)["token_ids"]) <= 16 for x in lines)  # the cap reached the sampler
+    gates = json.loads((run / "select/gates.json").read_text())
+    assert "ci_lo/shifted/lidc/nodule" in gates["gates"]["G-prior-b"]["values"]
+    assert gates["gates"]["G-vision"]["values"]["ratio"] is not None  # measured on every branch
+    k16 = json.loads((run / "select/report.json").read_text())["k16"]["datasets"]["lidc"]
+    assert k16["samples"] == 16 * k16["items"] and "hm_iou" in k16["objects"]["nodule"]
+    best = run / "branches" / (doc["selected"] or "e1")
     gp = _module("experiments.phase2.g_probe", "--model", name, "--ckpt", str(best), "--train", ev,
                  "--probe", ev, "--out", str(run / "gp"), "--grpo", json.dumps(GRPO_SMOKE), env=env)
     assert gp.returncode == 0, gp.stderr[-4000:]

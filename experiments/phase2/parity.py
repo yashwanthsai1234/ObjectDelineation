@@ -1,4 +1,5 @@
-"""H-A5-2(a) logprob parity on a sampled checkpoint (from archive/phase2_lab/B5/hf_teacher.py, S1-16; R0 calls compare via r0_parity).
+"""H-A5-2(a) logprob parity on a sampled checkpoint (from archive/phase2_lab/B5/hf_teacher.py, S1-16; R0 called compare through
+r0_parity, archived in CLEAN8).
 
     .venv/bin/python -I -m experiments.phase2.parity --prompts P.jsonl --completions C.jsonl --model DIR --out R.json
 

@@ -7,7 +7,8 @@ applies rule R-B and the gates; never touches CUDA.
     python -I -m experiments.phase2.select_ckpt --run runs/c2 --probes DIR --only topology [--sampler hf]
     python -I -m experiments.phase2.select_ckpt --spec specs/r1_qwen3vl2b.yaml --stage select [--rd RD] [--data DATA]
 
-The flags are an objdel.core.spec.SelectStage (cli_stage): K is -k and the sampler timeout --timeout-s. The order of
+The flags are an objdel.core.spec.SelectStage (cli_stage): K is -k and the sampler timeout --timeout-s; --max-tokens
+caps every sampled completion below the model's budget (the CPU smoke on a random model, which never stops). The order of
 work, the sampler child and the outputs: objdel.sft.select.
 """
 

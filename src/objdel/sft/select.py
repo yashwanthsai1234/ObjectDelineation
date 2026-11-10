@@ -27,7 +27,8 @@ branch with HF on HF_CHECK_ITEMS shifted-val items; a vLLM - HF metric differenc
 <out>/<branch>/<view>/ for re-scoring on the Mac.
 
 --only topology (C2, PLAN §6.1 R3-R5): the topology probe alone on the run's single branch at K = --k into
-<out>/report.json {"only", "branch", "sampler", "k", "probes": {"topology"}} (c2_analyze reads probes.topology).
+<out>/report.json {"only", "branch", "sampler", "k", "probes": {"topology"}} (archive/phase2_runs/c2_analyze.py read
+probes.topology).
 No selection, other views, G-vision, prior or gates; --vision and --no-vision are refused, the other flags ignored.
 
 References: PLAN D12 (R-B), D13, §5.1, §6.1 R1; https://docs.vllm.ai/en/stable/serving/offline_inference.html
@@ -192,7 +193,8 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     proc = AutoProcessor.from_pretrained(branch)  # saved by train_sft with the run's processor kwargs
     stop = sampler.stop_ids(branch, proc)
     prompts, comps = out / "prompts.jsonl", out / "completions.jsonl"
-    sample.export_prompts(rows, prompts, a.model, "lidc", k, processor=proc, stop_ids=stop, seed=a.seed)
+    sample.export_prompts(rows, prompts, a.model, "lidc", k, processor=proc, stop_ids=stop, seed=a.seed,
+                          max_tokens=a.max_tokens)
     run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), extra)
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
 
@@ -229,7 +231,7 @@ def score_probe(a, branch: Path, p: str, out: Path) -> dict:
 
     d = a.probes / f"probe-{p}"
     done = sample_view(a, branch, evaluate.view_rows(d, rl_only=False), out / f"probe-{p}", a.k)
-    return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # c2_analyze pairs seeds
+    return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # ids pair the seeds (C2)
 
 
 def hf_check(a, name: str, out: Path) -> dict:

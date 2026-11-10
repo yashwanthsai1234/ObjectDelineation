@@ -1,10 +1,8 @@
 """V1 readiness of train_sft: deterministic mode without full_determinism (PLAN D24), the run manifest's timing
-block, C2's depth read from R2's g_probe.json (branches_from) and runner-only config keys (project_r1, the R0 stop
-rule: test_p2_hf_eval)."""
+block, C2's depth read from R2's g_probe.json (branches_from) and runner-only config keys."""
 
 import json
 import os
-import shutil
 from pathlib import Path
 
 import pytest
@@ -45,7 +43,7 @@ def test_deterministic_is_applied_before_anything_loads(TS, tmp_path, monkeypatc
     import torch
 
     monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
-    a = stage("lfm2.5-vl-450m", _view(tmp_path, 0), str(tmp_path / "o"), vision=False, deterministic=True)
+    a = stage("qwen3-vl-2b", _view(tmp_path, 0), str(tmp_path / "o"), vision=False, deterministic=True)
     try:
         with pytest.raises(ValueError, match="view epoch"):
             TS.train(a)
@@ -95,7 +93,7 @@ def test_alloc_conf_is_set_before_anything_loads(TS, tmp_path, monkeypatch):
     """PLAN D4: expandable segments (fragmentation), read by the CUDA caching allocator at its first allocation."""
     monkeypatch.setenv("PYTORCH_ALLOC_CONF", "")  # restored after the test
     monkeypatch.delenv("PYTORCH_ALLOC_CONF")
-    a = stage("lfm2.5-vl-450m", _view(tmp_path, 0), str(tmp_path / "o"), vision=False)
+    a = stage("qwen3-vl-2b", _view(tmp_path, 0), str(tmp_path / "o"), vision=False)
     with pytest.raises(ValueError, match="view epoch"):
         TS.train(a)
     assert os.environ["PYTORCH_ALLOC_CONF"] == "expandable_segments:True"
@@ -116,7 +114,7 @@ def _tiny_args(TS, tmp_path, synthetic_items, model_path=None, **kw):
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
     o = {"branches": [0.5, 1.0], "steps_per_epoch": 10, "vision": False, "rolling_minutes": 1e3, "sft": CPU_SFT,
          "model_path": model_path or str(_tiny_vlm(tmp_path / "m"))}
-    return stage("lfm2.5-vl-450m", str(tmp_path / "view"), str(tmp_path / "o"), **(o | kw))
+    return stage("qwen3-vl-2b", str(tmp_path / "view"), str(tmp_path / "o"), **(o | kw))
 
 
 def _manifest_of(tmp_path):
@@ -199,71 +197,6 @@ def test_a_vision_abort_in_a_decay_saves_no_branch(TS, tmp_path, synthetic_items
     assert not (out / "branches").exists() and (out / "stable/e0.5").is_dir()
 
 
-class _Stop(Exception):
-    pass
-
-
-def _resume_branch(TS, tmp_path, synthetic_items, monkeypatch, base, ckpt):
-    """ckpt (a saved model) as stable/e1, a finished stable phase; train() up to the moment the e1 branch trainer has
-    loaded it: returns that trainer's model state_dict (the decay itself is not run)."""
-    import trl
-    from transformers.trainer_callback import TrainerState
-
-    loaded = {}
-
-    class Spy(trl.SFTTrainer):
-        def _inner_training_loop(self, *a, **k):  # called after _load_from_checkpoint and the trainer state
-            loaded.update(self.model.state_dict())
-            raise _Stop
-
-    monkeypatch.setattr(trl, "SFTTrainer", Spy)
-    a = _tiny_args(TS, tmp_path, synthetic_items, model_path=str(base), branches=[1.0])
-    shutil.copytree(ckpt, tmp_path / "o/stable/e1")
-    TrainerState(global_step=10, max_steps=10).save_to_json(str(tmp_path / "o/stable/e1/trainer_state.json"))
-    with pytest.raises(_Stop):
-        TS.train(a)
-    return loaded
-
-
-@pytest.mark.slow
-def test_branch_resume_restores_the_trained_vision_tower(TS, tmp_path, synthetic_items, monkeypatch):
-    """V1 R1: LFM2.5-VL saves its tower as model.vision_tower.vision_model.*, the live module is model.vision_tower.*;
-    Trainer's load_state_dict(strict=False) skipped all 198 tower tensors with a warning, so every branch (and every
-    crash resume) restarted the tower from base. Real weights: the tiny LFM config does not rename them."""
-    torch = pytest.importorskip("torch")
-    from huggingface_hub import snapshot_download
-    from transformers import AutoModelForImageTextToText
-
-    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
-    try:
-        src = snapshot_download("LiquidAI/LFM2.5-VL-450M", local_files_only=True)
-    except Exception:
-        pytest.skip("LFM2.5-VL-450M not in the local HF cache")
-    model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.float32)
-    with torch.no_grad():
-        model.get_parameter("model.vision_tower.embeddings.patch_embedding.weight").add_(0.5)  # "trained"
-    model.save_pretrained(tmp_path / "ckpt")
-    want = {k: v.detach().clone() for k, v in model.state_dict().items() if ".vision_tower." in k}
-    del model
-    loaded = _resume_branch(TS, tmp_path, synthetic_items, monkeypatch, src, tmp_path / "ckpt")
-    assert len(want) > 190 and all(torch.equal(loaded[k], v) for k, v in want.items())
-    assert torch.equal(loaded["lm_head.weight"], loaded["model.language_model.embed_tokens.weight"])  # still tied
-
-
-@pytest.mark.slow
-def test_branch_resume_refuses_a_checkpoint_missing_weights(TS, tmp_path, synthetic_items, monkeypatch):
-    import safetensors.torch
-    from test_p2_scripts import _tiny_vlm
-
-    base = _tiny_vlm(tmp_path / "m")
-    shutil.copytree(base, tmp_path / "ckpt")
-    sd = safetensors.torch.load_file(tmp_path / "ckpt/model.safetensors")
-    sd.pop(next(k for k in sd if "vision" in k))
-    safetensors.torch.save_file(sd, tmp_path / "ckpt/model.safetensors", metadata={"format": "pt"})
-    with pytest.raises(ValueError, match="missing"):
-        _resume_branch(TS, tmp_path, synthetic_items, monkeypatch, base, tmp_path / "ckpt")
-
-
 @pytest.mark.parametrize("name", ["r1_qwen3vl2b", "r0_qwen3vl_arm", "c2_a0p_seed2"])
 def test_qwen3_vl_configs_train_as_one_recipe(name):
     """The 30-step arm and the C2 runs train exactly as R1 does: LM-only LoRA r16 (a 24 GB card cannot hold full
@@ -285,15 +218,15 @@ def test_c2_configs_take_their_depth_from_g_probe():
 
 
 def _probe(tmp_path, **doc):
-    (tmp_path / "r1-lfm/g_probe").mkdir(parents=True)
-    (tmp_path / "r1-lfm/g_probe/g_probe.json").write_text(json.dumps(doc))
-    return "r1-lfm/g_probe/g_probe.json"
+    (tmp_path / "r1-qwen3vl2b/g_probe").mkdir(parents=True)
+    (tmp_path / "r1-qwen3vl2b/g_probe/g_probe.json").write_text(json.dumps(doc))
+    return "r1-qwen3vl2b/g_probe/g_probe.json"
 
 
 def test_branches_from_reads_the_final_verdict_checkpoint(TS, tmp_path):
-    ckpt = "/workspace/runs/v1/r1-lfm/branches/e0.5"  # D12(c): the repair branch e0.5 got the final verdict
+    ckpt = "/workspace/runs/v1/r1-qwen3vl2b/branches/e0.5"  # D12(c): the repair branch e0.5 got the final verdict
     rel = _probe(tmp_path, verdict="INCONCLUSIVE", ckpt=ckpt, probed=["e1", "e0.5"])
-    a = stage("lfm2.5-vl-450m", _view(tmp_path, 0), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
+    a = stage("qwen3-vl-2b", _view(tmp_path, 0), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
     with pytest.raises(ValueError, match="decays to 0.575 epochs"):  # resolved to [0.5] before the view check
         TS.train(a)
     assert a.branches == (0.5, 1.0, 2.0)  # a frozen stage: train rebinds a copy, the input is unchanged
@@ -303,14 +236,14 @@ def test_branches_from_reads_the_final_verdict_checkpoint(TS, tmp_path):
     "doc", [None, {"verdict": None, "skipped": "gates"}, {"ckpt": "b/e1"}, {"verdict": "PASS", "ckpt": "c"}]
 )
 def test_branches_from_refuses_without_a_verdict(TS, tmp_path, doc):
-    rel = _probe(tmp_path, **doc) if doc else "r1-lfm/g_probe/g_probe.json"
-    a = stage("lfm2.5-vl-450m", _view(tmp_path, 3), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
+    rel = _probe(tmp_path, **doc) if doc else "r1-qwen3vl2b/g_probe/g_probe.json"
+    a = stage("qwen3-vl-2b", _view(tmp_path, 3), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
     with pytest.raises(SystemExit, match="C2 must not start"):
         TS.train(a)
     assert not (tmp_path / "c2").exists()
 
 
-@pytest.mark.parametrize("path", C2 + [CONFIGS / "r1_lfm.yaml"], ids=lambda p: p.stem)
+@pytest.mark.parametrize("path", C2 + [CONFIGS / "r1_qwen3vl2b.yaml"], ids=lambda p: p.stem)
 def test_runner_only_keys_are_not_stage_fields(TS, path):
     """U22: an SftStage takes the launch config minus the runner-only keys, and refuses those keys."""
     from pydantic import ValidationError

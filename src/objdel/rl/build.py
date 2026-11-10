@@ -28,7 +28,7 @@ def build_trainer(model: str, ckpt: Path, rows, out: Path, roots: Sequence[Path]
                   eval_dataset=None, check=None, calls=(), reward=None, record_dir: Path | None = None,
                   **over) -> Built:
     """FastGRPO (or, with flags.plain, TRL's GRPOTrainer) on ckpt with configs.grpo_config, the model's GRPO sampling
-    and the probe LR (LoRA or full FT; flags.lr overrides when set). rows: the training rows; out: the run folder
+    and the probe LR (configs.rl_lr; flags.lr overrides when set). rows: the training rows; out: the run folder
     (the trainer writes out/trainer); roots: the prepared roots whose caches the reward reads (the held-out view
     first when eval_dataset is given). check(config) runs before the model loads (train_rl's sampler guards); calls:
     more callbacks; reward: the reward spec (objdel.reward.REWARDS; None: reward v4); record_dir: C0's batch folder

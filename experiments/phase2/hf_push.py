@@ -1,6 +1,6 @@
 """Upload a run's selected branch to the owner's private HF model repo (on the box; the Mac runs push_hf.sh).
 
-    python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-lfm < token
+    python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
     python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
     be the run's)
@@ -10,8 +10,8 @@ on disk); push_hf.sh refuses it unless token_problems is empty: fine-grained, wr
 owner's free HF account has no card; storage only, never inference, endpoints or jobs). Refused here: a repo that is
 not private, a run trained on anything but LIDC (RIGA's licence forbids redistribution, D16), a run with no selected
 branch (select_ckpt: none passed D12). One commit on branch `revision` (created if missing): the files of
-<run>/branches/<selected>, the base model's LICENSE (LFM Open License v1.0 §4(a); Apache-2.0 for Qwen) and a model
-card stating the change (§4(b)), the base model, the selection and the LIDC-IDRI attribution (CC BY 3.0).
+<run>/branches/<selected>, the base model's LICENSE (Apache-2.0 for Qwen) and a model card
+stating the change, the base model, the selection and the LIDC-IDRI attribution (CC BY 3.0).
 --card-only --headline docs/results/headline.json (no --run or --rl): the card's Evaluation and Limitations sections
 at <revision>, written by card_update; the weights stay. The full-push card() is unchanged.
 --rl (a train_rl output, always LIDC): <out>/final at the revision's root (the plain model folder fetch_hf.sh and
@@ -88,10 +88,10 @@ def card(base: str, meta: dict, man: dict, sel: dict, run: Path) -> str:
     c = man["config"]
     head = {k: meta[k] for k in ("license", "license_name", "license_link") if meta.get(k)}
     head |= {"base_model": base, "tags": ["medical-imaging", "segmentation", "lidc-idri"]}
-    how = "LoRA, merged into the base weights" if c.get("lora") else "full fine-tune"
     failed = f" (failed: {', '.join(sel['gates_failed'])})" if sel["gates_failed"] else ""
     return (f"---\n{yaml.safe_dump(head, sort_keys=False)}---\n\n# objdel SFT {run.name}, branch {sel['selected']}\n\n"
-            f"Modified from [{base}](https://huggingface.co/{base}) by the objdel project ({how}): every weight file "
+            f"Modified from [{base}](https://huggingface.co/{base}) by the objdel project (LoRA, merged into the "
+            f"base weights; every model is LoRA, ADR-0008): every weight file "
             f"here differs from the base model's. The base licence is in LICENSE.\n\n"
             f"- Run {run.name}: seed {c['seed']}, WSD branches {c['branches']}; selected branch {sel['selected']} "
             f"(sampler {sel['sampler']}, K = {sel['k']}, {sel['items'] or 'all'} items); gates pass: "
@@ -193,7 +193,7 @@ def main(argv=None) -> int:
     src.add_argument("--run", type=Path, help="train_sft output dir (select/ inside)")
     src.add_argument("--rl", type=Path, help="train_rl output dir (final/ and final_adapter/ inside)")
     ap.add_argument("--repo", required=True)
-    ap.add_argument("--revision", required=True, help="the repo branch, e.g. r1-lfm")
+    ap.add_argument("--revision", required=True, help="the repo branch, e.g. r1-qwen3vl2b")
     ap.add_argument("--view", type=Path, help="local copy of the training view (default: the manifest's path)")
     a = ap.parse_args(argv)
     token = sys.stdin.readline().strip() or sys.exit("hf_push: no token on stdin")

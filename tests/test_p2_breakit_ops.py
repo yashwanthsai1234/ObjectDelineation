@@ -137,7 +137,7 @@ def test_config_outputs_land_where_pull_reads(monkeypatch):
         out = sft_train.resolve(stage("m", "v", config_value(c, "output_dir"), vision=False)).output_dir
         assert PurePosixPath("/workspace/runs/v1") in PurePosixPath("/workspace/src", out).parents, c.name
     monkeypatch.delenv("OBJDEL_RUN_DIR")
-    assert sft_train.resolve(stage("m", "v", "r1-lfm", vision=False)).output_dir == str(Path("runs/r1-lfm"))
+    assert sft_train.resolve(stage("m", "v", "r1-x", vision=False)).output_dir == str(Path("runs/r1-x"))
 
 
 def test_config_data_root_is_the_box_bundle_dir(tmp_path, monkeypatch):

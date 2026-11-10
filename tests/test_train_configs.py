@@ -1,5 +1,6 @@
 """objdel.train.configs: plan D8 (GRPO), SFT settings, D12 image sizes, the I5 completion budget; CLEAN7 (the 256M
-model retired: CT-05, CT-06, CT-07)."""
+model retired: CT-05, CT-06, CT-07); CLEAN8 (the 450M model and full fine-tuning retired: CT-62, CT-88)."""
+import ast
 import dataclasses
 import re
 import subprocess
@@ -15,13 +16,18 @@ from objdel.train import configs  # noqa: E402
 from objdel.train.rewards import LOGGED  # noqa: E402
 
 OLD = "smol" + "vlm-256m"  # the retired key, built so this file never holds the word
+OLD8 = "l" + "fm2.5-vl-450m"  # CLEAN8's retired key, built the same way
+ROOT = Path(__file__).resolve().parents[1]
+KEPT_MODELS = {"qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct"}  # CT-62: MODELS of the parent commit minus OLD8
+KEPT_MAX = {"qwen3-vl-2b": 1536}  # CT-62: MAX_COMPLETION of the parent commit minus OLD8
+NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
 
 
 def test_models_and_budgets():
-    """CT-05: no exact set (a 4B row may join); every model has a budget, the retired key is gone."""
-    assert {"qwen3-vl-2b", "lfm2.5-vl-450m"} <= set(configs.MODELS)
+    """CT-05: no exact set (a 4B row may join); every model has a budget, the retired keys are gone."""
     assert configs.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
-    assert OLD not in configs.MODELS and OLD not in configs.MAX_COMPLETION
+    for old in (OLD, OLD8):
+        assert old not in configs.MODELS and old not in configs.MAX_COMPLETION
     assert set(configs.MODELS) == set(configs.MAX_COMPLETION)
 
 
@@ -33,8 +39,7 @@ def test_grpo_config_is_plan_d8(model, tmp_path):
     assert c.num_generations == REWARD_V4.group and c.num_generations_eval is None and c.temperature == 1.0
     assert (c.scale_rewards, c.multi_objective_aggregation) == ("none", "sum_then_normalize")
     assert c.reward_weights == [0.0] * len(LOGGED) + [1.0]
-    budget = {"lfm2.5-vl-450m": 1024}.get(model, 1536)
-    assert c.max_completion_length == configs.MAX_COMPLETION[model] == budget
+    assert c.max_completion_length == configs.MAX_COMPLETION[model]
     assert c.use_vllm is True
     assert not c.remove_unused_columns and c.log_completions
     # whole groups on every process, at any world size (tests/test_train_trl.py simulates 1, 2, 4 processes)
@@ -47,11 +52,10 @@ def test_grpo_config_is_plan_d8(model, tmp_path):
 def test_sft_config(model, tmp_path):
     c = configs.sft_config(model, str(tmp_path))
     assert c.assistant_only_loss and c.max_length is None and not c.packing
-    assert c.learning_rate == (5e-4 if configs.lora(model) else 5e-5)
+    assert c.learning_rate == 5e-4  # every model is LoRA
 
 
-def test_lora_only_where_the_plan_needs_it():
-    assert configs.lora("lfm2.5-vl-450m") is None
+def test_lora_for_every_model():
     q = configs.lora("qwen3-vl-2b")
     # Phase 2 (plan D6 / D7, M2): language model only, vision tower and projector excluded
     assert (q.r, q.lora_alpha, q.target_modules, q.exclude_modules) == (16, 32, "all-linear", configs.VISION)
@@ -75,7 +79,7 @@ GRPO_PRE_CLEAN = {  # captured at 08e6455 (asdict of grpo_config(m, out, use_cpu
         "per_device_train_batch_size": 16, "max_completion_length": n, "vllm_gpu_memory_utilization": 0.35,
         "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, "learning_rate": lr,
         "reward_weights": [0.0] * 8 + [1.0]}  # B3.5 adds the weight-0 loc logger
-    for m, n, lr in (("qwen3-vl-2b", 1536, 5e-05), ("lfm2.5-vl-450m", 1024, 5e-06))}  # E1: rl_lr, pre-registered
+    for m, n, lr in (("qwen3-vl-2b", 1536, 5e-05),)}  # E1: rl_lr, pre-registered; CLEAN8 drops the 450M row
 
 
 @pytest.mark.parametrize("model", sorted(GRPO_PRE_CLEAN))
@@ -92,16 +96,16 @@ def test_grpo_config_values_and_the_use_vllm_override(model, tmp_path):
 
 
 SMOL = re.compile("smol" + "vlm|hugging" + "facetb", re.I)
-LFM = re.compile(r"(?<![a-z])" + "l" + "fm", re.I)
+R450 = re.compile(r"(?<![a-z])" + "l" + "fm|liquid" + "ai", re.I)
 TEXT = (".py", ".yaml", ".md", ".toml")
 
 
 def test_forbidden_word_needles():
-    """CT-07 checker part (the lfm needle is for CLEAN8's Wave 3 scan)."""
+    """CT-07 checker part: the needles match the retired names and no ordinary word."""
     for t in ("selfmade", "shelfmark", "aGVsZm1Gx"):
-        assert not LFM.search(t)
-    for t in ("LFM2.5-VL", "lfm2.5-vl-450m", "# uses LFM"):
-        assert LFM.search(t)
+        assert not R450.search(t)
+    for t in ("L" + "FM2.5-VL", OLD8, "# uses " + "L" + "FM", "Liquid" + "AI/x"):
+        assert R450.search(t)
     for t in ("Smol" + "VLM", "smol" + "vlm_256m", "SMOL" + "VLM", "Hugging" + "FaceTB/x"):
         assert SMOL.search(t)
 
@@ -114,12 +118,53 @@ def scanned() -> list[str]:
     keep = [f for f in files if f.endswith(TEXT) and (root / f).is_file()
             and (f.startswith(("src/", "tests/")) or re.fullmatch(r"experiments/phase2/[^/]+\.py", f))]
     checker = "tests/test_final_sweep.py"  # tests the final sweep's own retired-model rule
-    return [f for f in keep if f != checker and SMOL.search((root / f).read_text(errors="replace"))]
+    return [f for f in keep if f != checker
+            and any(r.search((root / f).read_text(errors="replace")) for r in (SMOL, R450))]
 
 
 def test_no_retired_model_text_in_code():
-    """CT-07 repo part, Wave 1 (CLEAN-G10): no file in the scope names the retired 256M model."""
+    """CT-07 repo part, Waves 1 and 3 (CLEAN-G10): no file in the scope names a retired model."""
     assert scanned() == []
+
+
+def _defs(path: Path) -> set[str]:
+    return {n.name for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.FunctionDef)}
+
+
+def test_retired_450m_model_and_full_fine_tuning_gone():
+    """CT-62: the model tables are the parent commit's minus the retired key (every other row survives); every model
+    is LoRA; the full fine-tuning branches are gone (the pre-registered record: tests/experiments/test_prereg_lr.py)."""
+    assert configs.MODELS == KEPT_MODELS and configs.MAX_COMPLETION == KEPT_MAX
+    assert configs._LORA == frozenset(configs.MODELS) and configs._GRAD_CKPT
+    assert configs.rl_lr("qwen3-vl-2b") == 5e-5
+    assert not {"param_groups", "dtype"} & _defs(ROOT / "src/objdel/train/configs.py")
+    sft = ROOT / "src/objdel/sft/train.py"
+    assert "_load_from_checkpoint" not in _defs(sft) and "param_groups" not in sft.read_text()
+    assert not (ROOT / "experiments/phase2/configs" / "r1_l" "fm.yaml").exists()
+
+
+ARCHIVED = ("r0_parity.py", "hf_rate.py", "c2_analyze.py")  # CLEAN8 step 4 (project_r1.py went in E6.6)
+
+
+def test_phase2_run_scripts_left_the_live_tree():
+    """CT-88, the part a clone can check: the scripts and their plans are gone and nothing live names them."""
+    plans = ("r0.yaml", "r1_l" "fm.yaml")
+    assert not [n for n in ARCHIVED if (ROOT / "experiments/phase2" / n).exists()]
+    assert not [n for n in plans if (ROOT / "experiments/phase2/configs" / n).exists()]
+    files = subprocess.run(["git", "ls-files", "src", "experiments", "tests", "specs"], cwd=ROOT,
+                           capture_output=True, text=True, check=True).stdout.split()
+    mods = [f"experiments.phase2.{n[:-3]}" for n in ARCHIVED]
+    assert [f for f in files if (ROOT / f).is_file() and any(m in (ROOT / f).read_text(errors="ignore")
+                                                              for m in mods)] == []
+
+
+@NEEDS_ARCHIVE
+def test_phase2_run_scripts_are_archived():
+    """CT-88, the owner's checkout: the scripts and plans sit in archive/phase2_runs/, the plans with a README row."""
+    assert all((ROOT / "archive/phase2_runs" / n).is_file() for n in ARCHIVED)
+    readme = (ROOT / "archive/phase2_runs/configs/README.md").read_text()
+    assert all((ROOT / "archive/phase2_runs/configs" / n).is_file() and f"| {n} |" in readme
+               for n in ("r0.yaml", "r1_l" "fm.yaml"))
 
 
 @pytest.mark.parametrize("supported", [True, False])

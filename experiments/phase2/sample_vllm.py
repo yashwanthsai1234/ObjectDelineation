@@ -7,7 +7,7 @@ Input (objdel.train.sample.export_prompts): per prompt {"id", "prompt" (chat tex
 request is seeded request_seed(seed, id). Output: per completion {"id", "k", "text", "token_ids", "finish_reason"}
 (--logprobs adds "logprobs", the sampled tokens' processed logprobs (H-A5-2), and "prompt_token_ids", vLLM's prompt
 ids (H-A5-1); parity.py reads both) and <out>.meta.json with every distinct SamplingParams as vLLM built it. vLLM's
-token_ids end with the stop id on "stop" (B5: LFM 7); import_completions applies TRL's truncation
+token_ids end with the stop id on "stop" (B5); import_completions applies TRL's truncation
 rule (rewards.truncated).
 
 Imports nothing from objdel (its numpy / numba / torch pins differ from vLLM 0.32's, B5 Q1); vLLM, torch and PIL

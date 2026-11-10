@@ -1,6 +1,6 @@
 """G-probe (PLAN §5.1, §3.2 ④): can GRPO improve this checkpoint? 20 GRPO steps at the pre-registered probe LR.
 
-    python -I -m experiments.phase2.g_probe --model lfm2.5-vl-450m (--ckpt runs/r1/branches/e1 | --select runs/r1/select)
+    python -I -m experiments.phase2.g_probe --model qwen3-vl-2b (--ckpt runs/r1/branches/e1 | --select runs/r1/select)
         --train data/prepared --probe data/eval_views/lidc-val-shifted --out runs/r1/g_probe
     python -I -m experiments.phase2.g_probe --spec specs/r1_qwen3vl2b.yaml --stage probe [--rd RD] [--data DATA]
 
@@ -8,7 +8,7 @@ The flags are an objdel.core.spec.ProbeStage (cli_stage), with the trainer flags
 --grpo JSON, --shared-prefix, --compile, --plain, --trace, the C flags); objdel.rl.build.build_trainer builds the
 trainer from them.
 
-configs.grpo_config with prereg.G_PROBE: LR 5e-6 (full FT) or 5e-5 (LoRA), constant, 20 steps, G = 8, 32 LIDC train
+configs.grpo_config with prereg.G_PROBE: LR 5e-5 (LoRA; every model, ADR-0008), constant, 20 steps, G = 8, 32 LIDC train
 prompts per step (disagreement items x4), vLLM colocate generation (owner 2026-11-06, perf F1: HF generate of 256
 sequences needs 20-51 GiB of KV cache; needs the Phase 3 single-venv image, D15), sampling from
 configs.sampling(model, "grpo") (D13);
