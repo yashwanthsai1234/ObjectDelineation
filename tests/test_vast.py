@@ -1498,3 +1498,11 @@ def test_launch_without_an_image_in_the_allowlist_refuses(monkeypatch, tmp_path)
                         allow_parallel=False, idle_minutes=30)
     with pytest.raises(SystemExit, match="no image in .vast-allowlist"):
         P.cmd_launch(a)
+
+
+def test_onstart_ships_the_code_trees_watchdog_not_vast_homes(tmp_path, monkeypatch):
+    """VAST_HOME holds state only: a launch from another tree must not ship that folder's older watchdog.sh."""
+    (tmp_path / "watchdog.sh").write_text("#!/usr/bin/env bash\necho stale\n")
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    b64 = re.search(r"printf %s (\S+) \| base64 -d \| gunzip >", RM.onstart_cmd("r1", 7200)).group(1)
+    assert gzip.decompress(base64.b64decode(b64)).decode() == (VAST / "watchdog.sh").read_text()

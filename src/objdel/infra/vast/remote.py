@@ -14,6 +14,11 @@ import time
 from objdel.core.provenance import repo_root
 from objdel.infra.vast.ledger import accrued, active, home, ledger
 
+
+def watchdog_script():
+    """The onstart watchdog, from the code tree being launched (never from VAST_HOME, which holds state)."""
+    return repo_root() / "experiments/phase2/vast/watchdog.sh"
+
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
 # sync_up runs it on the box after the install: library modules and the box stack only, no tests.* or experiments.*
@@ -109,7 +114,7 @@ def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: i
     """--onstart-cmd: unpack the watchdog and start it; carries no secret (CONTAINER_API_KEY is injected by Vast).
     Vast's API spec limits onstart to ONSTART_MAX characters."""
     # gzip: Debian essential
-    b64 = base64.b64encode(gzip.compress((home() / "watchdog.sh").read_bytes(), mtime=0)).decode()
+    b64 = base64.b64encode(gzip.compress(watchdog_script().read_bytes(), mtime=0)).decode()
     created = int(created or time.time())
     env = (f"RUN_ID={run_id} WATCHDOG_CAP_S={cap_s} WATCHDOG_IDLE_S={idle_s} WATCHDOG_CREATED={created} "
            f"WATCHDOG_PULLED_OK=/workspace/runs/{run_id}/PULLED_OK WATCHDOG_SKIP={','.join(PULL_EXCLUDE)}")  # fmt: skip

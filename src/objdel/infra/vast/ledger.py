@@ -25,7 +25,8 @@ SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 
 def home() -> Path:
     """The Vast state folder: VAST_HOME, else <repo>/experiments/phase2/vast (ledger, active runs, allowlist, offers,
-    known_hosts, watchdog.sh), never this package's folder (spend() would read $0 there)."""
+    known_hosts; watchdog.sh ships from the code tree: remote.watchdog_script), never this package's folder (spend()
+    would read $0 there)."""
     return Path(os.environ.get("VAST_HOME", repo_root() / "experiments/phase2/vast"))
 
 
