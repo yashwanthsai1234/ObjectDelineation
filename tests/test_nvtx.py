@@ -240,7 +240,7 @@ def test_no_cuda_no_profiler_and_no_ranges(monkeypatch, no_nvtx_calls):
 # U30, U56: FastGRPO.timed ----------------------------------------------------------------------------------------
 
 NAMES = {"step", "loader", "micro", "batch", "generate", "sync", "wake", "sleep", "rewards", "checker", "logps",
-         "forward", "optimizer", "log", "vision_cache", "rope_cache", "image_memo"}
+         "forward", "optimizer", "log", "vision_cache", "rope_cache", "rope_template", "image_memo"}
 
 
 def fake_trainer(**attrs):
