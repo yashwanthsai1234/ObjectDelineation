@@ -14,7 +14,7 @@ import numpy as np
 
 from objdel.data.targets.build import build_target, min_areas
 
-GOLDEN = Path(__file__).resolve().parent / "goldens" / "d_r02_targets.json"
+GOLDEN = Path(__file__).resolve().parents[1] / "goldens" / "d_r02_targets.json"
 
 
 def _disc(h, w, cy, cx, r):
