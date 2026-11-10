@@ -139,3 +139,8 @@ E8.1 finish (impl2-emoves2): old_names re-recorded: experiments/phase2/preflight
 names live in objdel.infra.preflight; run() is main's body after the flag); vast/policy.py is gone (src/objdel/infra/
 vast/__main__.py holds every recorded name). objdel.io and objdel.hashing became objdel.core.io and
 objdel.core.hashing. Goldens 1-6, host_syncs and tests_import_experiments unchanged.
+E8.2 final_eval (impl2-emoves2): the library body moves to objdel.policy.final_eval (run = main after cli_stage;
+hash_view takes the render-file commits as an argument), the script keeps main and no_model. old_names re-recorded:
+final_eval.py keeps main and no_model (ROOT is gone: repo_root()). host_syncs gains policy/final_eval.py 1 (gate_a's
+bootstrap .tolist(), moved from the script, which the scan did not cover). Goldens 1-6 and tests_import_experiments
+unchanged.

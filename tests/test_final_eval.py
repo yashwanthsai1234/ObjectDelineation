@@ -14,8 +14,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from experiments.phase2 import final_eval as FE
+from experiments.phase2 import final_eval as CLI
 from objdel.policy import evaluate as EV
+from objdel.policy import final_eval as FE
 from objdel.verify import stats as S
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -219,7 +220,7 @@ def test_resummarize_writes_schema_2_beside_the_run(tmp_path, monkeypatch):
     monkeypatch.setattr(sample, "VllmSampler", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model")))
     run, store, items = finished_run(tmp_path)
     before = tree(run)
-    FE.main(["--resummarize", str(run), "--store", str(store), "--out", str(tmp_path / "out")])
+    CLI.main(["--resummarize", str(run), "--store", str(store), "--out", str(tmp_path / "out")])
     assert tree(run) == before
     doc = json.loads((tmp_path / "out" / "final_eval.json").read_text())
     assert (doc["schema"], doc["gate_ci"], doc["patients"]) == (2, "ci95_patient", 8)
@@ -234,11 +235,11 @@ def test_resummarize_writes_schema_2_beside_the_run(tmp_path, monkeypatch):
 def test_resummarize_exits_2_on_an_item_without_a_group(tmp_path, capsys):
     run, store, _ = finished_run(tmp_path, with_group=False)
     with pytest.raises(SystemExit) as e:
-        FE.main(["--resummarize", str(run), "--store", str(store), "--out", str(tmp_path / "out")])
+        CLI.main(["--resummarize", str(run), "--store", str(store), "--out", str(tmp_path / "out")])
     assert e.value.code == 2 and "lidc/s0/n000/z0" in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
     with pytest.raises(SystemExit) as e:
-        FE.main(["--resummarize", str(run), "--store", str(store), "--out", str(run)])
+        CLI.main(["--resummarize", str(run), "--store", str(store), "--out", str(run)])
     assert e.value.code == 2
 
 
@@ -468,7 +469,7 @@ def run_fe(ev, out, monkeypatch, *extra, scorer=None, K=8, loads=None):
     if scorer:
         monkeypatch.setattr(FE, "score_items", scorer)  # --rescore
         monkeypatch.setattr(EV, "score_items", scorer)  # evaluate
-    return FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--out", str(out),
+    return CLI.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--out", str(out),
                     "-k", str(K), *extra])
 
 
@@ -548,7 +549,7 @@ def test_full_run_replaces_the_partial(ev, tmp_path, monkeypatch):
 
 
 def rescore(src, ev, out, split="val"):
-    return FE.main(["--rescore", str(src), "--view", str(ev), "--split", split, "--out", str(out)])
+    return CLI.main(["--rescore", str(src), "--view", str(ev), "--split", split, "--out", str(out)])
 
 
 def strip_seconds(doc):
@@ -576,8 +577,8 @@ def test_rescore_loads_no_model(ev, tmp_path, monkeypatch):
     src = tmp_path / "src"
     run_fe(ev, src, monkeypatch)
     code = ("import sys\n"
-            "from experiments.phase2 import final_eval as FE\n"
-            f"FE.main(['--rescore', {str(src)!r}, '--view', {str(ev)!r}, '--split', 'val', '--out', "
+            "from experiments.phase2 import final_eval as CLI\n"
+            f"CLI.main(['--rescore', {str(src)!r}, '--view', {str(ev)!r}, '--split', 'val', '--out', "
             f"{str(tmp_path / 're')!r}])\n"
             "print(sorted(m for m in ('torch', 'vllm', 'transformers', 'trl', 'experiments.phase2.g_probe')"
             " if m in sys.modules))\n")
@@ -621,7 +622,7 @@ def test_cli_modes_need_exactly_one_source(capsys):
                  ["--ckpt", "c", "--rescore", "r", "--view", "v", "--out", "o"],
                  ["--ckpt", "c", "--train", "t", "--view", "v", "--out", "o"]):
         with pytest.raises(SystemExit) as e:
-            FE.main(argv)
+            CLI.main(argv)
         assert e.value.code == 2
     assert "--ckpt" in capsys.readouterr().err
 
@@ -631,7 +632,7 @@ def test_hash_view_needs_its_out_and_rescore_parses_without_a_ckpt(tmp_path):
     from objdel.core.spec import EvalStage, cli_parse
 
     with pytest.raises(SystemExit) as e:
-        FE.main(["--hash-view", str(tmp_path)])
+        CLI.main(["--hash-view", str(tmp_path)])
     assert e.value.code == 2
     st = cli_parse(EvalStage, ["--rescore", "d", "--view", "v", "--split", "val", "--out", "o"])
     assert (st.ckpt, st.rescore, st.view, st.split, st.out) == (None, "d", ("v",), ("val",), ("o",))
@@ -659,13 +660,13 @@ def test_limit_rows_is_an_even_deterministic_slice():
 def test_limit_flag_samples_and_scores_the_slice_only(ev, tmp_path, monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(FE, "load_sampler", fake_sampler(ev, calls=calls))
-    FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--out", str(tmp_path / "o"),
+    CLI.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--out", str(tmp_path / "o"),
              "--limit", "2"])
     assert len(calls) == 1 and len(calls[0]) == 2
     doc = json.loads((tmp_path / "o" / "final_eval.json").read_text())
     assert doc["limit"] == 2 and doc["items"] == 2 and len(jsonl(tmp_path / "o" / "answers.jsonl")) == 2
     with pytest.raises(SystemExit) as e:
-        FE.main(["--ckpt", "c", "--view", str(ev), "--out", str(tmp_path / "x"), "--limit", "0"])
+        CLI.main(["--ckpt", "c", "--view", str(ev), "--out", str(tmp_path / "x"), "--limit", "0"])
     assert e.value.code == 2 and "--limit" in capsys.readouterr().err
 
 
@@ -683,7 +684,7 @@ def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
                                                                                                           **k))
     monkeypatch.setattr(FE, "load_sampler", fake_sampler(ev, calls=calls, loads=loads))
     base = ["--ckpt", "c"]
-    FE.main([*base, "--view", str(ev), "--split", "val", "--view", str(v2), "--split", "val",
+    CLI.main([*base, "--view", str(ev), "--split", "val", "--view", str(v2), "--split", "val",
              "--out", str(tmp_path / "O")])
     assert loads == [1] and sorted(roots) == sorted({ev.resolve(), v2.resolve()}) and len(calls) == 2
     for v in (ev, v2):
@@ -691,17 +692,17 @@ def test_several_views_in_one_process(ev, tmp_path, monkeypatch):
         assert {"answers.jsonl", "items.jsonl", "final_eval.json"} <= {p.name for p in d.iterdir()}
         assert "load_and_sample" in json.loads((d / "final_eval.json").read_text())["seconds"]
         serve.STORE.clear()
-        FE.main([*base, "--view", str(v), "--split", "val", "--out", str(tmp_path / "single" / v.name)])
+        CLI.main([*base, "--view", str(v), "--split", "val", "--out", str(tmp_path / "single" / v.name)])
         assert (d / "items.jsonl").read_bytes() == (tmp_path / "single" / v.name / "items.jsonl").read_bytes()
     serve.STORE.clear()
-    FE.main([*base, "--view", str(ev), "--split", "val", "--view", str(v2), "--split", "val",
+    CLI.main([*base, "--view", str(ev), "--split", "val", "--view", str(v2), "--split", "val",
              "--out", str(tmp_path / "O1"), "--out", str(tmp_path / "O2")])
     assert (tmp_path / "O1" / "items.jsonl").is_file() and (tmp_path / "O2" / "items.jsonl").is_file()
     for bad in (["--view", str(ev), "--split", "val", "--view", str(v2), "--out", str(tmp_path / "X")],
                 ["--view", str(ev), "--view", str(v2), "--split", "val", "--split", "val",
                  "--out", str(tmp_path / "X"), "--out", str(tmp_path / "Y"), "--out", str(tmp_path / "Z")]):
         with pytest.raises(SystemExit) as e:
-            FE.main([*base, *bad])
+            CLI.main([*base, *bad])
         assert e.value.code == 2 and not any((tmp_path / n).exists() for n in "XYZ")
 
 
@@ -808,13 +809,13 @@ def test_view_content_hash(tmp_path, monkeypatch, capsys):
         assert FE.Q.view_content_sha256(content_view(tmp_path / change, r2)) != want, change
     monkeypatch.setattr(sample, "VllmSampler", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model")))
     out = tmp_path / "pre" / "pre_rental.json"
-    assert FE.main(["--hash-view", str(v), "--out", str(out)]) in (None, 0)
+    assert CLI.main(["--hash-view", str(v), "--out", str(out)]) in (None, 0)
     doc = json.loads(out.read_text())
     assert set(doc) == {"view", "items", "content_sha256", "target_set_sha256", "generator_commit", "render_files",
                         "r5_commit", "note"}
     assert (doc["items"], doc["content_sha256"], doc["target_set_sha256"], doc["r5_commit"]) == (3, want, "t" * 64,
                                                                                                 None)
-    assert set(doc["render_files"]) == set(FE.render_files()) and "experiments/phase2/build_eval_views.py" in doc[
+    assert set(doc["render_files"]) == set(CLI.render_files()) and "experiments/phase2/build_eval_views.py" in doc[
         "render_files"]
     assert doc["generator_commit"] == doc["render_files"]["experiments/phase2/build_eval_views.py"]
     assert all(c is None or len(c) == 40 for c in doc["render_files"].values()) and "not recorded" in doc["note"]
@@ -1065,7 +1066,7 @@ def test_final_eval_refuses_a_changed_frozen_view(frozen, mutate, key, tmp_path)
     d, _ = frozen
     mutate(d)
     with pytest.raises(SystemExit) as e:
-        FE.main(["--ckpt", "c", "--view", str(d), "--split", "test", "--out", str(tmp_path / "o")])
+        CLI.main(["--ckpt", "c", "--view", str(d), "--split", "test", "--out", str(tmp_path / "o")])
     assert key in str(e.value.code) and d.name in str(e.value.code)
     assert not (tmp_path / "o").exists()
 
@@ -1103,7 +1104,7 @@ def test_the_test_view_needs_the_explicit_split_flag(frozen, tmp_path):
     """I28: --split defaults to val, so a test view is read only with --split test."""
     d, _ = frozen
     with pytest.raises(SystemExit, match="--split test"):
-        FE.main(["--ckpt", "c", "--view", str(d), "--out", str(tmp_path / "o")])
+        CLI.main(["--ckpt", "c", "--view", str(d), "--out", str(tmp_path / "o")])
 
 
 def test_no_phase_b_script_but_final_eval_scores_the_test_view():
@@ -1114,7 +1115,8 @@ def test_no_phase_b_script_but_final_eval_scores_the_test_view():
            *(ROOT / "src/objdel/data" / f for f in ("audit.py", "probes.py", "prepare.py"))]
     hits = [p.relative_to(ROOT).as_posix() for p in [*(ROOT / "experiments/phase2").glob("*.py"), *lib]
             if re.search(r"lidc-test|--split\W+test", p.read_text())]
-    assert sorted(hits) == ["experiments/phase2/final_eval.py", "experiments/phase2/freeze_views.py"]
+    assert sorted(hits) == ["experiments/phase2/final_eval.py", "experiments/phase2/freeze_views.py",
+                            "src/objdel/policy/final_eval.py"]
     from objdel.infra.vast import chain as C
 
     for y in [*(ROOT / "experiments/phase2/configs").glob("*.yaml"), *(ROOT / "specs").glob("*.yaml")]:

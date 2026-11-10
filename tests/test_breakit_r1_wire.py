@@ -9,13 +9,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from experiments.phase2 import final_eval as FE
+from experiments.phase2 import final_eval as CLI
 from experiments.phase2 import train_rl as TR
 from objdel.data import quality as Q
 from objdel.infra import preflight as PF
 from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import remote as RM
+from objdel.policy import final_eval as FE
 from objdel.rl import run as rl_run
 from tests.test_final_eval import ev, ev_root, jsonl, run_fe  # noqa: F401  (fixtures and helpers)
 
@@ -101,7 +102,7 @@ def test_multi_view_one_out_does_not_collide(ev, tmp_path, monkeypatch):  # noqa
     monkeypatch.setattr(FE, "load_sampler", __import__("tests.test_final_eval", fromlist=["x"]).fake_sampler(ev))
     out = tmp_path / "O"
     try:
-        FE.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--view", str(other),
+        CLI.main(["--ckpt", "c", "--view", str(ev), "--split", "val", "--view", str(other),
                  "--split", "val", "--out", str(out)])
     except SystemExit:
         return  # refusing is fine
@@ -113,7 +114,7 @@ def test_rescore_into_its_own_source_is_refused(ev, tmp_path, monkeypatch):  # n
     run_fe(ev, src, monkeypatch)
     before = (src / "final_eval.json").read_bytes()
     try:
-        FE.main(["--rescore", str(src), "--view", str(ev), "--split", "val", "--out", str(src)])
+        CLI.main(["--rescore", str(src), "--view", str(ev), "--split", "val", "--out", str(src)])
     except SystemExit:
         pass
     assert (src / "final_eval.json").read_bytes() == before

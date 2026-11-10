@@ -606,7 +606,8 @@ SHIPPED = ("docs/reference/frozen_views.json", "docs/reference/val_halves.json")
 
 
 def _child(cwd: Path, code: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-I", "-c", code], cwd=cwd, capture_output=True, text=True, timeout=120)
+    return subprocess.run([sys.executable, "-I", "-c", code], cwd=cwd, capture_output=True, text=True, timeout=120,
+                          env=dict(os.environ, OBJDEL_REPO=str(cwd)))
 
 
 def test_frozen_views_ship(tmp_path, monkeypatch):
@@ -634,8 +635,8 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
     (view / "lidc").mkdir(parents=True)
     (view / "lidc" / "val.jsonl").write_text("")
     (view / "manifest.json").write_text(json.dumps({"sets": {"lidc/val": {"target_set_sha256": "0"}}}))
-    fe = (f"import sys, json; sys.path.insert(0, {str(box)!r}); from experiments.phase2 import final_eval as FE; "
-          f"assert FE.__file__.startswith({str(box)!r}), FE.__file__; "
+    fe = ("import json; from objdel.policy import final_eval as FE; "  # OBJDEL_REPO=box: the box's repo_root()
+          f"assert str(FE.FROZEN_VIEWS).startswith({str(box)!r}), FE.FROZEN_VIEWS; "
           "print(json.dumps(FE.frozen_entry('lidc-val-edge')), flush=True); "
           f"FE.check_view(FE.Path({str(view)!r}), 'val')")
     p = _child(box, fe)

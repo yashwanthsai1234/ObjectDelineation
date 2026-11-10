@@ -26,7 +26,7 @@ def _gate_items(n_patients):
 
 
 def FE():
-    from experiments.phase2 import final_eval
+    from objdel.policy import final_eval
     return final_eval
 
 

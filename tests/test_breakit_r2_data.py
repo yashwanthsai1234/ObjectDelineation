@@ -9,7 +9,7 @@ from objdel.verify import select
 
 
 def _fe():
-    from experiments.phase2 import final_eval
+    from objdel.policy import final_eval
     return final_eval
 
 

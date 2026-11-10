@@ -128,7 +128,7 @@ def test_g01_answers(folder, view, split, n, r5):
     (90 % patient CI inside +-0.01) and the view-identity rule. Second lines are printed: the TOST without R5's 128
     val-selection items, the new test mean against R5's nodule CI, noise_floor.mean_sd. Before V3 the test part
     skips ("open (V3)")."""
-    from experiments.phase2 import final_eval as FE
+    from objdel.policy import final_eval as FE
     from objdel.policy.evaluate import eval_rows
 
     run = _need(A3 / folder) if split == "val" else A3 / folder
@@ -166,12 +166,13 @@ def test_g01_answers(folder, view, split, n, r5):
 def test_g02a_rescore(folder, tmp_path, clean_store):
     """G02a (A-G3): final_eval --rescore of a pulled A3 folder on the Mac's view reproduces the box's per-sample
     legal, iou_tc, f5 and g_area to the bit."""
-    from experiments.phase2 import final_eval as FE
 
     run = _need(A3 / folder)
     doc = json.loads((run / "final_eval.json").read_text())
     view = _need(VIEWS / Path(doc["view"]).name)
-    FE.main(["--rescore", str(run), "--view", str(view), "--split", doc["split"], "--out", str(tmp_path)])
+    from experiments.phase2 import final_eval as CLI
+
+    CLI.main(["--rescore", str(run), "--view", str(view), "--split", doc["split"], "--out", str(tmp_path)])
     for a, b in zip(_jsonl(run / "metrics.jsonl"), _jsonl(tmp_path / "metrics.jsonl"), strict=True):
         assert a["item_id"] == b["item_id"]
         for k in ("legal", "iou_tc", "f5", "g_area"):
