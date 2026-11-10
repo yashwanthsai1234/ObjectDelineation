@@ -27,7 +27,8 @@ reward's rule).
 - nsd, boundary_iou (best doctor) and boundary_iou_vote (the majority outline); soft_dice, hm_iou (HM-IoU8) and ged
   (lower is better) per item: objdel.verify.metrics defines them;
 - miss_rate: the share of items whose K-mean IoU_tc is below 0.1 (not the best of K); iou_found: the mean IoU_tc of
-  the other items, its CIs drawn on that subset;
+  the other items, its CIs drawn on that subset; `size_terciles`: iou_tc and boundary_iou by nodule size (the doctors'
+  vote area), the result note's tercile table;
 - sel_*: one answer chosen per item with no doctor masks (objdel.verify.select; `per_item`), and `paired`: the per-item
   differences medoid - mean of K and vote - mean of K with their patient and nodule CIs. `gate_a` decides Gate A
   from the val patient CI. Run gates keep sel_mean_of_k (= iou_tc);
@@ -73,6 +74,24 @@ RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 TOPOLOGY_PERIOD_S = 5.0  # D-G17 (a): the sampler thread's period during scoring
 GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
 SAMPLER_LABEL = "VllmSampler; sampler not box-verified (E-G10 open)"  # until V4's deterministic check passes
+
+
+def size_terciles(items: list[dict]) -> dict:
+    """Items in three groups by the doctors' vote area (`vote_area`): area <= bounds[0], <= bounds[1], above, with
+    bounds at the 1/3 and 2/3 order statistics, so equal areas share a group; per group the item count and the mean
+    iou_tc and boundary_iou (None when empty). ValueError for fewer than 3 items."""
+    if len(items) < 3:
+        raise ValueError(f"size_terciles: need >= 3 items, got {len(items)}")
+    area = np.array([it["vote_area"] for it in items])
+    a = np.sort(area)
+    bounds = [int(a[-(-len(a) * j // 3) - 1]) for j in (1, 2)]
+    group = np.searchsorted(bounds, area)  # 0: <= bounds[0], 1: <= bounds[1], 2: above
+    terciles = []
+    for g in range(3):
+        its = [it for it, x in zip(items, group, strict=True) if x == g]
+        terciles.append({"items": len(its), **{m: float(np.mean([it[m] for it in its])) if its else None
+                                               for m in ("iou_tc", "boundary_iou")}})
+    return {"bounds": bounds, "terciles": terciles}
 
 
 def gate_a(val: dict, test: dict | None) -> dict:

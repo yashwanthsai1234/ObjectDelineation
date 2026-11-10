@@ -361,7 +361,7 @@ def test_per_item_sources_averages_and_miss():
     want = {"legal": .75, "iou_tc": .45, "f5": .525, "precision_vote": .5, "recall_vote": .5, "dice_vote": .45,
             "nsd": .2, "boundary_iou": .375, "boundary_iou_vote": .15, "soft_dice": .33, "hm_iou": .44, "ged": .55}
     assert {m: it[m] for m in EV.METRICS} == pytest.approx(want, rel=0, abs=1e-15)
-    assert (it["soft_dice"], it["hm_iou"], it["ged"]) == (.33, .44, .55)
+    assert (it["soft_dice"], it["hm_iou"], it["ged"], it["vote_area"]) == (.33, .44, .55, 40)
     assert all(type(it[m]) is float for m in EV.METRICS) and it["miss"] == 0.0
     for x, miss in ((0.0999999, 1.0), (0.1, 0.0), (0.1000001, 0.0)):
         assert EV.per_item(k4_result(iou=(x,) * 4))["miss"] == miss
@@ -408,6 +408,20 @@ def test_summary_has_every_metric_and_selection_key():
         assert s[m]["higher_is_better"] is (m != "ged"), m
     assert {"miss_rate", "iou_found", "paired"} <= set(s) and "sel_vote" not in s
     json.dumps(s, allow_nan=False)
+
+
+def test_size_terciles():
+    """U52: terciles of the vote-mask area with their means; ties stay in one tercile; fewer than 3 items raise."""
+    items = [{"item_id": f"x{a}", "vote_area": a, "iou_tc": a / 100, "boundary_iou": a / 200}
+             for a in range(10, 100, 10)]
+    t = FE.size_terciles(items)
+    assert t["bounds"] == [30, 60] and [g["items"] for g in t["terciles"]] == [3, 3, 3]
+    assert [g["iou_tc"] for g in t["terciles"]] == pytest.approx([.2, .5, .8])
+    assert [g["boundary_iou"] for g in t["terciles"]] == pytest.approx([.1, .25, .4])
+    tied = [it | {"vote_area": 30} if it["vote_area"] == 40 else it for it in items]
+    assert [g["items"] for g in FE.size_terciles(tied)["terciles"]] == [4, 2, 3]
+    with pytest.raises(ValueError, match="3 items"):
+        FE.size_terciles(items[:2])
 
 
 # A3: saved answers, write order, rescore, code identity, view hashes, noise floor, view identity ----------------------

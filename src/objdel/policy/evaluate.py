@@ -62,7 +62,7 @@ def score_items(rows: list[dict], done: dict, root: Path) -> tuple[list[dict], l
 
 def per_item(result: dict, obj: str = "nodule") -> dict:
     """K-sample means of one item's scores (metrics' output; METRICS), `miss` (the K-mean IoU_tc below signal.MISS),
-    and the answer choices (A4): the mean of the K IoU_tc,
+    the doctors' vote area, and the answer choices (A4): the mean of the K IoU_tc,
     the mean over legal answers (0 if none), the medoid's (with its legality), the best one (it reads the labels: an
     upper bound, never deployed) and the pixel vote's (analysis only: a mask is not an answer; absent when the
     result has no `pixel_vote_iou_tc`)."""
@@ -73,6 +73,7 @@ def per_item(result: dict, obj: str = "nodule") -> dict:
     vote = o.get("pixel_vote_iou_tc")
     means = {m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()}
     return {"item_id": result["item_id"], **means, "miss": float(means["iou_tc"] < signal.MISS),
+            "vote_area": o["vote_area"],
             "sel_mean_of_k": float(iou.mean()), "sel_legal_mean": float(iou[legal].mean()) if legal.any() else 0.0,
             "sel_medoid": float(iou[i]), "sel_medoid_legal": float(legal[i]), "sel_oracle": float(iou.max()),
             **({} if vote is None else {"sel_vote": float(vote)})}
