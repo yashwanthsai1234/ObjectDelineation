@@ -256,10 +256,10 @@ def test_push_rl_refuses_a_public_repo(tmp_path, monkeypatch, fake):
     assert not [c for c in fake.calls if c[0] in ("create_branch", "create_commit")]
 
 
-def test_push_hf_of_a_rows_launch_config_pushes_the_train_rl_output(monkeypatch):
-    """push_hf.sh <run> b1_launch.yaml: the config with rows_plan names a train_rl output (output_dir b1-rows)."""
+def test_push_hf_of_the_b1_spec_pushes_the_train_rl_output(monkeypatch):
+    """push_hf.sh <run> specs/b1_rows.yaml: the last rl stage's out is a train_rl output (revision b1-rows)."""
     sent = _mac(monkeypatch, token())
-    P.cmd_push_hf(SimpleNamespace(run_id="v1", config="experiments/phase2/configs/b1_launch.yaml"))
+    P.cmd_push_hf(SimpleNamespace(run_id="v1", config="specs/b1_rows.yaml"))
     ((cmd, stdin, _),) = sent
     assert "-m experiments.phase2.hf_push --rl /workspace/runs/v1/b1-rows" in cmd and "hf_secret" not in cmd
     assert f"--repo {REPO} --revision b1-rows" in cmd and stdin == "hf_secret\n"

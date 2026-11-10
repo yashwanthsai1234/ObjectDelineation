@@ -891,61 +891,38 @@ def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
         P.code_sha_text(tmp_path / "missing")
 
 
-CONFIGS = ROOT / "experiments" / "phase2" / "configs"
+SPECS = ROOT / "specs"
 
 
-def test_a3_plan_files_are_valid_plans(tmp_path, monkeypatch):
-    """I20: a3_measure.yaml holds one final_eval step on lidc-val-edge then lidc-val-shifted (each --split val and
-    its own --out), after the build-if-missing step; a3_test.yaml one final_eval step on lidc-test-shifted; headers
-    in the A3 order; no nsys step, no cap, no plan file after preflight CONFIG=; policy.chain fills every placeholder
-    and the runner adds -I to the -m steps."""
-    import importlib
-    import re
+def test_a3_specs_are_valid_plans(monkeypatch):
+    """I20 (E6.2: the plans are run specs): a3_measure.yaml holds one final_eval stage on lidc-val-edge then
+    lidc-val-shifted (each split val and its own out), after the build-if-missing stage; a3_test.yaml one final_eval
+    stage on lidc-test-shifted; no nsys stage; policy.chain fills every placeholder and the runner adds -I to the -m
+    stages."""
     import time
 
-    import yaml
-
     from experiments.phase2.vast import policy as P
+    from objdel.core.spec import load_spec
 
-    fe_steps, sent = {}, []
+    sent, evals = [], {}
     run = {"deadline": time.time() + 1e5, "instance": 1, "dph": 0.5, "started": 0.0}
     monkeypatch.setattr(P, "get_run", lambda r: run)
     monkeypatch.setattr(P, "remote", lambda run, cmd, *a, **k: sent.append(cmd))
     monkeypatch.setattr(P, "ledger", lambda **k: None)
     for name in ("a3_measure", "a3_test"):
-        path = CONFIGS / f"{name}.yaml"
-        text = path.read_text()
-        steps = yaml.safe_load(text)["steps"]
-        for s in steps:
-            if s[0] == "-m":
-                importlib.import_module(s[1])
-        fe = [s for s in steps if s[:2] == ["-m", "experiments.phase2.final_eval"]]
-        assert len(fe) == 1, name
-        fe_steps[name] = fe[0]
-        assert "nsys_capture.sh" not in text and "--cap-hours" not in text and "--owner-approved" not in text
-        head = [ln for ln in text.splitlines() if ln.startswith("#   ")]
-        assert "check_series_z" in head[0] and "teardown.sh" in head[-1] and "sweep_orphans.sh" in head[-1]
-        assert all(not re.search(r"preflight CONFIG=\S+(a3_|rl_|_rows)", ln) for ln in head)
-        assert set(re.findall(r"\{(\w*)\}", " ".join(map(str, sum(steps, []))))) <= {"rd", "data"}
-        chained = P.chain(path, "r")
-        assert not any("{" in x or "}" in x for s in chained for x in s), name
-        P.cmd_run(SimpleNamespace(run_id="r", module=f"experiments/phase2/configs/{name}.yaml", args=[], cap_hours=1))
+        spec = load_spec(SPECS / f"{name}.yaml")
+        (evals[name],) = [s for s in spec.stages if s.kind == "eval"]
+        chained = P.chain(SPECS / f"{name}.yaml", "r")
+        assert not any("{" in x or "}" in x or "nsys_capture.sh" in x for s in chained for x in s), name
+        P.cmd_run(SimpleNamespace(run_id="r", module=f"specs/{name}.yaml", args=[], cap_hours=1))
         assert "/opt/venv/bin/python -I -m experiments.phase2.final_eval" in sent[-1]
-    m = fe_steps["a3_measure"]
-    views = [m[i + 1] for i, x in enumerate(m) if x == "--view"]
-    assert views == ["{data}/eval_views/lidc-val-edge", "{data}/eval_views/lidc-val-shifted"]
-    assert [m[i + 1] for i, x in enumerate(m) if x == "--split"] == ["val", "val"]
-    assert [m[i + 1] for i, x in enumerate(m) if x == "--out"] == ["{rd}/eval_val_edge", "{rd}/eval_val"]
-    steps = [s for s in yaml.safe_load((CONFIGS / "a3_measure.yaml").read_text())["steps"] if s[0] != "~"]
-    assert "build() == \"cuda\"' || (bash experiments/cuda_checker/run_box.sh --build-only" in steps[0][2]
-    assert steps.index(m) == 1
-    t = fe_steps["a3_test"]
-    assert [t[i + 1] for i, x in enumerate(t) if x in ("--view", "--split")] == [
-        "{data}/eval_views/lidc-test-shifted", "test"]
-    planted = tmp_path / "planted.yaml"
-    planted.write_text('steps:\n  - [bash, -c, "{ true; }"]\n')
-    with pytest.raises(KeyError):
-        P.chain(planted, "r")
+    m, t = evals["a3_measure"], evals["a3_test"]
+    assert m.view == ("{data}/eval_views/lidc-val-edge", "{data}/eval_views/lidc-val-shifted")
+    assert m.split == ("val", "val") and m.out == ("{rd}/eval_val_edge", "{rd}/eval_val")
+    hard = [s for s in load_spec(SPECS / "a3_measure.yaml").stages if not s.soft]
+    assert "build() == \"cuda\"' || (bash experiments/cuda_checker/run_box.sh --build-only" in hard[0].argv[2]
+    assert hard.index(m) == 1
+    assert (t.view, t.split) == (("{data}/eval_views/lidc-test-shifted",), ("test",))
 
 
 def test_answers_reader_memory(tmp_path):
@@ -1115,7 +1092,9 @@ def test_no_phase_b_script_but_final_eval_scores_the_test_view():
                                                        *(ROOT / "src/objdel/train").glob("*.py")]
             if re.search(r"lidc-test|--split\W+test", p.read_text())]
     assert sorted(hits) == ["experiments/phase2/final_eval.py", "experiments/phase2/freeze_views.py"]
-    for y in (ROOT / "experiments/phase2/configs").glob("*.yaml"):
-        for line in y.read_text().splitlines():
-            if "lidc-test" in line and not line.lstrip().startswith("#"):
-                assert "experiments.phase2.final_eval" in line, (y.name, line)
+    from experiments.phase2.vast import policy
+
+    for y in [*(ROOT / "experiments/phase2/configs").glob("*.yaml"), *(ROOT / "specs").glob("*.yaml")]:
+        for step in policy.chain(y, "r"):
+            if "lidc-test" in " ".join(step):
+                assert "experiments.phase2.final_eval" in step, (y.name, step)

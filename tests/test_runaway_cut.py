@@ -77,8 +77,8 @@ def test_beta_zero_builds_and_b1_keeps_1e3(tmp_path):
     from pathlib import Path
 
     assert configs.grpo_config("qwen3-vl-2b", str(tmp_path), use_cpu=True, use_vllm=False, beta=0.0).beta == 0.0
-    plan = (Path(__file__).resolve().parents[1] / "experiments/phase2/configs/b1_rows.yaml").read_text()
-    assert "beta" not in plan.replace("beta 1e-3", "")  # the comment may name it; no key overrides it
+    plan = (Path(__file__).resolve().parents[1] / "specs/b1_rows.yaml").read_text()
+    assert "beta" not in plan  # no grpo key overrides it
     assert configs.grpo_config("qwen3-vl-2b", str(tmp_path), use_cpu=True, use_vllm=False).beta == 1e-3
 
 

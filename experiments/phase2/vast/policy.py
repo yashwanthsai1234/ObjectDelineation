@@ -528,7 +528,7 @@ def cmd_run(a) -> None:
     elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
         stages, name = [["-m", a.module, *a.args]], a.module.rsplit(".", 1)[1]
     else:
-        die("module must be experiments.phase2.<script> or experiments/phase2/configs/<name>.yaml")
+        die("module must be experiments.phase2.<script> or a run spec specs/<name>.yaml")
     cap = int(min(a.cap_hours * 3600, run["deadline"] - time.time() - MARGIN_S))
     if cap <= 0:
         die("no time left before the instance cap")
@@ -579,7 +579,7 @@ def push_target(spec: RunSpec, run_id: str) -> tuple[str, str, bool]:
 
 def cmd_push_hf(a) -> None:
     """hf_push on the box for CONFIG's run (CONFIG is a run spec, or an SFT launch config: repo branch = its
-    output_dir; a config with rows_plan names a train_rl output: --rl); the token is checked here first."""
+    output_dir); the token is checked here first."""
     import yaml
 
     from experiments.phase2 import hf_push
@@ -589,7 +589,7 @@ def cmd_push_hf(a) -> None:
         path, out, rl = push_target(load_spec(ROOT / a.config), a.run_id)
         kind = "--rl" if rl else "--run"
     else:
-        out, kind = c["output_dir"], "--rl" if c.get("rows_plan") else "--run"
+        out, kind = c["output_dir"], "--run"
         path = f"/workspace/runs/{a.run_id}/{out}"
     token = secret("objdel-hf-write")
     if bad := hf_push.token_problems(hf_push.whoami(token), hf_push.REPO):
@@ -607,14 +607,8 @@ ROWS_CHECK = ("import hashlib, json, pathlib, sys; d, want = pathlib.Path(sys.ar
 
 
 def rows_pin(revision: str) -> str:
-    """The --rows-manifest-sha256 that the plans in experiments/phase2/configs and specs/ pin beside REVISION."""
-    import yaml
-
-    plans = sorted((ROOT / "experiments/phase2/configs").glob("*.yaml"))
-    pins = {str(s[s.index("--rows-manifest-sha256") + 1]) for p in plans
-            for s in (yaml.safe_load(p.read_text()) or {}).get("steps", [])
-            if "--rows-revision" in s and str(s[s.index("--rows-revision") + 1]) == revision}
-    pins |= {s.rows_manifest_sha256 for p in sorted((ROOT / "specs").glob("*.yaml")) for s in load_spec(p).stages
+    """The rows_manifest_sha256 that the rl stages of specs/ pin beside REVISION."""
+    pins = {s.rows_manifest_sha256 for p in sorted((ROOT / "specs").glob("*.yaml")) for s in load_spec(p).stages
              if s.kind == "rl" and s.rows_revision == revision}
     if len(pins) != 1:
         die(f"--rows {revision}: the plans pin {len(pins)} manifest SHA-256 values for it (need exactly one)")
