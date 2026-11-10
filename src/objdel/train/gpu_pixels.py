@@ -8,14 +8,16 @@ mean' and std' come from the processor's own `_fuse_mean_std_and_rescale_factor`
 They are never Python numbers: CUDA divides by a CPU scalar as a multiply by its reciprocal, which differs from a
 true divide in 126 of the 256 uint8 values when the divisor is 127.5 (Qwen3-VL-2B: mean = std = 0.5).
 
-backend "hf" is the processor's own torch path on a device tensor; "torch" is the same ops written here.
-`pick_backend` returns the first backend whose output equals the processor's CPU output on given images.
+backend "hf" is the processor's own torch path on a device tensor; "torch" is the same ops written here; "auto" (the
+default) is the backend `pick_backend` last returned: the first whose output equals the processor's CPU output on the
+given images. The K3 `preprocess` extension is a box-only fallback (plan C1 step 7) and is not built here.
 """
 
 import numpy as np
 import torch
 
 BACKENDS = ("hf", "torch")
+picked: str | None = None  # the backend pick_backend returned last (what backend="auto" means)
 CHECKED = {"patch_size": 16, "merge_size": 2, "temporal_patch_size": 2}  # Qwen3-VL's; others are not checked here
 
 
@@ -64,12 +66,16 @@ def _patchify(x: torch.Tensor, p: int, m: int, t: int) -> torch.Tensor:
     return x.unsqueeze(6).expand(-1, -1, -1, -1, -1, -1, t, -1, -1).reshape(n * gh * gw, c * t * p * p)
 
 
-def patchify(images, image_processor, *, device=None, out_dtype=torch.float32, backend="torch"):
+def patchify(images, image_processor, *, device=None, out_dtype=torch.float32, backend="auto"):
     """(pixel_values (sum t*h*w, 1536) on `device`, image_grid_thw (N, 3) int64 on the CPU), equal to
     image_processor(list(images), return_tensors="pt"). images: a uint8 tensor (N, H, W, 3) / (N, H, W), or a
     sequence of PIL RGB / L images or uint8 (H, W, 3) / (H, W) arrays; a grey image becomes R = G = B, as PIL's
     convert("RGB") does. Raises UnsupportedImage for another mode, a size the processor would resize, or unchecked
-    processor settings."""
+    processor settings. backend "auto": the one pick_backend picked (RuntimeError before it ran or after it failed)."""
+    if backend == "auto":
+        if picked is None:
+            raise RuntimeError('backend "auto": no backend passed pick_backend on this process')
+        backend = picked
     if backend not in BACKENDS:
         raise ValueError(f"backend {backend!r}: one of {BACKENDS}")
     ip, device = image_processor, torch.device(device or "cpu")
@@ -104,9 +110,11 @@ def patchify(images, image_processor, *, device=None, out_dtype=torch.float32, b
 
 def pick_backend(images, image_processor, device) -> str | None:
     """The first of BACKENDS whose patchify equals the processor's CPU output (both tensors, bit for bit) on
-    `images`, or None (then the caller keeps the CPU processor)."""
+    `images`, or None (then the caller keeps the CPU processor). Sets `picked`, which backend="auto" reads."""
+    global picked
     import PIL.Image
 
+    picked = None
     pil = [x if isinstance(x, PIL.Image.Image) else PIL.Image.fromarray(_array(x)) for x in images]
     want = image_processor([x.convert("RGB") for x in pil], return_tensors="pt")
     for b in BACKENDS:
@@ -117,5 +125,6 @@ def pick_backend(images, image_processor, device) -> str | None:
         except Exception:  # a backend that does not run here (e.g. a processor without a device argument)
             continue
         if torch.equal(pv.cpu(), want["pixel_values"]) and torch.equal(grid, want["image_grid_thw"]):
+            picked = b
             return b
     return None

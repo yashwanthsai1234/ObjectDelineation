@@ -204,8 +204,8 @@ class OpsmDelta(TrainerCallback):
 
 class NoCkptLayers(TrainerCallback):
     """C9 arm (a), train_rl --no-ckpt-layers K: gradient checkpointing off on the last K text decoder layers (their
-    activations kept: less recompute, more memory). At train begin, because Trainer.train re-enables checkpointing
-    on every layer just before it."""
+    activations kept: less recompute, more memory; K = 0 changes nothing). At train begin, because Trainer.train
+    re-enables checkpointing on every layer just before it."""
 
     def __init__(self, k: int):
         self.k = k
@@ -215,9 +215,9 @@ class NoCkptLayers(TrainerCallback):
         from transformers.modeling_layers import GradientCheckpointingLayer
 
         layers = next(m for n, m in model.named_modules() if n.endswith("language_model.layers"))
-        if not 0 < self.k <= len(layers) or not all(isinstance(x, GradientCheckpointingLayer) for x in layers):
-            raise ValueError(f"--no-ckpt-layers {self.k}: needs 1..{len(layers)} checkpointable decoder layers")
-        for layer in list(layers)[-self.k:]:
+        if not 0 <= self.k <= len(layers) or not all(isinstance(x, GradientCheckpointingLayer) for x in layers):
+            raise ValueError(f"--no-ckpt-layers {self.k}: needs 0..{len(layers)} checkpointable decoder layers")
+        for layer in list(layers)[len(layers) - self.k:]:
             layer.gradient_checkpointing = False
 
 
