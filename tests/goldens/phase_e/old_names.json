@@ -458,6 +458,8 @@
   "write_tar"
  ],
  "experiments/phase2/preflight.py": [
+  "BUNDLE_DIR",
+  "CACHE_SAMPLE",
   "CHECKER_TESTS",
   "CHECKS",
   "DRY_RUN",
@@ -466,6 +468,7 @@
   "QUICK_TESTS",
   "ROOT",
   "VASTAI_VERSION",
+  "bundle",
   "checker_tests",
   "coverage",
   "ct_window",
@@ -486,6 +489,7 @@
   "rows_revision",
   "rows_root",
   "runbooks",
+  "sampled",
   "spec_inputs",
   "stamp_path",
   "targets",

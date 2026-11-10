@@ -61,3 +61,5 @@ Break-fix round 2 replayed on comb3 (impl2-bfix3b on impl2-comb3 527938a, 2026-1
 gains S3's module-level Base, Rolling, Trainer, finish, resume_manifest, trainer and validate and loses write_json
 (objdel.io.write_json, X2-6); final_eval loses code_sha and vast/policy loses code_sha_text (objdel.io.code_sha and
 git_sha, X2-3). The other goldens are unchanged.
+GPU retest fix (impl2-gpufix2, 2026-11-10): old_names re-recorded: preflight gains BUNDLE_DIR, CACHE_SAMPLE, bundle
+and sampled (the DATA upload bundle check). The other goldens are unchanged.

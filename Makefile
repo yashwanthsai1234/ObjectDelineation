@@ -27,8 +27,8 @@ cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objde
 
 CONFIG ?= specs/b1_rows.yaml
 MODEL_REF ?= svenk029/objdel-sft@rl-full-3ep
-preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=...); launch needs its stamp
-	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG)
+preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=... [BUNDLE_DIR=...]); launch needs its stamp
+	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG) $(if $(BUNDLE_DIR),--bundle-dir $(BUNDLE_DIR))
 
 lint:             ## lint library, tests and experiments, then the import-layer contracts
 	$(PY) -m ruff check src tests experiments
