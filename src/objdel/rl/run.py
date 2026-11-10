@@ -40,13 +40,14 @@ import gc
 import hashlib
 import json
 import math
+import numbers
 import os
 import shutil
 import sys
 import time
 from pathlib import Path
 
-from objdel.core.io import read_json
+from objdel.core.io import read_json, write_atomic
 from objdel.rl import build
 
 
@@ -323,20 +324,26 @@ def f_check_callback(a, trainer, train):
 
 
 def finite(x):
-    """NaN / inf -> None, recursively (Spearman of constant gains is NaN; strict JSON has no NaN)."""
+    """NaN / inf -> None, recursively. A caller applies it to the values that may be NaN by design (a Spearman CI of
+    constant gains, a trainer log), so save_json, which refuses NaN, gets null there."""
     if isinstance(x, dict):
         return {k: finite(v) for k, v in x.items()}
-    if isinstance(x, list):
+    if isinstance(x, list | tuple):
         return [finite(v) for v in x]
-    return None if isinstance(x, float) and not math.isfinite(x) else x
+    return None if isinstance(x, numbers.Real) and not math.isfinite(x) else x
+
+
+def _plain(x):
+    """numpy scalars and arrays as plain JSON values (json.dumps default)."""
+    return x.tolist() if hasattr(x, "tolist") else x.item()
 
 
 def save_json(path: Path, doc: dict, keys: tuple[str, ...]) -> int:
-    """Strict JSON (numpy scalars as floats, NaN / inf as null) to path; prints doc's `keys` on one line."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    doc = finite(json.loads(json.dumps(doc, default=float)))  # numpy scalars -> floats first
-    path.write_text(json.dumps(doc, indent=1, allow_nan=False) + "\n")
-    print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False))
+    """Strict JSON (numpy values as plain numbers and lists) to path, through write_atomic; prints doc's `keys` on
+    one line. A NaN or inf anywhere raises ValueError before anything is written (U25)."""
+    text = json.dumps(doc, indent=1, allow_nan=False, default=_plain) + "\n"
+    write_atomic(path, text)
+    print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False, default=_plain))
     return 0
 
 
@@ -417,10 +424,11 @@ def run_rl(a) -> dict:
                    "loc_width": getattr(spec, "loc_width", None), "area_gate": getattr(spec, "area_gate", None)},
         "rows": rows, "train_rows": len(train), "budget_stopped": bool(stop and stop.tripped),
         "loc_guard_stopped": bool(guard and guard.tripped),
-        "eval": [{"step": h["step"], "eval/iou_tc": h["eval_rewards/iou_tc/mean"],
-                  "eval/allmiss_share": h["eval_allmiss_share"]} for h in log if "eval_rewards/iou_tc/mean" in h],
+        "eval": finite([{"step": h["step"], "eval/iou_tc": h["eval_rewards/iou_tc/mean"],
+                         "eval/allmiss_share": h["eval_allmiss_share"]}
+                        for h in log if "eval_rewards/iou_tc/mean" in h]),
         "timing_s": {"train": t1 - t0, "per_step": (t1 - t0) / max(1, done - start)},
-        "report": run_report(log), "log": log,
+        "report": finite(run_report(log)), "log": finite(log),  # a trainer log may hold NaN (a logged 0/0): null
     }
     save_json(out / "rl.json", doc, keys=("steps", "lr", "resumed_from", "final", "budget_stopped", "report"))
     return doc

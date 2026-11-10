@@ -790,11 +790,12 @@ class FakeVLLM:
         return prompts, ids, lps, None, None
 
 
-def tiny_loop_vllm_fake(monkeypatch, out, steps=3, eval_steps=None):
+def tiny_loop_vllm_fake(monkeypatch, out, steps=3, eval_steps=None, shared_prefix=False, **over):
     """FastGRPO on a 1-layer Llama (CPU) for `steps` steps, logging every step, with TRL's vLLM path on (IS
     correction, sequence_mask cap 3) and FakeVLLM in place of the engine; 8 rows per step (rows_per_step); TRL's
     own train loader (OpenOnce needs an image column).
-    eval_steps: a held-out eval every eval_steps steps. Returns the trained trainer."""
+    eval_steps: a held-out eval every eval_steps steps; shared_prefix: FastGRPO's flag; over: GRPOConfig fields
+    that replace the defaults. Returns the trained trainer."""
     import trl.trainer.grpo_trainer as G
     from tokenizers import Tokenizer, models, pre_tokenizers
     from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
@@ -813,17 +814,18 @@ def tiny_loop_vllm_fake(monkeypatch, out, steps=3, eval_steps=None):
                                          num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
                                          pad_token_id=0, eos_token_id=1, bos_token_id=1))  # fmt: skip
     ev = {"eval_strategy": "steps", "eval_steps": eval_steps, "per_device_eval_batch_size": 8} if eval_steps else {}
-    args = GRPOConfig(output_dir=str(out), max_steps=steps, per_device_train_batch_size=8, num_generations=8,
+    args = GRPOConfig(**dict(output_dir=str(out), max_steps=steps, per_device_train_batch_size=8, num_generations=8,
                       max_completion_length=4, use_cpu=True, bf16=False, report_to="none", logging_steps=1,
                       save_strategy="no", seed=0, remove_unused_columns=False, learning_rate=1e-2, beta=0.0,
                       loss_type="dr_grpo", use_vllm=True, vllm_mode="colocate",
                       vllm_importance_sampling_correction=True, vllm_importance_sampling_mode="sequence_mask",
-                      **ev)  # fmt: skip
+                      **ev) | over)  # fmt: skip
     rows = lambda *n: Dataset.from_list([{"prompt": f"prompt {i}"} for i in n])  # noqa: E731
     t = rl_trl_adapter.FastGRPO(model=model, reward_funcs=lambda completions,
         **kw: [len(c) % 3 * 1.0 for c in completions],
                       args=args, train_dataset=rows(1, 2, 3, 4), eval_dataset=rows(7) if eval_steps else None,
                       processing_class=tok)  # fmt: skip
+    t.shared_prefix = shared_prefix
     t.train()
     return t
 

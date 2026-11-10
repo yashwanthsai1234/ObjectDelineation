@@ -38,7 +38,7 @@ import numpy as np
 from objdel.core.io import read_json
 from objdel.policy.evaluate import eval_rows, score_items
 from objdel.rl.build import build_trainer
-from objdel.rl.run import save_json
+from objdel.rl.run import finite, save_json
 from objdel.verify import stats as signal
 
 SEEDS = (11, 12, 13)  # step-0 draw a, step-0 draw b, step 20
@@ -91,14 +91,16 @@ def probe(a, ckpt: Path, train, rows, prereg) -> dict:
     r0a, r0b, r20 = (s["per_item"]["r_mean"] for s in (s0a, s0b, s20))
     step0 = {k: (s0a["per_item"][k] + s0b["per_item"][k]) / 2 for k in ("sd_geom", "r_std", "mixed")}
     log = trainer.state.log_history
-    return verdict(s0a, s0b, s20, prereg.g_probe) | {
+    # NaN by design, null in g_probe.json: a CI bound when the draws give no value (a constant gain, one cluster), a
+    # term missing from the training log, a logged 0/0. save_json refuses NaN, so the probe says it here.
+    return finite(verdict(s0a, s0b, s20, prereg.g_probe) | {
         "lr": lr, "steps": steps, "items": len(s20["ids"]), "ckpt": str(ckpt), "seeds": SEEDS,
         "legal": {"step0": [s0a["legal"], s0b["legal"]], "step20": s20["legal"]},
         "spearman_gain": {k: signal.spearman_ci(v, r20 - (r0a + r0b) / 2, s20["ids"]) for k, v in step0.items()},
         "per_item": {"ids": s20["ids"], "r0a": r0a.tolist(), "r0b": r0b.tolist(), "r20": r20.tolist()},
         "timing_s": {"step0_sampling": t1 - t0, "train": t2 - t1, "per_step": (t2 - t1) / cfg.max_steps},
         "train_log_R": train_log(log), "log": log,
-    }  # fmt: skip
+    })  # fmt: skip
 
 
 def run(a, prereg) -> int:

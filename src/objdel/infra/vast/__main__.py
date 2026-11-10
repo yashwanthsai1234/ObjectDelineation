@@ -228,17 +228,17 @@ def cmd_sync_up(a) -> None:
 
 
 def cmd_run(a) -> None:
-    """MODULE [ARGS] runs one module (experiments.phase2.*, or R0's xarch_hashes); a configs/*.yaml path runs its
-    `chain` under one cap, refused on the box while a G-vision reference it reads is missing (R0 writes them). Each job
-    has its own tmux session and log (<run_id>-<name>, <name>.log), so a second job can run beside the first."""
+    """MODULE [ARGS] runs one module (experiments.phase2.*, or R0's xarch_hashes); a run spec specs/<name>.yaml runs
+    its `chain` under one cap, refused on the box while a G-vision reference it reads is missing (R0 writes them).
+    Each job has its own tmux session and log (<run_id>-<name>, <name>.log), so a second job can run beside the
+    first."""
     run, guard = get_run(a.run_id), []
     if a.module.endswith(".yaml") and a.args:  # V1: a trailing --cap-hours was silently ignored
         die(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
     if a.module.endswith(".yaml"):
         stages, name = chain(repo_root() / a.module, a.run_id), Path(a.module).stem
-        if a.module.startswith("specs/"):  # E6.5: the spec, code and versions beside the log, before any stage
-            guard = [f"/opt/venv/bin/python -I -m objdel.infra.vast run_spec {shlex.quote(a.module)} "
-                     f"/workspace/runs/{a.run_id}/run_spec.json"]
+        guard = [f"/opt/venv/bin/python -I -m objdel.infra.vast run_spec {shlex.quote(a.module)} "
+                 f"/workspace/runs/{a.run_id}/run_spec.json"]  # E6.5: the spec, code and versions, before any stage
         guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run train_sft "
                  f"--vision-reference-only first' >&2; false; }}; }}"
                  for r in vision_refs(repo_root() / a.module, a.run_id)]  # fmt: skip
@@ -302,17 +302,11 @@ def cmd_pull(a) -> None:
 
 
 def cmd_push_hf(a) -> None:
-    """hf_push on the box for CONFIG's run (CONFIG is a run spec, or an SFT launch config: repo branch = its
-    output_dir); the token is checked here first."""
-    import yaml
-
-    run, c = get_run(a.run_id), yaml.safe_load((repo_root() / a.config).read_text())
-    if "schema_version" in c:
-        path, out, rl = push_target(load_spec(repo_root() / a.config), a.run_id)
-        kind = "--rl" if rl else "--run"
-    else:
-        out, kind = c["output_dir"], "--run"
-        path = f"/workspace/runs/{a.run_id}/{out}"
+    """hf_push on the box for the run spec CONFIG's run (push_target: its last rl or sft stage); the token is checked
+    here first."""
+    run = get_run(a.run_id)
+    path, out, rl = push_target(load_spec(repo_root() / a.config), a.run_id)
+    kind = "--rl" if rl else "--run"
     token = secret("objdel-hf-write")
     if bad := hf.token_problems(hf.whoami(token), hf.REPO):
         die(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: {'; '.join(bad)}. "
