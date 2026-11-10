@@ -57,3 +57,7 @@ test_docs_content.py, test_encoder_once.py, test_f_check.py, test_phase_b_decisi
 old_names re-recorded (train_rl: E6.4 drops _finite and _hex, fB adds f_check_callback and run_report, E6.4
 BudgetFlagError; preflight: train_rl_argv and rl_stages; serve loses the fork pool (D7); fast, callbacks,
 trl_adapter, vllm_sync, vllm_requests, gpu_pixels, nvtx and policy gain the lanes' names).
+Break-fix round 2 replayed on comb3 (impl2-bfix3b on impl2-comb3 527938a, 2026-11-09): old_names re-recorded: train_sft
+gains S3's module-level Base, Rolling, Trainer, finish, resume_manifest, trainer and validate and loses write_json
+(objdel.io.write_json, X2-6); final_eval loses code_sha and vast/policy loses code_sha_text (objdel.io.code_sha and
+git_sha, X2-3). The other goldens are unchanged.
