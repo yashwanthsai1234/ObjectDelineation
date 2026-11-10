@@ -130,7 +130,7 @@ def test_vllm_sampler_serves_an_adapter_unmerged(monkeypatch, tmp_path):
 
 
 def test_import_loads_neither_trl_trainer_nor_vllm():
-    code = ("import sys, objdel.train.sample\n"
+    code = ("import sys, objdel.train.sample, objdel.train.evaluate\n"
             "print(sorted(m for m in sys.modules if m.startswith(('trl.trainer', 'vllm'))))")
     out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"

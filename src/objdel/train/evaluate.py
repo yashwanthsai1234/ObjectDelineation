@@ -6,14 +6,20 @@ per-item and summary statistics of final_eval (policy/evaluate.py after the E5 m
   CUDA context, D7) and the signal groups.
 - per_item(result) and summarize(items, groups): final_eval's K-sample means, answer choices (A4) and the schema-2
   summary with item, nodule and patient bootstrap intervals (final_eval's module docstring names every key).
+- evaluate(sampler, rows, params, view_root, keep): the scoring half of final_eval on any objdel.train.sample
+  Sampler (VllmSampler on the box, HfSampler on the Mac): the K answers per row, handed to `keep` before scoring (a
+  crash in scoring keeps the paid sampling), then score_items and per_item. No trainer.
 """
 
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from objdel.eval import metrics, select, signal
 from objdel.train import serve
+from objdel.train.sample import Sampler
 
 SUBSET_SEED = 0  # eval_rows' `items`: one fixed subset for every branch and rung
 
@@ -121,3 +127,14 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
 
     out["paired"] = {"medoid_minus_mean": paired("sel_medoid"), "vote_minus_mean": paired("sel_vote")}
     return out
+
+
+def evaluate(sampler: Sampler, rows: Sequence[Mapping], params: Mapping[str, Any], view_root: Path,
+             keep: Callable[[list[dict]], object] = lambda answers: None) -> dict:
+    """K answers per row from `sampler` ({item_id, samples, truncated, tokens}, row order), keep(answers), then their
+    metrics (score_items on view_root's preloaded caches) and per-item statistics: {"answers", "results", "items"}."""
+    answers = [{"item_id": s.item_id, "samples": list(s.texts), "truncated": list(s.truncated),
+                "tokens": [len(t) for t in s.token_ids]} for s in sampler.sample(rows, params)]
+    keep(answers)
+    results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view_root)
+    return {"answers": answers, "results": results, "items": [per_item(r) for r in results]}
