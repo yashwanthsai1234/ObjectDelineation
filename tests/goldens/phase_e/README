@@ -144,3 +144,8 @@ hash_view takes the render-file commits as an argument), the script keeps main a
 final_eval.py keeps main and no_model (ROOT is gone: repo_root()). host_syncs gains policy/final_eval.py 1 (gate_a's
 bootstrap .tolist(), moved from the script, which the scan did not cover). Goldens 1-6 and tests_import_experiments
 unchanged.
+E8.2 g_probe (impl2-emoves2): the library body moves to objdel.rl.probe (run = main after cli_stage; the CLI passes
+the pre-registered record, experiments.phase2.prereg, as an argument: G_PROBE's steps and items and the g_probe rule,
+which verdict takes). old_names re-recorded: g_probe.py keeps main. host_syncs gains rl/probe.py 3 (probe's three
+.tolist() of the per-item R, moved from the script, which the scan did not cover). Goldens 1-6 and
+tests_import_experiments unchanged.

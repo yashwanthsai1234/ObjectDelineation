@@ -17,7 +17,7 @@ PROMPT = 330  # tokens: chat text + 256 image tokens (R1 collator)
 
 
 def test_g_probe_generates_with_vllm_colocate():
-    src = (ROOT / "experiments/phase2/g_probe.py").read_text()
+    src = (ROOT / "src/objdel/rl/probe.py").read_text()
     assert '"use_vllm": False' not in src  # HF generate of 256 sequences overflows the card (issues RL-1)
     c = rl_config.grpo_config("qwen3-vl-2b", "o", max_steps=20, save_strategy="no")
     assert c.use_vllm and c.vllm_mode == "colocate" and c.vllm_enable_sleep_mode

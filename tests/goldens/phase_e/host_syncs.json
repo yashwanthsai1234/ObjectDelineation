@@ -7,6 +7,7 @@
  "policy/vision.py": 2,
  "rl/f_check.py": 2,
  "rl/forward.py": 8,
+ "rl/probe.py": 3,
  "rl/record.py": 5,
  "rl/trl_adapter.py": 8
 }

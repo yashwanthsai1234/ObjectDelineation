@@ -221,7 +221,7 @@ def test_every_config_that_samples_on_v1_names_its_sampler():
 
 def test_g_probe_json_writes_null_for_nan(tmp_path):
     pytest.importorskip("scipy")
-    from experiments.phase2 import g_probe as GP
+    from objdel.rl import probe as GP
     from objdel.verify import stats as S
 
     gains = np.zeros(40)  # constant gains: Spearman undefined
