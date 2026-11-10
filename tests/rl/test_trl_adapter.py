@@ -18,7 +18,6 @@ import pytest
 
 torch = pytest.importorskip("torch")
 trl = pytest.importorskip("trl")
-import trl.trainer.grpo_trainer as grpo  # noqa: E402
 from trl import GRPOTrainer  # noqa: E402
 from trl.generation.vllm_generation import VLLMGeneration  # noqa: E402
 
@@ -54,8 +53,10 @@ def test_all_items_is_the_one_count_of_the_contract():
     # Phase A 29 (6 + 1 + 1 + 2 + 13 + 4 + 2), plus C5's _llm_weights_sleeping, plus BR1-rl's 3 reward-kwarg behaviours,
     # plus B2.1's set_is_ratio reads (attribute off_policy_mask_threshold, key advantages), plus B2.2 F step 3's 4
     # option-F vLLM names (add_lora, remove_lora, lora_index_to_id, lora_a_stacked / lora_b_stacked; lora-seqmask only),
-    # plus E5's source hash of each of the 6 overridden methods and the 2 trainer attributes of _prepare_inputs
+    # plus E5's source hash of each of the 6 overridden methods and the 2 trainer attributes of _prepare_inputs, minus
+    # the global shuffle_sequence_dict (E5 step 3: no swap any more; the _prepare_inputs hash guards the copy)
     assert set(T.SOURCE_SHA256) == set(T.METHODS) and set(T.TRAINER_ATTRS) == {"_step", "_buffered_inputs"}
+    assert T.GLOBALS == {} and len(T.ALL_ITEMS) == 46
     doc = ROOT / "docs/reference/trl-coupling.md"  # A9 writes it: one table row per item (header and rule excluded)
     assert sum(x.startswith("|") for x in doc.read_text().splitlines()) - 2 == len(T.ALL_ITEMS)
 
@@ -121,9 +122,6 @@ BREAKS = [
      compute_aux_loss=False, pixel_values=None, image_grid_thw=None, num_images=None, pixel_attention_mask=None,
      spatial_shapes=None, num_tiles=None, image_sizes=None, token_type_ids=None, mm_token_type_ids=None,
      image_position_ids=None, sampling_mask=None: 0), "_get_per_token_logps_and_entropies"),
-    ("delete shuffle_sequence_dict", lambda m: m.delattr(grpo, "shuffle_sequence_dict"), "shuffle_sequence_dict"),
-    ("shuffle_sequence_dict param d", lambda m: m.setattr(grpo, "shuffle_sequence_dict", lambda d: d),
-     "shuffle_sequence_dict"),
     ("delete _iter_named_params", lambda m: m.delattr(VLLMGeneration, "_iter_named_params"), "_iter_named_params"),
     ("__init__ without self._metrics", lambda m: drop(m, GRPOTrainer.__init__, "self._metrics"), "_metrics"),
     ("VLLMGeneration without self._dist", lambda m: drop(m, VLLMGeneration, "self._dist"), "_dist"),
@@ -162,8 +160,8 @@ def test_each_broken_item_raises_naming_it(monkeypatch, breaker, needle):
 
 
 @pytest.mark.parametrize("first, later, needle", [("delete _prepare_inputs", "no tool_mask", "_prepare_inputs"),
-                                                  ("delete shuffle_sequence_dict", "no self.use_vllm =",
-                                                   "shuffle_sequence_dict")])  # fmt: skip
+                                                  ("no self.use_vllm =", "changed source of _prepare_inputs",
+                                                   "use_vllm")])  # fmt: skip
 def test_the_first_broken_item_in_check_order_is_named(monkeypatch, first, later, needle):
     breaks = {name: fn for name, fn, _ in BREAKS}
     breaks[later](monkeypatch)

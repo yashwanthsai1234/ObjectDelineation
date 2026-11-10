@@ -271,7 +271,8 @@ def test_fast_grpo_starts_scoring_when_vllm_returns(monkeypatch):
 
 
 def c10_trainer(steps_per_generation=16, num_iterations=1):
-    args = type("A", (), {"gradient_accumulation_steps": 16, "steps_per_generation": steps_per_generation})()
+    args = type("A", (), {"gradient_accumulation_steps": 16, "steps_per_generation": steps_per_generation,
+                          "report_to": []})()
     return trainer(rl_trl_adapter.FastGRPO, vision=None, use_vllm=True, vllm_importance_sampling_correction=True,
         args=args,
                    num_iterations=num_iterations, loss_type="dr_grpo", vllm_importance_sampling_mode="sequence_mask",
@@ -328,25 +329,41 @@ def test_update_forward_gives_trl_its_importance_ratio(monkeypatch, tmp_path):
     assert logged[1]["sampling/importance_sampling_ratio/min"] == [1.0]
 
 
+def order_spy(monkeypatch, t):
+    """The order each t._prepare_inputs call takes: "trl" (TRL's own method, with its shuffle), "by_length" or
+    ("by_group_length", G). The generation batch is empty, and TRL's module global is never touched (E-G6)."""
+    import trl.trainer.grpo_trainer as G
+
+    seen, shuffle = [], G.shuffle_sequence_dict
+    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append("trl"))
+    monkeypatch.setattr(GRPOTrainer, "_generate_and_score_completions", lambda self, batch: {"x": torch.zeros(16)})
+    monkeypatch.setattr(rl_trl_adapter, "by_length", lambda b: seen.append("by_length") or b)
+    monkeypatch.setattr(rl_trl_adapter, "by_group_length", lambda b, G: seen.append(("by_group_length", G)) or b)
+    t._step = 0
+
+    def call():
+        t._buffered_inputs = None
+        t._prepare_inputs({})
+        assert G.shuffle_sequence_dict is shuffle
+        return seen.pop()
+
+    return call
+
+
 def test_update_micro_batches_are_length_sorted_only_when_that_leaves_the_gradient_unchanged(monkeypatch):
     """dr_grpo divides each micro-batch's sum by a constant (micro-batch rows x max_completion_length, then the
     accumulation steps: grpo_trainer.py 3285-3289), so when every micro-batch of a generation batch lands in one
     optimizer step (gradient_accumulation_steps a multiple of steps_per_generation), the partition does not change
     the update. Otherwise TRL's shuffle stays."""
-    import trl.trainer.grpo_trainer as G
-
-    seen = []
-    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append(G.shuffle_sequence_dict))
-    shuffle = G.shuffle_sequence_dict
     t = c10_trainer()
-    t.model = type("M", (), {"training": True})()
-    t._prepare_inputs({})
-    assert seen == [rl_forward.by_length] and G.shuffle_sequence_dict is shuffle  # restored after the call
+    call = order_spy(monkeypatch, t)
+    assert call() == "by_length"
     t.args.steps_per_generation = 32  # micro-batches of one generation batch span two optimizer steps
-    t._prepare_inputs({})
+    assert call() == "trl"
     t.args.steps_per_generation, t.loss_type = 16, "bnpo"  # a per-micro-batch token-count normaliser
-    t._prepare_inputs({})
-    assert seen[1:] == [shuffle, shuffle]
+    assert call() == "trl"
+    t.loss_type, t.model.training = "dr_grpo", False  # eval
+    assert call() == "trl"
 
 
 def test_lora_input_cast_is_dropped_only_under_bf16_autocast_where_it_is_bit_identical():
@@ -584,18 +601,13 @@ def test_shared_prefix_falls_back_when_rows_do_not_share_prompts():
 def test_shared_prefix_update_micro_batches_keep_whole_groups(monkeypatch):
     """With shared_prefix the update's order keeps each prompt's G answers together (by_group_length), so a
     micro-batch of whole groups packs; micro-batches that cannot hold whole groups keep by_length."""
-    import trl.trainer.grpo_trainer as G
-
-    seen = []
-    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append(G.shuffle_sequence_dict))
     t = c10_trainer()
-    t.model, t.shared_prefix, t.num_generations = type("M", (), {"training": True})(), True, 8
+    t.shared_prefix, t.num_generations = True, 8
     t.args.per_device_train_batch_size = 16
-    t._prepare_inputs({})
-    assert seen[0].func is rl_forward.by_group_length and seen[0].keywords == {"G": 8}
+    call = order_spy(monkeypatch, t)
+    assert call() == ("by_group_length", 8)
     t.args.per_device_train_batch_size = 12  # not whole groups of 8
-    t._prepare_inputs({})
-    assert seen[1] is rl_forward.by_length
+    assert call() == "by_length"
 
 
 def test_shared_prefix_normalizes_over_the_sampled_support_as_trl():
@@ -658,15 +670,81 @@ def test_a_model_without_the_rope_hook_takes_the_per_row_forward():
 
 
 def test_update_order_keeps_trls_shuffle_under_a_per_micro_batch_entropy_cut(monkeypatch):
+    t = c10_trainer()
+    t.top_entropy_quantile = 0.2
+    assert order_spy(monkeypatch, t)() == "trl"
+
+
+def generation_batch(rows=8, G=4, seed=0):
+    """A generation batch as _generate_and_score_completions returns it for Qwen3-VL: masks of distinct lengths, a
+    per-row list, a 0-d tensor, a None field and one image per row (pixel rows by image_grid_thw)."""
+    g = torch.Generator().manual_seed(seed)
+    real = torch.randperm(rows, generator=g) + 1  # completion lengths 1..rows
+    grid = torch.tensor([[1, 2, 2 * (1 + i % 2)] for i in range(rows)])
+    return {"prompt_ids": torch.arange(rows)[:, None].repeat(1, 3),
+            "prompt_mask": torch.ones(rows, 3, dtype=torch.long),
+            "completion_ids": torch.arange(rows * 9).view(rows, 9),
+            "completion_mask": (torch.arange(9)[None] < real[:, None]).long(),
+            "advantages": torch.randn(rows, generator=g),
+            "pixel_values": torch.randn(int(grid.prod(-1).sum()), 5, generator=g), "image_grid_thw": grid,
+            "num_images": [1] * rows, "keys": [f"k{i // G}" for i in range(rows)],
+            "num_items_in_batch": torch.tensor(7), "old_per_token_logps": None}  # fmt: skip
+
+
+def old_swap_prepare(monkeypatch, t, batch, order):
+    """The pre-E5 path, rebuilt for the equivalence test: TRL's own _prepare_inputs with its module global
+    shuffle_sequence_dict swapped for the order (E5 step 3 removed the swap)."""
     import trl.trainer.grpo_trainer as G
 
-    seen = []
-    monkeypatch.setattr(GRPOTrainer, "_prepare_inputs", lambda self, batch: seen.append(G.shuffle_sequence_dict))
-    shuffle = G.shuffle_sequence_dict
-    t = c10_trainer()
-    t.model, t.top_entropy_quantile = type("M", (), {"training": True})(), 0.2
-    t._prepare_inputs({})
-    assert seen == [shuffle]
+    with monkeypatch.context() as m:
+        m.setattr(G, "shuffle_sequence_dict", order)
+        return GRPOTrainer._prepare_inputs(t, batch)
+
+
+@pytest.mark.parametrize("shared_prefix", [False, True])
+def test_prepare_inputs_override_equals_the_old_swap_path(monkeypatch, shared_prefix):
+    """E-G6: the copied train branch with the order in place of TRL's shuffle gives the micro-batches of the old swap
+    path, key by key: on the generating step and on the next step, which reads the buffer (by_length, and
+    by_group_length under shared_prefix); in eval both are TRL's own method."""
+    import functools
+
+    batch = generation_batch()
+    monkeypatch.setattr(GRPOTrainer, "_generate_and_score_completions", lambda self, b: dict(batch))
+    order = functools.partial(rl_forward.by_group_length, G=4) if shared_prefix else rl_forward.by_length
+
+    def build():
+        t = c10_trainer(steps_per_generation=4)
+        t.args.gradient_accumulation_steps, t.args.per_device_train_batch_size = 4, 4
+        t.shared_prefix, t.num_generations, t._step, t._buffered_inputs = shared_prefix, 4, 0, None
+        return t
+
+    new, old = build(), build()
+    for step in (0, 1, 4):
+        new._step = old._step = step
+        a, b = new._prepare_inputs({}), old_swap_prepare(monkeypatch, old, {}, order)
+        assert a.keys() == b.keys()
+        for k in a:
+            assert a[k] == b[k] if not isinstance(a[k], torch.Tensor) else torch.equal(a[k], b[k]), (step, k)
+    assert [len(x["keys"]) for x in new._buffered_inputs] == [2, 2, 2, 2]
+    new.model.training = old.model.training = False
+    a, b = new._prepare_inputs({}), old_swap_prepare(monkeypatch, old, {}, order)
+    assert all(torch.equal(a[k], b[k]) if isinstance(a[k], torch.Tensor) else a[k] == b[k] for k in a)
+
+
+def test_no_assignment_to_a_trl_module_global_in_src():
+    """E-G6 / U12: no Assign, AugAssign, setattr or monkeypatch.setattr targets shuffle_sequence_dict in src."""
+    import ast
+    from pathlib import Path
+
+    hits = []
+    for f in (Path(__file__).resolve().parents[2] / "src").rglob("*.py"):
+        for n in ast.walk(ast.parse(f.read_text())):
+            targets = [*getattr(n, "targets", []), *([n.target] if isinstance(n, ast.AugAssign) else [])]
+            names = [t.attr for t in targets if isinstance(t, ast.Attribute)]
+            if isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", "")) == "setattr":
+                names += [a.value for a in n.args if isinstance(a, ast.Constant)]
+            hits += [f"{f.name}:{n.lineno}" for x in names if x == "shuffle_sequence_dict"]
+    assert hits == []
 
 
 def test_shared_prefix_is_off_when_the_text_layers_are_compiled():

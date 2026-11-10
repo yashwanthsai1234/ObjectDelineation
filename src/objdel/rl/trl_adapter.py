@@ -28,6 +28,8 @@ import torch.nn.functional as F
 import trl.trainer.grpo_trainer as trl_grpo
 from trl import GRPOTrainer
 from trl.data_utils import prepare_multimodal_messages
+from trl.extras.profiling import profiling_context
+from trl.trainer.utils import split_pixel_values_by_grid, split_tensor_dict, unsplit_pixel_values_by_grid
 
 from objdel.geom import engine as _gpucheck
 from objdel.policy import marks as nvtx
@@ -76,7 +78,7 @@ METHODS = {  # GRPOTrainer
     "_calculate_rewards": (("self", "inputs", "prompts", "completions", "completion_ids_list"),
                            "FastGRPO._calculate_rewards"),  # fmt: skip
 }
-GLOBALS = {"shuffle_sequence_dict": (("seq_dict",), "FastGRPO._prepare_inputs")}  # trl.trainer.grpo_trainer
+GLOBALS: dict[str, tuple] = {}  # trl.trainer.grpo_trainer functions (E5 removed shuffle_sequence_dict's swap)
 VLLM_METHODS = {"_iter_named_params": (("self",), "FastGRPO.sync_without_merge")}  # VLLMGeneration
 
 # name -> (sources that must contain the needle, needle, the place that relies on it)
@@ -632,7 +634,9 @@ class FastGRPO(FastForward, GRPOTrainer):
     def _prepare_inputs(self, generation_batch):
         """Update micro-batches cut from the length-sorted generation batch (by_length) when the partition leaves the
         update unchanged: dr_grpo's constant normaliser and every micro-batch in one optimizer step. Each chunk is
-        then trimmed to rows of like length instead of the batch's longest answer."""
+        then trimmed to rows of like length instead of the batch's longest answer. The train branch is TRL 1.17.1's
+        (grpo_trainer.py 1605-1617, pinned by SOURCE_SHA256) with the order in place of its shuffle; otherwise, and
+        in eval, TRL's own method runs."""
         a = self.args
         if not (self.model.training and self.loss_type == "dr_grpo" and getattr(self, "top_entropy_quantile", 1.0) >= 1
                 and a.gradient_accumulation_steps % a.steps_per_generation == 0):  # fmt: skip (entropy cut: per batch)
@@ -641,11 +645,12 @@ class FastGRPO(FastForward, GRPOTrainer):
         G = getattr(self, "num_generations", None)
         if self.shared_prefix and G and a.per_device_train_batch_size % G == 0:
             order = functools.partial(by_group_length, G=G)  # whole groups per micro-batch: packed_chunk shares them
-        shuffle, trl_grpo.shuffle_sequence_dict = trl_grpo.shuffle_sequence_dict, order
-        try:
-            return super()._prepare_inputs(generation_batch)
-        finally:
-            trl_grpo.shuffle_sequence_dict = shuffle
+        with profiling_context(self, "_prepare_inputs"):  # TRL's @profiling_decorator on the method it replaces
+            if self._step % (a.steps_per_generation * self.num_iterations) == 0 or self._buffered_inputs is None:
+                batch = split_pixel_values_by_grid(self._generate_and_score_completions(generation_batch))
+                batches = split_tensor_dict(order(batch), a.steps_per_generation)
+                self._buffered_inputs = [unsplit_pixel_values_by_grid(b) for b in batches]
+            return self._buffered_inputs[self._step % a.steps_per_generation]
 
     def training_step(self, *args, **kwargs):
         """Run the micro-batch step inside the `micro` NVTX range."""
