@@ -19,6 +19,7 @@ from objdel.verify.reward import cache as rc
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_many
 from tests.oracles.reward_reference import host_tables
+from tests.oracles.score_numpy import same_sig
 
 DATA = Path(os.environ.get("OBJDEL_DATA_ROOT", Path(__file__).resolve().parents[2] / "data"))
 KEYS = ("area", "iou_tc", "f5", "g_area", "topo_freq", "sig_start", "sig")
@@ -211,8 +212,8 @@ def _stack():
 
 def test_construction_and_load_make_no_engine_call(tmp_path, monkeypatch):
     """I06 (C11): constructing and loading make no engine call and leave gc.stats() unchanged; the first device()
-    builds the tables (one add_tables_from_raters call), the second makes none; perimeter, rater_sigs, voters and
-    same_sig call device() first; the distance maps come from cache.edt (one engine edt call each) on first host
+    builds the tables (one add_tables_from_raters call), the second makes none; perimeter, rater_sigs and voters
+    build them first when unbuilt; the distance maps come from cache.edt (one engine edt call each) on first host
     access, equal to scipy's EDT."""
     c0 = ExpertCache.build(_stack())
     path = tmp_path / "c.npz"
@@ -230,12 +231,12 @@ def test_construction_and_load_make_no_engine_call(tmp_path, monkeypatch):
     assert spy.calls == ["add_tables_from_raters"] and gc.resident() == n0 + 1
     h = c.device()
     assert c.device() == h and spy.calls == ["add_tables_from_raters"]
-    for name in ("rater_sigs", "voters", "same_sig", "perimeter"):
+    for name in ("rater_sigs", "voters", "perimeter"):
         spy.calls.clear()
         getattr(c2, name)
         assert spy.calls == ["add_tables_from_raters"], name
         c2 = ExpertCache(c0.raters, c0.tau, c0.t5)
-    assert (c.rater_sigs, c.voters, c.same_sig) == (c0.rater_sigs, c0.voters, c0.same_sig)
+    assert (c.rater_sigs, c.voters, same_sig(c)) == (c0.rater_sigs, c0.voters, same_sig(c0))
     spy.calls.clear()
     maps = (c.dist_out_union, c.dist_in_core, c.dist_out_union, c.dist_in_core)
     assert spy.calls == ["edt", "edt"]

@@ -249,7 +249,6 @@ struct Stats {
   i64 arena_bytes = 0;        // capacity of the grow-only device arenas of both lanes
   i64 table_bytes = 0;        // bytes of the resident expert tables
   i64 live_device_bytes = 0;  // device bytes allocated and not released (== arena_bytes + table_bytes)
-  i64 contexts = 0;           // 1 once a call has opened a CUDA context in this process (0 on the CPU build)
   i64 pool_reserved = 0;          // bytes the engine's pool holds from the driver (CUDA build, read live)
   i64 default_pool_reserved = 0;  // bytes the device's default pool holds (torch, vLLM; the engine never uses it)
 };

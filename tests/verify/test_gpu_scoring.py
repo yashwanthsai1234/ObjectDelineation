@@ -190,6 +190,32 @@ def test_tables_are_uploaded_once_and_freed_with_the_cache():
     assert _gpucheck.resident() == before
 
 
+def test_resident_tables_are_bounded_and_rebuild_alike(monkeypatch):
+    """device_many keeps at most MAX_TABLES table sets: the least recently used caches lose theirs (never one of the
+    running call's), rebuild the same tables on their next use and score the same; every handle is dropped once."""
+    from collections import OrderedDict
+
+    from objdel.verify.reward import cache as rc
+    monkeypatch.setattr(rc, "MAX_TABLES", 2)
+    monkeypatch.setattr(rc, "_TABLES", OrderedDict())  # other tests' caches keep their tables
+    dropped, drop = [], _gpucheck.drop_tables
+    monkeypatch.setattr(_gpucheck, "drop_tables", lambda h: (dropped.append(h), drop(h)))
+    gc.collect()
+    before = _gpucheck.resident()
+    cs = [ExpertCache.build(np.stack([disk(20, r + i, 10, 10) for r in (4, 5)])) for i in range(4)]
+    want = [(score_mask(c.vote, c), c.rater_sigs, c.perimeter) for c in cs]
+    assert [c._device for c in cs[:2]] == [None, None] and _gpucheck.resident() == before + 2
+    rc.device_many([cs[2]])  # least recent first: 2, 3; touched, 3, 2; so building 0 drops 3
+    rc.device_many([cs[0]])
+    assert [c._device is None for c in cs] == [False, True, False, True] and _gpucheck.resident() == before + 2
+    rc.device_many(cs)  # a call keeps all its caches, even past the bound
+    assert None not in [c._device for c in cs] and _gpucheck.resident() == before + 4
+    assert [(score_mask(c.vote, c), c.rater_sigs, c.perimeter) for c in cs] == want
+    del cs, want
+    gc.collect()
+    assert _gpucheck.resident() == before and len(dropped) == len(set(dropped)) == 7
+
+
 # ------------------------------------------------------------------ polygons: completions end to end
 
 @pytest.fixture(scope="module")

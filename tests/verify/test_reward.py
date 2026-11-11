@@ -17,6 +17,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from oracles import reward_harness as H
 from oracles import reward_reference as ref
+from oracles.score_numpy import same_sig
 
 from objdel.geom.shape import to_mask
 from objdel.verify.reward import cache as cache_mod
@@ -181,7 +182,7 @@ def test_fingerprint_covers_every_library_of_the_stored_values(monkeypatch):
 def test_pickle_rederives_the_cache(three):
     _, c = three
     d = pickle.loads(pickle.dumps(c))
-    assert d.digest == c.digest and np.array_equal(d.dist_in_core, c.dist_in_core) and d.same_sig == c.same_sig
+    assert d.digest == c.digest and np.array_equal(d.dist_in_core, c.dist_in_core) and same_sig(d) == same_sig(c)
     assert len(pickle.dumps(c)) < c.raters.nbytes + 2000  # only masks, tau, T5 travel
 
 
@@ -256,7 +257,7 @@ def test_sub_filter_raters_abstain_from_topology():
     big, tiny = disk(40, 6), np.zeros((40, 40), bool)
     tiny[19:21, 19:21] = True  # 4 px inside the 113 px disk; min_area = 5
     c = ExpertCache.build(np.stack([big, big, tiny]))
-    assert c.rater_sigs == ((0,), (0,), ()) and c.voters == (0, 1) and c.same_sig == {(0,): [0, 1]}
+    assert c.rater_sigs == ((0,), (0,), ()) and c.voters == (0, 1) and same_sig(c) == {(0,): [0, 1]}
     assert score_mask(big, c).topo_freq == 1.0 and min(c.rater_areas) == 4  # the area range keeps the tiny rater
     speck = score_mask(tiny, c)
     assert speck.sig == () and speck.topo_freq == 0.0 and speck.iou_tc == pytest.approx(4 / big.sum())  # vs the vote

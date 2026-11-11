@@ -1,5 +1,5 @@
 """Phase 2 M2 / M9 (train): view_rows over a training view directory (C-ROWS), the Phase 2 configs, and the I45
-dataset fixes (prepare checks cv2.imwrite, cache_loader reads the manifest, unbounded preload)."""
+dataset fixes (prepare checks cv2.imwrite, cache_loader reads the manifest)."""
 import hashlib
 import json
 import pickle
@@ -394,14 +394,6 @@ def test_cache_loader_reads_only_the_manifests_files(prepared, tmp_path):
         f.write("\n")
     with pytest.raises(ValueError, match="manifest"):
         verify_store.cache_loader(out)
-
-
-def test_cache_loader_unbounded_preload(prepared, tmp_path):
-    out = tmp_path / "out"
-    shutil.copytree(prepared, out)
-    load = verify_store.cache_loader(out, maxsize=None)
-    shutil.rmtree(out / "caches")  # everything was loaded up front
-    assert load("lidc/1.2.1/n000/z001")["nodule"].k == 2 and set(load("riga/MESSIDOR/image001")) == {"disc", "cup"}
 
 
 def test_prompt_rows_with_and_without_the_rl_filter(prepared):

@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BASELINE = (4, 2)  # (waits, drain_syncs) per score_polygons call before D5 (gpucheck.cpp score_polygons, score_words)
 EVENTS = ("waits", "drain_syncs", "label_pairs", "sync_alloc", "sync_free", "pool_allocs", "pool_frees", "pinned_grows",
           "eval_scratch_peak")
-STATE = ("arena_bytes", "table_bytes", "live_device_bytes", "contexts", "pool_reserved", "default_pool_reserved")
+STATE = ("arena_bytes", "table_bytes", "live_device_bytes", "pool_reserved", "default_pool_reserved")
 OUT_BOUND = 512 * 64 * 4  # the out staging bound (gpucheck.cpp kStageObjects x kStageComps signature entries)
 
 
@@ -77,7 +77,6 @@ def test_stats_keys_and_reset_keep_state():
     gc.reset_stats()
     after = gc.stats()
     assert all(after[k] == 0 for k in EVENTS) and all(after[k] == st[k] for k in STATE)
-    assert after["contexts"] == int(gc.build() == "cuda")
 
 
 def test_score_polygons_waits_drains_and_no_allocation_after_warm_up(cache):
