@@ -1,6 +1,6 @@
 """Build the SFT targets of every train/val item and rater from the data store, and measure K5-K7 and R1 (target part).
 
-    .venv/bin/python -I -m experiments.phase1.build_targets [--store data/store] [--out data/targets] [--procs 3]
+    .venv/bin/python -I -m objdel.cli.data.targets [--store data/store] [--out data/targets] [--procs 3]
 
 Per item: objdel.data.targets.frame (crop policy), then one target per rater with the reward's size filter
 (min_area of the raters' union per structure). Every target is re-checked from its

@@ -167,7 +167,7 @@ def test_sop_z_maps_every_roi_of_every_file(tmp_path):
 
 def test_fetch_matches_slices_by_sop_uid_then_by_z():  # B3-4 (LIDC-IDRI-0365: no cited SOP UID exists on TCIA)
     pytest.importorskip("pydicom")
-    from experiments.phase1.fetch_lidc_pixels import choose
+    from objdel.cli.data.fetch_lidc import choose
     headers = [("a.dcm", "u1", -10.0), ("b.dcm", "u2", -7.5), ("c.dcm", "u3", -5.004), ("d.dcm", "u4", -2.5),
                ("e.dcm", "u5", -2.5), ("f.dcm", "u6", 0.0)]
     sops = {"u1": -10.0, "x1": -10.0, "x2": -5.0, "x3": -2.5, "x4": -1.0}  # x*: UIDs absent from the series
@@ -217,7 +217,7 @@ def test_planted_series_uid_is_refused_by_every_xml_reader(tmp_path, planted):  
 @pytest.mark.parametrize("planted", ["../../victim", "VICTIM"])
 def test_fetch_never_touches_a_path_named_by_a_planted_uid(tmp_path, monkeypatch, planted):  # review #1, no network
     pytest.importorskip("pydicom")
-    from experiments.phase1 import fetch_lidc_pixels as F
+    from objdel.cli.data import fetch_lidc as F
     victim = tmp_path / "victim"
     victim.mkdir()
     (victim / "keep.txt").write_text("x")
@@ -234,7 +234,7 @@ def test_fetch_never_touches_a_path_named_by_a_planted_uid(tmp_path, monkeypatch
 
 def test_fetch_cli_series_must_be_dicom_uids(tmp_path, monkeypatch, capsys):  # review #1: the other way in
     pytest.importorskip("pydicom")
-    from experiments.phase1 import fetch_lidc_pixels as F
+    from objdel.cli.data import fetch_lidc as F
     monkeypatch.setattr(F.urllib.request, "urlopen", lambda *a, **k: 1 / 0)
     write(tmp_path / "xml", [[nodule_xml([(-7.5, square(1, 1, 5, 5))])]])
     with pytest.raises(SystemExit):
@@ -246,7 +246,7 @@ def test_fetch_url_quotes_the_uid(tmp_path, monkeypatch):  # review #1: the UID 
     pytest.importorskip("pydicom")
     from urllib.parse import parse_qs, urlsplit
 
-    from experiments.phase1 import fetch_lidc_pixels as F
+    from objdel.cli.data import fetch_lidc as F
     urls = []
     monkeypatch.setattr(F.urllib.request, "urlopen", lambda url, **k: urls.append(url) or 1 / 0)
     monkeypatch.setattr(F.time, "sleep", lambda s: None)

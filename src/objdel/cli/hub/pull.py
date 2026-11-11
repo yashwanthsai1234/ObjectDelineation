@@ -1,7 +1,7 @@
 """One revision of the private HF model repo onto the box (RL starts from an SFT run's selected branch, e.g. r1-qwen3vl2b).
 
-    python -I -m experiments.phase2.hf_pull --repo svenk029/objdel-sft --revision r1-qwen3vl2b --out DIR < token
-    python -I -m experiments.phase2.hf_pull --repo svenk029/objdel-sft --revision HEX40 --out /workspace/data/lidc \
+    python -I -m objdel.cli.hub.pull --repo svenk029/objdel-sft --revision r1-qwen3vl2b --out DIR < token
+    python -I -m objdel.cli.hub.pull --repo svenk029/objdel-sft --revision HEX40 --out /workspace/data/lidc \
         --allow "rows/lidc-train-b1-780/**" < token     # the B1 rows root lands at /workspace/data/lidc/rows/lidc-train-b1
 
 The token arrives on stdin (fetch_hf.sh streams it from objdel.infra.secrets over ssh, as push_hf does: never on argv,

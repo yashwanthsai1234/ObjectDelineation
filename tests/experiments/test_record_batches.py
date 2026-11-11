@@ -18,7 +18,7 @@ BASE = ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", 
 
 
 def test_flags_default_to_the_control_and_validate():
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     a = train_rl.parse(BASE)
     assert (a.record_batches, a.checks_from_step) == (None, 1)

@@ -1,6 +1,6 @@
 """Fair ceiling of a view: each doctor and the model against the same k - 1 doctors (objdel.verify.ceiling, plan A2).
 
-    python -I -m experiments.phase2.ceiling --view data/eval_views/lidc-val-shifted --split val \
+    python -I -m objdel.cli.eval.ceiling --view data/eval_views/lidc-val-shifted --split val \
         [--answers runs/a3/eval_val/answers.jsonl] --out runs/a3/ceiling_val
 
 Every RL item of the view's LIDC <split> records, on the view's caches (checked against the records' digests).

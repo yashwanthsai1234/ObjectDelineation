@@ -197,7 +197,7 @@ def test_topology_report_carries_the_probe_item_ids(tmp_path, monkeypatch):
     pytest.importorskip("trl")
     from test_p2_v1_select import _c2_run
 
-    from experiments.phase2 import select_ckpt as SC
+    from objdel.cli.train import select as SC
 
     run, base, _ = _c2_run(tmp_path, monkeypatch)
     assert SC.main(base + ["--sampler", "hf"]) == 0

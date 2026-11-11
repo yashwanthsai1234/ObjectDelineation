@@ -1,7 +1,7 @@
 """Build the ordered RL rows root of B1 (Implementation.md B1.4): one record per scheduled train window, in schedule
 order, and a manifest written only when every hard B data gate passes.
 
-    .venv/bin/python -I -m experiments.phase2.build_rl_rows --store data/store --target-law train-shifted
+    .venv/bin/python -I -m objdel.cli.data.rl_rows --store data/store --target-law train-shifted
         --out data/views/lidc-train-b1-780 --steps 780 --per-step 32 [--draws N] --shares 0.15 0.75 0.10 --seed 0
         --procs 6 --exclude reference/train_exclusions.json
 
@@ -20,7 +20,7 @@ order, and a manifest written only when every hard B data gate passes.
 An --out with a manifest, or with anything but a build's folders, is refused; a failed or interrupted build's folders
 are removed first (no stale file reaches the new root). With no passing draws value the last value's failure is
 printed (the schedule names the kind and cell it could not fill).
-Upload (B1.4 step 5, owner-run, before any rental): experiments.phase2.hf_push --rows ROOT. Reads untrusted data: run
+Upload (B1.4 step 5, owner-run, before any rental): objdel.cli.hub.push --rows ROOT. Reads untrusted data: run
 with python -I.
 """
 import argparse
@@ -41,11 +41,12 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.io import write_json
+from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
 from objdel.data import store, windows
 from objdel.data.coverage import cell_coverage
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = repo_root()
 REF = ROOT / "reference"
 DRAWS_OPTIONS = (1, 2, 4, 8)
 BUILD_DIRS = ("caches", "images", "lidc")  # what a build writes before its manifest

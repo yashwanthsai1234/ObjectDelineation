@@ -1,7 +1,7 @@
 """Copy the headline test and validation metrics of final_eval.json files into reference/headline.json.
 
-    python -I -m experiments.phase2.headline --run r5 --model-ref svenk029/objdel-sft@rl-full-3ep
-    python -I -m experiments.phase2.headline --test T/final_eval.json --val V/final_eval.json --model-ref REF
+    python -I -m objdel.cli.eval.headline --run r5 --model-ref svenk029/objdel-sft@rl-full-3ep
+    python -I -m objdel.cli.eval.headline --test T/final_eval.json --val V/final_eval.json --model-ref REF
 
 --run ID reads runs/ID/eval/eval_{test,val}/final_eval.json. Values are copied at full precision, never typed.
 The run id is ID, or the folder under runs/ of --test (else empty).

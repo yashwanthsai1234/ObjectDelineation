@@ -46,6 +46,7 @@ from pathlib import Path
 from objdel.core import datasets
 from objdel.core.io import code_sha, git_sha, read_json
 from objdel.core.provenance import repo_root
+from objdel.core.spec import CLI as CLI_PACKAGE
 from objdel.core.spec import load_spec
 from objdel.infra import hf
 from objdel.infra.errors import InfraError
@@ -224,11 +225,16 @@ def cmd_sync_up(a) -> None:
     ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], bundle=name)
 
 
+# The modules run.sh runs by name: a command-line module, or a script not yet moved out of experiments/
+RUNNABLE = re.compile(rf"{re.escape(CLI_PACKAGE)}\.\w+\.\w+|experiments\.phase2\.\w+|"
+                      r"experiments\.phase1\.bench\.xarch_hashes")
+
+
 def cmd_run(a) -> None:
-    """MODULE [ARGS] runs one module (experiments.phase2.*, or xarch_hashes); a run spec specs/<name>.yaml runs
-    its `chain` under one cap, refused on the box while a G-vision reference it reads is missing.
-    Each job has its own tmux session and log (<run_id>-<name>, <name>.log), so a second job can run beside the
-    first."""
+    """MODULE [ARGS] runs one module (RUNNABLE); a run spec specs/<name>.yaml runs its `chain` under one cap,
+    refused on the box while a G-vision reference it reads is missing.
+    Each job has its own tmux session and log (<run_id>-<name>, <name>.log; a module's name is its last two parts,
+    e.g. train_rl), so a second job can run beside the first."""
     run, guard = get_run(a.run_id), []
     if a.module.endswith(".yaml") and a.args:  # a trailing --cap-hours would be silently ignored
         raise InfraError(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
@@ -239,10 +245,11 @@ def cmd_run(a) -> None:
         guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run train_sft "
                  f"--vision-reference-only first' >&2; false; }}; }}"
                  for r in vision_refs(repo_root() / a.module, a.run_id)]  # fmt: skip
-    elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
-        stages, name = [["-m", a.module, *a.args]], a.module.rsplit(".", 1)[1]
+    elif RUNNABLE.fullmatch(a.module):
+        stages, name = [["-m", a.module, *a.args]], "_".join(a.module.split(".")[-2:])
     else:
-        raise InfraError("module must be experiments.phase2.<script> or a run spec specs/<name>.yaml")
+        raise InfraError(f"module must be {CLI_PACKAGE}.<group>.<command>, a tool script or a run spec "
+                         "specs/<name>.yaml")
     cap = int(min(a.cap_hours * 3600, run["deadline"] - time.time() - MARGIN_S))
     if cap <= 0:
         raise InfraError("no time left before the instance cap")
@@ -317,7 +324,7 @@ def cmd_push_hf(a) -> None:
     path, out, rl = push_target(load_spec(repo_root() / a.config), a.run_id)
     kind = "--rl" if rl else "--run"
     token = hf_token()
-    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push {kind} {path} "
+    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m {CLI_PACKAGE}.hub.push {kind} {path} "
            f"--repo {hf.REPO} --revision {out}")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
 
@@ -358,7 +365,7 @@ def cmd_fetch_hf(a) -> None:
     rev, name = a.rows or (a.revision, a.name)
     if "/" in name or ".." in name or name in ("", "."):
         raise InfraError(f"fetch_hf: folder name {name!r} may not hold / or ..")
-    pull = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_pull --repo {hf.REPO} "
+    pull = (f"cd /workspace/src && /opt/venv/bin/python -I -m {CLI_PACKAGE}.hub.pull --repo {hf.REPO} "
             f"--revision {shlex.quote(rev)}")
     if a.rows:
         pin = rows_pin(rev)  # refuses a revision no plan pins, or pins twice

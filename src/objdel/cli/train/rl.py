@@ -1,10 +1,10 @@
 """Full GRPO run CLI: the RlStage of the flags -> objdel.rl.run.run_rl (or merge_last with --merge-last).
 
-    python -I -m experiments.phase2.train_rl --model qwen3-vl-2b --ckpt runs/r1/branches/e2 --train data/prepared
+    python -I -m objdel.cli.train.rl --model qwen3-vl-2b --ckpt runs/r1/branches/e2 --train data/prepared
         --out runs/rl --steps 500 --save-steps 50 [--resume]
-    python -I -m experiments.phase2.train_rl --model qwen3-vl-2b --ckpt {rd}/ckpt --train {data}/rows/lidc-train-b1
+    python -I -m objdel.cli.train.rl --model qwen3-vl-2b --ckpt {rd}/ckpt --train {data}/rows/lidc-train-b1
         --rows-revision <hex40> --rows-manifest-sha256 <hex64> --out {rd}/b1-rows --steps 260 --budget-usd 2.05
-    python -I -m experiments.phase2.train_rl --merge-last --model qwen3-vl-2b --ckpt {rd}/ckpt --out {rd}/b1-rows
+    python -I -m objdel.cli.train.rl --merge-last --model qwen3-vl-2b --ckpt {rd}/ckpt --out {rd}/b1-rows
 
 The flags are an objdel.core.spec.RlStage (cli_stage: one flag per field, --grpo as JSON, --profile-window S,E with
 1 <= S <= E: `1,STEPS` traces every step, S >= 2 with --trace); objdel.rl.run.checked adds the rules that need objdel.rl

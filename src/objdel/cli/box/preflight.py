@@ -1,6 +1,6 @@
 """Preflight: everything that can be proven on the Mac, before any GPU is rented (objdel.infra.preflight).
 
-    python -I -m experiments.phase2.preflight --config specs/b1_rows.yaml [--bundle-dir DIR]
+    python -I -m objdel.cli.box.preflight --config specs/b1_rows.yaml [--bundle-dir DIR]
     (make preflight CONFIG=specs/... [BUNDLE_DIR=DIR]; DIR as sync_up's --bundle-dir, default build/bundles)
 """
 

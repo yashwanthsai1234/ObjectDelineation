@@ -9,7 +9,7 @@ rescaled,rotated} and data/views/lidc-train-{shifted,rescaled}. Two layouts:
   "source_item_id"): sets["<ds>/<split>"].target_set_sha256 over the records
   of <dir>/<ds>/<split>.jsonl; each record's store item is framed as it was built (the policy frame, or the record's
   "view": offset, side and op; a rotated window through build_eval_views._rotated);
-- targets (experiments.phase1.build_targets): files["<ds>/<split>.jsonl"].sha256 over every store item of the split,
+- targets (objdel.cli.data.targets): files["<ds>/<split>.jsonl"].sha256 over every store item of the split,
   and target_set_sha256 over all four.
 Per rater: objdel.data.targets.build.build_target with the reward's size rule (min_areas of the frame masks), as both
 builders call it; a rater whose build raises ValueError has no target, as there. A store whose manifest SHA-256
@@ -25,7 +25,7 @@ from itertools import batched
 from multiprocessing import get_context
 from pathlib import Path
 
-from experiments.phase2.build_eval_views import _rotated
+from objdel.cli.data.eval_views import _rotated
 from objdel.core import datasets
 from objdel.core.io import read_json
 from objdel.data import store

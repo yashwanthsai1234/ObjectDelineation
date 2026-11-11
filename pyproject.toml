@@ -14,6 +14,9 @@ dependencies = [
     "pydantic>=2.14,<3", "pydantic-settings>=2.16,<3", "pyyaml>=6.0",  # objdel.core.spec: the typed run spec (specs/*.yaml)
 ]
 
+[project.scripts]
+objdel = "objdel.cli.main:main"  # `objdel <group> <command>`: runs objdel.cli.<group>.<command> under python -I
+
 [project.optional-dependencies]
 # Pinned training stack (plan D8, §6); reward/target hashes are recorded against these versions.
 train = [
@@ -107,6 +110,7 @@ convention = "google"
 # Phase scripts are frozen records of what produced the published numbers: lint lightly.
 "experiments/**" = ["E501", "B023", "B905", "D"]
 "tests/**" = ["D"]
+"src/objdel/cli/*/*.py" = ["E501", "D103"]  # the command modules moved from experiments/ keep their light lint
 "src/objdel/rl/trl_adapter.py" = ["TID251"]   # the one TRL adapter (E5)
 "tests/rl/test_trl_adapter.py" = ["TID251"]
 "tests/rl/test_prepare_inputs.py" = ["TID251"]  # asserts TRL's shuffle_sequence_dict is never swapped (E5)
@@ -158,7 +162,7 @@ id = "layers"  # the E8 target form (Implementation.md E0 table, E8.4): exhausti
 name = "objdel layers"
 type = "layers"
 containers = ["objdel"]
-layers = ["infra", "rl | sft", "policy", "data", "verify", "geom", "core"]
+layers = ["cli", "infra", "rl | sft", "policy", "data", "verify", "geom", "core"]
 exhaustive = true
 exhaustive_ignores = ["_gpucheck"]
 broken_contract_guidance = "Move the import down or the code up, or inject the dependency (docs/architecture/layers.md)."

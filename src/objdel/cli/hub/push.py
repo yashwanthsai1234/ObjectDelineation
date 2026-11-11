@@ -1,10 +1,10 @@
 """Upload a run's selected branch to the owner's private HF model repo (on the box; the Mac runs push_hf.sh).
 
-    python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
-    python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
-    python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1-780 --repo svenk029/objdel-sft --revision main
+    python -I -m objdel.cli.hub.push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
+    python -I -m objdel.cli.hub.push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
+    python -I -m objdel.cli.hub.push --rows data/views/lidc-train-b1-780 --repo svenk029/objdel-sft --revision main
         < token     # on the Mac: prints rows_revision and rows_manifest_sha256 for specs/b1_rows.yaml
-    python -I -m experiments.phase2.hf_push --card-only --headline reference/headline.json --repo ... --revision ...
+    python -I -m objdel.cli.hub.push --card-only --headline reference/headline.json --repo ... --revision ...
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
     be the run's)
 

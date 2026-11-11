@@ -13,8 +13,8 @@ import probe_models as M
 import pytest
 from oracles.eval_oracle import pairwise_iou
 
-from experiments.phase2 import baselines
-from experiments.phase2 import prereg as P
+from objdel.cli.eval import baselines
+from objdel.cli.train import prereg as P
 from objdel.data import probes
 from objdel.data.targets.build import build_target
 from objdel.policy import evaluate

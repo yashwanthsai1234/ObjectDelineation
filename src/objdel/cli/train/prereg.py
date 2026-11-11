@@ -2,7 +2,7 @@
 D12; M8). Authoritative where it and the plan's prose differ (§5.0). Fixed before V1; a rule is never changed after
 a run sees data (a later re-specification gets a new name and an AMEND note here and in PLAN §9).
 
-    .venv/bin/python -I -m experiments.phase2.prereg   # prints the rules as JSON
+    .venv/bin/python -I -m objdel.cli.train.prereg   # prints the rules as JSON
 
 Rules:
 - C1 stop rule (§5.2): rungs smallest first; C1 = the first rung passing every C1 gate. Report-only: G-prior (a)

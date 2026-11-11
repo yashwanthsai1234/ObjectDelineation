@@ -362,7 +362,7 @@ def _answers(view, path, drop=None):
 
 
 def _run(view, out, *extra):
-    from experiments.phase2 import ceiling as CLI
+    from objdel.cli.eval import ceiling as CLI
 
     CLI.main(["--view", str(view), "--split", "val", "--out", str(out), *extra])
     return json.loads((out / "ceiling.json").read_text()), (out / "ceiling_items.jsonl").read_text()

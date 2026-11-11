@@ -74,7 +74,7 @@ def edit_records(root, fn):
 @pytest.fixture(scope="module")
 def world(tmp_path_factory):
     """(tmp dir, store root, rows root, train items, pool, schedule, eval views root)."""
-    from experiments.phase2 import build_eval_views as B
+    from objdel.cli.data import eval_views as B
     tmp = tmp_path_factory.mktemp("q")
     train, other = all_items()
     st = write_store(tmp / "store", train + other)
@@ -490,7 +490,7 @@ def test_policy_side_limit_is_exact(world):
 # ----------------------------------------------------------------------------------- audit_data CLI (E04)
 @pytest.fixture
 def cli(world, tmp_path, monkeypatch):
-    from experiments.phase2 import audit_data as A
+    from objdel.cli.data import audit as A
     from objdel.data import splits
     from objdel.policy import models
     stub_ceiling(monkeypatch, [0.9, 0.8])

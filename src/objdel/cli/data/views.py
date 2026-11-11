@@ -1,6 +1,6 @@
 """Build a Phase 2 training view (plan §6.0 bundle, D9-D11; C-VIEW): per-epoch row specs with certified targets.
 
-    .venv/bin/python -I -m experiments.phase2.build_views --out data/views/lidc-bundle-v2 [--store data/store]
+    .venv/bin/python -I -m objdel.cli.data.views --out data/views/lidc-bundle-v3 [--store data/store]
         [--dataset lidc] [--split train] [--epochs 3] [--seed 0] [--nonsimple-repeat 4] [--procs 2] [--limit N]
 
 Per item with pixels (objdel.data.store): the policy frame gives the reward's size rule (min_areas: shift-, scale- and
@@ -152,7 +152,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--store", default="data/store")
     ap.add_argument("--prepared", default="data/prepared")
-    ap.add_argument("--out", required=True, help="e.g. data/views/lidc-bundle-v2")
+    ap.add_argument("--out", required=True, help="e.g. data/views/lidc-bundle-v3")
     ap.add_argument("--dataset", default="lidc", choices=sorted(datasets.DATASETS))
     ap.add_argument("--split", default="train")
     ap.add_argument("--epochs", type=int, default=3)

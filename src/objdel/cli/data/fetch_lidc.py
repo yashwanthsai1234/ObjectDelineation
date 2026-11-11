@@ -13,7 +13,7 @@ other, and HU values outside int16 or not integral would be wrapped or truncated
 (I45) instead, and the series is reported FAILED. LIDC-IDRI-0365's XML cites no SOP UID of its TCIA series, and readers 2 and 4 of LIDC-IDRI-0017 cite five
 absent UIDs at z positions the other readers' UIDs cover.
 
-    .venv/bin/python -I -m experiments.phase1.fetch_lidc_pixels data/raw/lidc_xml data/lidc_slices [--workers 3]
+    .venv/bin/python -I -m objdel.cli.data.fetch_lidc data/raw/lidc_xml data/lidc_slices [--workers 3]
         [--series UID ...] [--refetch-incomplete]
 
 References:

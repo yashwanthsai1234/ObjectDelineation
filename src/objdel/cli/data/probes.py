@@ -1,8 +1,8 @@
 """Build the precision / topology probe eval views (objdel.data.probes) and score sampled completions on them.
 
-    .venv/bin/python -I -m experiments.phase2.probes build [--store data/store] [--out data/eval_views] \
+    .venv/bin/python -I -m objdel.cli.data.probes build [--store data/store] [--out data/eval_views] \
         [--n-test 1000] [--n-train 0] [--only precision|topology]
-    .venv/bin/python -I -m experiments.phase2.probes score --probe precision|topology --completions C.jsonl \
+    .venv/bin/python -I -m objdel.cli.data.probes score --probe precision|topology --completions C.jsonl \
         [--root data/eval_views/probe-<probe>] [--out score.json]
 
 build writes data/eval_views/probe-precision (lidc/val.jsonl = probe-test on the "val" half of the LIDC train

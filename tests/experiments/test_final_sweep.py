@@ -48,17 +48,17 @@ def test_controller_check_reads_src_and_phase2_only(tmp_path):
 
 def test_pool_check_finds_names_flags_and_stage_fields(tmp_path):
     ctx = make(tmp_path, {
-        "experiments/phase2/ceiling.py": "pool = serve.fork_pool(2)\n",
-        "experiments/phase2/select_ckpt.py": "ap.add_argument('--procs', type=int)\n",
-        "experiments/phase2/build_eval_views.py": "ap.add_argument('--procs', type=int)\n",  # keeps its own flag
+        "src/objdel/cli/eval/ceiling.py": "pool = serve.fork_pool(2)\n",
+        "src/objdel/cli/train/select.py": "ap.add_argument('--procs', type=int)\n",
+        "src/objdel/cli/data/eval_views.py": "ap.add_argument('--procs', type=int)\n",  # keeps its own flag
         "src/objdel/s.py": "cpus = 4\nclass SelectStage:\n    procs: int = 1\n",
         "src/objdel/ok.py": "'''quota and cpus in prose'''\nx = 1\n"})
     found = fs.pool_leftovers(ctx)
     text = "\n".join(found)
-    for want in ("ceiling.py:1: pool name", "select_ckpt.py:1: --procs flag", "s.py:1: pool identifier `cpus`",
+    for want in ("ceiling.py:1: pool name", "select.py:1: --procs flag", "s.py:1: pool identifier `cpus`",
                  "s.py:3: SelectStage.procs"):
         assert want in text, (want, text)
-    assert "build_eval_views" not in text and "ok.py" not in text
+    assert "eval_views.py" not in text and "ok.py" not in text
 
 
 def test_doc_links_separates_ok_local_only_and_missing(tmp_path):

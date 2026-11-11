@@ -22,8 +22,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = [f"experiments.{d.replace('/', '.')}.{p.stem}"
-           for d in ("phase1", "phase1/bench", "cuda_checker", "phase2")
-           for p in sorted((ROOT / "experiments" / d).glob("*.py")) if p.stem not in ("__init__", "compare")]
+           for d in ("phase1/bench", "cuda_checker", "phase2")
+           for p in sorted((ROOT / "experiments" / d).glob("*.py")) if p.stem not in ("__init__", "compare")] + [
+    f"objdel.cli.{p.parent.name}.{p.stem}" for p in sorted((ROOT / "src/objdel/cli").glob("*/*.py"))
+    if p.stem != "__init__"]
 OPTIONAL = {"torch", "transformers", "trl", "datasets", "peft", "accelerate", "pydicom", "pylidc"}  # extras
 
 RUNNER = """
@@ -55,9 +57,8 @@ def helps(tmp_path_factory):
 
 
 def test_scripts_found():
-    assert {f"experiments.phase1.{s}" for s in ("eval_run", "prepare_rl", "build_data")} | {
-        "experiments.cuda_checker.eval", "experiments.phase2.verify_target_hashes",
-        "experiments.phase2.final_eval"} <= set(SCRIPTS)
+    assert {f"objdel.cli.{s}" for s in ("eval.score", "data.prepare", "data.store", "eval.run")} | {
+        "experiments.cuda_checker.eval", "experiments.phase2.verify_target_hashes"} <= set(SCRIPTS)
 
 
 @pytest.mark.parametrize("script", SCRIPTS)

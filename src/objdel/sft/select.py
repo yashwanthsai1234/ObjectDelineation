@@ -1,7 +1,7 @@
 """Checkpoint selection over a train_sft run's WSD branches; never touches CUDA.
 
 `run(stage, prereg, baselines)` runs one objdel.core.spec.SelectStage: the sampler children, scoring per view and
-probe, G-vision, the HF check, the judge and the gates. experiments/phase2/select_ckpt.py is its CLI and passes the
+probe, G-vision, the HF check, the judge and the gates. src/objdel/cli/train/select.py is its CLI and passes the
 pre-registered record (prereg: rule R-B, the entry gates) and the experiment baselines, which src never imports.
 
 Order: refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches; per

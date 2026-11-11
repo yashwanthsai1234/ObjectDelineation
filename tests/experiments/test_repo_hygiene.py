@@ -31,7 +31,7 @@ def test_r5_test_golden_is_committed_and_holds_only_its_three_keys():
     assert set(json.loads((GOLDENS / "r5_test_items.meta.json").read_text())) == {"numpy", "machine"}
 
 
-CLIS = ("final_eval", "ceiling", "outline_lengths")
+CLIS = ("objdel.cli.eval.run", "objdel.cli.eval.ceiling", "experiments.phase2.outline_lengths")
 
 
 def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
@@ -40,7 +40,7 @@ def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
 
     (tmp_path / "json.py").write_text("raise SystemExit('planted json.py ran')\n")
     for name in CLIS:
-        r = subprocess.run([sys.executable, "-I", "-m", f"experiments.phase2.{name}", "--help"], cwd=tmp_path,
+        r = subprocess.run([sys.executable, "-I", "-m", name, "--help"], cwd=tmp_path,
                            capture_output=True, text=True)
         assert r.returncode == 0 and "usage" in r.stdout, (name, r.stderr)
 
@@ -132,9 +132,10 @@ def test_retired_trees_hold_nothing():
     for p in RETIRED:
         assert tracked(p) == [] and not (ROOT / p).exists(), p
     probe = ("import importlib, sys\n"
-             "mods = 'build_data build_targets fetch_lidc_pixels prepare_rl eval_run bench.xarch_hashes'\n"
+             "mods = 'data.store data.targets data.fetch_lidc data.prepare eval.score'\n"
              "for m in mods.split():\n"
-             "    importlib.import_module('experiments.phase1.' + m)\n"
+             "    importlib.import_module('objdel.cli.' + m)\n"
+             "importlib.import_module('experiments.phase1.bench.xarch_hashes')\n"
              "assert not [n for n in sys.modules if n.endswith('.lab') or '.lab.' in n]\n"
              "for m in ('experiments.phase0', 'experiments.phase1.lab', 'experiments.phase2.lab'):\n"
              "    try:\n        importlib.import_module(m)\n    except ModuleNotFoundError:\n        continue\n"
@@ -227,7 +228,7 @@ def test_make_preflight_default_config_loads_as_a_run_spec():
 
 
 def test_train_sft_names_its_loader_load_items():
-    from experiments.phase2 import train_sft
+    from objdel.cli.train import sft as train_sft
 
     assert callable(sft_train.load_items) and not hasattr(train_sft, "preload")
 

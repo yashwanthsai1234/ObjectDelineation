@@ -1,5 +1,5 @@
 """B3.9 config files (I22b): the V3 launch config and the b3_v5.yaml steps in order; every
-`-m experiments.phase2.<module>` step parses with its module's parser on the Mac; against B1 the train_rl step
+`-m <module>` step parses with its module's parser on the Mac; against B1 the train_rl step
 changes only the reward, the truncation mask, beta and adam_epsilon, and the output folder."""
 import json
 

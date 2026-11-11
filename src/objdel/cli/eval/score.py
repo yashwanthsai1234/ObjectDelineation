@@ -1,6 +1,6 @@
 """Evaluate sampled completions against the raters of the data store; write a JSON and a Markdown report.
 
-    .venv/bin/python -I -m experiments.phase1.eval_run --completions runs/sft_val.jsonl --out data/eval/sft \
+    .venv/bin/python -I -m objdel.cli.eval.score --completions runs/sft_val.jsonl --out data/eval/sft \
         [--store data/store | --prepared data/eval_views/lidc-val-shifted] [--view shifted] [--split val] \
         [--baseline data/eval/sft0/report.json] [--datasets riga] [--procs 3]
 

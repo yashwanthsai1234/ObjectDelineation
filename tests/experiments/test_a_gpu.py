@@ -80,7 +80,7 @@ def test_g03_device_bytes(monkeypatch):
 def test_g04_legacy_ceiling(split, legacy, found, n_found, tmp_path, clean_store):
     """G04 (A-G2): the legacy LOO d_max values of the ceiling CLI on the shifted view are the old ceiling's, on all
     items and on R5's found items (K-mean IoU_tc >= 0.1)."""
-    from experiments.phase2 import ceiling as CLI
+    from objdel.cli.eval import ceiling as CLI
     from objdel.verify import stats as signal
 
     view = ROOT / "data" / "eval_views" / f"lidc-{split}-shifted"
@@ -127,7 +127,7 @@ def test_g02a_rescore(folder, tmp_path, clean_store):
     run = _need(A3 / folder)
     doc = json.loads((run / "final_eval.json").read_text())
     view = _need(VIEWS / Path(doc["view"]).name)
-    from experiments.phase2 import final_eval as CLI
+    from objdel.cli.eval import run as CLI
 
     CLI.main(["--rescore", str(run), "--view", str(view), "--split", doc["split"], "--out", str(tmp_path)])
     for a, b in zip(_jsonl(run / "metrics.jsonl"), _jsonl(tmp_path / "metrics.jsonl"), strict=True):
@@ -192,7 +192,7 @@ def test_g07_repeat(tmp_path):
 
     ckpt = os.environ.get("OBJDEL_G07_CKPT")
     assert ckpt, "set OBJDEL_G07_CKPT to the checkpoint folder"
-    final_eval = [sys.executable, "-I", "-m", "experiments.phase2.final_eval", "--view", PREPARED]
+    final_eval = [sys.executable, "-I", "-m", "objdel.cli.eval.run", "--view", PREPARED]
     runs = [tmp_path / n for n in "ab"]
     for out in runs:
         subprocess.run([*final_eval, "--ckpt", ckpt, "--seed", "11", "--limit", "16",

@@ -55,7 +55,7 @@ def parse(argv=None):
     ap.add_argument("--encoder", action="store_true", help="C3 on batch b0: G-EN0, G-EN1, G-IM2")
     ap.add_argument("--sync", action="store_true", help="C5: G-SY1, G-SY2, G-SY3")
     flag, rest = ap.parse_known_args(argv)
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     return flag, train_rl.parse(rest)
 

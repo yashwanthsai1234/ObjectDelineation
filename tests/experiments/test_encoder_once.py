@@ -338,7 +338,7 @@ def test_trls_full_generate_and_score_runs_under_the_guard(monkeypatch, tmp_path
 def test_train_rl_and_g_probe_carry_encoder_once(capsys):
     from pathlib import Path
 
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     with pytest.raises(SystemExit):
         train_rl.main(["--help"])

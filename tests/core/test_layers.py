@@ -86,7 +86,10 @@ def test_private_trl_scan_flags_each_form():
 
 
 def torch_modules() -> list[Path]:
-    return [p for p in py_files(SRC) if any(m.split(".")[0] == "torch" for m in imported_roots(parse(p)))]
+    """Library modules that import torch; the command modules (cli/) are off the training step (baselines runs SAM on
+    the CPU)."""
+    return [p for p in py_files(SRC) if rel(p).split("/")[0] != "cli"
+            and any(m.split(".")[0] == "torch" for m in imported_roots(parse(p)))]
 
 
 def host_sync_counts() -> dict[str, int]:

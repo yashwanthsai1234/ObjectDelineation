@@ -14,6 +14,7 @@ import sys
 import time
 
 from objdel.core.provenance import repo_root
+from objdel.core.spec import CLI
 from objdel.infra.errors import InfraError
 from objdel.infra.vast.ledger import accrued, active, home, ledger, locked, update_active
 
@@ -28,10 +29,9 @@ BAD_STATUS = ("exited", "unknown", "offline")  # never reach running
 IMPORT_CHECK = ("import objdel.geom.engine, objdel.verify, objdel.rl.trl_adapter, objdel.policy.sampler, pydantic, "
                 "vllm")  # vllm and the sampler: the vllm_native image, one venv 
 # The one list of live CLI modules; the CLI smoke and import tests and the module-string gate read it
-LIVE_CLIS = tuple(f"experiments.phase1.{m}" for m in ("build_data", "build_targets", "fetch_lidc_pixels",
-                                                      "prepare_rl")) + tuple(
-    f"experiments.phase2.{m}" for m in ("build_views", "build_eval_views", "train_sft", "select_ckpt", "train_rl",
-                                        "g_probe", "final_eval", "preflight", "hf_push", "hf_pull"))
+LIVE_CLIS = tuple(f"{CLI}.{m}" for m in ("data.store", "data.targets", "data.fetch_lidc", "data.prepare", "data.views",
+                                         "data.eval_views", "train.sft", "train.select", "train.rl", "train.probe",
+                                         "eval.run", "box.preflight", "hub.push", "hub.pull"))
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
 # never closes a run younger than this as vanished (it may not be listed yet). PULL_S: added to --cap-hours, as the
 # watchdog counts from launch; a measured 5.88 GB image pull took 5.7 min.

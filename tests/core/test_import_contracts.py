@@ -41,7 +41,7 @@ def plant(tree: Path, rel: str, line: str):
     return lambda: path.write_text(before)
 
 
-LAYERS = ["infra", "rl | sft", "policy", "data", "verify", "geom", "core"]
+LAYERS = ["cli", "infra", "rl | sft", "policy", "data", "verify", "geom", "core"]
 EXTENSIONS = ["_gpucheck"]  # compiled modules import-linter cannot read (exhaustive_ignores)
 PURE_CORE = ["objdel.core", "objdel.geom", "objdel.verify", "objdel.data"]
 LAYER_NAMES = {n.strip() for layer in LAYERS for n in layer.split("|")}
@@ -59,7 +59,7 @@ def children(src: Path = ROOT / "src/objdel") -> set:
 
 
 def test_layers_contract_is_the_exhaustive_target_form():
-    """U1 (E8.4): one exhaustive `layers` contract over the eight layers, no ignore_imports, guidance on every
+    """U1 (E8.4): one exhaustive `layers` contract over the nine layers, no ignore_imports, guidance on every
     contract, and pure-core over the four ML-free packages. A loosened config disables the architecture silently."""
     cs = contracts()
     layers = cs["layers"]
@@ -72,7 +72,7 @@ def test_layers_contract_is_the_exhaustive_target_form():
 
 
 def test_src_objdel_children_are_exactly_the_layers():
-    """U1 precondition: the children of src/objdel are the eight layers plus the ignored extensions; an extra child
+    """U1 precondition: the children of src/objdel are the nine layers plus the ignored extensions; an extra child
     is named here, before lint-imports reports it as an unlisted module."""
     kids = children()
     assert sorted(kids - LAYER_NAMES - set(EXTENSIONS)) == [] and sorted(LAYER_NAMES - kids) == []
@@ -102,7 +102,8 @@ PURE_BROKEN = "never imports the ML stack BROKEN"
         ("sft/__init__.py", "import objdel.rl", LAYERS_BROKEN),
         ("rl/__init__.py", "import objdel.sft", LAYERS_BROKEN),
         ("policy/__init__.py", "import objdel.rl", LAYERS_BROKEN),
-        ("core/__init__.py", "import objdel.infra", LAYERS_BROKEN),  # E8: infra is the top layer
+        ("core/__init__.py", "import objdel.infra", LAYERS_BROKEN),
+        ("infra/__init__.py", "import objdel.cli", LAYERS_BROKEN),  # cli is the top layer: nothing imports it
     ],
 )
 def test_a_planted_violation_breaks_a_contract(scratch, rel, line, broken):

@@ -1,6 +1,6 @@
 """D17 baselines on the eval views: image-blind prior, MedSAM (oracle box, plus a jittered box) and SAM 2.1-tiny.
 
-    .venv/bin/python -I -m experiments.phase2.baselines --out data/eval/baselines.json \
+    .venv/bin/python -I -m objdel.cli.eval.baselines --out data/eval/baselines.json \
         [--views centred=data/prepared shifted=data/eval_views/lidc-val-shifted
         rescaled=data/eval_views/lidc-val-rescaled] \
         [--datasets lidc riga] [--models prior medsam sam2] [--every 1] [--threads 2]

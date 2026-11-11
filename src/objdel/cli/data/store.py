@@ -1,6 +1,6 @@
 """Build the LIDC item store, splits and K11 checks into data/store/.
 
-    .venv/bin/python -I -m experiments.phase1.build_data [--out data/store] [--workers 2] [--seed 0]
+    .venv/bin/python -I -m objdel.cli.data.store [--out data/store] [--workers 2] [--seed 0]
 
 Reads data/raw/lidc_xml, data/lidc_slices (CT pixels where fetched) and pylidc's bundled database.
 Writes <out>/lidc/{train,val,test}.parquet, manifest.json (SHA-256 per file) and build_report.json (counts, disagreement
@@ -22,12 +22,13 @@ from collections import Counter
 from multiprocessing import get_context
 from pathlib import Path
 
+from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store
 from objdel.data.store import Item
 from objdel.data.targets.frame import frame
 from objdel.geom.topology import min_area, signature
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = repo_root()
 LAB_SPLIT = REPO / "data" / "fixtures" / "lidc_full_meta.csv"  # the lab's patient split, for the plan's 313 / 251
 
 

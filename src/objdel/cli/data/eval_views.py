@@ -1,6 +1,6 @@
 """Build the fixed-seed shifted, rescaled, rotated and edge views (plan §5.0 "Views", §6.1, B1.6; C-VIEW layout).
 
-    .venv/bin/python -I -m experiments.phase2.build_eval_views [--store data/store] [--out data/eval_views]
+    .venv/bin/python -I -m objdel.cli.data.eval_views [--store data/store] [--out data/eval_views]
         [--datasets lidc] [--split val] [--seed 0] [--kinds shifted,rescaled,rotated] [--procs 2] [--limit N]
 
 Per dataset and named kind (default the first three) the directory <out>/<dataset>-<split>-<kind>, in the

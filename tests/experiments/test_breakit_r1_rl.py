@@ -15,7 +15,7 @@ from objdel.rl import run as rl_run
 def stub(tmp_path, monkeypatch):
     """train_rl.main with no model, engine or preload: build_trainer returns a fake trainer whose train() runs
     `body(start)` (start = the resumed checkpoint's step, 0 on a fresh run)."""
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
     from objdel.rl import build
     from objdel.rl import rows as dataset
     from objdel.verify import store as serve
@@ -54,7 +54,7 @@ def stub(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("steps", ["0", "-5"])
 def test_steps_must_be_positive(steps):
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     with pytest.raises(SystemExit):
         train_rl.parse(["--model", "qwen3-vl-2b", "--ckpt", "c", "--out", "o", "--train", "t", "--steps", steps])
@@ -90,7 +90,7 @@ def test_resume_mid_run_keeps_one_seq_gaps_row_block_per_step(stub):
 
 
 def test_merge_last_does_not_accept_a_half_written_final(tmp_path, capsys):
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     out = tmp_path / "out"
     (out / "trainer" / "checkpoint-40").mkdir(parents=True)

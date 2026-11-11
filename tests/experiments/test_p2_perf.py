@@ -67,7 +67,7 @@ def test_vllm_context_is_bounded():
 
 
 def test_g_probe_takes_the_profile_arm_flags(capsys):
-    from experiments.phase2 import g_probe
+    from objdel.cli.train import probe as g_probe
 
     with pytest.raises(SystemExit) as e:
         g_probe.main(["--help"])

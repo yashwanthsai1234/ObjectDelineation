@@ -1,17 +1,17 @@
 """Final evaluation of a tuned model on a whole split: K samples per item, scored by the checker.
 
-    python -I -m experiments.phase2.final_eval --ckpt DIR --view data/eval_views/lidc-val-shifted --split val \
+    python -I -m objdel.cli.eval.run --ckpt DIR --view data/eval_views/lidc-val-shifted --split val \
         --out runs/eval/val [-k 8] [--seed 11] [--adapter LORA_DIR]
-    python -I -m experiments.phase2.final_eval --ckpt DIR --view V1 --split val --out O1 \
+    python -I -m objdel.cli.eval.run --ckpt DIR --view V1 --split val --out O1 \
         --view V2 --split val --out O2          # several views, one model load (one --out: O/<view name>/)
-    python -I -m experiments.phase2.final_eval --ckpt DIR --view V --split val --out O \
+    python -I -m objdel.cli.eval.run --ckpt DIR --view V --split val --out O \
         --limit 32                              # a GPU smoke: 32 evenly spaced items, not a result
-    python -I -m experiments.phase2.final_eval --rescore runs/a3/eval_val --view V --split val --out O
-    python -I -m experiments.phase2.final_eval --hash-view data/eval_views/lidc-test-shifted \
+    python -I -m objdel.cli.eval.run --rescore runs/a3/eval_val --view V --split val --out O
+    python -I -m objdel.cli.eval.run --hash-view data/eval_views/lidc-test-shifted \
         --out runs/a3/pre_rental.json
-    python -I -m experiments.phase2.final_eval --resummarize runs/r5/eval/eval_test --out runs/r5/eval_a1/eval_test \
+    python -I -m objdel.cli.eval.run --resummarize runs/r5/eval/eval_test --out runs/r5/eval_a1/eval_test \
         [--store data/store]
-    python -I -m experiments.phase2.final_eval --spec specs/b1_rows.yaml --stage eval [--rd RD] [--data DATA]
+    python -I -m objdel.cli.eval.run --spec specs/b1_rows.yaml --stage eval [--rd RD] [--data DATA]
 
 The model forms read their flags as an objdel.core.spec.EvalStage (cli_stage: kebab flags, K as -k, or a spec stage)
 and call objdel.policy.final_eval.run; --hash-view and --resummarize load no model and are read before it. What is
@@ -22,7 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from experiments.phase2.freeze_views import render_files
+from objdel.cli.data.freeze import render_files
 from objdel.policy import final_eval as E
 from objdel.policy.errors import Refusal
 

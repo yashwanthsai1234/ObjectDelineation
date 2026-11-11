@@ -246,7 +246,7 @@ def test_lidc_variants_are_pixel_exact_and_certified(items):
 # ------------------------------------------------------------------------------------------------- build_views
 @pytest.fixture(scope="module")
 def views(tmp_path_factory, synthetic_items):
-    from experiments.phase2 import build_views as BV
+    from objdel.cli.data import views as BV
     root = tmp_path_factory.mktemp("views")
     store.write(synthetic_items(), root / "store")
     out = [BV.build(root / "store", root / f"v{k}" / "lidc-train", "lidc", "train", epochs=2, seed=3,
@@ -317,7 +317,7 @@ def test_build_views_defaults_to_three_epochs():
     """S1-8: R1's 2-epoch branch decays into epoch 3, so a default build must hold 3 epochs."""
     import inspect
 
-    from experiments.phase2 import build_views as BV
+    from objdel.cli.data import views as BV
     assert inspect.signature(BV.build).parameters["epochs"].default == 3
 
 
@@ -332,7 +332,7 @@ def test_view_rows_render_like_the_reference(views, synthetic_items):
 
 
 def test_build_views_help():
-    from experiments.phase2 import build_views as BV
+    from objdel.cli.data import views as BV
     with pytest.raises(SystemExit):
         BV.main(["--help"])
 
@@ -341,7 +341,7 @@ def test_build_views_help():
 @pytest.fixture(scope="module")
 def eval_views(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     root = tmp_path_factory.mktemp("eval_views")
     store.write(synthetic_items(("train", "val")), root / "store")
     return root, BE.build(root / "store", root / "out", ("lidc",), "val", seed=0, procs=1)
@@ -389,7 +389,7 @@ def test_eval_views_shift_and_rescale(eval_views, synthetic_items):
 
 
 def test_two_eval_builds_are_identical(eval_views, tmp_path):
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     root, _ = eval_views
     BE.build(root / "store", tmp_path, ("lidc",), "val", seed=0, procs=2)
     for name in ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated"):
@@ -419,7 +419,7 @@ def test_rotated_eval_view_is_the_shifted_view_turned_r90(eval_views, synthetic_
 
 
 def test_build_eval_views_help():
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     with pytest.raises(SystemExit):
         BE.main(["--help"])
 
@@ -430,7 +430,7 @@ def _jsonl(d, ds="lidc"):
 
 def test_kinds_builds_only_the_named_views_with_the_default_records(eval_views, tmp_path):
     """I06: --kinds filters without renumbering draws (the shifted records equal the default build's byte for byte)."""
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     root, _ = eval_views
     BE.main(["--store", str(root / "store"), "--out", str(tmp_path / "a"), "--kinds", "shifted", "--procs", "1"])
     BE.build(root / "store", tmp_path / "b", ("lidc",), "val", procs=1, kinds=("shifted", "rescaled"))
@@ -445,7 +445,7 @@ def test_kinds_builds_only_the_named_views_with_the_default_records(eval_views, 
 
 @pytest.mark.parametrize("kinds", ["shifted,uniform", "", "edge,,shifted"])
 def test_unknown_kind_exits_2(kinds, tmp_path, capsys):
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     with pytest.raises(SystemExit) as e:
         BE.main(["--out", str(tmp_path), "--kinds", kinds])
     assert e.value.code == 2 and "--kinds" in capsys.readouterr().err and not any(tmp_path.iterdir())
@@ -495,7 +495,7 @@ def test_edge_draws_every_boundary_point_alike(items):
 def test_edge_falls_back_to_the_policy_frame_when_every_boundary_window_is_crowded(items, tmp_path):
     """I32: no uncrowded boundary window in 64 tries -> None; the view keeps the policy frame and counts it."""
     pytest.importorskip("datasets")
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     it = next(i for i in items if i.dataset == "lidc")
     walled = replace(it, meta={"other_nodules": [list(union_box(it))]})  # every admissible window holds it
     assert augment.edge(replace(walled, image=None), frame(it).W, augment.row_rng(0, "edge", it.item_id)) is None
@@ -526,7 +526,7 @@ def test_every_view_record_carries_its_offset_fraction(eval_views, synthetic_ite
 
 # --------------------------------------------------------------------------------------------- M9: fetch_lidc_pixels
 def test_fetch_refuses_hu_truncation():
-    from experiments.phase1.fetch_lidc_pixels import hounsfield
+    from objdel.cli.data.fetch_lidc import hounsfield
     assert hounsfield(np.array([[0, 3000]], np.uint16), 1.0, -1024.0).tolist() == [[-1024, 1976]]
     assert hounsfield(np.array([[0, 2]], np.uint16), 0.5, -1024.0).dtype == np.int16
     with pytest.raises(ValueError, match="int16"):
@@ -536,7 +536,7 @@ def test_fetch_refuses_hu_truncation():
 
 
 def test_fetch_refuses_a_shared_z_key():
-    from experiments.phase1.fetch_lidc_pixels import z_keys
+    from objdel.cli.data.fetch_lidc import z_keys
     assert z_keys({"a.dcm": -10.0, "b.dcm": -7.5}) == {"a.dcm": "z-10.00", "b.dcm": "z-7.50"}
     with pytest.raises(ValueError, match="z-10.00"):
         z_keys({"a.dcm": -10.0, "b.dcm": -10.001})
@@ -712,7 +712,7 @@ def test_bundle_covers_every_eval_view():
 def val_view(tmp_path_factory, synthetic_items):
     """The prepared root (centred frames of train and val) and the shifted val view of the same val items."""
     pytest.importorskip("datasets")
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     from objdel.data import prepare as data_prepare
     from objdel.policy import prompt as policy_prompt
 

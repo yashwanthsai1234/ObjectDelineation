@@ -429,7 +429,7 @@ def test_end_to_end_dry_run(E):
     assert len(E.vast("show instance")) == 2  # polled loading -> running
     assert all(x["api_key"] == API_KEY for x in E.calls("vastai"))  # scoped key via env, never argv
     o3 = E.sh("sync_up.sh", "r1", "--bundle-dir", E.bundles)
-    o4 = E.sh("run.sh", "r1", "experiments.phase2.train_sft", "--spec", "specs/r1_qwen3vl2b.yaml", "--stage", "train")
+    o4 = E.sh("run.sh", "r1", "objdel.cli.train.sft", "--spec", "specs/r1_qwen3vl2b.yaml", "--stage", "train")
     assert "timeout" in o4.stdout and "tmux new-session" in o4.stdout and "HEARTBEAT" in o4.stdout
     o5 = E.sh("pull.sh", "r1")
     assert "PULLED_OK" in o5.stdout
@@ -1093,17 +1093,17 @@ def test_run_chain_for_an_r1_config(E):
     cfg, box = ROOT / "specs/r1_qwen3vl2b.yaml", "/workspace/data/lidc"
     gpu, train, select, probe = CH.chain(cfg, "r1")
     assert gpu[:2] == ["bash", "-c"] and "run_box.sh --build-only" in gpu[2]  # scoring runs on the CUDA checker
-    assert train[:2] == ["-m", "experiments.phase2.train_sft"] and after(train, "--output-dir") == "r1-qwen3vl2b"
-    assert select[:2] == ["-m", "experiments.phase2.select_ckpt"] and "--no-vision" not in select
+    assert train[:2] == ["-m", "objdel.cli.train.sft"] and after(train, "--output-dir") == "r1-qwen3vl2b"
+    assert select[:2] == ["-m", "objdel.cli.train.select"] and "--no-vision" not in select
     vision = json.loads(after(select, "--vision"))
     assert vision == {"prepared": f"{box}/prepared", "reference": "/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"}
     assert after(select, "--run") == "/workspace/runs/r1/r1-qwen3vl2b"
-    assert probe[:2] == ["-m", "experiments.phase2.g_probe"] and "--ckpt" not in probe
+    assert probe[:2] == ["-m", "objdel.cli.train.probe"] and "--ckpt" not in probe
     assert after(probe, "--select") == "/workspace/runs/r1/r1-qwen3vl2b/select"
     assert after(probe, "--model") == "qwen3-vl-2b"
     E.launched()
     line = E.tmux(cfg.relative_to(ROOT))
-    words = ("experiments.phase2.train_sft", "experiments.phase2.select_ckpt", "--vision", "experiments.phase2.g_probe",
+    words = ("objdel.cli.train.sft", "objdel.cli.train.select", "--vision", "objdel.cli.train.probe",
              "/workspace/runs/r1/r1-qwen3vl2b/select", "OBJDEL_RUN_DIR=/workspace/runs/r1")  # fmt: skip
     assert [w for w in words if w not in line] == []
 
@@ -1112,7 +1112,7 @@ def test_r1_refuses_on_the_box_without_its_g_vision_reference(E):
     E.launched()
     line, ref = E.tmux("specs/r1_qwen3vl2b.yaml"), "/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"
     assert f"test -f {ref}" in line and "--vision-reference-only first" in line  # refused on the box, with the remedy
-    assert line.index(f"test -f {ref}") < line.index("experiments.phase2.train_sft")
+    assert line.index(f"test -f {ref}") < line.index("objdel.cli.train.sft")
     assert CH.vision_refs(ROOT / "specs/r1_qwen3vl2b.yaml", "r1") == [ref]
 
 
@@ -1120,12 +1120,13 @@ def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
     """Audit: one session and one run.log per run_id made a second job (K3 under R1's load, §4.7 step 6) fail and
     overwrote logs."""
     E.launched()
-    out = E.sh("run.sh", "r1", "experiments.phase2.final_eval", "--out", "/workspace/runs/r1/k3_load.json").stdout
-    assert "tmux new-session -d -s r1-final_eval" in out and "/workspace/runs/r1/final_eval.log" in out
+    out = E.sh("run.sh", "r1", "objdel.cli.eval.run", "--out", "/workspace/runs/r1/k3_load.json").stdout
+    assert "tmux new-session -d -s r1-eval_run" in out and "/workspace/runs/r1/eval_run.log" in out
     out = E.sh("run.sh", "r1", "specs/r1_qwen3vl2b.yaml").stdout
     assert "-s r1-r1_qwen3vl2b" in out and "/workspace/runs/r1/r1_qwen3vl2b.log" in out
     E.sh("run.sh", "r1", "experiments.phase1.bench.xarch_hashes", "--out", "x.json")
-    E.sh("run.sh", "r1", "experiments.phase1.build_data", ok=False)  # only the one Phase 1 module R0 needs
+    E.sh("run.sh", "r1", "objdel.cli.data.store", "--help")  # every command module runs
+    E.sh("run.sh", "r1", "objdel.infra.bundle", ok=False)  # a library module is no command
 
 
 def _exe(path: Path, text: str) -> None:
@@ -1155,9 +1156,9 @@ def test_run_sh_job_runs_in_the_code_dir_with_the_run_dir_exported(E, tmp_path):
     """Audit: `cd ... && export ... && (heartbeat) &` backgrounded the whole && list, so the job ran in ssh's home dir
     without OBJDEL_RUN_DIR (relative --config paths and train_sft's /workspace/runs check fail on the box)."""
     E.launched()
-    calls, code, rd = _on_box(E, tmp_path, "experiments.phase2.final_eval", "--out", "x.json")
-    assert calls == [[str(tmp_path / "src"), str(rd), "-I -m experiments.phase2.final_eval --out x.json"]]
-    assert code == "0" and (rd / "final_eval.log").exists() and (rd / "HEARTBEAT").exists()
+    calls, code, rd = _on_box(E, tmp_path, "objdel.cli.eval.run", "--out", "x.json")
+    assert calls == [[str(tmp_path / "src"), str(rd), "-I -m objdel.cli.eval.run --out x.json"]]
+    assert code == "0" and (rd / "eval_run.log").exists() and (rd / "HEARTBEAT").exists()
 
 
 def test_soft_steps_continue_and_hard_steps_stop_the_chain(E, tmp_path):
@@ -1295,7 +1296,7 @@ def test_teardown_destroys_on_ctrl_c_during_the_final_pull(monkeypatch, tmp_path
 def test_run_cap_kills_a_job_that_ignores_sigterm(E):
     """A process stuck in CUDA can ignore timeout's SIGTERM; -k sends SIGKILL 120 s later."""
     E.launched()
-    assert re.search(r"timeout -k 120 \d+s bash -c", E.tmux("experiments.phase2.final_eval"))
+    assert re.search(r"timeout -k 120 \d+s bash -c", E.tmux("objdel.cli.eval.run"))
 
 
 def test_pull_stamps_its_start_and_skips_full_checkpoints(E):

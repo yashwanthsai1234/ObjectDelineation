@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from experiments.phase2 import hf_push as HP
+from objdel.cli.hub import push as HP
 from objdel.infra import hf as H
 from objdel.infra.errors import InfraError
 from objdel.infra.vast import __main__ as P
@@ -147,7 +147,7 @@ def test_push_hf_streams_the_token_over_stdin_only(monkeypatch):
     P.cmd_push_hf(SimpleNamespace(run_id="v1", config="specs/r1_qwen3vl2b.yaml"))
     ((cmd, stdin, what),) = sent
     assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.infra.secrets" in what
-    assert "-m experiments.phase2.hf_push --run /workspace/runs/v1/r1-qwen3vl2b" in cmd
+    assert "-m objdel.cli.hub.push --run /workspace/runs/v1/r1-qwen3vl2b" in cmd
     assert f"--repo {REPO} --revision r1-qwen3vl2b" in cmd
 
 
@@ -262,7 +262,7 @@ def test_push_hf_of_the_b1_spec_pushes_the_train_rl_output(monkeypatch):
     sent = _mac(monkeypatch, token())
     P.cmd_push_hf(SimpleNamespace(run_id="v1", config="specs/b1_rows.yaml"))
     ((cmd, stdin, _),) = sent
-    assert "-m experiments.phase2.hf_push --rl /workspace/runs/v1/b1-rows" in cmd and "hf_secret" not in cmd
+    assert "-m objdel.cli.hub.push --rl /workspace/runs/v1/b1-rows" in cmd and "hf_secret" not in cmd
     assert f"--repo {REPO} --revision b1-rows" in cmd and stdin == "hf_secret\n"
 
 

@@ -236,7 +236,7 @@ def test_targets_score_as_perfect_answers(prepared):
 @pytest.mark.parametrize("dataset", ["riga", "lidc"])
 def test_r1_round_trip_on_the_prepared_train_set(dataset):
     if not (PREPARED / "manifest.json").is_file():
-        pytest.skip(f"no prepared set at {PREPARED} (run experiments/phase1/prepare_rl.py)")
+        pytest.skip(f"no prepared set at {PREPARED} (run src/objdel/cli/data/prepare.py)")
     m = json.loads((PREPARED / "manifest.json").read_text())
     rel = f"{dataset}/train.jsonl"
     assert hashlib.sha256((PREPARED / rel).read_bytes()).hexdigest() == m["files"][rel]["sha256"]

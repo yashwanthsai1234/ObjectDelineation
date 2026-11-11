@@ -1,6 +1,6 @@
 """Preflight: everything that can be proven on the Mac, before any GPU is rented (the launch gate reads its stamp).
 
-    python -I -m experiments.phase2.preflight --config specs/b1_rows.yaml [--bundle-dir DIR]
+    python -I -m objdel.cli.box.preflight --config specs/b1_rows.yaml [--bundle-dir DIR]
     (make preflight CONFIG=specs/... [BUNDLE_DIR=DIR]; DIR as sync_up's --bundle-dir, default build/bundles)
 
 That script parses the flags and calls `run` here.
@@ -334,11 +334,13 @@ def targets(s: Inputs) -> list[str]:
 
 
 def train_rl_argv(step) -> list[str] | None:
-    """The words after `-m experiments.phase2.train_rl` of an argv: a stage of its own, or one inside a `bash -c`
-    string (the nsys-wrapped arms of specs/c_speed.yaml); None for any other argv."""
+    """The words after `-m <the rl module>` (objdel.core.spec.MODULE) of an argv: a stage of its own, or one inside a
+    `bash -c` string (the nsys-wrapped arms of specs/c_speed.yaml); None for any other argv."""
+    from objdel.core.spec import MODULE
+
     body = list(step[1:] if step[0] == "~" else step)
-    words = shlex.split(body[2]) if body[:2] == ["bash", "-c"] and "experiments.phase2.train_rl" in body[2] else body
-    i = next((i for i in range(len(words) - 1) if words[i:i + 2] == ["-m", "experiments.phase2.train_rl"]), None)
+    words = shlex.split(body[2]) if body[:2] == ["bash", "-c"] and MODULE["rl"] in body[2] else body
+    i = next((i for i in range(len(words) - 1) if words[i:i + 2] == ["-m", MODULE["rl"]]), None)
     return None if i is None else [str(w) for w in words[i + 2:]]
 
 

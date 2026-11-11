@@ -277,7 +277,7 @@ def series_files(xml_root) -> dict[str, Path]:
 
 def sop_z(xml_root) -> dict[str, dict[str, float]]:
     """Series uid -> {imageSOP_UID: imageZposition rounded to 0.01 mm} over every ROI of every XML of the series
-    (what the CT fetch needs to pick slices; experiments/phase1/fetch_lidc_pixels)."""
+    (what the CT fetch needs to pick slices; objdel.cli.data.fetch_lidc)."""
     out = {}
     for _, series, root in _messages(xml_root):
         m = out.setdefault(series, {})

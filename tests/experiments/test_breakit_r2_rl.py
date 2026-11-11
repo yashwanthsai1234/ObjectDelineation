@@ -40,7 +40,7 @@ def test_merge_last_keeps_a_complete_final_without_rl_json(tmp_path, monkeypatch
 
     import objdel.rl.run  # noqa: F401
     pass  # noqa: F401  (imports the real peft)
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     out = tmp_path / "out"
     (out / "trainer" / "checkpoint-250").mkdir(parents=True)
@@ -68,7 +68,7 @@ def stub(tmp_path, monkeypatch):
     """train_rl.main with no model, engine or preload (as round 1's stub); body(start, steps) runs in train()."""
     import gc
 
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
     from objdel.rl import build
     from objdel.rl import rows as dataset
     from objdel.verify import store as serve
@@ -129,7 +129,7 @@ def test_fresh_run_then_resume_ignores_stale_checkpoints(stub):
 def test_seq_gaps_stay_one_block_per_step_with_logging_steps_override():
     """BR2-rl-5 fix: logging_steps != 1 would write several optimizer steps per seq_gaps block (file step i != step
     i after cut_seq_gaps), so train_rl refuses the override before any load."""
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     with pytest.raises(SystemExit):
         train_rl.parse(["--model", "qwen3-vl-2b", "--ckpt", "c", "--out", "o", "--train", "t", "--steps", "10",
@@ -139,7 +139,7 @@ def test_seq_gaps_stay_one_block_per_step_with_logging_steps_override():
 @pytest.mark.parametrize("var", ["OBJDEL_FIXED_USD", "OBJDEL_SESSION_START", "OBJDEL_RATE_USD_PER_H"])
 def test_empty_budget_env_does_not_break_a_run_without_budget(monkeypatch, var):
     """BR2-rl-6, fixed at E6.4: the stage reads no environment; session_budget reads it only under --budget-usd."""
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     monkeypatch.setenv(var, "")
     a = train_rl.parse(["--model", "qwen3-vl-2b", "--ckpt", "c", "--out", "o", "--train", "t", "--steps", "10"])

@@ -11,7 +11,7 @@
   1,000 caches of prepared/caches/lidc by sorted path. Section "gpu03": the sanitizer corpus of
   tests/geom/test_gpu_sanitize.py (GPU03 compares its GPU outputs with these).
 - tests/goldens/d_r01_lidc.json (D-R01, always-run copy; tests/experiments/test_d_goldens.py): the first 50 items
-  of the LIDC val store, framed as experiments.phase1.build_targets frames them: per rater the mask of each object as
+  of the LIDC val store, framed as objdel.cli.data.targets frames them: per rater the mask of each object as
   run lengths and the target text stored in data/targets/lidc/val.jsonl (built before D).
 - tests/goldens/d_r04_scorer.json (D-R04; tests/experiments/test_d_goldens.py): score_polygons and score_masks of 200
   synthetic items (d_r04_items) as the hex of tobytes() of every output.

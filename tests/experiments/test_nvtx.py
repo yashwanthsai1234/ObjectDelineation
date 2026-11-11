@@ -834,7 +834,7 @@ def test_build_trainer_installs_the_lora_sync_only_under_option_f(built, monkeyp
 
 
 def test_train_rl_flags():
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     base = ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "20"]
     a = train_rl.parse(base)

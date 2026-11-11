@@ -1,8 +1,8 @@
 """G-probe (PLAN §5.1, §3.2 ④): can GRPO improve this checkpoint? 20 GRPO steps at the pre-registered probe LR.
 
-    python -I -m experiments.phase2.g_probe --model qwen3-vl-2b (--ckpt runs/r1/branches/e1 | --select runs/r1/select)
+    python -I -m objdel.cli.train.probe --model qwen3-vl-2b (--ckpt runs/r1/branches/e1 | --select runs/r1/select)
         --train data/prepared --probe data/eval_views/lidc-val-shifted --out runs/r1/g_probe
-    python -I -m experiments.phase2.g_probe --spec specs/r1_qwen3vl2b.yaml --stage probe [--rd RD] [--data DATA]
+    python -I -m objdel.cli.train.probe --spec specs/r1_qwen3vl2b.yaml --stage probe [--rd RD] [--data DATA]
 
 The flags are an objdel.core.spec.ProbeStage (cli_stage), with the trainer flags train_rl has (TrainerFlags: --lr,
 --grpo JSON, --shared-prefix, --compile, --plain, --trace, the C flags); objdel.rl.build.build_trainer builds the
@@ -14,7 +14,7 @@ the pre-registered record (prereg: G_PROBE, g_probe) from here.
 
 import sys
 
-from experiments.phase2 import prereg
+from objdel.cli.train import prereg
 
 
 def main(argv=None) -> int:

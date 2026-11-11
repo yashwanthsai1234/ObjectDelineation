@@ -1,7 +1,7 @@
 """Freeze eval views into reference/frozen_views.json (B1.6, DG15): one entry per view, keyed by its name.
 
-    .venv/bin/python -I -m experiments.phase2.freeze_views VIEW_DIR [VIEW_DIR ...] [--out FILE] [--known FILE]
-    .venv/bin/python -I -m experiments.phase2.freeze_views --check [--out FILE]
+    .venv/bin/python -I -m objdel.cli.data.freeze VIEW_DIR [VIEW_DIR ...] [--out FILE] [--known FILE]
+    .venv/bin/python -I -m objdel.cli.data.freeze --check [--out FILE]
 
 An entry holds the content hash (objdel.data.quality.view_content_sha256: the records' item_id, view.offset,
 view.side and image_sha256, so another Python or library build that renders the same windows and pixels gives the
@@ -18,11 +18,12 @@ import sys
 from pathlib import Path
 
 from objdel.core.io import code_sha, git, git_sha, read_json, write_json
+from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = repo_root()
 RENDER_FILES = ("src/objdel/data/targets/augment.py", "src/objdel/data/targets/frame.py", "src/objdel/data/targets/build.py",
-                "src/objdel/data/targets/simplify.py", "src/objdel/data/prepare.py", "experiments/phase2/build_eval_views.py")
+                "src/objdel/data/targets/simplify.py", "src/objdel/data/prepare.py", "src/objdel/cli/data/eval_views.py")
 R5_IDENTITY = {"lidc-test-shifted": (
     "equal to the R5 box view by code identity, not measured: targets/frame.py unchanged since 734b1ec; augment.py and "
     "build_eval_views.py changed in B1.6 without moving a window (their Mac rebuild of the R5 val shifted, rescaled and "

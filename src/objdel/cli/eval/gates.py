@@ -1,10 +1,10 @@
 """Gate B1 / Gate B3 on real final_eval outputs (Implementation.md B.6.2): a thin CLI over objdel.verify.rungates.
 
-    .venv/bin/python -I -m experiments.phase2.run_gates b1 --b1 runs/rl-run/eval_val --b1-edge runs/rl-run/eval_edge \
+    .venv/bin/python -I -m objdel.cli.eval.gates b1 --b1 runs/rl-run/eval_val --b1-edge runs/rl-run/eval_edge \
         --r5 runs/r5/eval_val --view data/eval_views/lidc-val-shifted --edge-view data/eval_views/lidc-val-edge \
         [--a3 DIR --a3-edge DIR --identity holds|fails] [--pre runs/a3/val_pre_rebuild.json] [--partial-steps N] \
         --out runs/rl-run/gate_b1.json
-    .venv/bin/python -I -m experiments.phase2.run_gates b3 --b3 DIR --b3-edge DIR --b1 DIR --b1-edge DIR \
+    .venv/bin/python -I -m objdel.cli.eval.gates b3 --b3 DIR --b3-edge DIR --b1 DIR --b1-edge DIR \
         --view ... --edge-view ... --select val_select.json --out runs/b3/gate_b3.json
 
 Each run folder is a final_eval output (items.jsonl + final_eval.json). --pre is the hash record of the view before its

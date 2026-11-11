@@ -189,6 +189,6 @@ def test_u52_u71_b3_config_gets_beta_and_adam_eps_from_one_r(tmp_path):
     from tests.experiments.test_move_invariance import grpo_config_dict
 
     argv = to_argv(train, "rd", "data")
-    cfg = grpo_config_dict(argv[argv.index("experiments.phase2.train_rl") + 1:], save_strategy="steps",
+    cfg = grpo_config_dict(argv[argv.index("objdel.cli.train.rl") + 1:], save_strategy="steps",
                            save_steps=50, shuffle_dataset=False)
     assert cfg["adam_epsilon"] == 2.5e-9 and cfg["beta"] == 0.0

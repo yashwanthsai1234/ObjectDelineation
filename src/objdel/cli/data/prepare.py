@@ -1,6 +1,6 @@
 """Prepare the training set once: model frames (PNG), SFT targets and expert caches with hashes (objdel.data.prepare).
 
-    .venv/bin/python -I -m experiments.phase1.prepare_rl [--store data/store] [--out data/prepared] [--procs 3]
+    .venv/bin/python -I -m objdel.cli.data.prepare [--store data/store] [--out data/prepared] [--procs 3]
 
 Writes <out>/images, <out>/caches, <out>/<dataset>/<split>.jsonl and <out>/manifest.json (git-ignored), then prints
 the per-split counts and the answer-token evidence for issue I5 (targets over each model's max_completion_length).

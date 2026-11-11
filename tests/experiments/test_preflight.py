@@ -278,7 +278,7 @@ def test_the_bundle_check_samples_the_caches_and_needs_the_bundle(cfg, tmp_path)
 
 
 def test_preflight_reads_the_bundle_sync_up_uploads(cfg, monkeypatch, tmp_path):
-    from experiments.phase2 import preflight as cli
+    from objdel.cli.box import preflight as cli
     from objdel.infra.vast.__main__ import CLI
 
     assert PF.BUNDLE_DIR == CLI["sync_up"]["--bundle-dir"]["default"]
@@ -447,7 +447,7 @@ def b1_pins():
 def check_train_rl(argv, ref):
     """U-CF4 on one `train_rl` command: it parses with train_rl's own parser, trains the B1 rows root with the same
     rows pins as specs/b1_rows.yaml, in whole 20-step blocks, and never names --train-views."""
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     a = train_rl.parse(argv)  # SystemExit(2) on an unknown or missing flag
     assert "--train-views" not in argv
@@ -457,13 +457,13 @@ def check_train_rl(argv, ref):
 
 
 def test_train_rl_argv_finds_a_direct_step_and_one_inside_a_bash_string():
-    direct = ["~", "-m", "experiments.phase2.train_rl", "--model", "m"]
+    direct = ["~", "-m", "objdel.cli.train.rl", "--model", "m"]
     wrapped = ["bash", "-c", "NSYS_TIMEOUT=1800 bash nsys_capture.sh /rd c 16 17 -- /opt/venv/bin/python -I -m "
-                             "experiments.phase2.train_rl --model m --grpo '{\"a\": false}'"]
+                             "objdel.cli.train.rl --model m --grpo '{\"a\": false}'"]
     assert PF.train_rl_argv(direct) == ["--model", "m"]
     assert PF.train_rl_argv(wrapped) == ["--model", "m", "--grpo", '{"a": false}']
-    assert PF.train_rl_argv(["-m", "experiments.phase2.final_eval", "--ckpt", "c"]) is None
-    assert PF.train_rl_argv(["bash", "-c", "echo experiments.phase2.train_rl"]) is None  # named, not run with -m
+    assert PF.train_rl_argv(["-m", "objdel.cli.eval.run", "--ckpt", "c"]) is None
+    assert PF.train_rl_argv(["bash", "-c", "echo objdel.cli.train.rl"]) is None  # named, not run with -m
     assert PF.train_rl_argv(["bash", "env_check.sh", "/rd/ckpt"]) is None
 
 
@@ -492,7 +492,7 @@ def test_the_rows_check_reads_the_pins_of_the_nsys_wrapped_arms(monkeypatch, tmp
 
 def test_an_arm_whose_train_rl_words_do_not_parse_fails_the_inputs(tmp_path):
     bad = {"kind": "cmd", "name": "arm", "argv": ["bash", "-c", "bash nsys_capture.sh {rd} a 16 17 -- python -I -m "
-                                                  "experiments.phase2.train_rl --model m --no-such-flag"]}
+                                                  "objdel.cli.train.rl --model m --no-such-flag"]}
     with pytest.raises(ValueError, match="stage arm"):
         PF.inputs(tiny_spec(tmp_path, stages=[bad]))
 

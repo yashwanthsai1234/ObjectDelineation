@@ -13,7 +13,7 @@ from objdel.sft import train as sft_train
 
 def test_rl_arms_are_short_g_probe_runs_of_256_answers(tmp_path):
     cmd = PS.arm_cmd("mb32", ckpt="CK", prepared="PREP", probe="VIEW", out=tmp_path)
-    assert cmd[:3] == ["-I", "-m", "experiments.phase2.g_probe"] and "--ckpt" in cmd and "CK" in cmd
+    assert cmd[:3] == ["-I", "-m", "objdel.cli.train.probe"] and "--ckpt" in cmd and "CK" in cmd
     grpo = json.loads(cmd[cmd.index("--grpo") + 1])
     assert grpo["max_steps"] == PS.STEPS and grpo["logging_steps"] == 1
     assert grpo["per_device_train_batch_size"] * grpo["gradient_accumulation_steps"] == 256

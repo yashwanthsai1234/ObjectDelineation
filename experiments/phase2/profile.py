@@ -52,7 +52,7 @@ def arm_cmd(arm: str, ckpt, prepared, probe, out: Path) -> list[str]:
     a = ARMS[arm]
     grpo = {"max_steps": STEPS, "logging_steps": 1} | a.get("grpo", {})
     flags = [x for f in a.get("flags", []) for x in ([f, str(out / arm / "trace")] if f == "--trace" else [f])]
-    return ["-I", "-m", "experiments.phase2.g_probe", "--model", "qwen3-vl-2b", "--ckpt", str(ckpt), "--train",
+    return ["-I", "-m", "objdel.cli.train.probe", "--model", "qwen3-vl-2b", "--ckpt", str(ckpt), "--train",
             str(prepared), "--probe", str(probe), "--out", str(out / arm), "--items", str(ITEMS),
             "--grpo", json.dumps(grpo), *flags]  # fmt: skip
 

@@ -415,7 +415,7 @@ def _rows(frames):
 
 def test_eval_run_skips_and_counts_single_rater_items(stores):
     """I45: a single-rater item (synthetic z003) no longer stops eval_run; it is skipped and counted."""
-    from experiments.phase1 import eval_run
+    from objdel.cli.eval import score as eval_run
     frames = eval_run.load_frames(stores / "store", "val")
     single = [i for i, f in frames.items() if len(next(iter(f["masks"].values()))) < 2]
     assert single == ["lidc/1.2.1/n000/z003"]
@@ -431,7 +431,7 @@ def test_eval_run_scores_with_the_prepared_caches(stores):
     """I45 / D25: with a prepared root, metrics get the prepared (digest-checked) caches and equal the store path."""
     pytest.importorskip("datasets")
     pytest.importorskip("cv2")
-    from experiments.phase1 import eval_run
+    from objdel.cli.eval import score as eval_run
     from objdel.data import prepare as data_prepare
     from objdel.policy import prompt as D
     from objdel.verify import store as verify_store

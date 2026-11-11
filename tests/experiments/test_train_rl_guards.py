@@ -1,4 +1,4 @@
-"""B1.5 run guards of experiments.phase2.train_rl and objdel.policy.callbacks.BudgetStop (U41-U46, U61, I16, I33,
+"""B1.5 run guards of objdel.cli.train.rl and objdel.policy.callbacks.BudgetStop (U41-U46, U61, I16, I33,
 I34, R04): every refusal happens before a model or a vLLM engine loads, and the budget stop measures session spend
 as LG.accrued does."""
 
@@ -123,7 +123,7 @@ TRAIN = ["--train", "t", "--steps", "20"]
 
 
 def parse(*argv, env=None, monkeypatch=None):
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     for k in ("OBJDEL_SESSION_START", "OBJDEL_RATE_USD_PER_H", "OBJDEL_FIXED_USD"):
         monkeypatch.delenv(k, raising=False)
@@ -335,7 +335,7 @@ def no_load(monkeypatch):
 ])
 def test_refusals_come_before_any_load(prepared, tmp_path, no_load, case, match):
     """R04: every train_rl refusal raises ValueError before the model, the processor or a vLLM engine loads."""
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     root, _, sha = schedule_root(prepared, tmp_path / "rows")
     if case == "count":  # the schedule claims 5 steps, the file holds 4
@@ -398,7 +398,7 @@ def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp
     E = Env(tmp_path)
     E.launched()
     run = E.active()["r1"]
-    line = E.tmux("experiments.phase2.final_eval", "--out", "x.json")
+    line = E.tmux("objdel.cli.eval.run", "--out", "x.json")
     env = dict(re.findall(r"(OBJDEL_SESSION_START|OBJDEL_RATE_USD_PER_H|OBJDEL_FIXED_USD)=([0-9.e+-]+)", line))
     assert float(env["OBJDEL_SESSION_START"]) == run["started"]
     assert float(env["OBJDEL_RATE_USD_PER_H"]) == pytest.approx(run["dph"] + 6 * run["inet_up_cost"])

@@ -35,8 +35,8 @@ SMOLVLM = re.compile(r"(?i)smolvlm")
 LFM = re.compile(r"(?i)\blfm|liquidai")
 POOL_NAMES = re.compile(r"\b(_Pool|fork_pool|pool_size)\b")
 POOL_IDENTS = {"cpus", "quota"}  # CLEAN16 step 1: AST identifiers, not words in prose
-PROCS_FILES = ("experiments/phase2/select_ckpt.py", "experiments/phase2/g_probe.py", "experiments/phase2/final_eval.py",
-               "src/objdel/infra/preflight.py", "experiments/phase2/ceiling.py")  # build_eval_views keeps its own --procs
+PROCS_FILES = ("src/objdel/cli/train/select.py", "src/objdel/cli/train/probe.py", "src/objdel/cli/eval/run.py",
+               "src/objdel/infra/preflight.py", "src/objdel/cli/eval/ceiling.py")  # build_eval_views keeps its own --procs
 CONTROLLER = re.compile(r"\b(Controller|alarms_for)\b")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\((<[^>]+>|[^)\s]+)(?:\s+\"[^\"]*\")?\)|!\[[^\]]*\]\((<[^>]+>|[^)\s]+)\)")
 TICK = re.compile(r"`((?:src|experiments|tests|cuda|docs|archive)/[^`\s*<{]+|ROADMAP\.md)`")

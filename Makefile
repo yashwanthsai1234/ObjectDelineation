@@ -38,7 +38,7 @@ cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objde
 CONFIG ?= specs/b1_rows.yaml
 MODEL_REF ?= svenk029/objdel-sft@b1-rows
 preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=... [BUNDLE_DIR=...]); launch needs its stamp
-	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG) $(if $(BUNDLE_DIR),--bundle-dir $(BUNDLE_DIR))
+	$(PY) -I -m objdel.cli.box.preflight --config $(CONFIG) $(if $(BUNDLE_DIR),--bundle-dir $(BUNDLE_DIR))
 
 smoke:            ## the CPU smoke test: train -> select on a tiny model (preflight's last check)
 	$(PY) -m pytest -q -p no:cacheprovider tests/experiments/test_p2_scripts.py::test_cpu_smoke_train_then_select
@@ -83,4 +83,4 @@ docs-serve:       ## serve the docs site locally
 headline:         ## copy the headline test and validation metrics into reference/headline.json (RUN=r5, or TEST=... VAL=...)
 	@test -n "$(RUN)$(TEST)" || { echo "headline: give RUN=<id>, or TEST=<final_eval.json> and VAL=<final_eval.json>"; exit 2; }
 	@test -n "$(RUN)" -o -n "$(VAL)" || { echo "headline: TEST needs VAL"; exit 2; }
-	$(PY) -I -m experiments.phase2.headline $(if $(RUN),--run $(RUN),--test $(TEST) --val $(VAL)) --model-ref $(MODEL_REF)
+	$(PY) -I -m objdel.cli.eval.headline $(if $(RUN),--run $(RUN),--test $(TEST) --val $(VAL)) --model-ref $(MODEL_REF)

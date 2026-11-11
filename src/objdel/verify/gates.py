@@ -55,7 +55,7 @@ IOU_TC_PASS, DUPLICATES, SIGNAL = 0.70, 0.10, 0.50
 GEOMETRY_VIEWS = ("shifted", "rescaled")  # G-geometry and G-prior (b)
 PROBE_DATASET = "lidc"  # the precision and topology probes are LIDC patches
 G = REWARD_V4.group
-REQUIREMENTS = {  # keys = experiments/phase2/prereg.py C1_GATES
+REQUIREMENTS = {  # keys = src/objdel/cli/train/prereg.py C1_GATES
     "G-format": f"shifted val: parse >= {FORMAT:.0%}, legal >= {LEGAL:.0%}",
     "G-geometry": f"shifted and rescaled val: median IoU_tc (illegal = 0) >= 0.85 disc, 0.75 cup, 0.60 nodule; "
                   f">= {IOU_TC_PASS:.0%} of rollouts legal with IoU_tc >= 0.5 on every object",

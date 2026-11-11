@@ -7,9 +7,9 @@ import json
 import numpy as np
 import pytest
 
-from experiments.phase2 import ceiling as CEILING
-from experiments.phase2 import final_eval as CLI
 from experiments.phase2 import outline_lengths as OL
+from objdel.cli.eval import ceiling as CEILING
+from objdel.cli.eval import run as CLI
 from objdel.policy import final_eval as FE
 from objdel.policy import rows as policy_rows
 from objdel.policy.sampler import Sample

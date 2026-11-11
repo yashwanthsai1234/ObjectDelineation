@@ -4,7 +4,7 @@ The unmarked end-to-end test runs the whole chain without data in ~15 s: a synth
 -> objdel.data.prepare.prepare (targets.frame, targets.build_target, reward.ExpertCache) -> grpo_rows (RIGA and LIDC
 rows mixed) -> the production TRLReward on the prepared caches inside a real TRL GRPOTrainer (configs.grpo_config,
 tiny offline Llama, char-level tokenizer, a scripted policy that emits rater targets, a truncated target, junk and
-an empty answer) -> TRL's held-out evaluation -> the same completions through experiments/phase1/eval_run.py
+an empty answer) -> TRL's held-out evaluation -> the same completions through src/objdel/cli/eval/score.py
 (store frames, eval.metrics) -> eval.gates.phase2_entry.
 Tests `b4_<n>` reproduce the confirmed breakdowns, now fixed (experiments/phase1/impl/breakit/B4_wiring.md).
 """
@@ -116,7 +116,7 @@ def _reference_advantages(chain, keys):
 
 
 def test_e2e_store_to_trl_to_eval_and_gates(chain):
-    from experiments.phase1 import eval_run
+    from objdel.cli.eval import score as eval_run
     train_calls = [c for c in chain["calls"] if c["train"]]
     eval_calls = [c for c in chain["calls"] if not c["train"]]
     assert len(train_calls) == 2 and len(eval_calls) == 2
@@ -172,7 +172,7 @@ def test_b4_3_logged_completions_carry_item_key_and_truncation(chain):
 def test_eval_runner_edges(chain):
     """Empty JSONL -> a failing report, not a crash; unknown ids -> KeyError naming them; an item without pixels
     is still scorable (frames need masks only)."""
-    from experiments.phase1 import eval_run
+    from objdel.cli.eval import score as eval_run
     store_root = chain["work"] / "store"
     report = eval_run.build_report(eval_run.evaluate([], eval_run.load_frames(store_root, "val", [])))
     assert report["gates"]["pass"] is False and report["summary"]["datasets"] == {}
@@ -229,10 +229,10 @@ def test_b4_6_readme_quick_start_imports_exist():
                 assert hasattr(mod, a.name), f"{node.module}.{a.name}"
 
 
-@pytest.mark.parametrize("script", ["fetch_lidc_pixels"])
+@pytest.mark.parametrize("script", ["fetch_lidc"])
 def test_b4_7_scripts_without_argparse(script):
     """Every script: tests/experiments/test_experiment_scripts.py."""
-    r = subprocess.run([sys.executable, "-I", "-m", f"experiments.phase1.{script}", "--help"], cwd=ROOT,
+    r = subprocess.run([sys.executable, "-I", "-m", f"objdel.cli.data.{script}", "--help"], cwd=ROOT,
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 0 and "usage" in r.stdout
 
@@ -281,7 +281,7 @@ def test_real_lidc_sample_prepared_equals_store_and_eval_frames(store_dir):
     pytest.importorskip("datasets")
     if not (PREPARED / "manifest.json").is_file():
         pytest.skip("data/prepared absent")
-    from experiments.phase1 import eval_run
+    from objdel.cli.eval import score as eval_run
     from objdel.core import datasets
     from objdel.data import store
     from objdel.data.targets.build import build_target
