@@ -31,6 +31,7 @@ from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_mask
 
 from .reward_harness import FIELDS, G, advantages, packed
+from .score_numpy import same_sig
 
 AB_FIELDS = (*FIELDS, "iou_max_all", "p0_iou", "p0_band", "p0_near", "g_tauP", "hole_tc", "hole_all")
 _I = {f: i for i, f in enumerate(AB_FIELDS)}
@@ -95,7 +96,7 @@ def pack_ab(mask, cache: ExpertCache) -> tuple:
     lo, hi = min(cache.rater_areas), max(cache.rater_areas)
     g_tauP = 0.0 if a == 0 else min(1.0, (hi + slack) / a) * (min(1.0, a / (lo - slack)) if lo > slack else 1.0)
     ph = _holes(m, cache.min_area)
-    same = cache.same_sig.get(t.sig)
+    same = same_sig(cache).get(t.sig)
     if same:
         key = tuple(same)
         if key not in s["cons_by_sig"]:

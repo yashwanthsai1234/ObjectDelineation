@@ -23,6 +23,8 @@ from objdel.verify.reward.cache import (
 )
 from objdel.verify.reward.score import score_mask, sig_id
 
+from .score_numpy import same_sig
+
 G = 8
 # packed per-rollout terms (one row per rollout)
 FIELDS = ("iou_tc", "f5", "g_area", "topo_any", "topo_freq", "sig_id", "area")
@@ -348,7 +350,7 @@ def k9_groups(stack, rng, two_part: bool = False, pack_fn=pack) -> list[tuple[np
     cache = ExpertCache.build(stack)
     out = []
     for base in (cache.vote, stack[int(rng.integers(len(stack)))]):
-        if not cache.same_sig.get(signature(base, cache.min_area)):
+        if not same_sig(cache).get(signature(base, cache.min_area)):
             continue
         cands = [(t, vote_iou(m, cache)) for m in correct_candidates(base, rng) if (t := pack_fn(m, cache))[TANY] == 1]
         wrongs = [(t, vote_iou(m, cache)) for m in wrong_variants(base, cache, rng, two_part)
@@ -427,7 +429,7 @@ def item_pools(args) -> dict:
     cache = ExpertCache.build(stack)
     sigs = list(cache.rater_sigs)
     vsig = signature(cache.vote, cache.min_area)
-    counts = {s: len(r) for s, r in cache.same_sig.items()}
+    counts = {s: len(r) for s, r in same_sig(cache).items()}
     top = max(counts.values())
     tied = sorted(s for s, c in counts.items() if c == top)
     mode = vsig if vsig in tied else tied[0]

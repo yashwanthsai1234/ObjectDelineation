@@ -81,7 +81,7 @@ import math
 import os
 import threading
 import weakref
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 from functools import cache, cached_property
 from itertools import combinations
 from pathlib import Path
@@ -275,7 +275,9 @@ class ExpertCache:
     raises RuntimeError("device() in a forked child") (D7). The scalars stay when device_many's bound drops the
     tables. The distance maps (edt) are computed only when read."""
 
-    def __init__(self, raters: np.ndarray, tau: float, t5: float):
+    def __init__(self, raters: np.ndarray, tau: float, t5: float, digest: str | None = None):
+        """digest: the SHA-256 of these values under the current fingerprint when the caller has just verified it
+        (load); computed otherwise."""
         if not (math.isfinite(t5) and t5 > 0):
             raise ValueError(f"t5 must be finite and > 0, got {t5}")
         raters = _rater_stack(raters)
@@ -287,7 +289,7 @@ class ExpertCache:
         self.min_area = min_area(int(np.count_nonzero(self.union)))
         x, y, w, h = cv2.boundingRect(self.union.view(np.uint8))
         self.box = (y, y + h, x, x + w)  # union bounding box (empty if the union is empty)
-        self.digest = _digest(raters, self.tau, self.t5, fingerprint())
+        self.digest = digest or _digest(raters, self.tau, self.t5, fingerprint())
         self._device = None  # handle of the tables on the checker's device
         self._built = None   # (perimeter, rater_sigs) returned with the tables
 
@@ -317,14 +319,6 @@ class ExpertCache:
     def voters(self) -> tuple[int, ...]:
         """Raters with a topology vote (`voters` of the signatures)."""
         return voters(self.rater_sigs)
-
-    @property
-    def same_sig(self) -> dict[tuple[int, ...], list[int]]:
-        """Signature -> voting raters who drew it (the rater topology histogram)."""
-        same = defaultdict(list)
-        for i in self.voters:
-            same[self.rater_sigs[i]].append(i)
-        return dict(same)
 
     @cached_property
     def ref_sum(self) -> tuple[int, int, int]:
@@ -386,10 +380,10 @@ class ExpertCache:
             raise ValueError(f"{path}: SHA-256 mismatch (corrupted or edited cache)")
         if expected_digest is not None and digest != expected_digest:
             raise ValueError(f"{path}: cache and expected digests differ ({digest[:12]} vs {expected_digest[:12]})")
-        if fp != fingerprint():
+        if fp != (now := fingerprint()):
             if not rebuild:
-                raise StaleCacheError(f"{path}: built under another reward fingerprint ({fp[:12]}, now "
-                                      f"{fingerprint()[:12]}: CACHE_SPEC, size rule or numpy/scipy/OpenCV changed); "
-                                      "re-run prepare_rl or load with rebuild=True")
+                raise StaleCacheError(f"{path}: built under another reward fingerprint ({fp[:12]}, now {now[:12]}: "
+                                      "CACHE_SPEC, size rule or numpy/scipy/OpenCV changed); re-run prepare_rl or load "
+                                      "with rebuild=True")
             return cls.build(raters)
-        return cls(raters, tau, t5)
+        return cls(raters, tau, t5, digest)

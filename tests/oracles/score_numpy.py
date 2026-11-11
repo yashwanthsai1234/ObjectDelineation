@@ -8,10 +8,20 @@ same float64 arithmetic as objdel.verify.reward.score (location, gated_loc).
 Numpy and OpenCV: bounding-box crop, Spaghetti-labeled size-filtered signature (objdel.geom.topology), float64
 sums of the float32 band distances.
 """
+from collections import defaultdict
+
 import cv2
 import numpy as np
 
 from objdel.geom.topology import signature
+
+
+def same_sig(cache) -> dict[tuple[int, ...], list[int]]:
+    """Signature -> voting raters of the cache who drew it (the rater topology histogram)."""
+    same = defaultdict(list)
+    for i in cache.voters:
+        same[cache.rater_sigs[i]].append(i)
+    return dict(same)
 
 
 def iou(a, area_a, b, area_b) -> float:
@@ -62,7 +72,7 @@ def score_mask(mask, cache) -> dict:
     m = m[roi]
     area = int(np.count_nonzero(m))
     sig = signature(m, cache.min_area)
-    same = cache.same_sig.get(sig, ())
+    same = same_sig(cache).get(sig, ())
     if same:
         iou_tc = max(iou(m, area, cache.raters[i][roi], cache.rater_areas[i]) for i in same)
     else:

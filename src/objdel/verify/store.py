@@ -10,6 +10,7 @@ Scoring runs on the CUDA checker (objdel.verify.reward.score.score_batch) in the
    item's caches and pickles as its key and root.
 3. `cache_loader(root)` loads one item's caches on first use (LRU), checked against the manifest's records;
    `voting(root, rec, dataset)` names the raters with a topology vote.
+Both loaders parse only records files whose SHA-256 is the manifest's (`_rl_records`).
 
     store.preload("data/prepared", ("lidc",))
     reward = TRLReward(store.loader("data/prepared"), stop_ids)
@@ -42,11 +43,7 @@ def preload(root, datasets: Iterable[str], threads: int = 4) -> int:
         paths = sorted(root.glob(f"{ds}/*.jsonl"))
         if not paths:
             raise ValueError(f"{root}: no {ds} records")
-        for p in paths:
-            data = p.read_bytes()
-            if files.get(p.relative_to(root).as_posix(), {}).get("sha256") != hashlib.sha256(data).hexdigest():
-                raise ValueError(f"{p}: SHA-256 differs from manifest.json")
-            digests |= {r["item_id"]: r["caches"] for r in map(json.loads, data.splitlines()) if r["rl"]}
+        digests |= _rl_records(root, files, [p.relative_to(root).as_posix() for p in paths])
 
     def load(item):
         key, ds = item
@@ -91,6 +88,19 @@ def _first(paths: list[str], key: str) -> CacheRef:
     return CacheRef(key, next((p for p in paths if key in STORE.get(p, {})), paths[0]))
 
 
+def _rl_records(root: Path, files: dict, rels: Iterable[str]) -> dict[str, dict[str, str]]:
+    """{item id: {object: cache digest}} of the RL records in the files `rels` under root. Each file is hashed and
+    parsed from the same bytes, and must have its SHA-256 in the manifest's `files` (ValueError otherwise), so a
+    stray or edited file is never parsed."""
+    digests = {}
+    for rel in rels:
+        data = (root / rel).read_bytes()
+        if files.get(rel, {}).get("sha256") != hashlib.sha256(data).hexdigest():
+            raise ValueError(f"{root / rel}: SHA-256 differs from manifest.json")
+        digests |= {r["item_id"]: r["caches"] for r in map(json.loads, data.splitlines()) if r["rl"]}
+    return digests
+
+
 def _caches(root, key: str, digests: dict[str, str]) -> dict[str, ExpertCache]:
     return {n: ExpertCache.load(Path(root, "caches", key, f"{n}.npz"), d) for n, d in digests.items()}
 
@@ -104,20 +114,13 @@ def voting(root, rec: dict, dataset: str) -> set[int]:
             for i in rs}
 
 
-def cache_loader(root, maxsize: int | None = 64) -> Callable[[str], dict[str, ExpertCache]]:
-    """key -> {object: ExpertCache}, checked against the digests in the prepared records (ValueError;
-    StaleCacheError after a reward fingerprint change). The records are the files the manifest lists, each checked
-    against its SHA-256 (I45: no glob, so a stray or edited jsonl is never read). maxsize: LRU size (a RIGA item's
-    caches hold ~9 MB), loaded on first use; None loads every cache now (preload: the LIDC train set is ~0.33 GB)."""
+def cache_loader(root, maxsize: int = 64) -> Callable[[str], dict[str, ExpertCache]]:
+    """key -> {object: ExpertCache}, loaded on first use into an LRU of maxsize items (a RIGA item's caches hold
+    ~9 MB) and checked against the digests in the prepared records (ValueError; StaleCacheError after a reward
+    fingerprint change). The records are the files the manifest lists (no glob)."""
     root = Path(root)
-    digests = {}
-    for rel, entry in read_json(root / "manifest.json")["files"].items():
-        text = (root / rel).read_bytes()
-        if hashlib.sha256(text).hexdigest() != entry["sha256"]:
-            raise ValueError(f"{root / rel}: not the file the manifest records")
-        digests |= {r["item_id"]: r["caches"] for r in map(json.loads, text.splitlines()) if r["rl"]}
-    if maxsize is None:
-        return {k: _caches(root, k, d) for k, d in digests.items()}.__getitem__
+    files = read_json(root / "manifest.json")["files"]
+    digests = _rl_records(root, files, files)
 
     @lru_cache(maxsize)
     def load(key: str) -> dict[str, ExpertCache]:
