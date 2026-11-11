@@ -13,6 +13,13 @@ def read_jsonl(path) -> list[dict]:
         return [json.loads(line) for line in f]
 
 
+def write_jsonl(path, rows) -> str:
+    """rows as sorted-key JSON lines to path; the SHA-256 hex digest of the text written."""
+    text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+    Path(path).write_text(text)
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 def write_atomic(path, text: str) -> None:
     """Write through a temp file and os.replace: a crash leaves the old file or none, never half a file."""
     path = Path(path)
@@ -32,13 +39,9 @@ def plain(x):
     return x.tolist() if hasattr(x, "tolist") else x.item()
 
 
-def write_json(path, doc, atomic: bool = True) -> None:
-    """doc as JSON with indent 1, sorted keys and a trailing newline (the manifests' bytes); atomic: write_atomic."""
-    text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
-    if atomic:
-        write_atomic(path, text)
-    else:
-        Path(path).write_text(text)
+def write_json(path, doc) -> None:
+    """doc as JSON with indent 1, sorted keys and a trailing newline (the manifests' bytes), through write_atomic."""
+    write_atomic(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
 
 
 def _git(args, root) -> bytes:

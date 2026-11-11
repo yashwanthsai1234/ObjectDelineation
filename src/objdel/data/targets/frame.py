@@ -1,52 +1,49 @@
 """The model's view of an item: a square crop around every rater's union, at the resolution the reward scores.
 
-Policy (plan §4.4, lab t_targets H6):
+Policy:
 - side s = the larger side of the union box (all raters, all structures), plus a margin of
   max(margin_px, ceil(margin_pct % of s)) on each side;
 - integer factor f = ceil(need / max_side); the frame side S is the smallest divisor of 1000 that is >= the reduced
   need and >= min_side, so S <= 500 and one pixel is exactly 1000 / S grid units: every pixel corner is a grid point
-  and the target round trip mask -> polygon -> mask has no rounding error (lab H6: crops whose side does not divide
+  and the target round trip mask -> polygon -> mask has no rounding error (crops whose side does not divide
   1000 flipped pixels and dropped LIDC IoU to 0.874). The context grows to reach S; the object is never resampled
   for that;
 - the crop window of f*S item pixels is centred on the union box and shifted inside the image when it fits, else
   padded (masks False, image black);
 - f > 1: masks are reduced by f x f block majority (ties, possible for even f, go to the foreground) and this reduced
   mask is the ground truth for SFT and reward alike; the image by the f x f block mean. Block voting is monotone, so
-  cup inside disc stays inside. It can change topology (lab: 7.8 % of rims when forced); a topology-preserving
+  cup inside disc stays inside. It can change topology (7.8 % of RIGA rims when forced); a topology-preserving
   downsampler exists (Chen & Peng 2024, integer programming) but is not needed because the reduced mask is the
   ground truth everywhere. None of the RIGA or LIDC items needs f > 1 (largest union 309 px);
-- the model image is uint8 RGB. LIDC Hounsfield units go through the lung window [-1000, 400] (Phase 0) and the
+- the model image is uint8 RGB. LIDC Hounsfield units go through the lung window [-1000, 400] and the
   uint8 crop is upscaled to image_side (512) with Pillow's bicubic filter; masks, W and H stay at the frame
   resolution. Pillow resamples 8-bit images in fixed point (22-bit integer coefficients, integer accumulation), so
   the image is bit-identical across CPUs, while cv2.resize(INTER_CUBIC) differed by +-1 between x86 (with or without
-  IPP) and arm64 (M9 finding 3, fix F3). Both sample at pixel centres (output centre (x + 1/2) * in / out), so the
+  IPP) and arm64. Both sample at pixel centres (output centre (x + 1/2) * in / out), so the
   image lines up with the mask scaled by image_side / S; the kernels differ (Keys a = -0.5 in Pillow, -0.75 in
   OpenCV), which changes pixel values by a few levels but not the geometry. Accepted image layouts:
   gray (H, W) or (H, W, 1), repeated to RGB; RGB (H, W, 3); RGBA (H, W, 4), whose alpha channel is dropped (the
-  stores hold opaque photos and CT slices); anything else raises ValueError (break-it B1-6);
+  stores hold opaque photos and CT slices); anything else raises ValueError;
 - masks: any nonzero value or byte is foreground (objdel.geom.topology.as_mask), so the frame's masks, which targets and
-  reward caches read, are canonical bools (issue I1).
+  reward caches read, are canonical bools.
 
 Frame semantics: masks are (k, H, W) with W = H = S; the reward rasterizes at W x H. A grid vertex g maps to frame
 pixel g * W / 1000 and to item pixel box[0] + scale * g * W / 1000 (x; y likewise with box[1]). box = (x0, y0, x1,
 y1) is half-open in item pixels, x1 - x0 = scale * W, and may extend past the image (padding).
 
-Views (Phase 2, D10; plan §5.0): frame(item, offset=(dx, dy), side=S, window=(lo, hi)) moves the scale-1 window of
+Views: frame(item, offset=(dx, dy), side=S, window=(lo, hi)) moves the scale-1 window of
 side S (default: the policy's S) by (dx, dy) item pixels from where the policy would centre a window of that side,
 and windows Hounsfield units with (lo, hi) instead of LUNG_WINDOW. A moved or resized window must hold the rater
-union with >= CLEARANCE background pixels on every side and meet no other outlined nodule (meta["other_nodules"],
-B3-2), else ValueError; the defaults reproduce the policy frame byte for byte and skip those checks.
+union with >= CLEARANCE background pixels on every side and meet no other outlined nodule (meta["other_nodules"]), else
+ValueError; the defaults reproduce the policy frame byte for byte and skip those checks.
 
 References:
-    archive/phase1_lab/t_targets/REPORT.md (crop policy H6) and targets/crops.py (pad_div, block reduce)
     M. Chen, Y. Peng, "Topology-preserving downsampling of binary images", ECCV 2024: https://arxiv.org/abs/2407.17786
     Pillow resampling (bicubic a = -0.5, centre = (xx + 0.5) * scale, PRECISION_BITS = 22 fixed point for 8-bit):
         https://github.com/python-pillow/Pillow/blob/main/src/libImaging/Resample.c ,
         https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.resize
     OpenCV INTER_CUBIC (A = -0.75, same half-pixel centres), replaced:
         https://github.com/opencv/opencv/blob/4.x/modules/imgproc/src/resize.cpp
-    experiments/phase1/impl/M9_x86.md (finding 3: cv2 vs Pillow pixels on x86 and arm64)
-    archive/phase0/baseline_medsam.py (LUNG_WINDOW = (-1000, 400))
 """
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -60,7 +57,7 @@ from objdel.geom.topology import as_mask
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
 LUNG_WINDOW = (-1000, 400)
-CLEARANCE = 2  # px between the rater union and the edge of a moved or resized window (D10)
+CLEARANCE = 2  # px between the rater union and the edge of a moved or resized window
 
 
 @dataclass(frozen=True)
@@ -125,7 +122,7 @@ def centred(item: Item, side: int, box=None) -> tuple[int, int]:
 
 
 def crowded(item: Item, box) -> bool:
-    """Does the half-open window box meet another outlined nodule (objdel.data.lidc.crowded, B3-2)?"""
+    """Does the half-open window box meet another outlined nodule (objdel.data.lidc.crowded)?"""
     return boxes_meet(box, item.meta.get("other_nodules", ()))
 
 
@@ -149,8 +146,8 @@ def rgb(chw: np.ndarray, side: int | None) -> np.ndarray:
 
 
 def hu_window(a: np.ndarray, window=LUNG_WINDOW) -> np.ndarray:
-    """Hounsfield units -> 0..255 (int64), rounded half up: the lung window of Phase 0 for the default; ValueError
-    for an empty or inverted window (break-it BK1-6)."""
+    """Hounsfield units -> 0..255 (int64), rounded half up: the lung window for the default; ValueError
+    for an empty or inverted window."""
     lo, hi = window
     if hi <= lo:
         raise ValueError(f"HU window {window}: hi must exceed lo")

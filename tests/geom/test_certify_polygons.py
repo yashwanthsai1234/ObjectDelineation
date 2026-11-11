@@ -1,7 +1,7 @@
 """D4 (B10, B11; gates D-G3, D-G4): the engine's ladder certificate `certify_polygons` against set algebra on an
 independent raster (tests/oracles/raster_oracle.py: even-odd crossings at pixel centres), the scipy signature oracle
 and check_polygons' legality; its rim pair queries and argument checks; build_target's ladder through it (one call
-per name and level, a second call for the RIGA rim) and min_area required. Expected values never come from the
+per name and level) and min_area required. Expected values never come from the
 engine call under test."""
 import random
 
@@ -236,19 +236,14 @@ def test_signature_equality_is_the_kept_oracle():
 
 
 class Spy:
-    """Counts build_target's certify_polygons calls: (shapes, pairs) per call; `break_rim` fakes one rim failure."""
+    """Counts build_target's certify_polygons calls: the number of shapes per call."""
 
-    def __init__(self, monkeypatch, break_rim=0):
-        self.calls, self.break_rim, real = [], break_rim, _gpucheck.certify_polygons
+    def __init__(self, monkeypatch):
+        self.calls, real = [], _gpucheck.certify_polygons
 
         def spy(*a, **k):
-            out = real(*a, **k)
-            pairs = k.get("pairs")
-            self.calls.append((len(a[4]), None if pairs is None else pairs.tolist()))
-            if pairs is not None and self.break_rim:
-                self.break_rim -= 1
-                out = {**out, "pair_sig": np.array([99], np.int32), "pair_sig_start": np.array([0, 1])}
-            return out
+            self.calls.append(len(a[4]))
+            return real(*a, **k)
         monkeypatch.setattr(B._gpucheck, "certify_polygons", spy)
 
 
@@ -257,24 +252,17 @@ def _disc(S, cy, cx, r):
     return (y - cy) ** 2 + (x - cx) ** 2 <= r * r
 
 
-def test_one_call_per_name_and_level_and_one_rim_call(monkeypatch):
-    """I12: a nodule that passes its first rung is one call with one shape; RIGA is one call per name, then the rim
-    call with both chosen shapes and pairs [(0, 1)]; a rim failure raises both levels and repeats the per-name calls
-    (each from its new level), then the rim call."""
+def test_one_call_per_name_and_level(monkeypatch):
+    """A nodule that passes its first rung is one call with one shape; a two-object item is one call per name."""
     m = _disc(60, 30, 30, 20)
     spy = Spy(monkeypatch)
     build_target({"nodule": m}, ("nodule",), None, min_areas({"nodule": m[None]}))
-    assert spy.calls == [(1, None)]
+    assert spy.calls == [1]
     d, c = _disc(80, 40, 40, 30), _disc(80, 40, 44, 12)
     ma = min_areas({"disc": d[None], "cup": c[None]})
-    t = build_target({"disc": d, "cup": c}, ("disc", "cup"), None, ma)
     spy = Spy(monkeypatch)
-    assert build_target({"disc": d, "cup": c}, ("disc", "cup"), None, ma).text == t.text
-    assert spy.calls == [(1, None), (1, None), (2, [[0, 1]])]
-    spy = Spy(monkeypatch, break_rim=1)
-    t2 = build_target({"disc": d, "cup": c}, ("disc", "cup"), None, ma)
-    assert [p for _, p in spy.calls] == [None, None, [[0, 1]], None, None, [[0, 1]]]
-    assert t2.info["disc"]["tau"] == BuildConfig().ladder()[1] and t2.info["cup"]["tau"] == BuildConfig().ladder()[1]
+    build_target({"disc": d, "cup": c}, ("disc", "cup"), None, ma)
+    assert spy.calls == [1, 1]
 
 
 def test_rungs_of_one_call_never_exceed_the_ladder(monkeypatch):
@@ -285,20 +273,18 @@ def test_rungs_of_one_call_never_exceed_the_ladder(monkeypatch):
     m = np.hypot(y - 250, x - 250) <= 120 + 6 * np.sin(23 * np.arctan2(y - 250, x - 250)) + rng.normal(0, 0.3, (S, S))
     spy = Spy(monkeypatch)
     t = build_target({"nodule": m}, ("nodule",), None, {"nodule": 5})  # exact: rung 9 (tau 0.75)
-    assert t.info["nodule"]["tau"] == 0.75 and [n for n, _ in spy.calls] == [1, 2, 4, 7]  # rungs 0, 1-2, 3-6, 7-13
-    assert sum(n for n, _ in spy.calls) <= len(BuildConfig().ladder())
+    assert t.info["nodule"]["tau"] == 0.75 and spy.calls == [1, 2, 4, 7]  # rungs 0, 1-2, 3-6, 7-13
+    assert sum(spy.calls) <= len(BuildConfig().ladder())
 
 
 def test_min_area_is_required():
-    """F06 (B10): a missing name, or a missing "rim" for RIGA, raises ValueError naming the key; negative raises;
+    """F06 (B10): a missing name raises ValueError naming the key; negative raises;
     0 and extra keys are accepted."""
     m = _disc(40, 20, 20, 10)
     with pytest.raises(ValueError, match="'nodule'"):
         build_target({"nodule": m}, ("nodule",))
     with pytest.raises(ValueError, match="'nodule'"):
         build_target({"nodule": m}, ("nodule",), None, {})
-    with pytest.raises(ValueError, match="'rim'"):
-        build_target({"disc": m, "cup": m & _disc(40, 20, 20, 4)}, ("disc", "cup"), None, {"disc": 5, "cup": 5})
     with pytest.raises(ValueError):
         build_target({"nodule": m}, ("nodule",), None, {"nodule": -1})
     a = build_target({"nodule": m}, ("nodule",), None, {"nodule": 0})
@@ -307,9 +293,8 @@ def test_min_area_is_required():
 
 @pytest.mark.data
 def test_ladder_rungs_of_real_builds_equal_the_host_path(store_dir):
-    """Step 1 data variant: every ladder rung of real LIDC and RIGA builds (1,000+ rungs) certified in one call equals
-    the host path (raster from check_polygons, numpy IoU, the signature oracle), and the RIGA rim pairs of 50 items
-    equal signature(disc & ~cup, min_area["rim"]) (Mac only: RIGA never leaves it)."""
+    """Step 1 data variant: every ladder rung of real LIDC builds certified in one call equals the host path (raster
+    from check_polygons, numpy IoU, the signature oracle)."""
     from itertools import islice
 
     from objdel.data import store
@@ -317,41 +302,29 @@ def test_ladder_rungs_of_real_builds_equal_the_host_path(store_dir):
     from objdel.geom.shape import to_masks
     from objdel.geom.text import MAX_VERTICES
 
-    ladder, rungs, rims = BuildConfig().ladder(), 0, 0
-    for ds, n in (("lidc", 40), ("riga", 50)):
-        for it in islice(store.load(ds, "train", store_dir), n):
-            f = frame(it)
-            names, ma = (("disc", "cup") if ds == "riga" else ("nodule",)), min_areas(f.masks)
-            r = 0
-            src = {k: f.masks[k][r] for k in names}
-            H, W = src[names[0]].shape
-            parts = {}
-            for k in names:
-                rings = B._rings(src[k])
-                if len(rings) > MAX_RINGS:
-                    continue
-                parts[k] = [p for p in (B._parts(rings, tau, W, H) for tau in ladder)
-                            if all(len(x) <= MAX_VERTICES for o, hs in p for x in (o, *hs))]
-                objs = [(p, W, H) for p in parts[k]]
-                out = run(objs, [src[k]], [0] * len(objs), [ma[k]] * len(objs))
-                for i, g in enumerate(to_masks(objs)):
-                    c = g.mask if g.legal else np.zeros_like(g.mask)
-                    assert bool(out["legal"][i]) == g.legal
-                    assert int(out["inter"][i]) == int((c & src[k]).sum())
-                    assert int(out["union"][i]) == int((c | src[k]).sum())
-                    assert bool(out["equal"][i]) == np.array_equal(c, src[k])
-                    assert sl(out, "sig", i) == oracle_signature(c, ma[k])
-                    assert sl(out, "ref_sig", i) == oracle_signature(src[k], ma[k])
-                rungs += len(objs)
-            if ds == "riga" and len(parts) == 2:
-                n_d = len(parts["disc"])
-                objs = [(p, W, H) for p in parts["disc"] + parts["cup"]]
-                pairs = [(i, n_d + j) for i in range(n_d) for j in range(len(parts["cup"]))]
-                out = run(objs, [src["disc"], src["cup"]], [0] * n_d + [1] * (len(objs) - n_d), [0] * len(objs),
-                          pairs=pairs, ref_pairs=[(0, 1)] * len(pairs), pair_min_area=[ma["rim"]] * len(pairs))
-                g = [x.mask if x.legal else np.zeros_like(x.mask) for x in to_masks(objs)]
-                for p, (a, b) in enumerate(pairs):
-                    assert sl(out, "pair_sig", p) == oracle_signature(g[a] & ~g[b], ma["rim"])
-                    assert sl(out, "pair_ref_sig", p) == oracle_signature(src["disc"] & ~src["cup"], ma["rim"])
-                rims += len(pairs)
-    assert rungs >= 1000 and rims >= 50
+    ladder, rungs = BuildConfig().ladder(), 0
+    for it in islice(store.load("lidc", "train", store_dir), 100):
+        f = frame(it)
+        names, ma = ("nodule",), min_areas(f.masks)
+        r = 0
+        src = {k: f.masks[k][r] for k in names}
+        H, W = src[names[0]].shape
+        parts = {}
+        for k in names:
+            rings = B._rings(src[k])
+            if len(rings) > MAX_RINGS:
+                continue
+            parts[k] = [p for p in (B._parts(rings, tau, W, H) for tau in ladder)
+                        if all(len(x) <= MAX_VERTICES for o, hs in p for x in (o, *hs))]
+            objs = [(p, W, H) for p in parts[k]]
+            out = run(objs, [src[k]], [0] * len(objs), [ma[k]] * len(objs))
+            for i, g in enumerate(to_masks(objs)):
+                c = g.mask if g.legal else np.zeros_like(g.mask)
+                assert bool(out["legal"][i]) == g.legal
+                assert int(out["inter"][i]) == int((c & src[k]).sum())
+                assert int(out["union"][i]) == int((c | src[k]).sum())
+                assert bool(out["equal"][i]) == np.array_equal(c, src[k])
+                assert sl(out, "sig", i) == oracle_signature(c, ma[k])
+                assert sl(out, "ref_sig", i) == oracle_signature(src[k], ma[k])
+            rungs += len(objs)
+    assert rungs >= 1000

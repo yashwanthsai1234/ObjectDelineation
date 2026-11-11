@@ -1,4 +1,4 @@
-"""SFT targets: rater masks of one item -> certified, canonical polygon text (plan D11, gates K5-K7, R1).
+"""SFT targets: rater masks of one item -> certified, canonical polygon text .
 
 Per object (structure) of one rater:
 1. exact crack-edge rings (objdel.geom.rings.trace), each ring's holes grouped with its 8-connected component;
@@ -8,40 +8,30 @@ Per object (structure) of one rater:
    pixel-neutral for crops <= 500 px); repeated and straight-through vertices dropped;
 4. certified on the CUDA engine (objdel.geom.engine.certify_polygons: raster, legality, IoU and the size-filtered
    signatures of the rung and the mask, only numbers leave the device): legal, at most MAX_VERTICES per ring, the
-   same per-instance signature as the mask under the size rule (plan §4.2: the rule applies to targets, reward and
-   eval), and IoU >= iou_min. The rule is the reward's min_area of the raters' union, which every caller passes
-   (`min_areas`; the archived interval loop for an unknown rule is tests/oracles/kept_oracle.py). For RIGA (disc,
-   cup) the rim disc & ~cup must keep its signature too (a second engine call with one pair query). The raw
-   signature is not required: on jagged masks (RIGA BinRushed) the tau = 3 polygon rasterizes with sub-filter
-   pinholes or specks, and demanding the raw signature pushed 1-2 % of RIGA objects to near-lossless answers of up
-   to 6,000 tokens.
-   The ring cap MAX_RINGS applies after the size rule (break-it B1-4): an object with more raw rings is traced from
+   same per-instance signature as the mask under the size rule (the rule applies to targets, reward and eval), and
+   IoU >= iou_min. The rule is the reward's min_area of the raters' union, which every caller passes (`min_areas`).
+   The raw signature is not required: on jagged masks the tau = 3 polygon rasterizes with sub-filter
+   pinholes or specks, and demanding the raw signature pushed objects to near-lossless answers.
+   The ring cap MAX_RINGS applies after the size rule: an object with more raw rings is traced from
    its size-filtered mask instead, and still certified against the raw mask.
-   LIDC nodules (BuildConfig.exact) must also rasterize to the mask pixel for pixel (D9). tau is in grid units and
+   LIDC nodules (BuildConfig.exact) must also rasterize to the mask pixel for pixel. tau is in grid units and
    a pixel is 1000 / S of them, so at S >= 167 tau = 3 is >= 1/2 px and a shortcut can cross a pixel centre
-   (break-it BK1-1: 20 % of S = 200 view rows were certified but not exact). The check steps those down the
+   (20 % of S = 200 view rows were certified but not exact). The check steps those down the
    ladder; every identity (policy-frame) LIDC target is already exact, so the Phase 1 target-set hashes do not
    change. If no rung is exact (rings traced from the size-filtered mask, or the vertex cap), the object falls
-   back to the certificate alone. RIGA is exempt: its jagged BinRushed masks would be pushed to near-lossless
-   answers, as the raw signature did (above).
+   back to the certificate alone.
 5. If an object fails, it is rebuilt one rung lower on the tolerance ladder tau = 3, 2.75, ..., 0.25, then lossless
-   only, then the exact rings, which pass by construction for crops <= 500 px (the lab's stress test, S = 125-501).
+   only, then the exact rings, which pass by construction for crops <= 500 px (stress test, S = 125-501).
    Rungs are certified in engine calls of 1, 2, 4, ... rungs from the current one (one call per start rung); the
    first certified rung wins, so the text is the one rung-by-rung certification gives. Simplifying every remaining
-   rung up front would cost 3x the whole build on LIDC, where 99 % pass the first rung (D4).
+   rung up front would cost 3x the whole build on LIDC, where 99 % pass the first rung.
 The answer is the canonical text of all objects (objdel.geom.shape.canonicalize / serialize); it must parse.
-
-Repair: the lab localized defects (pinning points of offending segments, halving the tolerance per ring, then the
-better of both). On the 3,169 fixture targets the per-object ladder with 0.25 steps needs 0.81x (disc) and 0.77x
-(cup) the lab's vertices on RIGA, and the same LIDC texts (99.85 %; the rest differ only in the bevel), so the
-localization was dropped (experiments/phase1/impl/M5_targets.md).
 
 References:
     P. Selinger, "Potrace: a polygon-based tracing algorithm", 2003: https://potrace.sourceforge.net/potrace.pdf
     D. Estkowski, J. S. B. Mitchell, "Simplifying a polygonal subdivision while keeping it simple" (min-vertex
         simplification without crossings is hard; simplify per ring, then verify and repair):
         https://www.uni-trier.de/fileadmin/fb4/prof/INF/DEA/Seminar0708/Estkowski.pdf
-    archive/phase1_lab/t_targets/REPORT.md (minseg_hybrid, tau = 3, IoU >= 0.99, bevel, crop policy)
 """
 import hashlib
 import time
@@ -58,9 +48,9 @@ from objdel.geom import topology
 from objdel.geom.rings import trace
 from objdel.geom.shape import canonicalize, pack_objects
 from objdel.geom.text import GRID, MAX_RINGS, MAX_VERTICES, Objects, parse, serialize
-from objdel.geom.topology import as_mask, size_filter
+from objdel.geom.topology import as_mask, pack_masks, size_filter
 
-MAX_SIDE = 500  # crop policy; beyond it the exact-ring fallback is no longer guaranteed (lab stress test, S = 640)
+MAX_SIDE = 500  # crop policy; beyond it the exact-ring fallback is no longer guaranteed (stress test, S = 640)
 
 
 @dataclass(frozen=True)
@@ -88,8 +78,8 @@ class Target(NamedTuple):
 
 def _rings(mask):
     """(lattice path, step directions, component, is hole) of every ring, traced on the mask cut to its bounding box
-    (crop before trace, Phase 2 B3 P4: every target text and hash unchanged, RIGA -23 % build time). The component is
-    the ring's part (the 8-connected component it bounds, D3; it replaced cv2.connectedComponents labels, which group
+    (crop before trace: every target text and hash unchanged). The component is
+    the ring's part (the 8-connected component it bounds; it replaced cv2.connectedComponents labels, which group
     the rings the same way). The texts cannot change: the ring start key orders vertices by (y, x, d) for any width,
     so a translation keeps every ring's start and order."""
     mask = np.ascontiguousarray(mask, dtype=bool)
@@ -113,8 +103,8 @@ def _clean(v):
 def _bevel(rings, steps_in, steps_out):
     """Split each vertex the object uses more than once (a pinch) into two points one grid unit back along the crack
     step arriving there and one unit along the step leaving it. The cut stays inside the pinch's background pixel
-    corner, so no pixel centre changes side for crops <= 500 px. (The lab stepped along the simplified edges; on a
-    slanted edge that rounds to a pixel centre at S = 500 and flips it.)"""
+    corner, so no pixel centre changes side for crops <= 500 px. (Stepping along the simplified edges instead
+    would, on a slanted edge at S = 500, round to a pixel centre and flip it.)"""
     pts, counts = np.unique(np.concatenate(rings), axis=0, return_counts=True)
     twice = {tuple(p) for p in pts[counts > 1].tolist()}
     if not twice:
@@ -145,15 +135,10 @@ def _parts(rings, tau, W, H):
     return [(o, hs) for o, hs in parts.values()]
 
 
-def _certify(objs, refs, ref_of, min_area, pairs=None, pair_min_area=None) -> dict:
+def _certify(objs, refs, ref_of, min_area) -> dict:
     """certify_polygons of objects [(parts, W, H)] against as_mask reference masks: one engine call."""
-    start = np.zeros(len(refs) + 1, np.int64)
-    start[1:] = np.cumsum([r.size for r in refs])
-    pairs = None if pairs is None else np.array(pairs, np.int32)
     return _gpucheck.certify_polygons(
-        *pack_objects(objs), GRID, np.concatenate([r.view(np.uint8).ravel() for r in refs]),
-        np.array([r.shape for r in refs], np.int32), start, np.array(ref_of, np.int32), np.array(min_area, np.int64),
-        pairs=pairs, ref_pairs=pairs, pair_min_area=None if pairs is None else np.array(pair_min_area, np.int64))
+        *pack_objects(objs), GRID, *pack_masks(refs), np.array(ref_of, np.int32), np.array(min_area, np.int64))
 
 
 def _sig(out: dict, key: str, i: int) -> list:
@@ -184,23 +169,20 @@ def _climb(name, rings, ladder, level, ref, min_area, exact, iou_min, W, H):
 
 def min_areas(stacks: Mapping[str, np.ndarray]) -> dict[str, int]:
     """The reward's size rule per structure of one item's rater stacks {name: (k, H, W)}: min_area of the union of
-    all raters, as ExpertCache computes it, and for RIGA (disc, cup) also of the rim union (disc & ~cup per rater).
-    This is build_target's min_area argument for every rater of the item."""
-    if {"disc", "cup"} <= set(stacks):
-        stacks = {**stacks, "rim": stacks["disc"] & ~stacks["cup"]}
+    all raters, as ExpertCache computes it. This is build_target's min_area argument for every rater of the item."""
     return {n: topology.min_area(int(s.any(0).sum())) for n, s in stacks.items()}
 
 
 def build_target(masks: Mapping[str, np.ndarray], names, cfg: BuildConfig | None = None,
                  min_area: Mapping[str, int] | None = None) -> Target:
     """One rater's masks {name: (H, W), any nonzero value is foreground} on one crop -> certified target.
-    min_area (required): the reward's size filter per object name and "rim" for RIGA, min_area of the union of all
-    raters, as ExpertCache computes it (`min_areas`); the target keeps the size-filtered signature at that rule. A
-    missing entry raises ValueError. Objects in cfg.exact must also be pixel-exact; when no rung is (rings traced
-    from the size-filtered mask, or the vertex cap), the target is built again without that demand (module
-    docstring). Raises ValueError when no target can be certified."""
+    min_area (required): the reward's size filter per object name, min_area of the union of all raters, as
+    ExpertCache computes it (`min_areas`); the target keeps the size-filtered signature at that rule. A missing
+    entry raises ValueError. Objects in cfg.exact must also be pixel-exact; when no rung is (rings traced from the
+    size-filtered mask, or the vertex cap), the target is built again without that demand (module docstring).
+    Raises ValueError when no target can be certified."""
     cfg, min_area = cfg or BuildConfig(), min_area or {}
-    for n in (*names, "rim") if {"disc", "cup"} <= set(names) else names:
+    for n in names:
         if n not in min_area:
             raise ValueError(f"min_area has no entry for {n!r}")
     try:
@@ -225,23 +207,11 @@ def _build(masks, names, cfg: BuildConfig, min_area: Mapping[str, int]) -> Targe
             rings[n] = _rings(size_filter(src[n], min_area[n]))
         if len(rings[n]) > MAX_RINGS:  # the text would not parse (cap_rings)
             raise ValueError(f"{n}: {len(rings[n])} rings > MAX_RINGS = {MAX_RINGS} after the size rule")
-    ladder, level = cfg.ladder(), dict.fromkeys(names, 0)
-    while True:
-        objs, info = {}, {}
-        for n in names:
-            level[n], objs[n], iou = _climb(n, rings[n], ladder, level[n], src[n], min_area[n], n in cfg.exact,
-                                            cfg.iou_min, W, H)
-            info[n] = {"tau": ladder[level[n]], "vertices": sum(len(r) for o, hs in objs[n] for r in (o, *hs)),
-                       "iou": iou}
-        if not {"disc", "cup"} <= set(names):
-            break
-        c = _certify([(objs["disc"], W, H), (objs["cup"], W, H)], [src["disc"], src["cup"]], [0, 1],
-                     [min_area["disc"], min_area["cup"]], [(0, 1)], [min_area["rim"]])
-        if _sig(c, "pair_sig", 0) == _sig(c, "pair_ref_sig", 0):  # the rim keeps its signature
-            break
-        if all(level[n] == len(ladder) - 1 for n in names):
-            raise ValueError("rim: no certified target")
-        level = {n: min(level[n] + 1, len(ladder) - 1) for n in names}
+    ladder = cfg.ladder()
+    objs, info = {}, {}
+    for n in names:
+        level, objs[n], iou = _climb(n, rings[n], ladder, 0, src[n], min_area[n], n in cfg.exact, cfg.iou_min, W, H)
+        info[n] = {"tau": ladder[level], "vertices": sum(len(r) for o, hs in objs[n] for r in (o, *hs)), "iou": iou}
     text = serialize(canonicalize(objs), names)
     p = parse(text, names)
     if not p.ok:

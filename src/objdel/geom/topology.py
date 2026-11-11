@@ -25,9 +25,9 @@ Input: any 2-D array-like; every nonzero value is foreground (NaN included). `as
 used here and by objdel.data.targets. A numpy bool array may hold bytes other than 0 and 1 (np.asarray(PIL "1" image,
 bool) stores 255; views of other dtypes store anything), and bool -> bool copies (asarray, astype, ascontiguousarray,
 pad) keep those bytes, while every cast to or from bool computes x != 0 [numpy casts]; so a bool array is cast
-to uint8 (5 us at 500 x 500, 10x cheaper than a != 0 comparison) and viewed back (issue I1, break-it B1-5, B2-10).
+to uint8 (5 us at 500 x 500, 10x cheaper than a != 0 comparison) and viewed back.
 
-Size rule (plan §4.2): `min_area(|U|) = max(5, ceil(0.5 % of the rater union))`. `size_filter` is an area
+Size rule: `min_area(|U|) = max(5, ceil(0.5 % of the rater union))`. `size_filter` is an area
 opening (drop 8-connected components with < min_area pixels) followed by an area closing (fill holes with
 < min_area pixels) [Vincent 1994]. A hole's size is its own background pixel count, measured after the
 opening, so removed specks inside it count toward it and an island it encloses does not; filling a small hole
@@ -85,13 +85,18 @@ def bbox(m: np.ndarray) -> tuple[int, int, int, int]:
     return cv2.boundingRect(m.view(np.uint8))  # box of the non-zero pixels
 
 
-def _engine(masks: Sequence, min_area, want_masks: bool = False) -> tuple[list[np.ndarray], dict]:
-    """One gc.topology call: the as_mask masks and the engine's result (min_area: one value or one per mask)."""
-    ms = [as_mask(m) for m in masks]
+def pack_masks(ms: Sequence[np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The engine's input layout of as_mask masks: (bytes concatenated, int32 (n, 2) shapes, int64 starts)."""
     start = np.zeros(len(ms) + 1, np.int64)
     start[1:] = np.cumsum([m.size for m in ms])
     bits = np.concatenate([m.view(np.uint8).ravel() for m in ms]) if ms else np.zeros(0, np.uint8)
-    hw = np.array([m.shape for m in ms], np.int32).reshape(-1, 2)
+    return bits, np.array([m.shape for m in ms], np.int32).reshape(-1, 2), start
+
+
+def _engine(masks: Sequence, min_area, want_masks: bool = False) -> tuple[list[np.ndarray], dict]:
+    """One gc.topology call: the as_mask masks and the engine's result (min_area: one value or one per mask)."""
+    ms = [as_mask(m) for m in masks]
+    bits, hw, start = pack_masks(ms)
     rules = np.array(np.broadcast_to(np.asarray(min_area, np.int64), (len(ms),)))
     return ms, _gpucheck.topology(bits, hw, start, rules, want_masks)
 

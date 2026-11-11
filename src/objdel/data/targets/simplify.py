@@ -29,7 +29,6 @@ References:
     J.-O. Lachaud, A. Vialard, F. de Vieilleville, "Fast, accurate and convergent tangent estimation on digital
         contours" / maximal DSS: https://arxiv.org/abs/0906.2716
     H. Imai, M. Iri, min-# approximation as a shortest path; survey and O(n^2) min-#: https://arxiv.org/abs/cs/0209007
-    archive/phase1_lab/t_targets/targets/simplify.py (the lab kernel this replaces; same admissibility)
 """
 import numpy as np
 from numba import njit

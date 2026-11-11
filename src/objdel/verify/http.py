@@ -19,10 +19,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from objdel.verify.api import API_VERSION, ScoreItem, Verifier, VerifyError
+from objdel.verify.api import API_VERSION, STATUS, ScoreItem, Verifier, VerifyError
 
 MAX_BATCH = 512
-STATUS = {"unknown_key": 404, "spec_mismatch": 409, "batch_too_large": 413, "device_error": 503}
 
 
 class Item(BaseModel):

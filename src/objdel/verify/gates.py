@@ -1,6 +1,6 @@
-"""Phase 2 entry gates (experiments/phase2/PLAN.md §5.1, D18) decided from one report of a selected checkpoint.
+"""Phase 2 entry gates decided from one report of a selected checkpoint.
 
-Gated, per dataset (B4-5): G-format on the shifted val (parse >= 98 %, legal >= 90 %); G-geometry on the shifted
+Gated, per dataset: G-format on the shifted val (parse >= 98 %, legal >= 90 %); G-geometry on the shifted
 **and** the rescaled val (median IoU_tc per structure, illegal = 0, and the share of samples legal with IoU_tc >= 0.5
 on every object); G-prior (b) on both views (paired mean (model - prior) IoU_tc, 95 % CI lower bound > 0, every
 structure); G-signal on the shifted val at G = 8 (duplicates <= 10 %, sigma-share >= 50 %); on LIDC the precision
@@ -9,14 +9,14 @@ probe's own pass rule, objdel.data.probes). Gated once per model: G-vision. Repo
 (centred win share, revision 7; gated per dataset as "G-prior-a", every structure's win share >= the threshold, only
 when `prior_a_threshold` = prereg.G_PRIOR_A_THRESHOLD is set before V1), topology-probe hole recall (decided by C2),
 truncation share and mean / p95 tokens beside G-format, the signal panel, and G-probe (not PASS -> a warning handed
-to Phase 3, §5.1). The unanimous-item topology gate (topo_any_unanimous) is removed (D18: vacuous, 0 unanimous
+to Phase 3). The unanimous-item topology gate (topo_any_unanimous) is removed (vacuous: 0 unanimous
 non-simple val items). G-x86, G-cost, G-parity and housekeeping are measured outside the eval harness.
 
 A model passes on a dataset when every gate value of that dataset passes, and overall when it passes on every judged
 dataset and G-vision passes. Judged datasets: `datasets` (fixed in advance; a model the precision probe dropped from
 LIDC is judged on RIGA alone, datasets=("riga",), and no LIDC value is read) or those in the shifted view's summary.
 Anything missing (a view, a dataset, a structure, a probe, the vision check) fails its gate; with no judged dataset
-every dataset gate fails (BK2-10). `eligible(summary, vision)` is D12 R-B's branch eligibility (prereg.RB["eligible"]):
+every dataset gate fails. `eligible(summary, vision)` is R-B's branch eligibility (prereg.RB["eligible"]):
 G-format, G-signal and G-vision of phase2_entry on one shifted-view summary, so selection and the gate table agree.
 
 The report (C-EVAL; agents G, P, R fill it; every part optional, missing parts fail their gates):
@@ -42,7 +42,6 @@ The geometry gates read objdel.verify.metrics.summarize, where an illegal rollou
 (objdel.verify.reward.advantages.legal_gate; REVIEW #2).
 
 References:
-- Gate table and thresholds: experiments/phase2/PLAN.md §5.1, D17-D20; per-dataset decision: B4-5.
 - Duplicate and sigma gates on groups of G = 8 at temperature 1: a group with equal rewards has zero advantage (DAPO
   dynamic sampling, https://arxiv.org/abs/2503.14476); sigma floors as in objdel.verify.reward.advantages.advantages_v4.
 """
@@ -68,7 +67,7 @@ REQUIREMENTS = {  # keys = experiments/phase2/prereg.py C1_GATES
     "G-vision": "projector cosine ratio >= 0.5 and image-use TV >= 0.002 (vs black, vs another item)",
 }
 PRIOR_A = "G-prior-a: centred val, every structure's win share over the image-blind prior >= {:.0%}"
-ELIGIBILITY = ("G-format", "G-signal", "G-vision")  # D12 R-B eligible branch (prereg.RB["eligible"])
+ELIGIBILITY = ("G-format", "G-signal", "G-vision")  # R-B eligible branch (prereg.RB["eligible"])
 
 
 def _dig(d, *path):
@@ -150,7 +149,7 @@ def phase2_entry(report: dict, datasets: Sequence[str] | None = None, prior_a_th
     reported = _reported(report, judged)
     warnings = []
     if reported["G-probe"] != "PASS":
-        warnings.append(f"G-probe {reported['G-probe'] or 'not measured'}: warning handed to Phase 3 (§5.1)")
+        warnings.append(f"G-probe {reported['G-probe'] or 'not measured'}: warning handed to Phase 3")
     if PROBE_DATASET in judged and _dig(report, "probes", "precision", "pass") is False and \
             _dig(report, "probes", "precision", "capacity", "pass") is True:
         warnings.append("precision probe: zero-shot failed, capacity run passed (LIDC SFT is the bottleneck)")
@@ -160,7 +159,7 @@ def phase2_entry(report: dict, datasets: Sequence[str] | None = None, prior_a_th
 
 
 def eligible(summary: dict, vision: dict | None, dataset: str = PROBE_DATASET) -> bool:
-    """D12 R-B eligibility of one branch: G-format, G-signal (groups of G) and G-vision of phase2_entry on its
+    """R-B eligibility of one branch: G-format, G-signal (groups of G) and G-vision of phase2_entry on its
     shifted-view `summary` (objdel.verify.metrics.summarize output) and `vision` (vision.check output; None or {} =
     unmeasured, not eligible)."""
     passed = phase2_entry({"views": {"shifted": {"summary": summary}}, "vision": vision}, [dataset])["passed"]

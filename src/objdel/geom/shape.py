@@ -1,4 +1,4 @@
-"""Canonical form of polygon objects, and their masks and legality from the CUDA checker (plan D1, D2, D10).
+"""Canonical form of polygon objects, and their masks and legality from the CUDA checker.
 
 Canonical form (screen coordinates, x right, y down; `signed_area2` > 0 means clockwise on screen):
 - an outer ring runs clockwise (signed area > 0), a hole counter-clockwise (< 0); a zero-area ring has no
@@ -8,8 +8,8 @@ Canonical form (screen coordinates, x right, y down; `signed_area2` > 0 means cl
 - among the candidates the ring with the smallest (y, x) vertex sequence wins;
 - holes of a part, and parts of an object, are sorted by the (y, x) vertex sequence of their canonical ring
   (parts: outer ring, then the list of holes). For legal shapes, whose starts differ, this is the row-major order
-  of the start vertices, as in the lab target builder.
-This is the convention of the repo's polygonize and of the lab targets. Clockwise-from-the-top-left order follows
+  of the start vertices.
+This is the convention of the repo's polygonize. Clockwise-from-the-top-left order follows
 PolyFormer and VectorLLM (which pick the vertex nearest the image corner; we use row-major order because it is
 exact on the integer grid and has no distance ties). Numerically it is the GeoJSON right-hand rule (exterior
 positive shoelace area, holes negative); on a y-down screen that exterior appears clockwise.
@@ -18,8 +18,6 @@ References:
     https://arxiv.org/abs/2302.07387 (PolyFormer §3: clockwise, start nearest the top-left, polygons ordered by start)
     https://arxiv.org/abs/2507.04664 (VectorLLM: clockwise from the top-left corner; a fixed start helps SFT)
     https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.6 (right-hand rule: exterior CCW, holes CW, y up)
-    archive/phase1_lab/t_targets/targets/builder.py (canon_ring, canonical_parts)
-    experiments/phase1/EXECUTION.md §3 (checker contract: packed rings, roles, even-odd mask, DEFECTS)
 """
 from __future__ import annotations
 

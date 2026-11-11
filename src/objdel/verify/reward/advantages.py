@@ -1,4 +1,4 @@
-"""Reward-v4 group advantages (plan D5, D7, §3.2; lab ITERATION4.md), for a batch ordered prompt by prompt.
+"""Reward-v4 group advantages, for a batch ordered prompt by prompt.
 
     A = sum_k w_k z_k  +  c_topo (r_topo - mean_group r_topo)
 
@@ -6,18 +6,18 @@
 - z_k is the per-group z-score of term k in (IoU_tc, F5, legal, g_area) with sigma_k <- max(sigma_k, floor_k).
   The floors keep a near-constant term from amplifying numeric noise (the GDPO "dark room"); there is no
   batch-level z-score, so one rollout's geometric advantage is bounded by sum_k w_k sqrt(G - 1) and
-  c_topo = 2 dominates it (lab ITERATION3).
+  c_topo = 2 dominates it.
 - r_topo is rater-frequency matching of the topology answer with a group leave-one-out estimate of the
   policy's answer probability, an instance of MaD-RL's gated reverse-KL with the rater histogram as target:
       r_topo = valid * max(eps, 1 + lam (log f(a) - b(f(a), G) - log pi_loo(a))),
       pi_loo(a) = max(n(a) - 1, 0.5) / (G - 1),  n(a) = rollouts of the group with answer a,
       b(f, G) = log f - E_{N ~ Bin(G-1, f)} log(max(N, 0.5) / (G - 1)),
-  valid = legal, a rater drew the answer and IoU_tc >= 0.5 for every object (iou_min; B2-7, the eval pass
+  valid = legal, a rater drew the answer and IoU_tc >= 0.5 for every object (iou_min; the eval pass
   criterion; terms without iou_min are single-object, where it equals iou_tc). b removes the estimator's bias,
   so at pi = f no rater answer is favoured; the clip eps keeps every valid rollout strictly above every invalid one. The
   term is only mean-centred (Dr. GRPO), never divided by its group std.
 - A group whose terms all span < 1e-2 and whose rollouts give one topology answer gets advantage 0 (DAPO's
-  dynamic sampling, by a spread threshold instead of exact equality, as in lab t_stack/prod.py).
+  dynamic sampling, by a spread threshold instead of exact equality).
 
 Reward v5 (advantages_v5; Implementation.md B3.4) sums the terms into one reward and takes RLOO advantages:
     R = legal (IoU_tc + alpha_loc loc + w_f5 F5 + w_area g_area) + c_topo r_topo,
@@ -41,8 +41,6 @@ References:
 - Bias of plug-in log-frequency estimators at finite group size (Jensen): Mohri, Schneider, Zhong 2026,
   https://arxiv.org/abs/2605.02435 ; b(f, G) here is the exact correction at pi = f for the LOO estimator.
 - "The Dark Room in the Reward Channel" (z-scored dense rewards amplify noise): https://arxiv.org/abs/2607.21273
-- Lab evidence: archive/phase1_lab/t_reward/results/ITERATION3.md (debias, clip, no batch z),
-  ITERATION4.md (area guard as a term).
 """
 from functools import cache
 from math import comb, log

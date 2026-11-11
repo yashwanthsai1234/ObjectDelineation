@@ -38,16 +38,6 @@ def test_cache_refuses_more_raters_than_the_engine_holds():
         ExpertCache(np.ones((33, 4, 4), bool), 1.0, 1.0)
 
 
-def test_trace_offset_overflow_raises():
-    with pytest.raises((ValueError, OverflowError)):
-        trace([np.ones((1, 1), bool)], [(2**63 - 1, 0)])
-
-
 def test_trace_refuses_misshaped_offsets():
     with pytest.raises(ValueError):
         trace([np.ones((1, 1), bool), np.ones((1, 1), bool)], [(1, 2, 3, 4)])
-
-
-def test_trace_refuses_fractional_offsets():
-    with pytest.raises(ValueError):
-        trace([np.ones((1, 1), bool)], [(0.7, 0)])

@@ -1,11 +1,11 @@
-"""Choose one answer of K with no doctor masks (Implementation.md A4): the medoid under IoU, and the pixel vote.
+"""Choose one answer of K with no doctor masks: the medoid under IoU, and the pixel vote.
 
 - medoid: the legal answer with the highest mean IoU to the other legal answers (sample-based minimum-Bayes-risk
   decoding with utility IoU, Bertsch et al. 2023, https://arxiv.org/abs/2310.01387; the sample 1-median under the
   Jaccard distance). It reads only the answers' IoU matrix and legality, so it cannot read labels.
 - vote_mask: the pixel strict majority of the legal masks, the exact minimiser of the summed Hamming distance (the
   pixel median; not the Jaccard medoid). With an even count, a pixel in exactly half of the masks is dropped. A mask
-  is not an answer: deploying the vote needs the CUDA polygonizer (Phase D, kernels/K1).
+  is not an answer: the vote has to be traced to rings (objdel.geom.rings.trace) to become one.
 """
 
 from collections.abc import Mapping, Sequence

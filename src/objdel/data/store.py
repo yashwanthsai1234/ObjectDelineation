@@ -2,21 +2,21 @@
 
 Layout: ``<root>/<dataset>/<split>.parquet`` plus ``<root>/manifest.json`` (SHA-256, rows and bytes per file, and
 the library versions that wrote it). Rows are sorted by ``item_id`` and written with fixed settings, so the same
-items give the same bytes (K10).
+items give the same bytes.
 
-Encodings (chosen in the M4 sandbox, experiments/phase1/impl/M4_data.md):
+Encodings:
 - image: the decoded pixel array as NPY bytes (uint8 RGB for RIGA, int16 Hounsfield units for LIDC), compressed by
   Parquet zstd. Lossless for any dtype, decoder-independent (no JPEG/PNG library in the loop), 25x faster to decode
   than PNG; about 1.3x larger than PNG on RIGA photographs.
 - masks: per structure, the bool stack (k, H, W) bit-packed along W (``np.packbits``) as NPY bytes. Exact, 8x
   smaller in memory than bool, and after zstd within a few KB of run-length encoding, which needs custom code.
 - row groups close at about ROW_GROUP_BYTES of uncompressed payload; `load` decodes one row at a time without
-  pre-buffering the row group (I20: a RIGA val pass peaks at 455 MB RSS instead of 1,543 MB with 16-row batches,
-  at the same speed).
+  pre-buffering the row group (a RIGA val pass peaks at 455 MB RSS instead of 1,543 MB with 16-row batches, at the same
+  speed).
 
-Contract checked on write and on load: item ids unique across the whole store (one id in two splits is a leak, B3-6);
+Contract checked on write and on load: item ids unique across the whole store (one id in two splits is a leak);
 every row's dataset and split are those of its file (on load); images uint8 (H, W, 3) RGB for RIGA and int16 (H, W)
-Hounsfield units for LIDC, or None (B3-7: a uint16 HU + 1024 or a pre-windowed uint8 slice would silently get the
+Hounsfield units for LIDC, or None (a uint16 HU + 1024 or a pre-windowed uint8 slice would silently get the
 wrong lung window downstream).
 
 References:
@@ -47,8 +47,8 @@ from objdel.core.io import read_json, write_json
 DATASETS = ("riga", "lidc")
 SPLITS = ("train", "val", "test")
 ROW_GROUP_BYTES = 128 << 20
-BATCH_ROWS = 1  # I20: rows are up to 16 MB (RIGA); one at a time bounds the reader's memory
-IMAGE = {"riga": (np.dtype(np.uint8), 3), "lidc": (np.dtype(np.int16), 2)}  # dtype, ndim (B3-7)
+BATCH_ROWS = 1  # rows are up to 16 MB (RIGA); one at a time bounds the reader's memory
+IMAGE = {"riga": (np.dtype(np.uint8), 3), "lidc": (np.dtype(np.int16), 2)}  # dtype, ndim
 SCHEMA = pa.schema([
     ("item_id", pa.string()), ("dataset", pa.string()), ("group_id", pa.string()), ("split", pa.string()),
     ("raters", pa.list_(pa.string())), ("height", pa.int32()), ("width", pa.int32()), ("image", pa.binary()),
@@ -62,7 +62,7 @@ class Item:
     """One prompt's data: an image and every rater's exact mask per structure.
 
     image: uint8 (H, W, 3) RGB for RIGA, int16 (H, W) Hounsfield units for LIDC, or None when there is no model
-    image (LIDC CT pixels not available locally; the BinRushed1 reconstruction, B3-1). masks: structure name -> bool
+    image (LIDC CT pixels not available locally; the BinRushed1 reconstruction). masks: structure name -> bool
     (k, H, W), one layer per rater, in the image frame. raters: k rater ids, in layer order. meta: JSON-serializable
     provenance (see objdel.data.riga / .lidc builders).
     """
@@ -94,7 +94,7 @@ def encode_masks(stack: np.ndarray) -> bytes:
 
 def decode_masks(bits: bytes, width: int) -> np.ndarray:
     """Unpack `encode_masks` bytes into a bool stack whose last axis has `width` entries."""
-    return np.unpackbits(_from_npy(bits), axis=-1, count=width).astype(bool)
+    return np.unpackbits(_from_npy(bits), axis=-1, count=width).view(bool)
 
 
 def _check(it: Item) -> tuple[int, int]:
@@ -112,13 +112,13 @@ def _check(it: Item) -> tuple[int, int]:
                 ndim == 3 and it.image.shape[2] != 3):
             raise ValueError(f"{it.item_id}: image {it.image.dtype} {it.image.shape}, expected {dtype} "
                              f"{'(H, W, 3)' if ndim == 3 else '(H, W)'} on the mask frame {shape[1:]}")
-    if json.loads(json.dumps(it.meta)) != it.meta:
-        raise ValueError(f"{it.item_id}: meta must be JSON-native")
     return shape[1:]
 
 
 def _row(it: Item) -> dict:
     h, w = _check(it)
+    if json.loads(json.dumps(it.meta)) != it.meta:
+        raise ValueError(f"{it.item_id}: meta must be JSON-native")
     return {"item_id": it.item_id, "dataset": it.dataset, "group_id": it.group_id, "split": it.split,
             "raters": list(it.raters), "height": h, "width": w,
             "image": None if it.image is None else _npy(np.ascontiguousarray(it.image)),
@@ -143,7 +143,7 @@ def write(items: Iterable[Item], root) -> dict:
     try:
         for it in items:
             rel = f"{it.dataset}/{it.split}.parquet"
-            if split_of.setdefault(it.item_id, it.split) != it.split:  # B3-6
+            if split_of.setdefault(it.item_id, it.split) != it.split:
                 raise ValueError(f"{it.item_id}: in two splits ({split_of[it.item_id]}, {it.split})")
             if rel in last and it.item_id <= last[rel]:
                 raise ValueError(f"{rel}: item ids out of order at {it.item_id}")
@@ -167,9 +167,20 @@ def write(items: Iterable[Item], root) -> dict:
     return manifest
 
 
+_VERIFIED: set[tuple] = set()  # (path, size, mtime_ns, sha256, rows) of files already hashed in this process
+
+
 def _verified(root: Path, rel: str, entry: dict) -> None:
-    if file_sha256(root / rel) != entry["sha256"] or pq.ParquetFile(root / rel).metadata.num_rows != entry["rows"]:
+    """Check a file against its manifest entry; a file already hashed in this process (same path, size and mtime)
+    is not hashed again."""
+    path = (root / rel).resolve()
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime_ns, entry["sha256"], entry["rows"])
+    if key in _VERIFIED:
+        return
+    if file_sha256(path) != entry["sha256"] or pq.ParquetFile(path).metadata.num_rows != entry["rows"]:
         raise ValueError(f"{rel}: SHA-256 or row count differs from the manifest")
+    _VERIFIED.add(key)
 
 
 def verify(root) -> dict:
@@ -192,7 +203,7 @@ def load(dataset: str, split: str, root) -> Iterator[Item]:
                       image=None if r["image"] is None else _from_npy(r["image"]),
                       masks={m["name"]: decode_masks(m["bits"], r["width"]) for m in r["masks"]},
                       raters=r["raters"], meta=json.loads(r["meta"]))
-            if (it.dataset, it.split) != (dataset, split):  # review #12: a row from another file is a split leak (K11)
+            if (it.dataset, it.split) != (dataset, split):  # a row from another file is a split leak
                 raise ValueError(f"{rel}: row {it.item_id} belongs to {it.dataset}/{it.split}")
             _check(it)
             yield it

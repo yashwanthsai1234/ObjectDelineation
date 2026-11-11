@@ -58,9 +58,6 @@ def check(masks, names, ma=None, cfg=None):
         assert iou >= cfg.iou_min, (n, iou)
         assert t.info[n]["iou"] == iou
         out[n] = g.mask
-    if set(names) == {"disc", "cup"}:
-        rim, rim_src = out["disc"] & ~out["cup"], masks["disc"] & ~masks["cup"]
-        assert kept(rim, rim_src, ma["rim"], ma["rim"])
     return t, out
 
 
@@ -196,16 +193,9 @@ def test_rectangle_vertices_are_exact_pixel_corners():
 def test_large_smooth_objects_riga_like():
     S = 500
     d, c = disc(S, 250, 250, 240), disc(S, 240, 255, 120)  # disc almost fills the crop, cup inside
-    t, _ = check({"disc": d, "cup": c}, ("disc", "cup"), {"disc": 300, "cup": 300, "rim": 300})
+    t, _ = check({"disc": d, "cup": c}, ("disc", "cup"), {"disc": 300, "cup": 300})
     assert list(t.objs) == ["disc", "cup"]
     assert t.info["disc"]["vertices"] < 60 and t.info["cup"]["vertices"] < 60  # simplified, not exact rings
-
-
-def test_rim_topology_kept_when_cup_touches_disc():
-    S = 250
-    d, c = disc(S, 125, 125, 100), disc(S, 125, 160, 65)  # cup touches the disc border on the right
-    c &= d
-    check({"disc": d, "cup": c}, ("disc", "cup"))
 
 
 def test_wiggly_boundary_needs_a_finer_tolerance():
@@ -346,7 +336,7 @@ def test_invalid_inputs():
         build_target({"nodule": np.ones((501, 10), bool)}, ("nodule",), None, {"nodule": 5})  # beyond the 500 px
     with pytest.raises(ValueError):
         build_target({"disc": np.ones((5, 5), bool), "cup": np.ones((5, 6), bool)}, ("disc", "cup"), None,
-                     {"disc": 5, "cup": 5, "rim": 5})
+                     {"disc": 5, "cup": 5})
     with pytest.raises(ValueError):
         build_target({"nodule": np.ones((5, 5, 2), bool)}, ("nodule",), None, {"nodule": 5})
     with pytest.raises(ValueError):  # more than MAX_RINGS rings: the text would not parse
@@ -354,11 +344,10 @@ def test_invalid_inputs():
                      {"nodule": 1})
 
 
-def test_min_areas_is_the_rule_of_each_union_and_of_the_rim():
+def test_min_areas_is_the_rule_of_each_union():
     d = np.stack([disc(80, 40, 40, r) for r in (30, 33)])
     c = np.stack([disc(80, 40, 40, r) for r in (12, 20)])
-    assert min_areas({"disc": d, "cup": c}) == {"disc": min_area(int(d[1].sum())), "cup": min_area(int(c[1].sum())),
-                                                 "rim": min_area(int((d[1] & ~c[0]).sum()))}
+    assert min_areas({"disc": d, "cup": c}) == {"disc": min_area(int(d[1].sum())), "cup": min_area(int(c[1].sum()))}
     assert min_areas({"nodule": c}) == {"nodule": min_area(int(c[1].sum()))}
 
 

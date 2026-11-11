@@ -2,7 +2,7 @@
 
 A row is a dict of categorical properties of one target outline (props). distribution() gives each property's share per
 category over many rows; gaps() lists every evaluation category with a share >= EVAL_MIN that training has below
-TRAIN_MAX. cell_coverage() compares scheduled windows with a (size, offset) cell law (B1.3, gates DG7-DG9, DG16).
+TRAIN_MAX. cell_coverage() compares scheduled windows with a (size, offset) cell law (gates DG7-DG9, DG16).
 Pure functions, no I/O.
 """
 
@@ -12,12 +12,13 @@ from collections import Counter
 import numpy as np
 from scipy.stats import ks_2samp
 
+from objdel.geom.text import GRID
+
 from .windows import cell_shares
 
 EVAL_MIN = 0.05  # an eval category this common ...
 TRAIN_MAX = 0.01  # ... must have at least this much training share
 KEYS = ("W", "ext", "pos", "topo", "verts", "grid10", "op")
-GRID = 1000  # outline coordinates are integers 0..1000 of the crop
 
 
 def _bucket(x, edges: tuple, names: tuple) -> str:

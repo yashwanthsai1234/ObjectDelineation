@@ -1,5 +1,5 @@
-"""GRPO-signal panel of K = 8 sampled groups per item, D12 checkpoint rule R-B and the per-item Spearman (PLAN §5.1
-G-signal / G-probe, D12, M11; promoted from archive/phase2_lab/B2 score.py, analyze.py, posthoc.py `parts`).
+"""GRPO-signal panel of K = 8 sampled groups per item, checkpoint rule R-B and the per-item Spearman (G-signal /
+G-probe).
 
 Per item (one GRPO group of G = 8 samples at T = 1), from `objdel.verify.metrics` output (`group`):
 - R = 0.3 IoU_tc + 0.3 F5 + 0.1 legal + 0.3 g_area, the G-probe raw composite on the legality-gated terms
@@ -9,14 +9,14 @@ Per item (one GRPO group of G = 8 samples at T = 1), from `objdel.verify.metrics
   (1 - duplicate share), legal_wrong (share legal with IoU_tc < 0.5), active (v4 advantages not all 0), abs_adv
   (mean |A_v4|), legal, r_mean, iou_mean;
 - the exact split (law of total variance; illegal R = 0): Var(R) = p(1 - p) mu_L^2 + p Var_L(R), with p the legal
-  share, mu_L / Var_L the legal samples' mean / population variance; sd_geom = sqrt(p Var_L) (D12's veto statistic,
+  share, mu_L / Var_L the legal samples' mean / population variance; sd_geom = sqrt(p Var_L) (the veto statistic,
   post-hoc in B2 and labelled so), geom_share = var_geom / var.
 
-Statistics (PLAN §5.0): 95 % percentile bootstrap, B = 2,000, resampling LIDC nodules (item id up to the slice; any
+Statistics: 95 % percentile bootstrap, B = 2,000, resampling LIDC nodules (item id up to the slice; any
 other id is its own cluster); paired differences resample the same nodules for both arms (items aligned by id).
 The draws reproduce B2's analyze.draws exactly (same seed, same order), so B2's CIs are reproduced to the digit.
 
-R-B (D12): among eligible branches take the deepest; walk downward pairwise and move to the next shallower eligible
+R-B: among eligible branches take the deepest; walk downward pairwise and move to the next shallower eligible
 branch only if its sd_geom is higher with the paired CI excluding 0 AND by >= 15 % of the deeper branch's value AND
 its median IoU_tc is not significantly lower (paired CI upper bound < 0 = significant loss); stop at the first pair
 that does not fire (ties stay deep). The same walk under r_std (B2's pre-registered statistic) is reported, with
@@ -35,7 +35,7 @@ IOU_OK = 0.5  # legal_wrong: legal and IoU_tc < this (REWARD_V4.iou_gate)
 BOOT, LEVEL, SEED = 2000, 0.95, 0
 VETO_REL = 0.15
 MISS = 0.1  # an item is a miss when its K-mean IoU_tc is below this (final_eval, ceiling)
-DIGITS = 12  # decision values are rounded to 12 decimals before a >= / <= line (BK2-4, BK2-7): float sums of exact
+DIGITS = 12  # decision values are rounded to 12 decimals before a >= / <= line: float sums of exact
 #              shares land 1e-16 off (0.345 / 0.30 - 1 = 0.1499999...), real differences are far above 1e-12
 VETO_STAT, ALT_STAT = "sd_geom", "r_std"
 
@@ -107,7 +107,7 @@ def draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: Callable[
           ) -> list[np.ndarray]:
     """B cluster bootstrap index draws: each draw picks C of the C clusters (key(id); first-appearance order) with
     replacement and keeps all their items. The default key (nodule) reproduces B2's analyze.draws bit for bit;
-    key = {item_id: group_id}.__getitem__ draws patients (A1's gate CI)."""
+    key = {item_id: group_id}.__getitem__ draws patients ."""
     if len(ids) == 0:
         raise ValueError("draws: no ids to resample")
     nod = [key(i) for i in ids]
@@ -147,7 +147,7 @@ def ci(x: np.ndarray, D: list[np.ndarray]) -> list[float]:
 def cluster_t(x, groups: Sequence[str], level: float = LEVEL) -> list[float]:
     """[mean, lo, hi]: the CR1 cluster-robust t interval of the item-weighted mean of x, with groups[i] the cluster
     (patient) of item i. se^2 = P/(P-1) sum_p (S_p - m N_p)^2 / N^2, t with P - 1 degrees of freedom (Cameron and
-    Miller 2015, eq. 11-12 at one regressor). The decision interval of a gate on fewer than 50 patients (A1 step 5)."""
+    Miller 2015, eq. 11-12 at one regressor). The decision interval of a gate on fewer than 50 patients."""
     x = np.asarray(x, float)
     _, inv = np.unique(np.asarray(groups), return_inverse=True)
     P = len(np.unique(inv))
@@ -208,7 +208,7 @@ def _pair(shallow: dict, deep: dict) -> dict:
 def select_rb(branches: Sequence[dict]) -> tuple[str | None, dict]:
     """D12 rule R-B over branches {"name", "depth", "eligible", "panel"} (panel: `panel` output on the shifted val).
     Returns (selected name, or None when no branch is eligible; reasons). ValueError on a repeated name or depth
-    (the walk order would be the input order, BK2-8)."""
+    (the walk order would be the input order)."""
     for key in ("name", "depth"):
         values = [b[key] for b in branches]
         if len(set(values)) != len(values):

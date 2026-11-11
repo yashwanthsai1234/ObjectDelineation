@@ -1,4 +1,4 @@
-"""Reward v4 (plan §3.2, §4.3) and v5 (Implementation.md B3.2-B3.4: location term, RLOO; advantages_v5):
+"""Reward v4 and v5 (location term, RLOO; advantages_v5):
 per-prompt expert caches, per-rollout terms, group advantages.
 
     cache = ExpertCache.build(rater_stack)                       # offline, once per item and object

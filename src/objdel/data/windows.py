@@ -1,4 +1,4 @@
-"""Train windows for scheduled RL rows (ADR-0015; plan B1.1, B1.2): a geometry-only pool of windows per RL item and
+"""Train windows for scheduled RL rows (ADR-0015): a geometry-only pool of windows per RL item and
 the cells of the coverage target.
 
 Cells: (size bin, offset bin) over SIZE_EDGES px and OFFSET_EDGES (SD3's cells). The size is the apparent size
@@ -127,7 +127,8 @@ def _windows(item, draws: int, seed: int, dropped: dict) -> list[Window]:
     for d in range(draws):
         for kind in ("shifted", "rescaled"):
             rng = augment.row_rng(seed, kind, item.item_id) if d == 0 else augment.row_rng(seed, kind, d, item.item_id)
-            got = augment.draw(bare, rng, side=S0) if kind == "shifted" else augment.neighbour_side(bare, S0, rng)
+            got = (augment.draw(bare, rng, side=S0) if kind == "shifted"
+                   else augment.neighbour_side(bare, S0, rng, box=ub))
             if got is None:
                 dropped[f"{kind}_none"] += 1
                 continue

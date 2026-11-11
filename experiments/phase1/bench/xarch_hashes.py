@@ -18,7 +18,7 @@ specks, pinches and abstaining raters, int16 Hounsfield units) go through the pr
     reward.ExpertCache.build (tau, T5, digest)             -> caches, fingerprint
     reward.score_batch on 2 groups of 8 completions per item, advantages_v4, topology_reward -> reward.*
     eval.metrics on 16 completions per item                -> eval
-    data.splits: lidc_split, riga_split, riga.descriptor + near_duplicates, riga.keypoints + keypoint_duplicates
+    data.splits: lidc_split
 
 Floats are hashed exactly (float.hex / raw bytes). Every section stores one short digest per record, so a mismatch
 names the first differing record. `fingerprint` and the cache digests include the numpy / scipy / OpenCV version
@@ -43,7 +43,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from objdel.data import riga as riga_mod
 from objdel.data import splits
 from objdel.data.store import Item
 from objdel.data.targets.build import BuildConfig, build_target, target_set_hash
@@ -228,8 +227,7 @@ def run() -> dict:
     sec: dict[str, list[str]] = {k: [] for k in (
         "corpus", "frame.masks", "frame.image", "png", "checker", "topology", "polygonize", "targets",
         "target_set_hash", "caches", "fingerprint", "reward.terms", "reward.advantages", "eval",
-        "splits.lidc", "splits.riga", "splits.descriptor", "splits.ncc_values", "splits.ncc_pairs",
-        "splits.keypoints", "splits.keypoint_pairs", "splits.keypoint_dups")}
+        "splits.lidc")}
 
     for it in items:
         sec["corpus"].append(_h(it.item_id, it.image, *(it.masks[n] for n in sorted(it.masks))))
@@ -253,9 +251,8 @@ def run() -> dict:
         sec["frame.image"].append(_h(it.item_id, f.image))
         ok, png = cv2.imencode(".png", cv2.cvtColor(f.image, cv2.COLOR_RGB2BGR))  # as data.prepare writes it
         sec["png"].append(_h(it.item_id, bool(ok), png))
-        stacks = dict(f.masks) | ({"rim": f.masks["disc"] & ~f.masks["cup"]} if it.dataset == "riga" else {})
-        ma = {n: min_area(int(s.any(0).sum())) for n, s in stacks.items()}
-        for n, s in stacks.items():
+        ma = {n: min_area(int(s.any(0).sum())) for n, s in f.masks.items()}
+        for n, s in f.masks.items():
             for r, m in enumerate(s):
                 t = instance_topology(m)
                 sec["topology"].append(_h(it.item_id, n, r, t.areas, t.holes, t.hole_areas, betti(m),
@@ -290,38 +287,10 @@ def run() -> dict:
     sec["target_set_hash"].append(target_set_hash(rows))
     sec["fingerprint"].append(fingerprint())
 
-    # splits: hash-dealt assignments, FFT-based NCC near-duplicates, ORB + RANSAC keypoint duplicates
+    # splits: hash-dealt assignments
     pats = {f"P{i:04d}": splits.Patient(int(rng.integers(0, 60)), int(rng.integers(0, 3)) * int(rng.integers(0, 2)))
             for i in range(300)}
     sec["splits.lidc"].append(_h(sorted(splits.lidc_split(pats).items())))
-    subsets = {f"img{i}": riga_mod.SUBSETS[i % len(riga_mod.SUBSETS)] for i in range(120)}
-    groups = splits.group_ids(list(subsets), [(f"img{i}", f"img{i + 1}") for i in range(0, 119, 7)])
-    sec["splits.riga"].append(_h(sorted(splits.riga_split(subsets, groups).items())))
-    photos = []
-    for i in range(8):  # fundus-like photographs: noisy field of view with vessel-like random lines; pairs 2j, 2j+1
-        if i % 2 == 0:  # are the same eye reframed (shifted crop of one larger texture)
-            big = np.zeros((560, 760, 3), np.uint8)
-            big[..., 0] = 120
-            big[..., 1] = rng.integers(30, 90, (560, 760), dtype=np.uint8)
-            for _ in range(60):
-                p0, p1 = (tuple(int(v) for v in rng.integers(0, 760, 2)) for _ in range(2))
-                cv2.line(big, p0, p1, (150, 200, 40), int(rng.integers(1, 4)))
-        dy, dx = (0, 0) if i % 2 == 0 else (int(rng.integers(3, 12)), int(rng.integers(3, 12)))
-        img = np.ascontiguousarray(big[dy:dy + 480, dx:dx + 640])
-        img[~_ellipse(480, 640, 240, 320, 230, 300)] = 0
-        photos.append(img)
-    desc = np.stack([riga_mod.descriptor(p) for p in photos])
-    for d in desc:
-        sec["splits.descriptor"].append(_h(d))
-    ncc = splits.near_duplicates(desc, threshold=-1.0)  # every pair, to see raw values
-    sec["splits.ncc_values"].append(_h([(i, j, float(c)) for i, j, c in ncc]))
-    sec["splits.ncc_pairs"].append(_h([(i, j) for i, j, c in ncc if c >= splits.NCC_DUP]))
-    feats = [riga_mod.keypoints(p) for p in photos]
-    for xy, des in feats:
-        sec["splits.keypoints"].append(_h(xy, des if des is not None else "none"))
-    kp = splits.keypoint_duplicates(feats, threshold=0)  # every pair's inlier count
-    sec["splits.keypoint_pairs"].append(_h(kp))
-    sec["splits.keypoint_dups"].append(_h([(i, j) for i, j, n in kp if n >= splits.ORB_DUP]))  # the decisions
 
     return {"platform": {"machine": platform.machine(), "system": platform.system(), "python": sys.version.split()[0],
                          "numpy": np.__version__, "opencv": cv2.__version__,

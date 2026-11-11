@@ -2,8 +2,8 @@
 
 Each CT series has (usually) four unblinded reading sessions. A nodule >= 3 mm is outlined slice by slice as pixel
 contours on the 512 x 512 grid; ``inclusion=FALSE`` contours cut regions out; smaller nodules are a single point.
-Four fixes over Phase 0 (lab t_data, parity with pylidc on all 1,018 scans: 6,859 / 6,859 annotations matched,
-99.97 % of reader-slice masks exact):
+Rules (parity with pylidc on all 1,018 scans: 6,859 / 6,859 annotations matched, 99.97 % of reader-slice masks
+exact):
 
 - P1  Single-point contours inside a >= 3 mm nodule are dropped (pylidc's database drops them too); they rasterized
       as stray 1-px components.
@@ -12,19 +12,19 @@ Four fixes over Phase 0 (lab t_data, parity with pylidc on all 1,018 scans: 6,85
       LIDC readers drew the outline on the first pixels outside the nodule, so masks are about 1 px generous;
       this matters most for nodules under 50 px.
 - P3  Slice index = nearest scan slice z position (pylidc database), not the spacing of the annotated z values,
-      which is wrong for overlapping reconstructions (6 / 67 scans in the lab sample).
+      which is wrong for overlapping reconstructions (6 / 67 scans of a sample).
 - P4  Patient ids from the pylidc database (the XML carries none); 1,018 series, 1,010 patients, 8 with two scans.
 
 Reader annotations are clustered into nodules by shared voxels (z index, y, x); an item is one slice of one nodule
 outlined by at least two readers, and holds one mask per reader who drew on that slice. Two more rules:
 
-- P5  Copied outlines (B3-3). Readers whose masks on a slice are identical count once (the lowest session number
+- P5  Copied outlines. Readers whose masks on a slice are identical count once (the lowest session number
       is kept; ``Slice.copied`` records the others). In the XML, 160 nodule pairs of two sessions in 144 session
       pairs share point-for-point identical contours, and 158 of 160 carry different characteristics, so these are
       outlines one reader adopted from another in the unblinded phase (Armato et al. 2007: readers saw the others'
       marks), not duplicated sessions. 392 of the 425 identical slice masks come from such identical contours, the
       other 33 are all >= 20 px; the reward treats raters as independent draws, so a copy would count twice.
-- P6  Other nodules on the slice (B3-2). ``Slice.others`` lists the box of every other nodule outlined on that
+- P6  Other nodules on the slice. ``Slice.others`` lists the box of every other nodule outlined on that
       slice, by any number of readers, so a consumer can refuse a crop that shows an annotated nodule absent from
       its ground truth (``crowded``).
 
@@ -95,8 +95,8 @@ class Slice:
     y0: int
     x0: int
     stack: np.ndarray  # bool (len(readers), h, w)
-    copied: dict[int, int]  # P5: reader -> the kept reader whose identical mask it repeats on this slice
-    others: list[tuple[int, int, int, int]]  # P6: (x0, y0, x1, y1) half-open box of each other nodule on the slice
+    copied: dict[int, int]  # reader -> the kept reader whose identical mask it repeats on this slice
+    others: list[tuple[int, int, int, int]]  # (x0, y0, x1, y1) half-open box of each other nodule on the slice
 
     def full(self) -> np.ndarray:
         """The reader masks as a bool (readers, GRID, GRID) stack: the cropped stack placed at (y0, x0) on an all-False
@@ -114,7 +114,7 @@ def _text(el, tag):
 
 def uid(s) -> str:
     """s if it is a DICOM UID (PS3.5 §9.1), else ValueError. Series UIDs name files and directories and go into the
-    TCIA URL, and the XML is untrusted: this keeps "../..", absolute paths and query strings out (review #1)."""
+    TCIA URL, and the XML is untrusted: this keeps "../..", absolute paths and query strings out."""
     if not (isinstance(s, str) and len(s) <= UID_MAX and UID.fullmatch(s)):
         raise ValueError(f"not a DICOM UID (digits and dots, <= {UID_MAX} characters): {s!r}")
     return s
@@ -138,7 +138,7 @@ def _messages(xml_root):
 
 def parse(path):
     """(series uid, sessions) or None for a non-CT message. sessions: per reading session, its nodules >= 3 mm
-    (contoured and characterised), each a list of Roi; single-point contours of those nodules dropped (P1)."""
+    (contoured and characterised), each a list of Roi; single-point contours of those nodules dropped."""
     root = ET.parse(path).getroot()
     if not root.tag.endswith("LidcReadMessage"):
         return None
@@ -158,7 +158,7 @@ def parse(path):
 
 
 def draw(points) -> np.ndarray:
-    """P2: the closed polygon through `points`, outline pixels included."""
+    """The closed polygon through `points`, outline pixels included."""
     img = Image.new("1", (GRID, GRID), 0)
     ImageDraw.Draw(img).polygon(list(points), fill=1, outline=1)
     # Not np.asarray(img, dtype=bool): for mode "1" that keeps byte value 255 for True, which code that reads the
@@ -167,7 +167,7 @@ def draw(points) -> np.ndarray:
 
 
 def slice_index(zvals, z) -> int:
-    """P3: index of the scan slice nearest to z."""
+    """Index of the scan slice nearest to z."""
     return int(np.abs(np.asarray(zvals) - z).argmin())
 
 
@@ -230,8 +230,8 @@ def _box(mask) -> tuple[int, int, int, int]:
 
 
 def slices(sessions, zvals) -> list[Slice]:
-    """Every slice of every nodule on which at least two readers drew distinct masks (P5), with the boxes of the
-    other nodules outlined on that slice (P6)."""
+    """Every slice of every nodule on which at least two readers drew distinct masks, with the boxes of the
+    other nodules outlined on that slice."""
     cl = clusters(sessions, zvals)
     boxes = {}  # slice index -> [(cluster, box)]
     for ci, (per_reader, _) in enumerate(cl):
@@ -262,7 +262,7 @@ def slices(sessions, zvals) -> list[Slice]:
 
 
 def crowded(s: Slice, box) -> bool:
-    """P6: does the half-open window box = (x0, y0, x1, y1) overlap another nodule's box on the slice?"""
+    """Does the half-open window box = (x0, y0, x1, y1) overlap another nodule's box on the slice?"""
     return boxes_meet(box, s.others)
 
 
@@ -307,7 +307,7 @@ def scans(db=None) -> dict[str, Scan]:
 
 
 def ct_slices(npz_path, zvals) -> dict[int, np.ndarray]:
-    """{slice index: int16 Hounsfield units} from a Phase 0 slice archive (keys "z<mm, 2 decimals>"); keys that are
+    """{slice index: int16 Hounsfield units} from a slice archive (keys "z<mm, 2 decimals>"); keys that are
     not within 0.01 mm of a scan slice are ignored."""
     out = {}
     with np.load(npz_path, allow_pickle=False) as z:

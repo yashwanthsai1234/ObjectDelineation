@@ -1,4 +1,4 @@
-"""Evaluation metrics of K sampled completions per item against its raters (plan §4.7, judge R10).
+"""Evaluation metrics of K sampled completions per item against its raters .
 
 Everything goes through the training path: objdel.verify.reward.score.score_many (score_completion's parse, then the
 CUDA checker scores every object: mask, defects, IoU_tc, F5, g_area, size-filtered signature) and advantages_v4 on the
@@ -25,19 +25,18 @@ Definitions and choices:
 - A sample's topology answer is its joint size-filtered signature (score_completion's sig_id); unparseable or
   illegal samples share one "fail" answer that no rater gives. The rater histogram is over the voting raters
   (objdel.verify.reward.score.rater_answers: a rater whose whole mask is below the size filter abstains), as in the
-  reward. Histograms are per image; summaries average the per-image TV / JS, never histograms pooled over images (lab
-  t_dynamics REPORT).
+  reward. Histograms are per image; summaries average the per-image TV / JS, never histograms pooled over images.
 - Minimum-mode retention = min over rater answers a of pi_v(a) / f(a), with pi_v the sample histogram restricted to
-  rater answers and renormalised (lab t_dynamics grpo_toy.py); 1 iff pi_v = f, 0 when some rater answer is never
+  rater answers and renormalised; 1 iff pi_v = f, 0 when some rater answer is never
   sampled or no sample gives a rater answer.
 - Coverage = share of distinct rater answers drawn by at least one sample (Multi-Answer RL's coverage).
 - Pass criterion: the reward's own validity gate (objdel.verify.reward.advantages.topology_valid: legal, a rater drew
   the topology, IoU_tc >= REWARD_V4.iou_gate for every object, score_completion's iou_min), so a RIGA answer with a good
   disc and a missed cup fails. The Phase 2 geometry gate (summarize's iou_tc_pass) is its geometric part, legal and
-  IoU_tc >= 0.5 for every object; topology is gated by the synthetic topology probe (objdel.data.probes; plan D20).
+  IoU_tc >= 0.5 for every object; topology is gated by the synthetic topology probe (objdel.data.probes).
 - Duplicates (GRPO groups) are outputs the reward cannot tell apart: equal format and legality flags and equal
   raw rasters of every object (device.duplicate_keys: intersection == both areas), so re-spelled texts of one mask
-  (sub-pixel vertex nudges, whitespace) count as duplicates, as the reward's low-spread drop treats them (B2-6).
+  (sub-pixel vertex nudges, whitespace) count as duplicates, as the reward's low-spread drop treats them.
 - Failed (unparseable or truncated) samples get 0 for every score, an empty mask for the probability map and GED,
   and areas of an empty mask (the audit only reads parsed samples). Illegal samples (parsed, but some ring defective)
   are failures too, by the reward's legality gate (objdel.verify.reward.advantages.legal_gate, which zeroes every term
@@ -65,10 +64,10 @@ Definitions and choices:
   (compute_surface_distances + compute_surface_dice_at_tolerance, spacing 1 px): surfels on the corner grid of 2 x 2
   neighbourhood codes, weighted by their contour length; (|S_P within tau of S_G| + |S_G within tau of S_P|) /
   (|S_P| + |S_G|), distances by exact EDT; two empty masks: 1 (the reference gives 0 / 0), one empty: 0. Per sample
-  the maximum over the raters (like D_max), so a rater's own target scores 1. tau at frame resolution (D25, A4 S2):
-  2 px LIDC, 9 px disc, 16 px cup. 4-connected boundary pixels (A4's prototype) differ from the reference by up to
-  0.14 on LIDC rater pairs (impl/M4.md). The device counts surfels per length class beyond the cut, so the length
-  sums run in another order than the host's: NSD may differ from the host value by <= 1e-12 (D7, D-G9).
+  the maximum over the raters (like D_max), so a rater's own target scores 1. tau at frame resolution :
+  2 px LIDC, 9 px disc, 16 px cup. 4-connected boundary pixels differ from the reference by up to
+  0.14 on LIDC rater pairs. The device counts surfels per length class beyond the cut, so the length
+  sums run in another order than the host's: NSD may differ from the host value by <= 1e-12.
 - Token statistics: per sample completion token counts when the caller passes them (objdel.policy.sampler);
   summarize reports the truncated share, mean and p95 tokens.
 
@@ -93,7 +92,6 @@ References:
 - NSD: S. Nikolov et al., https://arxiv.org/abs/1809.04430 ; reference code:
   https://github.com/google-deepmind/surface-distance (metrics.py, lookup_tables.py) ; Metrics Reloaded:
   https://arxiv.org/abs/2206.01653
-- Per-image TV / JS and minimum-mode retention: archive/phase1_lab/t_dynamics/REPORT.md, grpo_toy.py
 - Identical rewards give a zero-signal group (DAPO dynamic sampling): https://arxiv.org/abs/2503.14476
 """
 import math
@@ -116,7 +114,7 @@ FAIL = -1.0  # topology answer of unparseable or illegal samples (sig_ids are CR
 # scores of failed and illegal samples
 _ZEROED = ("iou_tc", "f5", "g_area", "iou_vote", "dice_vote", "d_max", "precision_vote", "recall_vote",
            "boundary_iou", "boundary_iou_vote")
-NSD_TAU = {"nodule": 2.0, "disc": 9.0, "cup": 16.0}  # px at frame resolution (D25)
+NSD_TAU = {"nodule": 2.0, "disc": 9.0, "cup": 16.0}  # px at frame resolution
 BIOU_D = {"nodule": 2, "disc": 9, "cup": 16}  # boundary IoU band width, px at frame resolution
 _D = 0.5 * np.sqrt(2.0)  # surfel lengths of the 2 x 2 codes (surface-distance lookup table, 1 px spacing): _D, 1, 2 _D
 _GEOMETRIC = [(t, f) for t, f in zip(TERMS, REWARD_V4.floors, strict=True) if t != "legal"]  # (term, sigma floor)
@@ -165,7 +163,8 @@ def soft_dice(soft: np.ndarray) -> float:
 
 def _iou(inter: np.ndarray) -> np.ndarray:
     """IoU of every pair of masks from their (n, n) intersection counts, areas on the diagonal; two empty masks: 1.
-    Fortran order, the layout of the host matrix before D7 (a fancy-indexed copy), so GED's means sum in its order."""
+    Fortran order, the layout of the host matrix before it moved to the engine (a fancy-indexed copy), so GED's
+    means sum in its order."""
     area = np.diag(inter)
     union = area[:, None] + area[None, :] - inter
     return np.asfortranarray(np.where(union > 0, inter / np.where(union > 0, union, 1.0), 1.0))
@@ -203,7 +202,7 @@ def _nsd_best(c: ItemCounts, K: int) -> np.ndarray:
 def _ged(iou: np.ndarray, n: int) -> float:
     """GED from the pairwise IoU of n samples followed by the raters."""
     d = 1.0 - iou
-    return max(0.0, float(2 * d[:n, n:].mean() - d[:n, :n].mean() - d[n:, n:].mean()))  # BK2-9: -1.1e-16 at 0
+    return max(0.0, float(2 * d[:n, n:].mean() - d[:n, :n].mean() - d[n:, n:].mean()))  # -1.1e-16 at 0 otherwise
 
 
 def _samples(keys: Sequence[tuple[str, bool]], names, caches, W: int, H: int) -> list[dict]:

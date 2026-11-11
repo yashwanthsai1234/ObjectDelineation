@@ -3,7 +3,7 @@
     .venv/bin/python -I -m experiments.phase1.build_targets [--store data/store] [--out data/targets] [--procs 3]
 
 Per item: objdel.data.targets.frame (crop policy), then one target per rater with the reward's size filter
-(min_area of the raters' union per structure, and of the rim union for RIGA). Every target is re-checked from its
+(min_area of the raters' union per structure). Every target is re-checked from its
 text alone (parse -> polycore -> signature, IoU), and its answer length is counted with the tokenizers of the three
 screened models. Writes <out>/<dataset>/<split>.jsonl (item_id, rater, W, H, box, scale, text), <out>/manifest.json
 (target-set SHA-256 per file and overall, pinned versions, config) and <out>/summary.json.
@@ -54,7 +54,6 @@ def _job(job):
     item_id, ds, raters, masks = job
     names = SCHEMAS[ds]
     W = next(iter(masks.values())).shape[2]
-    derived = {"rim": masks["disc"] & ~masks["cup"]} if ds == "riga" else {}
     ma = min_areas(masks)
     rows = []
     for r, rater in enumerate(raters):
@@ -67,20 +66,14 @@ def _job(job):
             continue
         p = parse(t.text, names)
         row.update(text=t.text, parse=p.ok, time=t.info["time"], tokens=_tokens(t.text), obj={})
-        out = {}
         for n in names:
             g = to_mask(p.objs[n], W, W)
-            out[n] = g.mask
             u = np.count_nonzero(g.mask | src[n])
             row["obj"][n] = {
                 "legal": g.legal, "iou": 1.0 if u == 0 else np.count_nonzero(g.mask & src[n]) / u,
                 "k5": signature(g.mask, ma[n]) == signature(src[n], ma[n]),
                 "raw": signature(g.mask) == signature(src[n]), "tau": t.info[n]["tau"],
                 "vertices": t.info[n]["vertices"], "tokens": _tokens(serialize({n: p.objs[n]}, (n,)))}
-        if derived:
-            rim, rim_src = out["disc"] & ~out["cup"], derived["rim"][r]
-            row["obj"]["rim"] = {"k5": signature(rim, ma["rim"]) == signature(rim_src, ma["rim"]),
-                                 "raw": signature(rim) == signature(rim_src)}
         rows.append(row)
     return rows
 

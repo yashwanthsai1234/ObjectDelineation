@@ -1,4 +1,4 @@
-"""Fair human ceiling (Implementation.md A2): each doctor and the model are scored against the same k - 1 doctors.
+"""Fair human ceiling: each doctor and the model are scored against the same k - 1 doctors.
 
 Per item with k doctors (`cache.raters`) and voting doctors V (`cache.voters`; a doctor whose size-filtered signature
 is empty has no vote, ExpertCache docstring):

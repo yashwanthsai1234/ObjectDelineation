@@ -5,23 +5,22 @@ even-odd mask -> ring defects -> the terms below, against each cache's tables re
 (ExpertCache.device). Masks never leave the device; only per-object numbers come back. One checker call per
 score_many / score_batch. Per object, against its ExpertCache:
 - IoU_tc: max IoU over the raters whose size-filtered signature equals the prediction's; IoU vs the vote
-  when no rater drew that signature (lab ITERATION3, R3);
+  when no rater drew that signature;
 - F5 = 1 / (1 + (2 D / P) / T5^2): D = depth beyond the egg-yolk band, P = contour length of the union;
-- g_area = min(1, A_max / A) * min(1, A / A_min), A_min / A_max over all raters, zero tolerance (ITERATION4);
+- g_area = min(1, A_max / A) * min(1, A / A_min), A_min / A_max over all raters, zero tolerance;
   an empty prediction gets 0;
 - the signature and its rater frequency;
-- loc_raw (reward v5, Implementation.md B3.2): the location kernel of the mask's centroid (the checker's exact
+- loc_raw (reward v5): the location kernel of the mask's centroid (the checker's exact
   sum_x, sum_y) against the vote's centroid, scaled by the union's radius (ExpertCache.ref_sum, radius2).
-The terms are bit-identical to the host scorer this replaced (tests/oracles/score_numpy.py; the exactness argument is
-in docs/research/notes/gpu_scoring.md).
+The terms are bit-identical to the host scorer this replaced (tests/oracles/score_numpy.py).
 
 A completion with several objects (RIGA: disc, cup) gets the mean of the per-object IoU_tc, F5 and g_area; it
 is legal when every object is legal; its topology answer is joint: topo_freq is the share of the voting raters
 (`rater_answers`; ExpertCache docstring on abstaining raters) whose signatures equal the prediction's for every
 object (rater r of one object's cache is rater r of the others; caches with different rater counts are refused),
-and sig_id identifies the tuple of per-object signatures. This is the lab's rule (t_stack/prod.py score_text);
-for one object it reduces to the per-object terms. iou_min, the smallest per-object IoU_tc, feeds the topology
-validity gate (advantages_v4), so a good disc cannot carry a missed cup past it (B2-7; the eval pass criterion).
+and sig_id identifies the tuple of per-object signatures. For one object it reduces to the per-object terms.
+iou_min, the smallest per-object IoU_tc, feeds the topology validity gate (advantages_v4), so a good disc cannot
+carry a missed cup past it (the eval pass criterion).
 The completion's loc is the mean over objects of gated_loc: non-zero only for a missed answer (IoU_tc < miss_iou)
 of doctor-like size (g_area) and a topology some doctor drew (topo_freq > 0). These combinations of the returned
 per-object numbers are the only host arithmetic.
@@ -31,9 +30,8 @@ illegal one keeps its terms for logging; advantages_v4 zeroes them through the l
 list is a legal empty mask, scored like any other mask.
 
 References:
-- Reward v4 definition: archive/phase1_lab/t_reward/results/ITERATION4.md; plan §3.2, §4.3.
 - VLM-R1's count guard s_ovd = min(1, L_gt / L_pred) multiplying the detection reward against over-prediction
-  (§4.3, Eq. 7-8; the hack it removes: §5.3.1), the analogue of g_area: https://arxiv.org/abs/2504.07615 (full text
+  (Eq. 7-8), the analogue of g_area: https://arxiv.org/abs/2504.07615 (full text
   https://arxiv.org/html/2504.07615)
 """
 import zlib

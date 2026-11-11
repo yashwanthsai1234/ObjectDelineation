@@ -51,7 +51,7 @@ def riga_raters():
 
 
 def targets(raters, names):
-    ma = min_areas({n: raters[n] for n in names})  # with the rim's rule for RIGA
+    ma = min_areas({n: raters[n] for n in names})
     k = len(raters[names[0]])
     return [build_target({n: raters[n][r] for n in names}, names, min_area=ma).text for r in range(k)]
 
