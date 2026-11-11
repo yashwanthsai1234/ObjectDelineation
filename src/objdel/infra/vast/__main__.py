@@ -18,7 +18,8 @@ there is the only logic that runs on the box.
                                                                alarm and hard stop: see ALARM and HARD_STOP below
 
 Money: a launch is refused when the money committed (closed sessions + every active run to its deadline) plus its own
-worst case passes HARD_STOP, and needs --owner-approved (recorded in the ledger) when that projection reaches ALARM.
+worst case passes HARD_STOP, and needs --owner-approved (recorded in the ledger) when that projection reaches ALARM
+(both in reference/spend_limits.json: the owner edits the file, not the code).
 Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB);
 teardown saves the raw charges and records what Vast billed beside that estimate (`billed`).
 

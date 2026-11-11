@@ -665,6 +665,14 @@ def _child(cwd: Path, code: str) -> subprocess.CompletedProcess:
                           env=dict(os.environ, OBJDEL_REPO=str(cwd)))
 
 
+def test_the_money_guard_reads_its_limits_from_reference():
+    """ALARM and HARD_STOP come from reference/spend_limits.json (an owner edit, not a code edit); the file ships,
+    since the box imports the ledger (run_spec)."""
+    lim = json.loads((ROOT / "reference/spend_limits.json").read_text())
+    assert (LG.ALARM, LG.HARD_STOP) == (lim["alarm_usd"], lim["hard_stop_usd"]) == (10.0, 31.45)
+    assert "reference/spend_limits.json" in RM.code_files()
+
+
 def test_frozen_views_ship(tmp_path, monkeypatch):
     """I50: the code snapshot keeps the two reference/ records the box reads (final_eval's frozen check, the
     held-out val_half) and drops docs/; on a copy of the snapshot both lookups find their file."""
@@ -1158,6 +1166,8 @@ def test_soft_steps_continue_and_hard_steps_stop_the_chain(E, tmp_path):
     repo = tmp_path / "repo"
     (repo / "specs").mkdir(parents=True)
     (repo / "pyproject.toml").write_text("")
+    (repo / "reference").mkdir()  # the ledger reads its money limits from the repo it runs in
+    (repo / "reference/spend_limits.json").write_bytes((ROOT / "reference/spend_limits.json").read_bytes())
     argvs = [(True, ["bash", "-c", "exit 3  # it's"]), (True, ["-m", "experiments.phase2.a", "it's"]),
              (False, ["-m", "experiments.phase2.b"]), (False, ["bash", "-c", "exit 4"]),
              (False, ["-m", "experiments.phase2.c"])]
