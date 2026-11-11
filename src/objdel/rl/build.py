@@ -56,7 +56,7 @@ def build_trainer(model: str, ckpt: Path, rows, out: Path, roots: Sequence[Path]
     if check:
         check(cfg)
     net = AutoModelForImageTextToText.from_pretrained(ckpt, **({"dtype": torch.float16} if cfg.fp16 else {}))
-    proc = AutoProcessor.from_pretrained(ckpt, **policy_models.processor_kwargs(model, "lidc"))
+    proc = AutoProcessor.from_pretrained(ckpt, **policy_models.processor_kwargs(model))
     funcs, _ = rl_reward.TRLReward(serve.loader(*roots), policy_models.stop_ids(net, proc), spec=reward).funcs()
     cls = GRPOTrainer if flags.plain else rl_trl_adapter.FastGRPO
     win = flags.profile_window  # --profile-window S,E: NVTX steps and the nsys capture window

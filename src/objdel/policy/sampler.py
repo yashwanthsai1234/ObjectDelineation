@@ -84,15 +84,15 @@ def _path(image) -> str:
     return image if isinstance(image, str) else image["path"]
 
 
-def export_prompts(rows, path, model: str, dataset: str, n: int, processor=None, stop_ids=None,
-                   seed: int = 0, max_tokens: int | None = None) -> None:
+def export_prompts(rows, path, model: str, n: int, processor=None, stop_ids=None, seed: int = 0,
+                   max_tokens: int | None = None) -> None:
     """rows: prompt, image (a path; grpo_rows' decoded Image column is read as paths), key (unique) -> the prompts
-    JSONL. processor: AutoProcessor of the sampled checkpoint (default: MODELS[model] with processor_kwargs).
-    max_tokens: a completion cap below the model's budget (the CPU smoke), else MAX_COMPLETION."""
-    kw = models.processor_kwargs(model, dataset)
+    JSONL. processor: AutoProcessor of the sampled checkpoint (default: the entry's hub id with processor_kwargs).
+    max_tokens: a completion cap below the model's budget (the CPU smoke), else the entry's max_completion."""
+    kw = models.processor_kwargs(model)
     if processor is None:
         from transformers import AutoProcessor
-        processor = AutoProcessor.from_pretrained(models.MODELS[model], **kw)
+        processor = AutoProcessor.from_pretrained(models.get(model).hf_id, **kw)
     if hasattr(rows, "cast_column"):  # a datasets.Dataset: paths, not decoded images
         from datasets import Image
         rows = rows.cast_column("image", Image(decode=False))
@@ -186,7 +186,7 @@ class Sampler(Protocol):
 
 def _rows_lines(rows: Sequence[Mapping], processor, model: str, params: Mapping[str, Any]) -> list[dict]:
     """Prompt rows of one dataset (the first key's first part) and params_for's dict -> prompts JSONL lines."""
-    kw = models.processor_kwargs(model, rows[0]["key"].split("/")[0]) if rows else {}
+    kw = models.processor_kwargs(model) if rows else {}
     return prompt_lines(rows, processor, kw, {k: v for k, v in params.items() if k != "n"}, params["n"])
 
 
@@ -251,8 +251,9 @@ def _rgb(path):
 
 
 class VllmSampler(Sampler):
-    """vllm.LLM offline, in this process (module docstring). `model` (a models.MODELS key) is needed by sample()
-    only; records() samples prompt lines as they are. `sampling_params` collects repr of every SamplingParams built."""
+    """vllm.LLM offline, in this process (module docstring). `model` (a models.MODELS key) is needed by sample() and
+    with an adapter (its LoRA rank); records() samples prompt lines as they are. `sampling_params` collects repr of
+    every SamplingParams built."""
 
     def __init__(self, ckpt: Path, model: str | None = None, gpu_memory_utilization: float = 0.85,
                  max_model_len: int = 2048, *, adapter: Path | None = None, dtype: str = "bfloat16", seed: int = 0,
@@ -269,7 +270,8 @@ class VllmSampler(Sampler):
                             max_model_len=max_model_len, enable_prefix_caching=True, seed=seed,
                             limit_mm_per_prompt={"image": {"count": 1, "width": 512, "height": 512}},
                             **({"logprobs_mode": "processed_logprobs"} if logprobs else {}),
-                            **({"enable_lora": True, "max_lora_rank": 16} if adapter is not None else {}))
+                            **({"enable_lora": True, "max_lora_rank": models.get(model).lora_r}
+                               if adapter is not None else {}))
 
     @cached_property
     def processor(self):

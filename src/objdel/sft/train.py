@@ -143,8 +143,8 @@ def vision_reference(args) -> int:
 
     if not (args.vision and isinstance(args.vision["reference"], str)):
         raise ValueError("--vision-reference-only writes vision.reference: set it to a .json path")
-    src = args.model_path or policy_models.MODELS[args.model]
-    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model, "lidc"))
+    src = args.model_path or policy_models.get(args.model).hf_id
+    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model))
     model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.float32).eval()
     items, sha = vision.fixed_set(args.vision["prepared"])
     d = vision.projector_distance(model, proc, [it["image"] for it in items[: vision.N_IMAGES]])  # inference_mode
@@ -350,10 +350,10 @@ def train(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
     man = resume_manifest(args, out, view)
     write_json(out / "manifest.json", man)
-    src = args.model_path or policy_models.MODELS[args.model]
-    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model, "lidc"))
+    src = args.model_path or policy_models.get(args.model).hf_id
+    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model))
     base = Base(src, proc, torch.bfloat16)  # the frozen LoRA base
-    rows = dataset.view_rows(args.view, proc.tokenizer, policy_models.MAX_COMPLETION[args.model], a0=args.a0)
+    rows = dataset.view_rows(args.view, proc.tokenizer, policy_models.get(args.model).max_completion, a0=args.a0)
     epochs = list(rows["epoch"])
     gbs = args.sft.get("per_device_train_batch_size", 8) * args.sft.get("gradient_accumulation_steps", 1)  # 1 GPU
     rows0 = epochs.count(min(epochs, default=0))  # rows of one view epoch

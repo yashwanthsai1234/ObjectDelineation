@@ -257,7 +257,7 @@ def toy(names):
 
 
 def test_models_and_budgets():
-    assert policy_models.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
+    assert policy_models.get("qwen3-vl-2b").hf_id == "Qwen/Qwen3-VL-2B-Instruct"
     assert policy_models.MAX_COMPLETION["qwen3-vl-2b"] == 1536
 
 
@@ -355,7 +355,7 @@ def test_qwen3_vl_trains_with_trls_own_template():
     from trl import chat_template_utils as ct
 
     try:
-        proc = AutoProcessor.from_pretrained(policy_models.MODELS["qwen3-vl-2b"], local_files_only=True)
+        proc = AutoProcessor.from_pretrained(policy_models.get("qwen3-vl-2b").hf_id, local_files_only=True)
     except OSError:
         pytest.skip("Qwen3-VL-2B processor not in the local HF cache")
     train = ct.get_training_chat_template(proc)

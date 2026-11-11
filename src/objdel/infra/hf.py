@@ -144,7 +144,7 @@ def rl_ops(out: Path, hub, repo: str) -> list:
             raise InfraError(f"{out}/{d} missing (train_rl --merge-last writes both from the last checkpoint)")
     require_private(hub, repo)
     doc = read_json(out / "rl.json")
-    base = models.MODELS[doc["model"]]
+    base = models.get(doc["model"]).hf_id
     lic, meta = base_card(base)
     files = [(f.relative_to(out / "final"), f) for f in sorted((out / "final").rglob("*")) if f.is_file()]
     files += [(f.relative_to(out), f) for f in sorted((out / "final_adapter").rglob("*")) if f.is_file()]
@@ -228,7 +228,7 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
     require_private(hub, repo)
     from huggingface_hub import CommitOperationAdd
 
-    base = models.MODELS[man["config"]["model"]]
+    base = models.get(man["config"]["model"]).hf_id
     lic, meta = base_card(base)
     src = run / "branches" / sel["selected"]
     ops = [CommitOperationAdd(f.relative_to(src).as_posix(), str(f)) for f in sorted(src.rglob("*")) if f.is_file()]

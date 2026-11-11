@@ -304,7 +304,7 @@ def test_fast_grpo_checks_the_option_f_names_only_under_lora_seqmask(monkeypatch
         t.args, t.vllm_generation, t.model, t.processing_class = SimpleNamespace(vllm_lora=lora), \
             SimpleNamespace(llm="engine"), None, None
         vars(t).update(_step=0, _buffered_inputs=None)  # TRL's __init__ sets both (check_trainer)
-        T.FastGRPO.__init__(t, args=t.args)
+        T.FastGRPO.__init__(t, args=t.args, peft_config=SimpleNamespace(r=16))  # option F serves its rank
     assert seen == ["engine"]
 
 

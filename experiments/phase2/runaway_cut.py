@@ -72,9 +72,9 @@ def main():
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     from transformers import AutoProcessor
 
-    tok = AutoProcessor.from_pretrained(configs.MODELS[a.model], **configs.processor_kwargs(a.model, "lidc")).tokenizer
+    tok = AutoProcessor.from_pretrained(configs.get(a.model).hf_id, **configs.processor_kwargs(a.model)).tokenizer
     res = size(dataset.records(a.train, "lidc", a.split), _jsonl(a.answers), _jsonl(a.answers.parent / "metrics.jsonl"),
-               lambda text: dataset.target_tokens(tok, text), configs.MAX_COMPLETION[a.model], a.factors)
+               lambda text: dataset.target_tokens(tok, text), configs.get(a.model).max_completion, a.factors)
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "runaway_cut.json").write_text(json.dumps({str(f): r for f, r in res.items()}, indent=1))
     for f, r in res.items():

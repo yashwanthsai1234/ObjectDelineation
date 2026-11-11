@@ -66,7 +66,7 @@ def main(argv=None) -> int:
 
     from objdel.policy import models as configs
 
-    proc = AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs("qwen3-vl-2b", "lidc"))
+    proc = AutoProcessor.from_pretrained(a.ckpt, **configs.processor_kwargs("qwen3-vl-2b"))
     model = AutoModelForImageTextToText.from_pretrained(a.ckpt, dtype=torch.float16).eval()
     batches = [attr.batch(proc, p, ans, a.views, proc.tokenizer.pad_token_id)
                for p, ans in attr.pick(a.answers, a.prompts, a.k)]  # fmt: skip

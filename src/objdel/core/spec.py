@@ -206,7 +206,7 @@ class SelectStage(StageBase, frozen=True, extra="forbid"):  # select_ckpt
     k: int = 8
     seed: int = 0
     timeout_s: float | None = None
-    max_tokens: int | None = Field(None, ge=1)  # sampled completion cap (CPU smoke); None: configs.MAX_COMPLETION
+    max_tokens: int | None = Field(None, ge=1)  # sampled completion cap (CPU smoke); None: the model's max_completion
     out: str | None = None
 
     @model_validator(mode="after")

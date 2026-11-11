@@ -28,15 +28,15 @@ def token_budget(out):
     """Issue I5: per model, train targets whose answer (+1 end-of-turn token) exceeds max_completion_length."""
     from transformers import AutoTokenizer
 
-    from objdel.policy.models import MAX_COMPLETION, MODELS
+    from objdel.policy.models import MODELS
     res = {}
-    for m, mid in MODELS.items():
-        tok = AutoTokenizer.from_pretrained(mid)
+    for m, entry in MODELS.items():
+        tok = AutoTokenizer.from_pretrained(entry.hf_id)
         for ds in sorted({k.split("/")[0] for k in read_json(Path(out, "manifest.json"))["sets"]}):
             n = [len(tok(t, add_special_tokens=False)["input_ids"]) + 1
                  for r in policy_rows.records(out, ds, "train") for t in r["targets"] if t]
-            over = sorted(x for x in n if x > MAX_COMPLETION[m])
-            res[f"{m}/{ds}"] = {"targets": len(n), "budget": MAX_COMPLETION[m], "over": len(over), "max": max(n),
+            over = sorted(x for x in n if x > entry.max_completion)
+            res[f"{m}/{ds}"] = {"targets": len(n), "budget": entry.max_completion, "over": len(over), "max": max(n),
                                 "over_lengths": over}
     return res
 

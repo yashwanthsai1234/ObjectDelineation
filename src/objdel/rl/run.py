@@ -84,7 +84,7 @@ def check_flags(a) -> None:
     from objdel.policy import models as policy_models
 
     over = a.grpo
-    budget = policy_models.MAX_COMPLETION[a.model]
+    budget = policy_models.get(a.model).max_completion
     if over.get("max_completion_length", budget) > budget:
         raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
     if a.runaway_cap and over.get("mask_truncated_completions", True):
@@ -263,7 +263,7 @@ def merge_last(a) -> int:
     from objdel.policy import models as policy_models
 
     model = PeftModel.from_pretrained(AutoModelForImageTextToText.from_pretrained(a.ckpt), last)
-    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model, "lidc")), out)
+    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)), out)
     return save_json(out / "rl.json", {
         "model": a.model, "steps": int(Path(last).name.split("-")[1]), "partial": True, "merged_from": last,
         "ckpt": str(a.ckpt),
@@ -280,10 +280,10 @@ def with_caps(train, a):
     from objdel.policy import rows as policy_rows
     from objdel.rl import runaway
 
-    tok = AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model, "lidc")).tokenizer
+    tok = AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)).tokenizer
     caps = runaway.row_caps(train["key"], policy_rows.records(a.train, "lidc", "train"),
                             lambda text: policy_rows.target_tokens(tok, text),
-                            a.grpo.get("max_completion_length", policy_models.MAX_COMPLETION[a.model]),
+                            a.grpo.get("max_completion_length", policy_models.get(a.model).max_completion),
                             a.runaway_cap, runaway.MARGIN)
     return train.add_column("cap", caps)
 
@@ -413,7 +413,7 @@ def run_rl(a) -> dict:
         "opsm_start_delta": a.opsm_start_delta if a.opsm_start_delta is not None else cfg.off_policy_mask_threshold,
         "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
         "max_completion_length": cfg.max_completion_length,
-        "loss_scale": policy_models.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L
+        "loss_scale": policy_models.get(a.model).max_completion / cfg.max_completion_length,  # dr_grpo divides by L
         "reward": {"name": spec.name, "fingerprint": reward_fingerprint(spec), "c_topo": spec.c_topo,
                    "loc_width": getattr(spec, "loc_width", None), "area_gate": getattr(spec, "area_gate", None)},
         "rows": rows, "train_rows": len(train), "budget_stopped": bool(stop and stop.tripped),
