@@ -127,15 +127,6 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
         "mean": float(iou[found].mean()), "items": len(fids),
         "ci95_patient": None if groups is None else signal.ci(iou[found], unit_draws(fids, groups.__getitem__))[1:],
         "ci95_nodule": signal.ci(iou[found], unit_draws(fids))[1:]}
-
-    def paired(arm: str) -> dict | None:  # the per-item difference arm - sel_mean_of_k under the same draws
-        if arm not in out:
-            return None
-        d = np.array([it[arm] - it["sel_mean_of_k"] for it in items])
-        return {"mean": float(d.mean()), "ci95_patient": None if D["ci95_patient"] is None
-                else signal.ci(d, D["ci95_patient"])[1:], "ci95_nodule": signal.ci(d, D["ci95_nodule"])[1:]}
-
-    out["paired"] = {"medoid_minus_mean": paired("sel_medoid"), "vote_minus_mean": paired("sel_vote")}
     return out
 
 

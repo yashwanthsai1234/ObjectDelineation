@@ -46,13 +46,8 @@ rescoring.
 Reads untrusted data: run with python -I.
 """
 
-import contextlib
 import json
-import os
-import re
-import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -71,51 +66,7 @@ from objdel.verify import stats as signal
 FROZEN_VIEWS = repo_root() / "reference/frozen_views.json"  # /workspace/src on the box
 
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
-TOPOLOGY_PERIOD_S = 5.0  # D-G17 (a): the sampler thread's period during scoring
-GATE_A_GAIN = 0.015  # Gate A: the val mean gain over sel_mean_of_k a method needs (Direction.md §4)
 SAMPLER_LABEL = "VllmSampler; sampler not box-verified (E-G10 open)"  # until V4's deterministic check passes
-
-
-def size_terciles(items: list[dict]) -> dict:
-    """Items in three groups by the doctors' vote area (`vote_area`): area <= bounds[0], <= bounds[1], above, with
-    bounds at the 1/3 and 2/3 order statistics, so equal areas share a group; per group the item count and the mean
-    iou_tc and boundary_iou (None when empty). ValueError for fewer than 3 items."""
-    if len(items) < 3:
-        raise ValueError(f"size_terciles: need >= 3 items, got {len(items)}")
-    area = np.array([it["vote_area"] for it in items])
-    a = np.sort(area)
-    bounds = [int(a[-(-len(a) * j // 3) - 1]) for j in (1, 2)]
-    group = np.searchsorted(bounds, area)  # 0: <= bounds[0], 1: <= bounds[1], 2: above
-    terciles = []
-    for g in range(3):
-        its = [it for it, x in zip(items, group, strict=True) if x == g]
-        terciles.append({"items": len(its), **{m: float(np.mean([it[m] for it in its])) if its else None
-                                               for m in ("iou_tc", "boundary_iou")}})
-    return {"bounds": bounds, "terciles": terciles}
-
-
-def gate_a(val: dict, test: dict | None) -> dict:
-    """Gate A (A4): the medoid becomes the default answer choice when its val mean gain over sel_mean_of_k is
-    >= GATE_A_GAIN and the lower end of its paired gate CI (patients) is > 0. The vote passing the same rule is
-    reported, but it is no default before Phase D ships the CUDA polygonizer. `test_same_sign` (the medoid's test
-    difference has the val sign; None without a test summary) is a direction line only: test never chooses."""
-    def passes(arm: str) -> bool:
-        p = val["paired"][arm]
-        if p is None or val.get("patients", 2) in (0, 1):  # one patient's point interval proves nothing
-            return False
-        ci = p[val["gate_ci"]]
-        if ci is None:
-            raise ValueError(f"gate_a: {arm}.{val['gate_ci']} is null (a summary built without groups)")
-        return round(p["mean"], signal.DIGITS) >= GATE_A_GAIN and ci[0] > 0
-
-    medoid, vote = passes("medoid_minus_mean"), passes("vote_minus_mean")
-    reason = "medoid passes on val" if medoid else "medoid does not pass on val"
-    if vote:
-        reason += "; the vote passes on val but needs the Phase D CUDA polygonizer to be an answer"
-    same = None if test is None else bool(
-        np.sign(test["paired"]["medoid_minus_mean"]["mean"]) == np.sign(val["paired"]["medoid_minus_mean"]["mean"]))
-    return {"method": "medoid" if medoid else "mean_of_k", "change_default": medoid, "test_same_sign": same,
-            "reason": reason}
 
 
 def noise_floor(results: list[dict], groups: dict[str, str], draws: int = 2000, seed: int = 0) -> dict:
@@ -133,51 +84,6 @@ def noise_floor(results: list[dict], groups: dict[str, str], draws: int = 2000, 
     D = signal.draws(ids, draws, seed, key=groups.__getitem__)
     return {"item_sd": float(np.std(d, ddof=1) / np.sqrt(2)),
             "mean_sd": float(np.std([d[x].mean() for x in D], ddof=1) / np.sqrt(2))}
-
-
-def _paired(new: dict[str, float], old: dict[str, float], ids: list[str]) -> np.ndarray:
-    """The old run's values in `ids` order; ValueError unless both runs hold the same items."""
-    lost = [i for i in ids if i not in old] + [i for i in old if i not in new]
-    if lost:
-        raise ValueError(f"{len(lost)} items are not in both runs, first {lost[0]}")
-    return np.array([old[i] for i in ids], float)
-
-
-def tost(new: dict[str, float], old: dict[str, float], groups: dict[str, str], bound: float = 0.01,
-         draws: int = 2000, seed: int = 0) -> dict:
-    """A-G3 equivalence of two runs' per-item values ({item_id: value}): the 90 % patient-bootstrap CI of the mean
-    paired difference new - old lies strictly inside +-bound. A wider CI is "not shown", never a pass."""
-    ids = list(new)
-    d = np.array([new[i] for i in ids]) - _paired(new, old, ids)
-    lo, hi = np.quantile([d[x].mean() for x in signal.draws(ids, draws, seed, key=groups.__getitem__)], [.05, .95])
-    return {"mean": float(d.mean()), "ci90_patient": [float(lo), float(hi)], "bound": bound, "items": len(ids),
-            "patients": len({groups[i] for i in ids}), "pass": bool(-bound < lo and hi < bound)}
-
-
-def view_identity(results: list[dict], old: dict[str, float], groups: dict[str, str], draws: int = 2000,
-                  seed: int = 0) -> dict:
-    """A-G3 view identity: is another run's per-item IoU_tc ({item_id: K-mean}) as correlated with this run's K-mean
-    as a second K-answer sampling of the same view would be? r_obs = Pearson(this K-mean, old); r_sh = 2 r_h / (1 + r_h)
-    (Spearman-Brown, the K-answer reliability), r_h = Pearson of the two half means. The rule bootstraps r_obs - r_sh
-    on the same patient draws and fails only when the upper end of its 95 % CI is < 0 (math-stats §11 item 7: the
-    plan's "r_obs >= lower end of r_sh's CI" ignores r_obs's own error). A failure means another view."""
-    ids = [r["item_id"] for r in results]
-    iou = np.array([r["samples"]["iou_tc"] for r in results], float)
-    h = iou.shape[1] // 2
-    a, b, new, o = iou[:, :h].mean(1), iou[:, h:].mean(1), iou.mean(1), _paired(dict.fromkeys(ids), old, ids)
-
-    def stats(x):
-        r_h = np.corrcoef(a[x], b[x])[0, 1]
-        return np.corrcoef(new[x], o[x])[0, 1], 2 * r_h / (1 + r_h)
-
-    r_obs, r_sh = stats(np.arange(len(ids)))
-    reps = np.array([stats(x) for x in signal.draws(ids, draws, seed, key=groups.__getitem__)])
-    lo, hi = np.nanquantile(reps[:, 0] - reps[:, 1], [.025, .975])
-    ok = bool(hi >= 0)
-    msg = (f"view identity {'holds' if ok else 'fails'}: r_obs {r_obs:.4f}, r_sh {r_sh:.4f}, 95 % patient CI of "
-           f"r_obs - r_sh [{lo:.4f}, {hi:.4f}] (fails when its upper end < 0)")
-    return {"r_obs": float(r_obs), "r_sh": float(r_sh), "diff_ci95_patient": [float(lo), float(hi)],
-            "r_sh_ci95_patient": np.nanquantile(reps[:, 1], [.025, .975]).tolist(), "pass": ok, "message": msg}
 
 
 def limit_rows(rows: list[dict], limit: int | None) -> list[dict]:
@@ -272,61 +178,6 @@ def load_sampler(a):
     return s, sample.params_for(a.model, n=a.k, seed=a.seed, stop_token_ids=stop)
 
 
-def _smi(query: str) -> list[str]:
-    """The non-empty CSV rows of one nvidia-smi query."""
-    out = subprocess.run(["nvidia-smi", query, "--format=csv,noheader"], capture_output=True, text=True, check=True)
-    return [x for x in out.stdout.splitlines() if x.strip()]
-
-
-def _proc_count() -> int:
-    """Processes in /proc that hold /dev/nvidia<N> open: the container's own view (D-G17 (a))."""
-    n = 0
-    for p in Path("/proc").glob("[0-9]*"):
-        with contextlib.suppress(OSError):
-            n += any(re.fullmatch(r"/dev/nvidia\d+", os.readlink(f)) for f in (p / "fd").iterdir())
-    return n
-
-
-def _sample(method: str) -> tuple[int, int]:
-    """(device processes by the method, memory.used in MiB summed over the GPUs)."""
-    used = sum(int(x.split()[0]) for x in _smi("--query-gpu=memory.used"))
-    return (len(_smi("--query-compute-apps=pid,used_memory")) if method == "nvidia-smi" else _proc_count()), used
-
-
-@contextlib.contextmanager
-def topology(name: str):
-    """D-G17 (a), (c) around one view's scoring, only on a CUDA build with OBJDEL_RUN_DIR set: the device process
-    count before scoring (nvidia-smi's compute-apps rows; when there are none, as in many containers, the /proc
-    count), a sampler thread every TOPOLOGY_PERIOD_S during it and one sample at its end. Adds the view's method,
-    count before, largest count during and peak memory.used (MiB) to $OBJDEL_RUN_DIR/d/topology.json. In this
-    process because "before scoring" is a point inside final_eval, after sampling."""
-    run_dir = os.environ.get("OBJDEL_RUN_DIR")
-    if not run_dir or _gpucheck.build() != "cuda":
-        yield
-        return
-    method = "nvidia-smi" if _smi("--query-compute-apps=pid,used_memory") else "proc"
-    seen, stop = [_sample(method)], threading.Event()
-
-    def run():
-        while not stop.wait(TOPOLOGY_PERIOD_S):
-            seen.append(_sample(method))
-
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    try:
-        yield
-    finally:
-        stop.set()
-        thread.join()
-    seen.append(_sample(method))
-    path = Path(run_dir) / "d" / "topology.json"
-    doc = read_json(path) if path.exists() else {}
-    doc[name] = {"method": method, "before": seen[0][0], "max_during": max(c for c, _ in seen[1:]),
-                 "peak_memory_used_mib": max(u for _, u in seen)}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _write(path, json.dumps(doc, indent=1))
-
-
 def engine_record() -> dict:
     """D-G14: the view's eval_sets wall time, the scratch cap the loop passed and the engine's memory counters, read
     after its scoring (the counters were reset just before it)."""
@@ -336,13 +187,10 @@ def engine_record() -> dict:
             "max_memory_reserved": torch.cuda.max_memory_reserved() if torch else 0}
 
 
-@contextlib.contextmanager
-def scoring(view: Path):
-    """Around one view's scoring: the engine counters reset first, the topology sampler around it."""
+def start_scoring() -> None:
+    """Reset the engine counters before one view's scoring."""
     _gpucheck.reset_stats()
     device.eval_sets_s = 0.0
-    with topology(view.name):
-        yield
 
 
 def write_scored(view: Path, split: str, out: Path, results: list[dict], run: dict, t0: float):
@@ -386,8 +234,8 @@ def rescore(src: Path, view: Path, split: str, out: Path) -> None:
            | {"rescored_from": str(src), "seconds": {}})
     serve.preload(view, ["lidc"])
     _write(out / "answers.jsonl", _lines(answers))
-    with scoring(view):
-        results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view.resolve())
+    start_scoring()
+    results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view.resolve())
     write_scored(view, split, out, results, run, t0)
 
 
@@ -428,19 +276,18 @@ def run(a) -> None:
         run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed, "sampler": SAMPLER_LABEL} | (
             {"adapter": str(a.adapter), "adapter_sha256": file_sha256(Path(a.adapter) / "adapter_model.safetensors")}
             if a.adapter else {}) | _identity(view, split) | ({"limit": a.limit} if a.limit else {})
-        with contextlib.ExitStack() as stack:
 
-            def keep(answers, run=run, stack=stack, out=out, view=view, groups=groups, rows=rows, t0=t0):
-                """answers.jsonl and the partial final_eval.json before scoring (a crash keeps the sampling)."""
-                lines = [{"item_id": d["item_id"], "group_id": groups[d["item_id"]], "W": r["W"], "H": r["H"],
-                          **{k: d[k] for k in ("samples", "truncated", "tokens")}}
-                         for r, d in zip(rows, answers, strict=True)]
-                run["seconds"] = {"load_and_sample": time.time() - t0}
-                _write(out / "answers.jsonl", _lines(lines))
-                _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
-                stack.enter_context(scoring(view))
+        def keep(answers, run=run, out=out, view=view, groups=groups, rows=rows, t0=t0):
+            """answers.jsonl and the partial final_eval.json before scoring (a crash keeps the sampling)."""
+            lines = [{"item_id": d["item_id"], "group_id": groups[d["item_id"]], "W": r["W"], "H": r["H"],
+                      **{k: d[k] for k in ("samples", "truncated", "tokens")}}
+                     for r, d in zip(rows, answers, strict=True)]
+            run["seconds"] = {"load_and_sample": time.time() - t0}
+            _write(out / "answers.jsonl", _lines(lines))
+            _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
+            start_scoring()
 
-            torch.manual_seed(a.seed)
-            results = evaluate(sampler, rows, params, view.resolve(), keep)["results"]
+        torch.manual_seed(a.seed)
+        results = evaluate(sampler, rows, params, view.resolve(), keep)["results"]
         write_scored(view, split, out, results, run, t0)
         t0 = time.time()

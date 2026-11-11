@@ -32,14 +32,3 @@ def test_b04():
     e = json.loads((run / "eval_b3_val_shifted" / "final_eval.json").read_text())["engine"]
     assert e["eval_scratch_peak"] <= e["max_scratch_bytes"]
     assert e["live_device_bytes"] <= e["arena_bytes"] + e["table_bytes"]
-
-
-def test_b06():
-    """B06 (D-G17 (a), (c)): per view the device process count never rises above its count before scoring (and the
-    /proc count is >= 1 before), and peak memory.used <= 30 GB."""
-    topo = json.loads((_run() / "d" / "topology.json").read_text())
-    assert topo
-    for view, r in topo.items():
-        assert r["method"] in ("nvidia-smi", "proc"), view
-        assert r["before"] >= 1 and r["max_during"] <= r["before"], view
-        assert r["peak_memory_used_mib"] <= 30e9 / 2 ** 20, view  # 30 GB in MiB

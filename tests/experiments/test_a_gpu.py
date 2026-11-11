@@ -119,49 +119,6 @@ def _jsonl(path: Path) -> list[dict]:
 
 
 @pytest.mark.data
-@pytest.mark.parametrize("folder, view, split, n, r5", [
-    ("eval_val", "lidc-val-shifted", "val", 1084, "eval_val"), ("eval_val_edge", "lidc-val-edge", "val", 1084, None),
-    ("eval_test", "lidc-test-shifted", "test", 2200, "eval_test")])
-def test_g01_answers(folder, view, split, n, r5):
-    """G01 (A-G3): the box's answers (counts, K = 8 lists), the view it sampled (its content hash equals the Mac's
-    view; the test view's equals runs/a3/pre_rental.json), and for the shifted views the paired TOST against R5
-    (90 % patient CI inside +-0.01) and the view-identity rule. Second lines are printed: the TOST without R5's 128
-    val-selection items, the new test mean against R5's nodule CI, noise_floor.mean_sd. Before V3 the test part
-    skips ("open (V3)")."""
-    from objdel.policy import final_eval as FE
-    from objdel.policy.evaluate import eval_rows
-
-    run = _need(A3 / folder) if split == "val" else A3 / folder
-    if not run.exists():
-        pytest.skip("A-G3 test part: open (V3 item 3)")
-    ans = _jsonl(run / "answers.jsonl")
-    assert len(ans) == n and all(len(a[k]) == 8 for a in ans for k in ("samples", "truncated", "tokens"))
-    doc = json.loads((run / "final_eval.json").read_text())
-    assert doc["partial"] is False and doc["view_content_sha256"] == FE.view_content_sha256(_need(VIEWS / view))
-    if split == "test":
-        assert doc["view_content_sha256"] == json.loads(_need(A3 / "pre_rental.json").read_text())["content_sha256"]
-    print(folder, "noise_floor", doc["noise_floor"])
-    if r5 is None:
-        return  # the R5 edge baseline has no older R5 file to pair with; Gate B1 reads it directly
-    old = {d["item_id"]: d["iou_tc"] for d in _jsonl(_need(R5 / r5 / "items.jsonl"))}
-    new = {d["item_id"]: d["sel_mean_of_k"] for d in _jsonl(run / "items.jsonl")}
-    assert set(new) == set(old)
-    groups = FE.view_groups(VIEWS / view, split)
-    t = FE.tost(new, old, groups)
-    v = FE.view_identity(_jsonl(run / "metrics.jsonl"), old, groups)
-    print(folder, "TOST", t, "|", v["message"])
-    if split == "val":
-        sel = {r["key"] for r in eval_rows(VIEWS / view, 128)}
-        keep = lambda d: {i: x for i, x in d.items() if i not in sel}  # noqa: E731
-        print("TOST without the 128 R5-selection items", FE.tost(keep(new), keep(old), groups))
-    else:
-        print("new test mean", doc["iou_tc"]["mean"], "inside R5's nodule CI [0.6279, 0.6621]:",
-              0.6279 <= doc["iou_tc"]["mean"] <= 0.6621)
-    assert t["pass"], f"TOST not shown: {t}"
-    assert v["pass"], v["message"]
-
-
-@pytest.mark.data
 @pytest.mark.parametrize("folder", ["eval_val", "eval_val_edge", "eval_test"])
 def test_g02a_rescore(folder, tmp_path, clean_store):
     """G02a (A-G3): final_eval --rescore of a pulled A3 folder on the Mac's view reproduces the box's per-sample
