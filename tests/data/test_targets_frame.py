@@ -195,3 +195,13 @@ def test_frame_masks_are_canonical_bools():
     nb = (m.view(np.uint8) * np.uint8(255)).view(bool)
     f, g = frame(item({"nodule": nb}, dataset="lidc")), frame(item({"nodule": m}, dataset="lidc"))
     assert f.masks["nodule"].view(np.uint8).max() == 1 and np.array_equal(f.masks["nodule"], g.masks["nodule"])
+
+
+def test_pixels_windows_by_the_window_not_by_the_dtype():
+    """frame.pixels: a window maps intensities to 0..255 (any dtype); no window keeps the crop as is (a uint8
+    dataset); frame() passes the item's dataset window (LIDC: the lung window)."""
+    from objdel.data.targets.frame import hu_window, pixels
+
+    hu = np.arange(-1200, 600, 50, dtype=np.int16).reshape(4, 9)
+    assert (pixels(hu, 0, 0, 4)[0] == hu[:4, :4]).all()  # no window: as is
+    assert (pixels(hu, 0, 0, 4, (-1000, 400))[0] == hu_window(hu[:4, :4], (-1000, 400))).all()

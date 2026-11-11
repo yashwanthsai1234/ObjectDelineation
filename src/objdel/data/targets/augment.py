@@ -37,13 +37,13 @@ from objdel.data.store import Item
 from objdel.data.targets.frame import (
     CLEARANCE,
     DIVISORS,
-    LUNG_WINDOW,
     centred,
     crowded,
     pixels,
     policy_side,
     rgb,
     union_box,
+    view_window,
 )
 
 OPS = ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")
@@ -187,5 +187,5 @@ def render(spec: dict, context: dict) -> np.ndarray:
         raise ValueError(f"{spec.get('row_id')}: window {spec['box']} leaves the context crop")
     sigma = spec.get("noise_sigma")
     noise = np.rint(row_rng("noise", spec["noise_seed"]).normal(0, sigma, (S, S))).astype(np.int64) if sigma else None
-    chw = pixels(px, x0 - cx, y0 - cy, S, tuple(spec.get("window") or LUNG_WINDOW), noise)
+    chw = pixels(px, x0 - cx, y0 - cy, S, view_window(spec["dataset"], spec.get("window")), noise)
     return rgb(apply(chw, spec.get("op", "id")), datasets.get(spec["dataset"]).frame.image_side)
