@@ -285,6 +285,15 @@ def test_card_update_appends_sections_and_keeps_every_other_line():
     assert "shifted views" in new and "single-run" in new and "RIGA" in new
 
 
+def test_card_limitations_add_the_headline_runs_own_lines():
+    """headline.json `limitations` (checkpoint selection, a gate result) join the general lines; without it none."""
+    lines = ["No checkpoint selection: the step-780 end of one run.", "Gate B1 failed one rule, `centred`."]
+    new = H.card_update(OLD_CARD, HEADLINE | {"limitations": lines})
+    limits = new.split("## Limitations", 1)[1]
+    assert all(f"- {line}\n" in limits for line in lines) and "checkpoint-250" not in new
+    assert "No checkpoint selection" not in H.card_update(OLD_CARD, HEADLINE)
+
+
 def test_card_update_is_idempotent_and_replaces_an_old_evaluation():
     once = H.card_update(OLD_CARD, HEADLINE)
     assert H.card_update(once, HEADLINE) == once

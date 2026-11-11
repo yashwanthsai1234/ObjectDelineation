@@ -36,15 +36,16 @@ can be trusted.
 
 Lung nodule outlining on LIDC-IDRI CT scans, scored on images the model never saw:
 
-| | Before RL | After RL |
+| | First RL run | RL run on shifted views (headline) |
 |---|---|---|
-| Overlap with experts (IoU, held-out) | 0.511 | **0.659** |
-| Valid outlines | 94.5 % | **98.8 %** |
+| Overlap with experts (IoU, test, 2,200 images) | 0.645 | **0.735** |
+| Off-centre nodules (IoU, edge validation view) | 0.540 | **0.692** |
+| Valid outlines (test) | 99.4 % | **99.8 %** |
 
-- **Test set (2,200 images):** IoU 0.645, boundary F-score 0.816, 99.4 % valid outlines.
+- **Test set (2,200 images):** IoU 0.735, boundary F-score 0.902, 99.8 % valid outlines.
 - **Exact by construction:** 0 mismatches between the GPU engine and the reference checker on 195,809 cases.
 - **Fast:** 7.7 M polygons checked per second on one RTX 5090, 141x the first GPU build.
-- **Cheap:** the full RL run took under 6 hours on one GPU, for about $5.
+- **Cheap:** the latest RL run trained 780 steps in 2 h 17 min on one GPU; the whole rental cost about $2.40.
 
 <img src="docs/figures/rl_gallery.png" alt="Held-out CT crops: expert outlines in green, the model's outline in red, before and after RL" width="900">
 

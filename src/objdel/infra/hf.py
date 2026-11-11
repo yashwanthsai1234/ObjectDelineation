@@ -153,7 +153,8 @@ METRIC_NAMES = {"iou_tc": "IoU (against the expert band)", "f5": "boundary F-sco
 
 
 def card_sections(h: dict) -> str:
-    """The '## Evaluation' and '## Limitations' sections of the model card, from docs/results/headline.json."""
+    """The '## Evaluation' and '## Limitations' sections of the model card, from docs/results/headline.json; its
+    optional `limitations` list adds the run's own lines (checkpoint selection, gate results) to the general ones."""
     t, v = h["test"], h["val"]
     rows = "\n".join(f"| {name} | {t['metrics'][k]['mean']:.3f} ({t['metrics'][k]['ci95'][0]:.3f} to "
                      f"{t['metrics'][k]['ci95'][1]:.3f}) | {v['metrics'][k]['mean']:.3f} |"
@@ -166,9 +167,8 @@ def card_sections(h: dict) -> str:
             "- The test uses shifted views from one synthetic shift law, and training matches that law.\n"
             "- An image counts as a miss when its mean IoU over the K answers is below 0.1.\n"
             "- The test split informed the diagnosis of the plateau.\n"
-            "- 128 validation shifted items chose this checkpoint over checkpoint-250, so its validation numbers "
-            "are slightly optimistic.\n"
-            "- Training-seed variance is not measured: a gain is a single-run result. The intervals hold only the "
+            + "".join(f"- {line}\n" for line in h.get("limitations", []))
+            + "- Training-seed variance is not measured: a gain is a single-run result. The intervals hold only the "
             "K = 8 answer noise and the image sample.\n"
             "- LIDC-IDRI only: RIGA is not redistributed.\n")  # fmt: skip
 

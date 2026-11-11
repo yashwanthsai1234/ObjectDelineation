@@ -32,7 +32,7 @@ cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objde
 	$(PY) -m pytest -q -m "not slow" --cov=objdel --cov-report=term-missing:skip-covered --cov-fail-under=90
 
 CONFIG ?= specs/b1_rows.yaml
-MODEL_REF ?= svenk029/objdel-sft@rl-full-3ep
+MODEL_REF ?= svenk029/objdel-sft@b1-rows
 preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=... [BUNDLE_DIR=...]); launch needs its stamp
 	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG) $(if $(BUNDLE_DIR),--bundle-dir $(BUNDLE_DIR))
 
