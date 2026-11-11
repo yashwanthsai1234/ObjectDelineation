@@ -320,7 +320,7 @@ def test_eval_scripts_score_in_one_process():
     """I18: final_eval, select_ckpt, g_probe and the ceiling CLI fork no pool; select_ckpt and g_probe have no
     --procs (the preflight dry run passes none)."""
     root = Path(__file__).resolve().parents[2]
-    for name in ("final_eval", "select_ckpt", "g_probe", "ceiling"):
-        src = (root / "experiments" / "phase2" / f"{name}.py").read_text()
+    for name in ("eval/run", "train/select", "train/probe", "eval/ceiling"):
+        src = (root / "src/objdel/cli" / f"{name}.py").read_text()
         assert "Pool" not in src and '"--procs"' not in src, name
     assert '"--procs"' not in (root / "tests" / "experiments" / "test_p2_scripts.py").read_text()

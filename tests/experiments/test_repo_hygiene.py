@@ -80,7 +80,7 @@ STALE = ("experiments/phase0", "experiments/phase1/lab", "experiments/phase2/lab
 
 def _exempt(f: str) -> bool:
     name = f.rsplit("/", 1)[-1]
-    return (f.startswith(EXEMPT_DOCS) or "/impl/" in f or f.startswith("experiments/phase2/perf/")
+    return (f.startswith(EXEMPT_DOCS) or "/impl/" in f or f.startswith(("experiments/phase2/perf/", "results/"))
             or (f.startswith("experiments/phase") and f.count("/") == 2 and name.endswith(".md")))  # fmt: skip
 
 

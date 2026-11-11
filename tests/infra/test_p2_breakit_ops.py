@@ -313,14 +313,14 @@ def test_no_riga_derived_file_is_committable(tmp_path):
     assert files and riga_block_hits(files) == [] and riga_named(files) == []
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     new = ["docs/research/records/phase0/results/riga/masks.csv", "archive/phase1_lab/t_stack/results/t2_x.json",
-           "experiments/x/riga/a.csv"]  # fmt: skip (docs/ is ignored as a whole since 2026-11-11)
+           "tools/x/riga/a.csv"]  # fmt: skip (docs/ is ignored as a whole since 2026-11-11)
     for n in new:
         (tmp_path / n).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / n).write_text("x")
     gi = tmp_path / ".gitignore"
     gi.write_text((ROOT / ".gitignore").read_text())
     got = committable(tmp_path)
-    assert riga_named(got) == ["experiments/x/riga/a.csv"] and riga_block_hits(got) == []
+    assert riga_named(got) == ["tools/x/riga/a.csv"] and riga_block_hits(got) == []
     gi.write_text("")
     got = committable(tmp_path)
     assert set(riga_block_hits(got)) == set(new[:2])

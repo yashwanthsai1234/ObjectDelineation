@@ -29,7 +29,7 @@ ROOT = repo_root()
 TEXT = (".py", ".md", ".yaml", ".yml", ".toml", ".txt", ".sh", ".cfg", ".json")
 SELF = {"tools/sweep.py", "tests/experiments/test_final_sweep.py", "tests/experiments/test_repo_hygiene.py"}
 # Frozen records and history keep old names by design (DOC4 FROZEN_GLOBS, in short).
-FROZEN = re.compile(r"^(docs/research/|docs/changelog\.md|experiments/phase[0]/|experiments/[^/]+/(RESULTS|PLAN|EXECUTION|"
+FROZEN = re.compile(r"^(docs/research/|docs/changelog\.md|results/|experiments/phase[0]/|experiments/[^/]+/(RESULTS|PLAN|EXECUTION|"
                     r"RESEARCH|JUDGE_|V0_V1)[^/]*\.md|experiments/.*/(lab|impl)/|experiments/phase2/perf/|archive/)")
 RETIRED_TREES = tuple("experiments/" + d for d in ("phase0", "phase1/lab", "phase2/lab"))  # split: CT-15 scans this file
 SMOLVLM = re.compile(r"(?i)smolvlm")

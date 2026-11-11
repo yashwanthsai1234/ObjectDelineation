@@ -8,7 +8,7 @@
 # 3. make cuda: objdel._gpucheck rebuilt with nvcc (CUDA_ARCHS, default the box's GPU);
 # 4. the GPU test group (with the arena-reuse and two-stream tests), the equivalence suite, the packed-mask and
 #    one-checker-call-per-reward tests, then tools/checker/eval.py even when a test failed (it shows where
-#    the GPU build goes wrong); writes results/cuda.json and the GPU section of RESULTS.md: copy both back.
+#    the GPU build goes wrong); writes results/checker/cuda.json and the GPU section of results/checker.md: copy both back.
 #    Exit status: the tests' (1 if any failed), else the eval's.
 # --build-only stops after 3 (cuda/docker_check.sh runs it on the Mac, without a GPU).
 # --gpu-check (make gpu-check, Implementation.md D8) replaces 4. Step 0: old_engine.tar and its .sha256 in the repo root

@@ -19,7 +19,7 @@ bit-quad counts, rings (Betti numbers b0/b1 and the ring hash), on
   smallest one that still differs (a polygon cannot be: its sub-cases have no reference since polycore is archived).
 Speed: shapes/s of this build, and masks/s against the Python certify path and OpenCV, by batch size and shape size.
 
-Writes experiments/cuda_checker/results/<build>.json and the build's section of experiments/cuda_checker/RESULTS.md.
+Writes results/checker/<build>.json and the build's section of results/checker.md.
 Licence rule: RIGA must never reach a rented host, so any path naming RIGA, or a manifest that is not LIDC-only, is
 refused.
 """
@@ -47,7 +47,7 @@ from tests.oracles.bitquad_oracle import bitquads
 from tests.oracles.polygonize_oracle import polygonize
 
 ROOT = repo_root()
-HERE = ROOT / "experiments/cuda_checker"  # RESULTS.md and results/, the records this eval writes
+RESULTS = ROOT / "results"  # checker.md and checker/, the records this eval writes
 PIXELS_PER_CALL = 1 << 26  # polygon batches are split at 2^26 pixels per call (8 MB of packed mask words)
 SRC = ("train_target", "eval_target", "probe_target", "model_output")  # polygons.npz src codes
 
@@ -305,7 +305,7 @@ def markdown(res) -> str:
 
 
 def write_section(md: str, build: str):
-    doc = HERE / "RESULTS.md"
+    doc = RESULTS / "checker.md"
     text = doc.read_text()
     begin, end = f"<!-- BEGIN eval:{build} -->", f"<!-- END eval:{build} -->"
     block = f"{begin}\n{md}\n{end}"
@@ -356,7 +356,7 @@ def main():
         res["speed_polygons"] = speed_polygons(a.quick)
         res["speed_masks"] = speed_masks(a.quick, lidc_masks)
     res["wall_s"] = time.time() - t0
-    out = HERE / "results"
+    out = RESULTS / "checker"
     out.mkdir(exist_ok=True)
     (out / f"{build}{'-quick' if a.quick else ''}.json").write_text(json.dumps(res, indent=1, default=float) + "\n")
     md = markdown(res)

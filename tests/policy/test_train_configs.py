@@ -169,7 +169,7 @@ def test_phase2_run_scripts_left_the_live_tree():
     plans = ("r0.yaml", "r1_l" "fm.yaml")
     assert not [n for n in ARCHIVED if (ROOT / "experiments/phase2" / n).exists()]
     assert not [n for n in plans if (ROOT / "experiments/phase2/configs" / n).exists()]
-    files = subprocess.run(["git", "ls-files", "src", "experiments", "tests", "specs"], cwd=ROOT,
+    files = subprocess.run(["git", "ls-files", "src", "tools", "ops", "tests", "specs"], cwd=ROOT,
                            capture_output=True, text=True, check=True).stdout.split()
     mods = [f"experiments.phase2.{n[:-3]}" for n in ARCHIVED]
     assert [f for f in files if (ROOT / f).is_file() and any(m in (ROOT / f).read_text(errors="ignore")

@@ -55,7 +55,7 @@ target_link_libraries(_gpucheck PRIVATE gpucheck)
 install(TARGETS _gpucheck LIBRARY DESTINATION objdel)
 
 # Editable installs also put the repo root on sys.path (what hatch's dev-mode-dirs did), so
-# `python -I -m experiments.<phase>.<script>` works. Never part of a real wheel.
+# `python -I -m tools.<folder>.<script>` and `python -I -m tests.<module>` work. Never part of a real wheel.
 if(SKBUILD_STATE STREQUAL "editable")
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/_objdel_repo.pth" "${CMAKE_CURRENT_SOURCE_DIR}\n")
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_objdel_repo.pth" DESTINATION .)

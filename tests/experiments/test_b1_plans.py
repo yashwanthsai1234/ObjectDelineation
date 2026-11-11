@@ -92,7 +92,7 @@ def test_rl_shifted_is_archived_with_its_readme_row():
     assert (ROOT / "archive/phase2_runs/configs" / name).exists()
     readme = (ROOT / "archive/phase2_runs/configs/README.md").read_text()
     assert "| Was | Replaced by | Commit |" in readme and f"| {name} | b1_rows.yaml |" in readme
-    files = subprocess.run(["git", "ls-files", "experiments", "src", "tests", "Makefile"], cwd=ROOT,
+    files = subprocess.run(["git", "ls-files", "tools", "ops", "src", "tests", "Makefile"], cwd=ROOT,
                            capture_output=True, text=True, check=True).stdout.split()
     assert [f for f in files if (ROOT / f).is_file() and name in (ROOT / f).read_text(errors="ignore")] == []
 

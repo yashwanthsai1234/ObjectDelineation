@@ -109,9 +109,9 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 # Tool scripts (several are frozen records of what produced the published numbers): lint lightly.
 "tools/**" = ["E501", "B023", "B905", "D"]
-"tests/goldens/make_*.py" = ["E501", "B023", "B905"]  # the golden writers moved from experiments/
+"tests/goldens/make_*.py" = ["E501", "B023", "B905"]  # the golden writers: lint lightly
 "tests/**" = ["D"]
-"src/objdel/cli/*/*.py" = ["E501", "D103"]  # the command modules moved from experiments/ keep their light lint
+"src/objdel/cli/*/*.py" = ["E501", "D103"]  # the command modules: lint lightly
 "src/objdel/rl/trl_adapter.py" = ["TID251"]   # the one TRL adapter (E5)
 "tests/rl/test_trl_adapter.py" = ["TID251"]
 "tests/rl/test_prepare_inputs.py" = ["TID251"]  # asserts TRL's shuffle_sequence_dict is never swapped (E5)

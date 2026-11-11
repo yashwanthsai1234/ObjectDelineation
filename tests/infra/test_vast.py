@@ -638,7 +638,7 @@ def test_launch_needs_a_picked_admissible_offer(E):
 
 def test_code_snapshot_ships_the_gpu_scoring_test(E):
     """E8: the chain runs tests/verify/test_gpu_scoring.py on the box; the install's import check names library modules
-    and the box stack only (no tests.* and no experiments.*)."""
+    and the box stack only (no tests.* and no tools.*)."""
     files = RM.code_files()
     assert "tests/verify/test_gpu_scoring.py" in files and "tests/oracles/reward_reference.py" in files
     assert "src/objdel/__init__.py" in files and not [f for f in files if f.startswith(("data/", ".venv/", "build/"))]
@@ -647,7 +647,7 @@ def test_code_snapshot_ships_the_gpu_scoring_test(E):
     assert "tests/oracles/reward_reference.py" in (E.home / "code_files.txt").read_text().split()
     (inst,) = [ln for ln in o.stdout.splitlines() if "uv pip install" in ln]
     assert "-I -c" in inst and RM.IMPORT_CHECK in inst
-    assert "tests." not in RM.IMPORT_CHECK and "experiments." not in RM.IMPORT_CHECK
+    assert "tests." not in RM.IMPORT_CHECK and "tools." not in RM.IMPORT_CHECK
 
 
 def test_rsync_never_sends_data_raw(E):
@@ -1325,15 +1325,14 @@ def test_pull_stamps_its_start_and_skips_full_checkpoints(E):
 def test_code_files_keep_paths_with_spaces_whole(tmp_path, monkeypatch):
     """V1 (2026-11-02): `git ls-files` output was split on any whitespace, so a tracked path with spaces (docs/research
     notes) became words that rsync --files-from could not stat, and sync_up failed before sending a byte."""
-    for p in ("tests/verify/test_gpu_scoring.py", "experiments/my dir/a b.py", "docs/notes with space/x.md",
+    for p in ("tests/verify/test_gpu_scoring.py", "tools/my dir/a b.py", "docs/notes with space/x.md",
               "pyproject.toml"):
         (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / p).write_text("x")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
-    assert sorted(RM.code_files()) == ["experiments/my dir/a b.py", "pyproject.toml",
-                                       "tests/verify/test_gpu_scoring.py"]
+    assert sorted(RM.code_files()) == ["pyproject.toml", "tests/verify/test_gpu_scoring.py", "tools/my dir/a b.py"]
 
 
 def _git_repo(root, files):
@@ -1344,11 +1343,12 @@ def _git_repo(root, files):
 
 
 def test_code_snapshot_drops_agent_and_archive_folders(tmp_path, monkeypatch):
-    """CLEAN1: .claude/ and archive/ never ship, even untracked; tracked-but-moved files and look-alikes are handled."""
+    """CLEAN1: .claude/ and archive/ never ship, even untracked; tracked-but-moved files and look-alikes are handled.
+    The checker's raw results stay home; its record results/checker.md ships (the checker eval on the box writes it)."""
     keep = ["tests/verify/test_gpu_scoring.py", "src/a.py", "src/archive_util.py", "tests/data_helpers.py",
-            "experiments/p/riga.py", "pyproject.toml"]
+            "tools/p/riga.py", "results/checker.md", "pyproject.toml"]
     drop = [".claude/x", ".claude/worktrees/w/a.py", "archive/x/y.py", "data/d.npz", "docs/a.md",
-            "experiments/p/lab/l.py", "experiments/p/results/r.json", "experiments/p/RIGA_x.CSV"]  # fmt: skip
+            "results/checker/cuda.json", "tools/p/RIGA_x.CSV"]  # fmt: skip
     _git_repo(tmp_path, keep + drop + ["src/gone.py"])
     subprocess.run(["git", "add", "src/gone.py"], cwd=tmp_path, check=True)
     (tmp_path / "src/gone.py").unlink()  # tracked, deleted on disk: rsync --files-from would abort on it
@@ -1384,7 +1384,7 @@ def test_bundle_imports_standalone(tmp_path):
         "[importlib.import_module(m) for m in mods]\n"
         "out = []\n"
         "for n, m in sorted(sys.modules.items()):\n"
-        "    if n.split('.')[0] in ('objdel', 'experiments', 'tests'):\n"
+        "    if n.split('.')[0] in ('objdel', 'tools', 'tests'):\n"
         "        out += [m.__file__] if getattr(m, '__file__', None) else list(m.__path__)\n"
         "print(json.dumps(out))\n"
     )

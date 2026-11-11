@@ -96,7 +96,7 @@ src/objdel/      the library, in layers; each imports only the layers below it
 specs/           run specs: what a GPU run does, checked before any rental
 tools/           off the train path: checker bench and eval, profiling, data and model checks, studies
 ops/             what runs on or rents a GPU box: the Vast scripts and watchdog, the Docker images, the box check
-experiments/     thin command-line scripts, by phase
+results/         the frozen records of the published numbers
 tests/           the test suite, oracles and goldens
 reference/       records the code reads: frozen view hashes, validation halves, training exclusions, headline numbers
 assets/          the images in this README

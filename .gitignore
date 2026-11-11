@@ -46,8 +46,6 @@ CLAUDE.md
 /ops/vast/code_files.txt
 /ops/vast/.lock
 /ops/vast/.pull-*.lock
-# The same state at its old place in a clone made before the move, until it is moved by hand to ops/vast
-/experiments/phase2/vast/
 
 # Local secrets (objdel.infra.secrets): never committed, never shipped
 /.secrets
@@ -77,13 +75,9 @@ CLAUDE.md
 /docs/research/records/**/PLAN*.md
 /docs/implementation2.0/*
 !/docs/implementation2.0/kernels/
-/experiments/*/PLAN.md
-/experiments/*/EXECUTION.md
-/experiments/*/RESEARCH.md
-/experiments/*/JUDGE_R*.md
-/experiments/*/V0_V1.md
-/experiments/*/impl/
-/experiments/phase2/perf/*.md
+# The old experiments/ tree holds nothing tracked: in a clone made before the move it keeps only local plans, notes
+# and the Vast state, until they are moved by hand (the state to ops/vast)
+/experiments/
 /.import_linter_cache/
 
 # Documentation stays on the owner's machine (owner, 2026-11-11): the docs site, its config and the tests that

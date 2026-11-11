@@ -33,7 +33,8 @@ def test_capture_script_pins_and_flags():
         assert text in s, text
     assert "--cuda-memory-usage" not in s and "--cuda-graph-trace=node" not in s
     assert "apt-get install" not in s  # one source per package: the pinned .deb files
-    hits = [p for p in (ROOT / "experiments").rglob("*") if p.is_file() and p.suffix in (".py", ".sh", ".yaml")
+    hits = [p for d in ("tools", "ops") for p in (ROOT / d).rglob("*") if p.is_file()
+            and p.suffix in (".py", ".sh", ".yaml")
             and "--profile-steps" in p.read_text(errors="ignore")]  # fmt: skip
     assert hits == []
 

@@ -196,7 +196,7 @@ def test_every_process_pool_spawns():
     import re
 
     root = Path(__file__).resolve().parents[2]
-    files = sorted([*(root / "src").rglob("*.py"), *(root / "experiments").rglob("*.py")])
+    files = sorted([*(root / "src").rglob("*.py"), *(root / "tools").rglob("*.py")])
     bad = [f"{p.relative_to(root)}:{n}" for p in files for n, line in enumerate(p.read_text().splitlines(), 1)
            if re.search(r"\bPool\(", line) and 'get_context("spawn").Pool(' not in line and "`" not in line]
     assert bad == []
