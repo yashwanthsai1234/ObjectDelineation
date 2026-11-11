@@ -542,6 +542,11 @@ def failures(gs: Sequence[Gate]) -> list[Gate]:
     return [g for g in gs if g.hard and not g.ok]
 
 
+def _train_sha(store_root) -> str:
+    """The train parquet's SHA-256 from the store manifest (store.load has verified the file against it)."""
+    return read_json(Path(store_root, "manifest.json"))["files"]["lidc/train.parquet"]["sha256"]
+
+
 def _json_or_empty(path) -> dict:
     return read_json(path) if Path(path).is_file() else {}
 
@@ -581,6 +586,6 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
         "tokens": tokens(rows, tokenizer, limit),
         "agreement": agreement(rows, wn["low_contrast"]),
         "frozen": frozen(eval_views, _json_or_empty(frozen_views or ref / "frozen_views.json")),
-        "z": dg17(read_json(z), ex, file_sha256(store_root / "lidc/train.parquet"))
+        "z": dg17(read_json(z), ex, _train_sha(store_root))
         if z.is_file() else [f"no contour-to-slice report {z}: run check_series_z"],
     }

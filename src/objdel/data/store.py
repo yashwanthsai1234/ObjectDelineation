@@ -31,6 +31,7 @@ References:
   https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetFile.html
 - COCO RLE, the alternative considered: https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/mask.py
 """
+import functools
 import io
 import json
 from collections.abc import Iterable, Iterator
@@ -167,9 +168,17 @@ def write(items: Iterable[Item], root) -> dict:
     return manifest
 
 
+@functools.cache
+def _verified_stat(path: str, size: int, mtime_ns: int, sha256: str, rows: int) -> None:
+    """Hash a file against its manifest entry once per process: a failure raises and is not cached."""
+    if file_sha256(path) != sha256 or pq.ParquetFile(path).metadata.num_rows != rows:
+        raise ValueError(f"{path}: SHA-256 or row count differs from the manifest")
+
+
 def _verified(root: Path, rel: str, entry: dict) -> None:
-    if file_sha256(root / rel) != entry["sha256"] or pq.ParquetFile(root / rel).metadata.num_rows != entry["rows"]:
-        raise ValueError(f"{rel}: SHA-256 or row count differs from the manifest")
+    path = (root / rel).resolve()
+    st = path.stat()
+    _verified_stat(str(path), st.st_size, st.st_mtime_ns, entry["sha256"], entry["rows"])
 
 
 def verify(root) -> dict:

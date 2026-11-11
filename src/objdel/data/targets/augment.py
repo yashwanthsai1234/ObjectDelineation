@@ -129,11 +129,13 @@ def draw(item: Item, rng, side: int | None = None, tries: int = 20) -> tuple[tup
     return None
 
 
-def neighbour_side(item: Item, side: int, rng) -> tuple[tuple[int, int], int] | None:
+def neighbour_side(item: Item, side: int, rng, box=None) -> tuple[tuple[int, int], int] | None:
     """The rescaled view (plan §5.0): S moved to a neighbouring LADDER divisor where an admissible shifted window
-    exists (one drawn uniformly when both do), with a uniform shift; None when neither neighbour is admissible."""
+    exists (one drawn uniformly when both do), with a uniform shift; None when neither neighbour is admissible.
+    `box`: the item's union_box, when the caller has it."""
+    box = box or union_box(item)
     for s in rng.permutation(_neighbours(side)).tolist():
-        if s <= FRAMES[item.dataset].max_side and (off := shift(item, s, rng)) is not None:
+        if s <= FRAMES[item.dataset].max_side and (off := shift(item, s, rng, box=box)) is not None:
             return off, s
     return None
 
