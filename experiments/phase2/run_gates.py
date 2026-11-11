@@ -48,7 +48,7 @@ def main(argv=None) -> int:
     b1.add_argument("--r5", type=Path, required=True)
     b1.add_argument("--a3", type=Path)
     b1.add_argument("--a3-edge", type=Path)
-    b1.add_argument("--identity", choices=("holds", "fails"), help="final_eval view_identity of A3 vs R5")
+    b1.add_argument("--identity", choices=("holds", "fails"), help="whether A3 and R5 gave identical answers on the shared views")
     b1.add_argument("--pre", type=Path, help="pre-rebuild view hash record (the R5 hash chain)")
     b1.add_argument("--partial-steps", type=int)
     b3.add_argument("--b3", type=Path, required=True)

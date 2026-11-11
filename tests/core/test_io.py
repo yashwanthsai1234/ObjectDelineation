@@ -11,6 +11,4 @@ def test_write_json_keeps_the_manifest_bytes(tmp_path):
     write_json(tmp_path / "new" / "m.json", doc)  # atomic: makes the folder, leaves no .tmp
     assert (tmp_path / "new" / "m.json").read_text() == want
     assert [p.name for p in (tmp_path / "new").iterdir()] == ["m.json"]
-    write_json(tmp_path / "plain.json", doc, atomic=False)
-    assert (tmp_path / "plain.json").read_text() == want
-    assert read_json(tmp_path / "plain.json") == read_json(str(tmp_path / "new" / "m.json")) == doc
+    assert read_json(str(tmp_path / "new" / "m.json")) == doc

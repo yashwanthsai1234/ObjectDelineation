@@ -46,7 +46,6 @@ TARGET = 0.66  # val IoU target: reported, not gated
 HELD_OUT = {"250": 0.634, "770": 0.659}  # rl-full-3ep held-out 128-item points at steps 250 and 770
 B1_RULES = ("iou", "far_miss", "centred", "did", "edge", "legal", "view_hash")
 STOP_RULES = ("centred", "edge", "legal", "view_hash")  # front 1.1 row 4
-B3_RULES = ("miss_share", "both_found_iou", "edge", "legal")
 BEST = "best of B1 and B3 on val-select by the Gate B3 rules (a tie goes to B1)"
 R5_FINAL = "R5, unless the 4B arm wins on val"
 
@@ -188,7 +187,8 @@ def evaluate_b1(b1: Run, b1_edge: Run, *, a3: Run | None, a3_edge: Run | None, r
                 frozen: dict, chain_ok: bool, identity_ok: bool | None, near_headroom_hi: float | None = None,
                 raise_planned: bool = True, partial_steps: int | None = None, r5_selection=(),
                 report_pairs: dict | None = None, noise_mean_sd: float | None = None) -> dict:
-    """Gate B1 on the runs (module docstring); identity_ok: final_eval.view_identity of A3 vs R5 (None: not run)."""
+    """Gate B1 on the runs (module docstring); identity_ok: whether A3 and R5 gave identical answers on the shared
+    views (None: not checked)."""
     base = a3 or r5
     issues = _issues(frozen, b1.view)
     p = _pair(b1, base, meta, issues)

@@ -1,5 +1,5 @@
 """Phase A tests that need a GPU box or the Mac's data (Implementation.md A.9.6). One marker line per test: `gpu`
-tests run on the box's CUDA build (d_gpu_test.yaml step 2) and skip on the CPU build; `data` tests read data/ and
+tests run on the box's CUDA build (make test on a GPU box) and skip on the CPU build; `data` tests read data/ and
 runs/ on the Mac."""
 
 import hashlib

@@ -64,7 +64,7 @@ class Item:
     image: uint8 (H, W, 3) RGB for RIGA, int16 (H, W) Hounsfield units for LIDC, or None when there is no model
     image (LIDC CT pixels not available locally; the BinRushed1 reconstruction). masks: structure name -> bool
     (k, H, W), one layer per rater, in the image frame. raters: k rater ids, in layer order. meta: JSON-serializable
-    provenance (see objdel.data.riga / .lidc builders).
+    provenance (see the objdel.data.lidc builders).
     """
 
     item_id: str
