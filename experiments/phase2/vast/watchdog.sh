@@ -14,7 +14,7 @@ for v in RUN_ID CONTAINER_ID WATCHDOG_CAP_S WATCHDOG_PULLED_OK; do
 done
 destroy() {
     echo "watchdog $(date -u +%FT%TZ): destroying instance ${CONTAINER_ID}: $1"
-    until curl -fsS -X DELETE -H "Authorization: Bearer ${CONTAINER_API_KEY}" "$API/instances/${CONTAINER_ID}/"; do
+    until curl -fsS --max-time 30 -X DELETE -H "Authorization: Bearer ${CONTAINER_API_KEY}" "$API/instances/${CONTAINER_ID}/"; do
         sleep 10
     done
     exit 0

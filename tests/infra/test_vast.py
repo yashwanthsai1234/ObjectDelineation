@@ -24,6 +24,7 @@ import pytest
 from objdel.core.io import git_sha
 from objdel.infra import bundle as B
 from objdel.infra import preflight as PF
+from objdel.infra.errors import InfraError
 from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import chain as CH
 from objdel.infra.vast import ledger as LG
@@ -261,6 +262,97 @@ def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
     monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", err))
     with pytest.raises(SystemExit, match="offer no longer available"):
         RM.vast("create", "instance", "1", "--raw")
+
+
+def test_vast_call_has_a_timeout_and_a_timeout_is_a_failed_try(monkeypatch):
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(kw["timeout"])
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setenv("VAST_API_KEY", "k")
+    monkeypatch.setenv("VAST_POLL_S", "0")
+    monkeypatch.setattr(RM.subprocess, "run", run)
+    with pytest.raises(SystemExit, match="no answer in 120 s"):
+        RM.vast("show", "instances", "--raw", tries=3)
+    assert seen == [RM.VAST_TIMEOUT_S] * 3
+
+
+def test_vast_retries_back_off_exponentially_with_jitter_and_a_cap(monkeypatch):
+    monkeypatch.setenv("VAST_POLL_S", "10")
+    monkeypatch.setattr(RM.random, "uniform", lambda lo, hi: 1.0)
+    assert [RM.backoff_s(i) for i in range(5)] == [10, 20, 40, 60, 60]
+    monkeypatch.setattr(RM.random, "uniform", lambda lo, hi: hi)
+    assert RM.backoff_s(0) == 15 and RM.backoff_s(9) == 90
+    sleeps, tries = [], []
+    monkeypatch.setenv("VAST_API_KEY", "k")
+    monkeypatch.setattr(RM.time, "sleep", sleeps.append)
+    monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: tries.append(1) or subprocess.CompletedProcess(
+        cmd, 1, "", "429"))
+    with pytest.raises(SystemExit, match="429"):
+        RM.vast("destroy", "instance", "1", tries=3)
+    assert len(tries) == 3 and sleeps == [15, 30]
+
+
+def test_destroy_tries_six_times_and_create_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(RM, "vast", lambda *a, **k: calls.append((a[:2], k.get("tries", 1))) or [])
+    monkeypatch.setattr(RM, "active", lambda *a: {})
+    monkeypatch.setattr(RM.time, "sleep", lambda s: None)
+    RM.destroy(5, "r", "destroy", {"id": 5})
+    assert (("destroy", "instance"), 6) in calls
+
+
+def test_ssh_and_rsync_carry_timeouts_and_sh_has_one(monkeypatch, tmp_path):
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    argv = RM.ssh({"port": 1})
+    assert {"ConnectTimeout=30", "ServerAliveInterval=30", "ServerAliveCountMax=4"} <= set(argv)
+    seen = []
+    monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: seen.append((cmd, kw["timeout"])) or SimpleNamespace(
+        returncode=0))
+    RM.rsync({"port": 1}, "a", "b")
+    assert {"--timeout=300", "--partial"} <= set(seen[0][0]) and seen[0][1] == RM.SH_TIMEOUT_S
+
+    def hang(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(RM.subprocess, "run", hang)
+    with pytest.raises(SystemExit, match="rsync timed out"):
+        RM.rsync({"port": 1}, "a", "b")
+
+
+def test_watchdog_curl_has_a_max_time():
+    assert "curl -fsS --max-time 30" in (VAST / "watchdog.sh").read_text()
+
+
+def test_the_lock_is_reentrant_exclusive_and_waits_a_bounded_time(tmp_path, monkeypatch):
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    with LG.locked(), LG.locked():  # reentrant: destroy() holds it and calls ledger()
+        LG.ledger(event="x")
+        probe = subprocess.run([sys.executable, "-c", (
+            "import fcntl, sys; f = open(sys.argv[1], 'a')\n"
+            "try: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\nexcept BlockingIOError: sys.exit(7)"),
+            str(tmp_path / ".lock")])
+        assert probe.returncode == 7  # another process cannot take it meanwhile
+        monkeypatch.setattr(LG, "LOCK_WAIT_S", 0)
+    assert subprocess.run([sys.executable, "-c", (
+        "import fcntl, sys; f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)"),
+        str(tmp_path / ".lock")]).returncode == 0  # released after the block
+    holder = open(tmp_path / ".lock", "a")
+    import fcntl
+
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    with pytest.raises(InfraError, match="held by another"), LG.locked():
+        pass
+    holder.close()
+
+
+def test_active_runs_json_is_written_atomically(tmp_path, monkeypatch):
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    LG.update_active(lambda runs: {**runs, "r1": {"instance": 1}})
+    LG.update_active(lambda runs: {**runs, "r2": {"instance": 2}})
+    assert sorted(LG.active()) == ["r1", "r2"] and not list(tmp_path.glob("*.tmp"))
 
 
 def test_real_offer_from_v0_is_admissible():

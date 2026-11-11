@@ -38,6 +38,7 @@ import os
 import re
 import shlex
 import signal
+import sys
 import time
 from pathlib import Path
 
@@ -45,6 +46,7 @@ from objdel.core.io import code_sha, git_sha, read_json
 from objdel.core.provenance import repo_root
 from objdel.core.spec import load_spec
 from objdel.infra import hf
+from objdel.infra.errors import InfraError
 from objdel.infra.vast.chain import chain, push_target, vision_refs
 from objdel.infra.vast.ledger import (
     ALARM,
@@ -57,7 +59,9 @@ from objdel.infra.vast.ledger import (
     home,
     ledger,
     load,
+    locked,
     spend,
+    update_active,
 )
 from objdel.infra.vast.offers import governance, is_raw, offer_cols, query, reasons
 from objdel.infra.vast.remote import (
@@ -162,7 +166,7 @@ def cmd_launch(a) -> None:
         out = vast("create", "instance", str(a.offer), "--image", image, "--login", login, "--disk", str(o["_disk"]),
                    "--onstart-cmd", onstart, *flags)  # fmt: skip
         run["instance"] = iid = int(out["new_contract"])
-        active({**active(), a.run_id: run})
+        update_active(lambda runs: {**runs, a.run_id: run})
         ledger(event="launch", run_id=a.run_id, instance_id=iid, offer_id=a.offer, gpu=o["_gpu"], **offer_cols(o),
                detail=f"cap_s={cap_s} image={image}" + " owner_approved=yes" * a.owner_approved)  # fmt: skip
         t0, timeout = time.time(), float(os.environ.get("VAST_LAUNCH_TIMEOUT_S", 900))
@@ -171,7 +175,7 @@ def cmd_launch(a) -> None:
             status, port = inst.get("actual_status"), ((inst.get("ports") or {}).get("22/tcp") or [{}])[0]
             if status == "running" and inst.get("public_ipaddr") and port.get("HostPort"):  # BK4-4: ports come late
                 run.update(ip=inst["public_ipaddr"], port=int(port["HostPort"]))
-                active({**active(), a.run_id: run})
+                update_active(lambda runs: {**runs, a.run_id: run})
                 print(f"running: ssh -p {run['port']} root@{run['ip']}")
                 return
             if status in BAD_STATUS or time.time() - t0 > timeout:
@@ -293,12 +297,13 @@ def cmd_pull(a) -> None:
     """rsync verifies every transferred file with a whole-file checksum; only then does PULLED_OK appear, carrying
     the pull's start time (PULLED_OK.next, touched before rsync), so a file written during the pull is newer."""
     for run_id in [a.run_id] if a.run_id else list(active()):
-        run, dst = get_run(run_id), Path(os.environ.get("VAST_RUNS", repo_root() / "runs")) / run_id
-        dst.mkdir(parents=True, exist_ok=True)
-        rd = f"/workspace/runs/{run_id}"
-        remote(run, f"touch {rd}/PULLED_OK.next")
-        rsync(run, f"root@{run['ip']}:{rd}/", f"{dst}/", opts=tuple(f"--exclude={x}" for x in PULL_EXCLUDE))
-        remote(run, f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK")
+        with locked():  # a teardown's pull or a second pull would race on PULLED_OK.next
+            run, dst = get_run(run_id), Path(os.environ.get("VAST_RUNS", repo_root() / "runs")) / run_id
+            dst.mkdir(parents=True, exist_ok=True)
+            rd = f"/workspace/runs/{run_id}"
+            remote(run, f"touch {rd}/PULLED_OK.next")
+            rsync(run, f"root@{run['ip']}:{rd}/", f"{dst}/", opts=tuple(f"--exclude={x}" for x in PULL_EXCLUDE))
+            remote(run, f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK")
 
 
 def cmd_push_hf(a) -> None:
@@ -392,9 +397,10 @@ def cmd_sweep_orphans(a) -> None:
     for k, r in active().items():  # BK4-7: gone without our destroy (watchdog G5, host loss): close at its last state
         if r["instance"] not in {i["id"] for i in listed} and now - r["started"] > GRACE_S:
             alert(f"run {k}: instance {r['instance']} no longer listed; closing it")
-            active({j: x for j, x in active().items() if j != k})
-            ledger(event="vanished", run_id=k, instance_id=r["instance"], detail="cost to min(now, deadline)",
-                   cost_usd=round(accrued(r, min(now, r["deadline"])), 4))  # fmt: skip
+            with locked():
+                update_active(lambda runs, k=k: {j: x for j, x in runs.items() if j != k})
+                ledger(event="vanished", run_id=k, instance_id=r["instance"], detail="cost to min(now, deadline)",
+                       cost_usd=round(accrued(r, min(now, r["deadline"])), 4))  # fmt: skip
     runs = {r["instance"]: (k, r) for k, r in active().items()}
     for inst in listed:
         k, r = runs.get(inst["id"], (inst.get("label") or "?", None))
@@ -440,7 +446,10 @@ def main(argv: list[str] | None = None) -> None:
         for name, kw in args.items():
             p.add_argument(name, **kw)
     a = ap.parse_args(argv)
-    globals()[f"cmd_{a.cmd}"](a)
+    try:
+        globals()[f"cmd_{a.cmd}"](a)
+    except InfraError as e:
+        sys.exit(f"vast: {e}")
 
 
 if __name__ == "__main__":

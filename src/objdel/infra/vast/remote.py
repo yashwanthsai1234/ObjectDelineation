@@ -5,6 +5,7 @@ import base64
 import gzip
 import json
 import os
+import random
 import re
 import shlex
 import subprocess
@@ -12,7 +13,7 @@ import sys
 import time
 
 from objdel.core.provenance import repo_root
-from objdel.infra.vast.ledger import accrued, active, home, ledger
+from objdel.infra.vast.ledger import accrued, active, home, ledger, locked, update_active
 
 
 def watchdog_script():
@@ -37,6 +38,12 @@ MARGIN_S = GRACE_S = PULL_S = 600
 # full checkpoints with optimizer state (R1: 29 GB; branches/ is model-only and is pulled) and the pull's own markers.
 PULL_EXCLUDE = ("rolling/", "decay/", "stable/", "PULLED_OK", "PULLED_OK.next")
 ONSTART_MAX = 4048  # Vast API spec
+VAST_TIMEOUT_S = 120  # one `vastai` call: its API answers in seconds; a longer wait is a hang
+# One ssh or rsync call. rsync also stops on 300 s without data (--timeout), so this only bounds a transfer that
+# trickles on: 1 h moves a 3 GB model-only branch at 0.85 MB/s, and teardown makes up to 3 pulls.
+SH_TIMEOUT_S = 3600
+SSH_OPTS = ("StrictHostKeyChecking=accept-new", "ConnectTimeout=30", "ServerAliveInterval=30", "ServerAliveCountMax=4")
+BACKOFF_CAP_S = 60
 
 
 def die(msg: str):
@@ -55,31 +62,51 @@ def secret(service: str) -> str:
     return value or die(f"secret {service} missing: not in {secrets.path()}, not in the keychain")
 
 
+def backoff_s(i: int) -> float:
+    """The wait after failed try i: VAST_POLL_S x 2**i, at most BACKOFF_CAP_S, times a random 0.5 to 1.5 (no two
+    clients retry in step)."""
+    return min(BACKOFF_CAP_S, float(os.environ.get("VAST_POLL_S", 10)) * 2**i) * random.uniform(0.5, 1.5)
+
+
 def vast(*args: str, tries: int = 1):
-    """Run `vastai ARGS` with the scoped API key, `tries` times; JSON for --raw, else the text; dies on failure."""
+    """Run `vastai ARGS` with the scoped API key, up to `tries` times (backoff_s between them); JSON for --raw, else
+    the text; dies on failure. A call over VAST_TIMEOUT_S is a failed try."""
     env = dict(os.environ, VAST_API_KEY=os.environ.get("VAST_API_KEY") or secret("objdel-vast-scoped"))
     for i in range(tries):
-        p = subprocess.run(["vastai", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
-        # an API error exits 0 with empty stdout (V0)
-        if not p.returncode and (p.stdout.strip() or "--raw" not in args):
-            return json.loads(p.stdout) if "--raw" in args else p.stdout
+        try:
+            p = subprocess.run(["vastai", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+                               timeout=VAST_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            why = f"no answer in {VAST_TIMEOUT_S} s"
+        else:
+            # an API error exits 0 with empty stdout (V0)
+            if not p.returncode and (p.stdout.strip() or "--raw" not in args):
+                return json.loads(p.stdout) if "--raw" in args else p.stdout
+            why = p.stderr.strip()[-300:]
         if i < tries - 1:
-            time.sleep(float(os.environ.get("VAST_POLL_S", 10)))
-    die(f"vastai {args[:2]} failed: {p.stderr.strip()[-300:]}")
+            time.sleep(backoff_s(i))
+    die(f"vastai {args[:2]} failed: {why}")
 
 
 def sh(cmd: list[str], stdin: str | None = None, what: str = "") -> None:
-    """ssh / rsync: printed under DRY_RUN=1 (stdin shown only as a label), otherwise run; a failure stops."""
+    """ssh / rsync: printed under DRY_RUN=1 (stdin shown only as a label), otherwise run for at most SH_TIMEOUT_S; a
+    failure or a timeout stops."""
     if os.environ.get("DRY_RUN") == "1":
         print("DRY_RUN:", shlex.join(cmd), f"<stdin: {what}>" if stdin is not None else "")
-    elif subprocess.run(cmd, input=stdin, text=True, stdin=None if stdin else subprocess.DEVNULL).returncode:
+        return
+    try:
+        p = subprocess.run(cmd, input=stdin, text=True, stdin=None if stdin else subprocess.DEVNULL,
+                           timeout=SH_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        die(f"{cmd[0]} timed out after {SH_TIMEOUT_S} s: {shlex.join(cmd[-2:])[:160]}")
+    if p.returncode:
         die(f"{cmd[0]} failed: {shlex.join(cmd[-2:])[:160]}")
 
 
 def ssh(run: dict) -> list[str]:
-    """The ssh argv prefix for a run's box (its port, our known_hosts under home())."""
-    known = f"UserKnownHostsFile={home() / 'known_hosts'}"
-    return ["ssh", "-p", str(run["port"]), "-o", "StrictHostKeyChecking=accept-new", "-o", known]
+    """The ssh argv prefix for a run's box (its port, our known_hosts under home(), connect and keep-alive limits)."""
+    opts = [*SSH_OPTS, f"UserKnownHostsFile={home() / 'known_hosts'}"]
+    return ["ssh", "-p", str(run["port"]), *(x for o in opts for x in ("-o", o))]
 
 
 def remote(run: dict, command: str, stdin: str | None = None, what: str = "") -> None:
@@ -88,26 +115,29 @@ def remote(run: dict, command: str, stdin: str | None = None, what: str = "") ->
 
 
 def rsync(run: dict, *paths: str, opts: tuple = ()) -> None:
-    """paths: sources, then the destination (V1: two sources once made the .sha256 the destination)."""
-    sh(["rsync", "-az", "--exclude=data/raw/", *opts, "-e", shlex.join(ssh(run)), *paths])
+    """paths: sources, then the destination (V1: two sources once made the .sha256 the destination). Stops after 300 s
+    without data; a partly sent file is kept for the next try."""
+    sh(["rsync", "-az", "--timeout=300", "--partial", "--exclude=data/raw/", *opts, "-e", shlex.join(ssh(run)), *paths])
 
 
 def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None:
     """Destroy (never stop, G4), verify the instance is no longer listed, record the session's cost (Vast's dph and
-    start when it lists the instance, else the run record's)."""
+    start when it lists the instance, else the run record's). Six tries for the destroy itself: a box left running
+    bills until the watchdog or the next sweep."""
     inst = inst or next((i for i in vast("show", "instances", "--raw", tries=3) if i["id"] == iid), {})
     run = next((r for r in active().values() if r["instance"] == iid), {})
     r = dict(run, **({"dph": inst.get("dph_total", 0), "started": inst["start_date"]} if "start_date" in inst else {}))
     cost = accrued(r, time.time()) if r else 0.0
-    vast("destroy", "instance", str(iid), "-y", tries=3)
+    vast("destroy", "instance", str(iid), "-y", tries=6)
     for _ in range(10):
         if all(i["id"] != iid for i in vast("show", "instances", "--raw", tries=3)):
             break
         time.sleep(float(os.environ.get("VAST_POLL_S", 10)))
     else:
         die(f"instance {iid} still listed after destroy: destroy it in the console NOW")
-    active({k: x for k, x in active().items() if x["instance"] != iid})
-    ledger(event=event, run_id=run_id, instance_id=iid, cost_usd=round(cost, 4))
+    with locked():
+        update_active(lambda runs: {k: x for k, x in runs.items() if x["instance"] != iid})
+        ledger(event=event, run_id=run_id, instance_id=iid, cost_usd=round(cost, 4))
 
 
 def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: int = 1800) -> str:

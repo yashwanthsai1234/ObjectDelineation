@@ -1,15 +1,18 @@
 """Vast state under VAST_HOME (default <repo>/experiments/phase2/vast): the ledger (G9), active runs, offers, the
 allowlist, and the money: what runs accrue, what was spent, what Vast billed (G10, BK4-18)."""
 
+import contextlib
 import csv
+import fcntl
 import json
 import os
 import re
 import time
 from pathlib import Path
 
-from objdel.core.io import read_json
+from objdel.core.io import read_json, write_atomic
 from objdel.core.provenance import repo_root
+from objdel.infra.errors import InfraError
 
 # G10, USD spent in Phase 2: $16.90 at plan start + the approved $3.00 + $1.50 (2026-11-09)
 ALARM, HARD_STOP = 10.0, 31.45
@@ -20,6 +23,8 @@ FIELDS = tuple(
     "ts event run_id instance_id offer_id gpu dph_total inet_up_cost inet_down_cost hosting_type host_id machine_id "
     "bundle cost_usd detail".split()
 )
+LOCK_WAIT_S = 900  # a pull holds the lock for its rsync; a sweep or launch waits this long, then stops
+_lock = {"fh": None, "depth": 0}
 SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 
 
@@ -30,6 +35,33 @@ def home() -> Path:
     return Path(os.environ.get("VAST_HOME", repo_root() / "experiments/phase2/vast"))
 
 
+@contextlib.contextmanager
+def locked():
+    """The one lock (fcntl.flock on <home>/.lock) of every read-modify-write of active_runs.json and ledger.csv, and of
+    a pull (so a pull and a teardown never share PULLED_OK). Reentrant in one process; waits at most LOCK_WAIT_S."""
+    if _lock["depth"] == 0:
+        fh = (home() / ".lock").open("a")
+        deadline = time.monotonic() + LOCK_WAIT_S
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    fh.close()
+                    raise InfraError(f"{fh.name} is held by another vast command for over {LOCK_WAIT_S} s") from None
+                time.sleep(0.2)
+        _lock["fh"] = fh
+    _lock["depth"] += 1
+    try:
+        yield
+    finally:
+        _lock["depth"] -= 1
+        if _lock["depth"] == 0:
+            _lock["fh"].close()  # closing releases the flock
+            _lock["fh"] = None
+
+
 def ledger(**row) -> None:
     """Append one row to ledger.csv (G9): known FIELDS only, never a secret-looking value."""
     if bad := set(row) - set(FIELDS):
@@ -37,10 +69,9 @@ def ledger(**row) -> None:
     if any(SECRET_RE.search(str(v)) for v in row.values()):
         raise ValueError("refusing to write a secret-looking value to the ledger")
     f = home() / "ledger.csv"
-    new = not f.exists()
-    with f.open("a", newline="") as fh:
+    with locked(), f.open("a", newline="") as fh:
         w = csv.DictWriter(fh, FIELDS)
-        if new:
+        if fh.tell() == 0:
             w.writeheader()
         w.writerow({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **row})
 
@@ -52,10 +83,17 @@ def load(name: str) -> dict:
 
 
 def active(update: dict | None = None) -> dict:
-    """The live runs (active_runs.json); with `update`, write that dict first."""
+    """The live runs (active_runs.json); with `update`, write that dict first (atomically). A caller that reads, then
+    writes, holds `locked()` around both."""
     if update is not None:
-        (home() / "active_runs.json").write_text(json.dumps(update, indent=1))
+        write_atomic(home() / "active_runs.json", json.dumps(update, indent=1))
     return load("active_runs.json")
+
+
+def update_active(change) -> None:
+    """active_runs.json := change(its current dict), read and written under the lock."""
+    with locked():
+        active(change(active()))
 
 
 def accrued(r: dict, t: float) -> float:
