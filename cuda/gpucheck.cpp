@@ -566,6 +566,13 @@ constexpr i32 kWin = 1024;  // columns per suffix-sum window = 32 words of 32 pi
 
 HD inline i32 words_per_row(i32 W) { return (W + 31) / 32; }
 
+// Word offsets of n bit-packed frames: frame k is words [ws[k], ws[k + 1]), H[k] rows of words_per_row(W[k]).
+std::vector<i64> word_starts(i64 n, const i32* W, const i32* H) {
+  std::vector<i64> ws(size_t(n + 1), 0);
+  for (i64 k = 0; k < n; ++k) ws[size_t(k + 1)] = ws[size_t(k)] + i64(H[k]) * words_per_row(W[k]);
+  return ws;
+}
+
 // The centre line of one pixel row in polycore's doubled, grid-scaled coordinates.
 template <class T>
 struct RowLine {
@@ -1902,6 +1909,19 @@ void pack_plane(const u8* px, i32 H, i32 W, u32* out) {  // out zeroed
       if (px[i64(y) * W + x]) out[y * wpr + x / 32] |= u32(1) << (x % 32);
 }
 
+// The masks bit-packed into lane L's checker arena (mask k at word word_start[k]): one upload, one wait.
+const u32* upload_masks(Lane& L, const Masks& in, const std::vector<i64>& word_start) {
+  const size_t bytes = sizeof(u32) * size_t(word_start.back());
+  u8* h = L.in.get(bytes);
+  std::fill_n(h, bytes, u8(0));
+  for (i64 k = 0; k < in.n; ++k)
+    pack_plane(in.bits + in.start[k], in.H[k], in.W[k], ptr<u32>(h, 0) + word_start[size_t(k)]);
+  u8* d = L.dev.get(bytes);
+  to_device(d, h, bytes, L.stream);
+  wait(L.stream);
+  return ptr<u32>(d, 0);
+}
+
 std::vector<TableView> views(const i64* handles, i64 n, const i32* W, const i32* H) {  // called with the mutex held
   const Registry& r = registry();
   std::vector<TableView> v(static_cast<size_t>(n));
@@ -3111,8 +3131,7 @@ PolygonResult check_polygons(const Polygons& in, Times* times) {
   GC_RANGE("check_polygons");
   const i64 n = in.n;
   PolygonResult out;
-  out.word_start.assign(n + 1, 0);
-  for (i64 k = 0; k < n; ++k) out.word_start[k + 1] = out.word_start[k] + i64(in.H[k]) * words_per_row(in.W[k]);
+  out.word_start = word_starts(n, in.W, in.H);
   if (n == 0) return out;
   out.evenodd.resize(size_t(out.word_start[n]));
   out.defects.resize(size_t(n * kNumDefects));
@@ -3459,8 +3478,7 @@ Scores score_polygons(const Polygons& in, const i64* tables, Times* times) {
   const i64 n = in.n;
   Scores out;
   out.sig_start = {0};
-  std::vector<i64> word_start(size_t(n + 1), 0);
-  for (i64 k = 0; k < n; ++k) word_start[size_t(k + 1)] = word_start[size_t(k)] + i64(in.H[k]) * words_per_row(in.W[k]);
+  const std::vector<i64> word_start = word_starts(n, in.W, in.H);
   if (n == 0) return out;
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
@@ -3486,8 +3504,7 @@ Scores score_masks(const Masks& in, const i64* tables, Times* times) {
   const i64 n = in.n;
   Scores out;
   out.sig_start = {0};
-  std::vector<i64> word_start(size_t(n + 1), 0);
-  for (i64 k = 0; k < n; ++k) word_start[size_t(k + 1)] = word_start[size_t(k)] + i64(in.H[k]) * words_per_row(in.W[k]);
+  const std::vector<i64> word_start = word_starts(n, in.W, in.H);
   if (n == 0) return out;
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
@@ -3497,16 +3514,9 @@ Scores score_masks(const Masks& in, const i64* tables, Times* times) {
   Timer t{times, {}};
   e.start("score_masks", n);
   Lane& L = e.lanes[0];
-  const size_t bytes = sizeof(u32) * size_t(word_start[size_t(n)]);
-  u8* h = L.in.get(bytes);
-  std::fill_n(h, bytes, u8(0));
-  for (i64 k = 0; k < n; ++k)
-    pack_plane(in.bits + in.start[k], in.H[k], in.W[k], ptr<u32>(h, 0) + word_start[size_t(k)]);
-  u8* d = L.dev.get(bytes);
-  to_device(d, h, bytes, L.stream);
-  wait(L.stream);
+  const u32* words = upload_masks(L, in, word_start);
   out.defects.assign(size_t(n * kNumDefects), 0);
-  score_words(L, tv, ptr<u32>(d, 0), word_start, out, t);
+  score_words(L, tv, words, word_start, out, t);
   if (times) t.read();
   return out;
 }
@@ -3518,9 +3528,8 @@ Certified certify_polygons(const Polygons& in, const Masks& ref, const i32* ref_
   Certified out;
   out.sig_start = out.ref_sig_start = out.pair_sig_start = out.pair_ref_sig_start = {0};
   if (n == 0) return out;
-  std::vector<i64> word_start(size_t(n + 1), 0), rws(size_t(ref.n + 1), 0), pws(size_t(2 * P + 1), 0);
-  for (i64 k = 0; k < n; ++k) word_start[size_t(k + 1)] = word_start[size_t(k)] + i64(in.H[k]) * words_per_row(in.W[k]);
-  for (i64 j = 0; j < ref.n; ++j) rws[size_t(j + 1)] = rws[size_t(j)] + i64(ref.H[j]) * words_per_row(ref.W[j]);
+  const std::vector<i64> word_start = word_starts(n, in.W, in.H), rws = word_starts(ref.n, ref.W, ref.H);
+  std::vector<i64> pws(size_t(2 * P + 1), 0);
   std::vector<i32> qW(size_t(2 * P)), qH(size_t(2 * P));  // pair planes: P candidate pairs, then P reference pairs
   for (i64 q = 0; q < 2 * P; ++q) {
     const i64 a = q < P ? pr.shapes[2 * q] : pr.refs[2 * (q - P)];
@@ -3637,11 +3646,9 @@ EvalCounts eval_sets(const Polygons& in, const EvalSets& es) {
   const i32 K = es.K, T = es.T;
   EvalCounts out;
   if (n == 0) return out;
-  std::vector<i64> ws(size_t(in.n + 1), 0), shape_tables(static_cast<size_t>(in.n)), vws(size_t(n + 1), 0);
-  for (i64 q = 0; q < in.n; ++q) {
-    ws[size_t(q + 1)] = ws[size_t(q)] + i64(in.H[q]) * words_per_row(in.W[q]);
-    shape_tables[size_t(q)] = es.tables[q / K];
-  }
+  const std::vector<i64> ws = word_starts(in.n, in.W, in.H);
+  std::vector<i64> shape_tables(static_cast<size_t>(in.n)), vws(size_t(n + 1), 0);
+  for (i64 q = 0; q < in.n; ++q) shape_tables[size_t(q)] = es.tables[q / K];
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
   Drain drain{e};
@@ -3755,8 +3762,7 @@ Topology topology(const Masks& in, const i64* min_area, bool want_masks) {
   out.comp_start = out.hole_start = out.sig_start = {0};
   if (want_masks) out.masks.assign(size_t(in.start[n]), 0);
   if (n == 0) return out;
-  std::vector<i64> word_start(size_t(n + 1), 0);
-  for (i64 k = 0; k < n; ++k) word_start[size_t(k + 1)] = word_start[size_t(k)] + i64(in.H[k]) * words_per_row(in.W[k]);
+  const std::vector<i64> word_start = word_starts(n, in.W, in.H);
   Engine& e = engine();
   std::lock_guard<std::mutex> lock(e.mu);
   clear_error();
@@ -3765,14 +3771,7 @@ Topology topology(const Masks& in, const i64* min_area, bool want_masks) {
   e.start("topology", in.n);
   Lane& L = e.lanes[0];
   const Stream st = L.stream;
-  const size_t bytes = sizeof(u32) * size_t(word_start[size_t(n)]);
-  u8* h = L.in.get(bytes);
-  std::fill_n(h, bytes, u8(0));
-  for (i64 k = 0; k < n; ++k)
-    pack_plane(in.bits + in.start[k], in.H[k], in.W[k], ptr<u32>(h, 0) + word_start[size_t(k)]);
-  const u32* words = ptr<u32>(L.dev.get(bytes), 0);
-  to_device(L.dev.p, h, bytes, st);
-  wait(st);
+  const u32* words = upload_masks(L, in, word_start);
   std::vector<Plane> pl;
   for (i64 k = 0; k < n; ++k) pl.push_back(Plane{word_start[size_t(k)], min_area[k], 0, 0, in.W[k], in.H[k]});
   std::vector<i64> crow_start;
