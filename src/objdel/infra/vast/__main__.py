@@ -1,6 +1,6 @@
 """Vast AI operations: the CLI, `python -I -m objdel.infra.vast <cmd>`. Every
 decision and every command is built here or in objdel.infra.vast (offers, ledger, remote, chain); the `*.sh` files in
-experiments/phase2/vast/ are symlinks to the one shim `vast.sh` (the link's name is the command), and `watchdog.sh`
+ops/vast/ are symlinks to the one shim `vast.sh` (the link's name is the command), and `watchdog.sh`
 there is the only logic that runs on the box.
 
     offers.sh GPU [--disk GB] [--pick OFFER_ID|top]            search (US/CA hosts), top 5; --pick saves it
@@ -24,7 +24,7 @@ Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H 
 teardown saves the raw charges and records what Vast billed beside that estimate (`billed`).
 
 Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; default:
-<repo>/experiments/phase2/vast), VAST_RUNS (pull target, default <repo>/runs), DRY_RUN=1 (ssh, rsync and `vastai
+<repo>/ops/vast), VAST_RUNS (pull target, default <repo>/runs), DRY_RUN=1 (ssh, rsync and `vastai
 create` / `destroy` are printed, never run; `vastai` calls that only read still run, so tests put a fake one on
 PATH), VAST_POLL_S, VAST_LAUNCH_TIMEOUT_S. Secrets live in the macOS keychain and are read with `security`:
 objdel-vast-scoped (scoped API key, passed to vastai as VAST_API_KEY), objdel-ghcr-read (read-only GHCR PAT, Vast
@@ -217,7 +217,7 @@ def cmd_sync_up(a) -> None:
     if a.code_only:  # a code fix mid-session: the bundle is already on the box
         return ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], detail="code only")
     # GPU check before the bundle (a busy, power-capped card was once found only after a 12 min upload)
-    check = f"bash experiments/phase2/docker/image_check.sh /workspace/runs/{a.run_id}/image_check.json"
+    check = f"bash ops/docker/image_check.sh /workspace/runs/{a.run_id}/image_check.json"
     remote(run, f"cd /workspace/src && {check}")
     rsync(run, *map(str, files), f"{host}/workspace/data/")
     remote(run, f"cd /workspace/data && sha256sum -c {name}.sha256 && mkdir -p {a.bundle} && tar -xf {name} -C "

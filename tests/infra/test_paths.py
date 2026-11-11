@@ -1,4 +1,4 @@
-"""U34 / E-G15 (E8.1): one repo root for every moved file; the Vast state stays in experiments/phase2/vast."""
+"""U34 / E-G15 (E8.1): one repo root for every moved file; the Vast state stays in ops/vast."""
 
 
 
@@ -25,10 +25,10 @@ def test_secrets_default_to_the_repo_root(monkeypatch):
     assert secrets.path() == repo_root() / ".secrets"
 
 
-def test_vast_state_stays_in_experiments_phase2_vast(monkeypatch, tmp_path):
+def test_vast_state_stays_in_ops_vast(monkeypatch, tmp_path):
     """After a plain move home() would be the package folder: spend() would read $0 and active() {} (unsafe)."""
     monkeypatch.delenv("VAST_HOME", raising=False)
-    assert ledger.home() == repo_root() / "experiments/phase2/vast"
+    assert ledger.home() == repo_root() / "ops/vast"
     assert "image" in ledger.load(".vast-allowlist")
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     assert ledger.home() == tmp_path
@@ -37,5 +37,5 @@ def test_vast_state_stays_in_experiments_phase2_vast(monkeypatch, tmp_path):
 def test_onstart_reads_the_watchdog_from_the_code_tree_not_the_vast_home(monkeypatch, tmp_path):
     """d050dcc: VAST_HOME holds state only; an empty VAST_HOME still launches the code tree's watchdog.sh."""
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
-    assert remote.watchdog_script() == repo_root() / "experiments/phase2/vast/watchdog.sh"
+    assert remote.watchdog_script() == repo_root() / "ops/vast/watchdog.sh"
     assert "watchdog.sh" in remote.onstart_cmd("r1", 600)

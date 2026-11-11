@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The CUDA checker's GPU run, one command on a CUDA box with the Phase 2 image (repo rsynced, data/checker_eval only):
-#   bash experiments/cuda_checker/run_box.sh [--build-only]
+#   bash ops/box/run_box.sh [--build-only]
 # 1. refuse to run if any RIGA data is on the host (its licence forbids rented hosts);
 # 2. add the CUDA 13.0 compiler and NVTX headers (the image has none; its torch is 2.13.0+cu130,
-#    experiments/phase2/docker/locks/vllm_native.txt), compute-sanitizer 13.4.92 (the toolkit extra's 13.0.85 wheel
+#    ops/docker/locks/vllm_native.txt), compute-sanitizer 13.4.92 (the toolkit extra's 13.0.85 wheel
 #    lacks its TreeLauncher executables: K1, 2026-11-06) and pytest/hypothesis to $PY's venv;
 # 3. make cuda: objdel._gpucheck rebuilt with nvcc (CUDA_ARCHS, default the box's GPU);
 # 4. the GPU test group (with the arena-reuse and two-stream tests), the equivalence suite, the packed-mask and
@@ -90,7 +90,7 @@ if [ "${1:-}" = "--gpu-check" ]; then
     step '"$PY" -I -c "import objdel._gpucheck as g; assert g.build() == '"'cuda'"'"'
     step 'miss=; for f in $R_D2_PAYLOAD; do [ -e "$OBJDEL_DATA_ROOT/$f" ] || miss="$miss $OBJDEL_DATA_ROOT/$f"; done; [ -f tests/goldens/d_gpu02.json ] || miss="$miss tests/goldens/d_gpu02.json"; [ -z "$miss" ] || { echo "box inputs missing:$miss" >&2; exit 1; }'
     step '"$PY" -I -m pytest -q -p no:cacheprovider $D_GPU_TESTS -m "$SEL" --junitxml "$OUT/gpu.xml" || rc=1'
-    step '"$PY" -I -m experiments.cuda_checker.junit_skips "$OUT/gpu.xml" || rc=1'
+    step '"$PY" -I ops/box/junit_skips.py "$OUT/gpu.xml" || rc=1'
     for t in $SAN_TOOLS; do
         step 's=$SECONDS; e=0; PYTORCH_NO_CUDA_MEMORY_CACHING=1 timeout 300 "$CUDA_HOME/bin/compute-sanitizer" --tool '"$t"' --error-exitcode 99 --print-limit 20 "$PY" -I -m pytest -q -p no:cacheprovider $D_GPU_TESTS -m "gpu and sanitizer" || e=$?; echo "{\"tool\": \"'"$t"'\", \"exit\": $e, \"seconds\": $((SECONDS - s))}" >> "$OUT/sanitize.jsonl"; [ $e = 0 ] || rc=1'
     done

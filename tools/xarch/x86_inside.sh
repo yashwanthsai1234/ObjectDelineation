@@ -5,7 +5,7 @@
 # Steps, each timed and logged to /io/<step>.log, status to /io/status.tsv:
 #   build    editable install from source with no build isolation (as `make setup` / CI): scikit-build-core 1.1.1 +
 #            nanobind 3.1.0 drive CMake Release (-O3 -DNDEBUG), g++ 14, x86-64 baseline ISA (no -march)
-#   lint     ruff check src tests tools (the Python of make lint)
+#   lint     ruff check src tests tools ops (the Python of make lint)
 #   fast     pytest -q -m "not slow and not data" (data/ is absent, so data tests would skip anyway)
 #   hashes   tools.xarch.xarch_hashes -> /io/hashes-x86.json; hashes2: a second run (x86 run-to-run);
 #            noipp: the same with OpenCV's Intel IPP HAL off (diagnostic, impl/M9_x86.md)
@@ -49,7 +49,7 @@ grep -h -E '^ *(FLAGS|DEFINES) *=' build/*/build.ninja 2>/dev/null | sort -u > "
     || grep -rh -E 'CXX_FLAGS|CXX_DEFINES' build/*/CMakeFiles/gpucheck.dir/flags.make > "$IO/compile_flags.txt" 2>/dev/null
 grep -h -E '^CMAKE_(BUILD_TYPE|CXX_COMPILER|CXX_FLAGS_RELEASE|CXX_FLAGS):' build/*/CMakeCache.txt >> "$IO/compile_flags.txt"
 
-step lint python -m ruff check src tests tools
+step lint python -m ruff check src tests tools ops
 step fast python -m pytest -q -m "not slow and not data" -p no:cacheprovider --durations=15 \
     --junitxml="$IO/junit-fast.xml"
 step hashes python -I -m tools.xarch.xarch_hashes --out "$IO/hashes-x86.json"

@@ -1,5 +1,5 @@
 """Fail the GPU check on any skipped test (Implementation.md D8): on the box a skip hides a missing input or a CPU
-build, so `run_box.sh --gpu-check` runs `python -I -m experiments.cuda_checker.junit_skips <gpu.xml>` after pytest.
+build, so `run_box.sh --gpu-check` runs `python -I ops/box/junit_skips.py <gpu.xml>` after pytest.
 Prints each skipped test with its reason; exit 1 when there is one."""
 import argparse
 import sys
@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 
 
 def skipped(path: str) -> list[str]:
+    """Each skipped test case of a JUnit XML file, as `<class>::<name>: <reason>`."""
     return [f"{case.get('classname')}::{case.get('name')}: {s.get('message')}"
             for case in ET.parse(path).getroot().iter("testcase") for s in case.findall("skipped")]
 

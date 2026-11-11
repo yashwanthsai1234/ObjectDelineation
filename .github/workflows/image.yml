@@ -1,6 +1,6 @@
 name: image
 
-# Builds and pushes one Vast image (experiments/phase2/docker; input `which`: phase2 or vllm_native) on a native x86-64
+# Builds and pushes one Vast image (ops/docker; input `which`: phase2 or vllm_native) on a native x86-64
 # runner. The Mac's emulated build needs ~35 GB of scratch disk the Mac cannot spare (V0, 2026-11-01). Manual only: each run is a choice.
 # Inputs come from the repo: Dockerfile.phase2 / Dockerfile.vllm_native and the committed locks (build_images.sh --lock, on
 # the Mac).
@@ -45,7 +45,7 @@ jobs:
       - id: build
         env:
           WHICH: ${{ inputs.which }}
-        run: experiments/phase2/docker/build_images.sh --push "$WHICH"
+        run: ops/docker/build_images.sh --push "$WHICH"
       - name: Image reference for .vast-allowlist
         env:
           TAG: ${{ steps.build.outputs.tag }}

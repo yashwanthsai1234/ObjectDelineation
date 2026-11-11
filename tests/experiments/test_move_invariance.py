@@ -251,14 +251,17 @@ ROWS_780 = (("34213dceb068128f1a1abf9c67aa65dd59bc1220", "d2c8edb8e15534363ebbce
             ("472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4",
              "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9"))
 # {old: new} of the modules and box scripts that left experiments/ (owner decision D4, 2026-11-11: the command modules
-# into objdel.cli, run as `python -I -m objdel.cli.<group>.<command>`; the tool scripts into tools/)
+# into objdel.cli, run as `python -I -m objdel.cli.<group>.<command>`; the tool scripts into tools/, the box scripts
+# into ops/)
 MODULE_MOVES = {"experiments.phase2.train_rl": "objdel.cli.train.rl",
                 "experiments.phase2.train_sft": "objdel.cli.train.sft",
                 "experiments.phase2.select_ckpt": "objdel.cli.train.select",
                 "experiments.phase2.g_probe": "objdel.cli.train.probe",
                 "experiments.phase2.final_eval": "objdel.cli.eval.run",
                 "experiments.phase2.c_speed_check": "tools.studies.c_speed_check",
-                "experiments/phase2/docker/nsys_capture.sh": "tools/profiling/nsys_capture.sh"}
+                "experiments/phase2/docker/nsys_capture.sh": "tools/profiling/nsys_capture.sh",
+                "experiments/phase2/docker/env_check.sh": "ops/docker/env_check.sh",
+                "experiments/cuda_checker/run_box.sh": "ops/box/run_box.sh"}
 
 
 def later_edits(argvs: list[list[str]]) -> list[list[str]]:

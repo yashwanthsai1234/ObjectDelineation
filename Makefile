@@ -43,8 +43,8 @@ preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before rentin
 smoke:            ## the CPU smoke test: train -> select on a tiny model (preflight's last check)
 	$(PY) -m pytest -q -p no:cacheprovider tests/experiments/test_p2_scripts.py::test_cpu_smoke_train_then_select
 
-lint:             ## lint library, tests and tools, then the import-layer contracts
-	$(PY) -m ruff check src tests tools
+lint:             ## lint library, tests, tools and ops, then the import-layer contracts
+	$(PY) -m ruff check src tests tools ops
 	.venv/bin/lint-imports --no-logo
 
 dead:             ## list unused code (vulture, [tool.vulture] in pyproject.toml)
@@ -54,7 +54,7 @@ sweep:            ## final sweep: stale names, orphans, doc links, docstrings, d
 	$(PY) -I -m tools.sweep
 
 fmt:              ## auto-fix lint issues
-	$(PY) -m ruff check src tests tools --fix
+	$(PY) -m ruff check src tests tools ops --fix
 
 wheels:           ## build manylinux x86-64 + aarch64 wheels in Docker with cibuildwheel (build/wheelhouse)
 	uvx cibuildwheel==4.3.1 --platform linux --output-dir build/wheelhouse
@@ -66,7 +66,7 @@ cuda:             ## rebuild objdel._gpucheck with nvcc (CUDA box; nvcc = $CUDAC
 	@mkdir -p build && touch $(EXT_STAMP)
 
 gpu-check:        ## the GPU check chain on a CUDA box (run_box.sh --gpu-check); DRY=1 prints it and collects its tests
-	PY=$(PY) bash experiments/cuda_checker/run_box.sh --gpu-check $(if $(DRY),--dry)
+	PY=$(PY) bash ops/box/run_box.sh --gpu-check $(if $(DRY),--dry)
 
 .PHONY: old-engine-tar
 old-engine-tar:   ## the pre-D2 engine (owner's tag pre-d2) as old_engine.tar + .sha256 in the repo root, for D-G7 on the box

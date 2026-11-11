@@ -15,7 +15,7 @@
 # pins change; record the pushed digest in .vast-allowlist ("image": "<repo>:p2-<hash>@sha256:..."). On the Mac the
 # builder is capped at 2 CPUs / 4 GB (B5); a CI runner (CI=true) gives it the whole machine.
 set -euo pipefail
-HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/../../.." && pwd); CTX=$ROOT/build/images/ctx; LOCKS=$HERE/locks
+HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/../.." && pwd); CTX=$ROOT/build/images/ctx; LOCKS=$HERE/locks
 USAGE="usage: build_images.sh --lock | [--check] [--push] [--prune] phase2|vllm_native|sampler ..."
 LOCK=0; CHECK=0; PUSH=0; PRUNE=0; WHICH=()
 for a in "$@"; do
@@ -30,7 +30,7 @@ mkdir -p "$CTX"
 if [ "$LOCK" = 1 ]; then
     cd "$ROOT"  # relative paths, so the locks' "# via" notes name no Mac directories
     compile() { uv pip compile "$@" --python-platform x86_64-manylinux_2_40 --python-version 3.12 --no-header --quiet; }
-    mkdir -p "$LOCKS"; c=build/images/ctx; l=experiments/phase2/docker/locks
+    mkdir -p "$LOCKS"; c=build/images/ctx; l=ops/docker/locks
     uv pip freeze --python .venv/bin/python | grep -v -E '^(-e |objdel)' > "$c/mac.txt"
     .venv/bin/python -I -c "import tomllib; print(*tomllib.load(open('pyproject.toml', 'rb'))['build-system']['requires'], sep='\n')" > "$c/build.in"
     compile pyproject.toml --extra train "$c/build.in" -c "$c/mac.txt" -o "$l/train.txt"

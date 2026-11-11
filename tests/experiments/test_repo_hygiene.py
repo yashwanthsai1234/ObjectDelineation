@@ -178,7 +178,7 @@ def test_fixtures_moved_and_digest_inline():
     assert (fx / "vast_snapshot.json").is_file() and list(fx.glob("topo_probe_v3e_seed*.json"))
     for f in fx.glob("*.json"):
         json.loads(f.read_text(), parse_constant=lambda c, f=f: pytest.fail(f"{f.name}: {c}"))
-    digest = re.search(r"sha256:[0-9a-f]{64}", (ROOT / "experiments/phase2/docker/Dockerfile.phase2").read_text())[0]
+    digest = re.search(r"sha256:[0-9a-f]{64}", (ROOT / "ops/docker/Dockerfile.phase2").read_text())[0]
     assert digest in (ROOT / "tests/infra/test_vast.py").read_text()
 
 

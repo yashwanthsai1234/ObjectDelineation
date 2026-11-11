@@ -38,19 +38,21 @@ CLAUDE.md
 /docs/implementation2.0/impl-log/
 /runs/
 
-# Vast session state (experiments/phase2/vast): local records, never shipped to a host by sync_up
-/experiments/phase2/vast/ledger.csv
-/experiments/phase2/vast/offers/
-/experiments/phase2/vast/invoices/
-/experiments/phase2/vast/active_runs.json
-/experiments/phase2/vast/code_files.txt
-/experiments/phase2/vast/.lock
-/experiments/phase2/vast/.pull-*.lock
+# Vast session state (ops/vast): local records, never shipped to a host by sync_up
+/ops/vast/ledger.csv
+/ops/vast/offers/
+/ops/vast/invoices/
+/ops/vast/active_runs.json
+/ops/vast/code_files.txt
+/ops/vast/.lock
+/ops/vast/.pull-*.lock
+# The same state at its old place in a clone made before the move, until it is moved by hand to ops/vast
+/experiments/phase2/vast/
 
 # Local secrets (objdel.infra.secrets): never committed, never shipped
 /.secrets
-/experiments/phase2/vast/known_hosts
-/experiments/phase2/vast/*.launchd.log
+/ops/vast/known_hosts
+/ops/vast/*.launchd.log
 
 # RIGA-derived results stay local: no permission to share RIGA data (repo public, owner 2026-11-06)
 /docs/research/records/phase0/results/medsam_riga.csv

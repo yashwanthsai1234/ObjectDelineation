@@ -33,8 +33,8 @@ from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
 
 ROOT = Path(__file__).resolve().parents[2]
-VAST = ROOT / "experiments" / "phase2" / "vast"
-DOCKER = ROOT / "experiments" / "phase2" / "docker"
+VAST = ROOT / "ops" / "vast"
+DOCKER = ROOT / "ops" / "docker"
 SNAP = ROOT / "tests" / "fixtures" / "vast_snapshot.json"
 IDENTITY = "AGE-SECRET-KEY-1FAKEIDENTITYFORTESTSQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
 API_KEY = "fakevastscopedkey0123456789abcdef"
@@ -945,6 +945,13 @@ def test_script_help_and_strict_mode(E, script):
     assert "usage" in E.sh(script, "--help").stdout.lower()
 
 
+def test_shim_runs_the_repo_venv_two_levels_up():
+    """vast.sh finds the repo at a fixed depth (ops/vast/ -> the root): without PYTHON it runs the repo's .venv."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("VAST", "DRY_RUN", "PYTHON"))}
+    p = subprocess.run(["bash", str(VAST / "offers.sh"), "--help"], env=env, capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0 and "usage" in p.stdout.lower(), p.stderr
+
+
 def test_shell_syntax():
     files = [*VAST.glob("*.sh"), *DOCKER.glob("*.sh")]
     assert len(files) >= 10
@@ -955,9 +962,9 @@ def test_shell_syntax():
 
 def test_launchd_plists():
     for name, interval in [("pull", 1200), ("sweep", 3600)]:
-        plist = VAST / f"com.objdel.vast.{name}.plist"
+        plist = VAST / "launchd" / f"com.objdel.vast.{name}.plist"
         assert f"<integer>{interval}</integer>" in plist.read_text()
-        assert "__REPO__/experiments/phase2/vast/" in plist.read_text()
+        assert "__REPO__/ops/vast/" in plist.read_text()
         assert not shutil.which("plutil") or subprocess.run(["plutil", "-lint", str(plist)]).returncode == 0
 
 
@@ -1209,7 +1216,7 @@ def test_code_snapshot_ships_no_local_vast_state():
     """Audit: `git ls-files -co --exclude-standard` also lists untracked files, so the ledger, offers, invoices and run
     records would reach the rented host. They are ignored; the allowlist (image pin, no secret) stays tracked."""
     state = ("ledger.csv", "offers/", "invoices/", "active_runs.json", "code_files.txt", "known_hosts", ".lock")
-    assert not {f for f in RM.code_files() for s in state if f.startswith(f"experiments/phase2/vast/{s}")}
+    assert not {f for f in RM.code_files() for s in state if f.startswith(f"ops/vast/{s}")}
 
 
 def test_launch_idle_minutes_reach_the_watchdog(E):

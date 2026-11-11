@@ -6,11 +6,11 @@ bundle_view: views/lidc-bundle-v3
 stages:
 - kind: cmd
   name: build
-  argv: [bash, -c, 'bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -I -c "import objdel._gpucheck
+  argv: [bash, -c, 'bash ops/box/run_box.sh --build-only && /opt/venv/bin/python -I -c "import objdel._gpucheck
       as g; assert g.build() == ''cuda''" && /opt/venv/bin/python -I -m pytest -q -p no:cacheprovider tests/verify/test_gpu_scoring.py']
 - kind: cmd
   name: env_check
-  argv: [bash, experiments/phase2/docker/env_check.sh, '{rd}/ckpt', '{rd}/env_check.json']
+  argv: [bash, ops/docker/env_check.sh, '{rd}/ckpt', '{rd}/env_check.json']
 - kind: cmd
   name: c_check
   argv: [-m, tools.studies.c_speed_check, --pixels, --sync, --model, qwen3-vl-2b, --ckpt, '{rd}/ckpt', --train, '{data}/rows/lidc-train-b1-780',

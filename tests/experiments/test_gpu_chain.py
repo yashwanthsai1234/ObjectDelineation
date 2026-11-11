@@ -3,13 +3,13 @@
 collects a test, and the sanitizer selection is the corpus. Reads no data/. The JUnit skip check fails the box on any
 skip."""
 import re
+import runpy
 import subprocess
 from pathlib import Path
 
-from experiments.cuda_checker.junit_skips import skipped
-
 ROOT = Path(__file__).resolve().parents[2]
-BOX = ROOT / "experiments/cuda_checker/run_box.sh"
+BOX = ROOT / "ops/box/run_box.sh"
+JUNIT_SKIPS = ROOT / "ops/box/junit_skips.py"  # run by path: ops/ is not a Python package
 PY = ROOT / ".venv/bin/python"
 
 
@@ -31,7 +31,7 @@ def test_dry_chain_prints_the_box_steps_in_order_and_collects_the_list():
     want = ["uv pip install", "CUDA_HOME=", '[ -e "$CUDA_HOME/lib64" ]', "ln -sf libcudart", "export CUDACXX=",
             "make cuda", '"$PY" -I -c "import objdel._gpucheck',
             'for f in $R_D2_PAYLOAD; do [ -e "$OBJDEL_DATA_ROOT/$f" ]', '"$PY" -I -m pytest -q -p no:cacheprovider '
-            '$D_GPU_TESTS -m "$SEL" --junitxml "$OUT/gpu.xml"', '"$PY" -I -m experiments.cuda_checker.junit_skips',
+            '$D_GPU_TESTS -m "$SEL" --junitxml "$OUT/gpu.xml"', '"$PY" -I ops/box/junit_skips.py',
             *(f"--tool {t} --error-exitcode 99" for t in ("memcheck", "initcheck", "synccheck", "racecheck")),
             "sha256sum -c old_engine.tar.sha256", "tar -xf old_engine.tar -C /opt/old_src", "uv venv",
             "uv pip install --python /opt/old/bin/python", "make -C /opt/old_src cuda PY=/opt/old/bin/python",
@@ -73,7 +73,9 @@ def test_junit_skips_lists_each_skip(tmp_path):
     x.write_text('<testsuites><testsuite skipped="1"><testcase classname="tests.a" name="t1"/>'
                  '<testcase classname="tests.a" name="t2"><skipped message="no input"/></testcase>'
                  '</testsuite></testsuites>')
-    assert skipped(str(x)) == ["tests.a::t2: no input"]
+    assert runpy.run_path(str(JUNIT_SKIPS))["skipped"](str(x)) == ["tests.a::t2: no input"]
+    r = subprocess.run([str(PY), "-I", str(JUNIT_SKIPS), str(x)], capture_output=True, text=True)
+    assert r.returncode == 1 and "skipped on the box: tests.a::t2: no input" in r.stderr
 
 
 def test_cuda_host_code_does_not_contract_fmas():

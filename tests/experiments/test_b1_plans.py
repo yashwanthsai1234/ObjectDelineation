@@ -49,7 +49,7 @@ def test_b1_rows_holds_the_b1_5_steps_in_order():
     build, env, smoke, train, merge, evals = steps("b1_rows.yaml")
     assert build[:2] == ["bash", "-c"] and "run_box.sh --build-only" in build[2]
     assert "assert g.build() == 'cuda'" in build[2] and build[2].endswith("tests/verify/test_gpu_scoring.py")
-    assert env[:2] == ["bash", "experiments/phase2/docker/env_check.sh"]
+    assert env[:2] == ["bash", "ops/docker/env_check.sh"]
     assert smoke[:4] == ["-m", "pytest", "-m", "gpu"] and "-k" not in smoke
     assert train[:3] == ["~", "-m", "objdel.cli.train.rl"]  # soft: a crash goes on to --merge-last
     t = dict(zip(train[3::2], train[4::2], strict=False))

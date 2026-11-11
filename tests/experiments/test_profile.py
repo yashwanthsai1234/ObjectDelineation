@@ -110,7 +110,7 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     instrumented API call"); the 13.4.92 wheel ran memcheck and initcheck on 40 GPU tests, 0 errors."""
     from objdel.core.provenance import repo_root
 
-    box = (repo_root() / "experiments/cuda_checker/run_box.sh").read_text()
+    box = (repo_root() / "ops/box/run_box.sh").read_text()
     assert '"cuda-toolkit[nvcc,cccl,nvtx]==13.0.3" "nvidia-cuda-sanitizer-api==13.4.92"' in box
     assert "sanitizer]" not in box
 

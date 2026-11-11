@@ -1,5 +1,5 @@
 """Every script has a command line: `--help` prints usage and exits 0 without touching data (B4-7): the command
-modules of objdel.cli, every script under tools/ and the box helper in experiments/cuda_checker.
+modules of objdel.cli and every script under tools/.
 
 Scripts run as modules in an isolated interpreter, as docs/contributing.md prescribes for anything that reads data/
 (`python -I -m tools.<folder>.<script>`; -I drops the current directory from sys.path, so this also checks that
@@ -19,8 +19,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = [".".join(p.relative_to(root).with_suffix("").parts)
-           for root, pattern in ((ROOT, "experiments/cuda_checker/*.py"), (ROOT, "tools/**/*.py"),
-                                 (ROOT / "src", "objdel/cli/*/*.py"))
+           for root, pattern in ((ROOT, "tools/**/*.py"), (ROOT / "src", "objdel/cli/*/*.py"))
            for p in sorted(root.glob(pattern)) if p.stem != "__init__"]
 OPTIONAL = {"torch", "transformers", "trl", "datasets", "peft", "accelerate", "pydicom", "pylidc"}  # extras
 

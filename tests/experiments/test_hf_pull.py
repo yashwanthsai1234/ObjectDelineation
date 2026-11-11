@@ -65,7 +65,7 @@ def test_fetch_hf_streams_the_token_over_stdin_only(monkeypatch):
 
 
 def test_fetch_hf_has_its_shim():
-    assert (P.repo_root() / "experiments/phase2/vast/fetch_hf.sh").resolve().name == "vast.sh"
+    assert (P.repo_root() / "ops/vast/fetch_hf.sh").resolve().name == "vast.sh"
 
 
 # --- B1.5: rows root and checkpoint folder names (I40, I40b) ------------------------------------------------------

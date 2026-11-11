@@ -21,7 +21,7 @@ from objdel.infra.vast.ledger import accrued, active, home, ledger, locked, upda
 
 def watchdog_script():
     """The onstart watchdog, from the code tree being launched (never from VAST_HOME, which holds state)."""
-    return repo_root() / "experiments/phase2/vast/watchdog.sh"
+    return repo_root() / "ops/vast/watchdog.sh"
 
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path; onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running
@@ -189,7 +189,7 @@ def code_files() -> list[str]:
     files = subprocess.run(git, cwd=repo_root(), capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
     riga = re.compile(r"riga[^/]*\.(csv|jsonl?)$", re.I)
     drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/|"
-                      r"^experiments/phase2/vast/\.lock$", re.I)
+                      r"^ops/vast/\.lock$", re.I)
     files = [f for f in dict.fromkeys(files)
              if not riga.search(f) and not drop.search(f) and (repo_root() / f).is_file()]
     if "tests/verify/test_gpu_scoring.py" not in files:  # the chain runs it on the box before any scoring stage

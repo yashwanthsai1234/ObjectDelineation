@@ -159,7 +159,7 @@ def test_push_hf_refuses_an_over_broad_token_before_touching_the_box(monkeypatch
 
 
 def test_push_hf_has_its_shim():
-    assert (P.repo_root() / "experiments/phase2/vast/push_hf.sh").resolve().name == "vast.sh"
+    assert (P.repo_root() / "ops/vast/push_hf.sh").resolve().name == "vast.sh"
 
 
 def test_push_from_the_mac_takes_a_local_copy_of_the_view_with_the_same_hash(tmp_path, monkeypatch, fake):
