@@ -404,22 +404,6 @@ def r5_item(stack, seed: int) -> dict[int, list[float]]:
     return out
 
 
-def g_area_loo(stack) -> list[tuple[float, float]]:
-    """AB4: each rater scored against the remaining raters' area range: (zero tolerance, tau*P tolerance)."""
-    out = []
-    for j in range(len(stack)):
-        rest = np.delete(stack, j, 0)
-        if len(rest) < 2:
-            continue
-        c = ExpertCache.build(rest)
-        a = int(stack[j].sum())
-        slack = c.tau * c.perimeter
-        lo, hi = min(c.rater_areas), max(c.rater_areas)
-        out.append((min(1.0, hi / a) * min(1.0, a / lo),
-                    min(1.0, (hi + slack) / a) * (min(1.0, a / (lo - slack)) if lo > slack else 1.0)))
-    return out
-
-
 def item_pools(args) -> dict:
     """Per item: cache facts, honest pools (exact, jit1px, real) and the packed adversaries."""
     key, stack, seed, n_pool, pack_fn, with_adv = args
