@@ -109,54 +109,10 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     extra's 13.0.85 wheel lacks the TreeLauncher executables ("Target application terminated before first
     instrumented API call"); the 13.4.92 wheel ran memcheck and initcheck on 40 GPU tests, 0 errors."""
     from objdel.core.provenance import repo_root
-    from objdel.infra.vast import chain as C
 
     box = (repo_root() / "experiments/cuda_checker/run_box.sh").read_text()
     assert '"cuda-toolkit[nvcc,cccl,nvtx]==13.0.3" "nvidia-cuda-sanitizer-api==13.4.92"' in box
     assert "sanitizer]" not in box
-    mem = " ".join(C.chain(repo_root() / "specs/rl_full.yaml", "rl")[3])  # P1's step, verbatim (archived P1 plan)
-    assert "--error-exitcode 1" in mem and "no compute-sanitizer" in mem
-    # torch's caching allocator hides out-of-bounds accesses from memcheck; arena reuse is initcheck's case
-    assert "PYTORCH_NO_CUDA_MEMORY_CACHING=1" in mem and "for t in memcheck initcheck" in mem
-    assert "timeout 1200 $S --tool $t" in mem  # memcheck instruments torch's kernels too: each pass is bounded
-    # R2 (2026-11-07): the step sanitized only test_cuda_checker_gpu.py (6 tests); K1's 40 are run_box.sh's group,
-    # and the device scorer's kernels run only in test_gpu_scoring.py
-    # the default (non --gpu-check) group: the last pytest call before "|| tests=1" (D8's --gpu-check calls come first)
-    group = box.split("|| tests=1", 1)[0].rsplit("pytest -q -p no:cacheprovider", 1)[1]
-    files = [*group.replace("\\", " ").split(), "tests/verify/test_gpu_scoring.py"]
-    assert len(files) == 5 and all(f in mem.split() for f in files), (files, mem)
-
-
-def test_full_rl_chain_checks_the_card_and_checker_then_tunes_e2_resumably():
-    """The full RL run: the card, checker and sanitizer steps (P1's, verbatim), then train_rl on R1's e2, saving
-    every 50 steps and always with --resume, so rerunning the chain on a new box continues from the last checkpoint."""
-    from objdel.core.provenance import repo_root
-    from objdel.infra.vast import chain as C
-
-    rl = C.chain(repo_root() / "specs/rl_full.yaml", "rl")
-    assert [s[0] for s in rl] == ["~", "bash", "bash", "~", "-m"] and len(rl) == 5
-    tr = rl[4]
-    assert tr[:2] == ["-m", "experiments.phase2.train_rl"] and tr[-1] == "--resume"
-    args = dict(zip(tr[2:-1:2], tr[3:-1:2], strict=True))
-    data = "/workspace/data/lidc"
-    assert args == {"--model": "qwen3-vl-2b", "--ckpt": "/workspace/runs/rl/ckpt", "--train": f"{data}/prepared",
-                    "--out": "/workspace/runs/rl/train_rl", "--steps": "770", "--save-steps": "50"}
-
-
-def test_shared_prefix_chain_compares_the_packed_forward_on_e2():
-    """R5: the full run's box facts and env check (R4's), then two short train_rl arms on e2: today's forward, then
-    --shared-prefix. The packed arm must not stop the chain, and each arm saves once, at its last step (E2.7)."""
-    from objdel.core.provenance import repo_root
-    from objdel.infra.vast import chain as C
-
-    full, r5 = (C.chain(repo_root() / f, "r5") for f in ("specs/rl_full.yaml", "specs/r5_shared.yaml"))
-    assert r5[:2] == full[:2] and len(r5) == 4
-    base, packed = r5[2], r5[3]
-    assert packed[:3] == ["~", "-m", "experiments.phase2.train_rl"] and packed[-1] == "--shared-prefix"
-    assert "--shared-prefix" not in base
-    a, b = (dict(zip(s[i::2], s[i + 1 :: 2], strict=False)) for s, i in ((base, 2), (packed[:-1], 3)))
-    assert a["--ckpt"] == b["--ckpt"] == "/workspace/runs/r5/ckpt" and a["--steps"] == b["--steps"] == "15"
-    assert a["--save-steps"] == b["--save-steps"] == "15" and a["--out"] != b["--out"]  # E2.7: one save, at the end
 
 
 def test_covered_hand_cases():

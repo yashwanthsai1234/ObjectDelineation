@@ -18,19 +18,15 @@ for _g in GOLDEN.values():
     _g["argv"] = later_edits(_g["argv"])
 
 
-@pytest.mark.parametrize("plan", ["b1_rows", "rl_full", "r5_shared"])
-def test_spec_chain_equals_golden_5(plan):
-    assert C.chain(SPECS / f"{plan}.yaml", "x") == GOLDEN[plan]["argv"]
-
-
-def test_r5_shared_keeps_its_soft_steps():
-    argv = C.chain(SPECS / "r5_shared.yaml", "x")
-    assert [a[0] == "~" for a in argv] == [True, False, False, True]
+def test_spec_chain_equals_golden_5():
+    assert C.chain(SPECS / "b1_rows.yaml", "x") == GOLDEN["b1_rows"]["argv"]
 
 
 PLAN_ARGV = json.loads((ROOT / "tests/goldens/phase_e/plan_argv.json").read_text())
-# the one-time implementation-2.0 GPU test passed; its three specs left the repo (owner, 2026-11-11)
-RETIRED = {"impl2_gpu_test", "impl2_gpu_test_a", "impl2_gpu_test_b"}
+# specs that left the repo: the one-time implementation-2.0 GPU test, and the finished measurement and run plans
+# that b1_rows.yaml replaced (their frozen argv stays in the goldens)
+RETIRED = {"impl2_gpu_test", "impl2_gpu_test_a", "impl2_gpu_test_b", "a3_measure", "a3_test", "d_gpu_test", "rl_full",
+           "r5_shared"}
 PLAN_ARGV = {plan: later_edits(argvs) for plan, argvs in PLAN_ARGV.items() if plan not in RETIRED}
 # (plan, step) pairs whose old text a spec cannot write string for string; the stage they parse to is the same
 SAME_STAGE = {("b3_v5", 3): "grpo JSON spacing and 2.20",
@@ -98,7 +94,7 @@ def test_chain_refuses_an_old_schema_plan(tmp_path):
 
 
 # I29: every spec a front 6.3 rental names runs from specs/, never from the old plan folder
-RENTAL_PLANS = ("a3_measure", "c_speed", "c_speed_b", "c_speed_c6", "d_gpu_test", "b2_fp16", "a3_test", "b3_v5")
+RENTAL_PLANS = ("c_speed", "c_speed_b", "c_speed_c6", "b2_fp16", "b3_v5")
 
 
 @pytest.mark.parametrize("plan", RENTAL_PLANS)
@@ -120,7 +116,8 @@ def test_push_target_takes_the_last_rl_or_sft_stage():
 
 
 def test_push_target_of_a_spec_without_a_training_stage_dies():
-    spec = S.load_spec(SPECS / "a3_test.yaml")
+    b1 = S.load_spec(SPECS / "b1_rows.yaml")
+    spec = b1.model_copy(update={"stages": tuple(s for s in b1.stages if s.kind not in ("rl", "sft"))})
     with pytest.raises(SystemExit):
         C.push_target(spec, "x")
 

@@ -18,8 +18,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 GOLDENS = ROOT / "tests/goldens/phase_e"
 PLATFORM = f"{sys.platform}-{platform.machine()}"
-# E6.2: every plan that is live on the E0 commit and goes through policy.chain.
-PLANS = ("b1_rows", "rl_full", "r5_shared", "r1_qwen3vl2b")
+# E6.2: every plan that is live and goes through policy.chain; the goldens also hold plans that left the repo
+PLANS = ("b1_rows", "r1_qwen3vl2b")
 # Fields of GRPOConfig.to_dict() that hold a path, a time or a host name: not part of the run's behaviour.
 VOLATILE = {"output_dir", "logging_dir", "run_name", "hub_model_id", "hub_token", "push_to_hub_model_id",
             "push_to_hub_organization", "push_to_hub_token", "local_rank", "_n_gpu", "world_size", "process_index"}
@@ -342,6 +342,7 @@ def test_golden_4_one_update(monkeypatch, tmp_path):
 
 def test_golden_5_chain_argv_of_the_live_plans():
     got, want = json.loads(json.dumps(jsonable(chain_argv()))), json.loads(json.dumps(golden()["chain_argv"]))
+    want = {p: want[p] for p in PLANS}  # the golden also holds the retired plans rl_full and r5_shared
     for g in want.values():
         g["argv"] = later_edits(g["argv"])
     for g in (got, want):  # r1 train: `--config <yaml>` before E6, SftStage flags after (test_chain compares by value)
