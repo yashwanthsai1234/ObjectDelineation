@@ -171,7 +171,7 @@ NB_MODULE(_gpucheck, m) {
     d["sync_alloc"] = s.sync_alloc, d["sync_free"] = s.sync_free;
     d["pool_allocs"] = s.pool_allocs, d["pool_frees"] = s.pool_frees, d["pinned_grows"] = s.pinned_grows;
     d["arena_bytes"] = s.arena_bytes, d["table_bytes"] = s.table_bytes;
-    d["live_device_bytes"] = s.live_device_bytes, d["contexts"] = s.contexts;
+    d["live_device_bytes"] = s.live_device_bytes;
     d["pool_reserved"] = s.pool_reserved, d["default_pool_reserved"] = s.default_pool_reserved;
     d["eval_scratch_peak"] = s.eval_scratch_peak;
     return d;

@@ -335,7 +335,6 @@ struct Engine {
     for (Lane& l : lanes) l.stream = l.dev.st = l.score.st = l.scan.st = new_stream();
 #ifdef __CUDACC__
     if (!pool()) pool() = new_pool();
-    counters().contexts = 1;  // the streams live in the device's primary context
 #endif
     for (Lane& l : lanes) l.in.resize(stage_in_bound()), l.out.resize(stage_out_bound());
     ready = true;
@@ -3105,7 +3104,7 @@ void reset_stats() {
   const Stats kept = s;
   s = Stats{};
   s.arena_bytes = kept.arena_bytes, s.table_bytes = kept.table_bytes;
-  s.live_device_bytes = kept.live_device_bytes, s.contexts = kept.contexts;
+  s.live_device_bytes = kept.live_device_bytes;
 }
 
 PolygonResult check_polygons(const Polygons& in, Times* times) {

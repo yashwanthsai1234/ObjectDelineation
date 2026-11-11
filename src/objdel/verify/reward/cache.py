@@ -79,8 +79,9 @@ References:
 import hashlib
 import math
 import os
+import threading
 import weakref
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from functools import cache, cached_property
 from itertools import combinations
 from pathlib import Path
@@ -115,7 +116,13 @@ def voters(sigs) -> tuple[int, ...]:
     return tuple(i for i, s in enumerate(sigs) if s) or tuple(range(len(sigs)))
 
 
+MAX_TABLES = 4096  # resident table sets (device_many); a LIDC cache's set is about 25 KB, so about 100 MB
+_TABLES: OrderedDict[int, weakref.finalize] = OrderedDict()  # handle -> its finalizer, least recently used first
+_LOCK = threading.Lock()  # device_many runs on the reward's prefetch thread and on the caller's
+
+
 def _drop_tables(handle: int) -> None:
+    _TABLES.pop(handle, None)
     if os.getpid() == _PID:  # a forked child never frees its parent's tables
         _gpucheck.drop_tables(handle)
 
@@ -123,23 +130,40 @@ def _drop_tables(handle: int) -> None:
 def device_many(caches) -> None:
     """Builds the device tables of every cache that has none, in one engine call (objdel._gpucheck.
     add_tables_from_raters: one upload, one host wait), and stores each one's handle and returned scalars. The reward
-    scores a step's answers after one such call for the step's cold caches (score_many). RuntimeError in a forked
-    child (os.getpid() is not the pid recorded at import): the device work runs in one process (D7), and a child
-    would open its own device context, tables and scratch."""
+    scores a step's answers after one such call for the step's caches (score_many).
+
+    At most MAX_TABLES table sets stay resident: past it, the caches least recently passed here lose their tables
+    (never one of this call's) and rebuild the same tables when passed here again. Without the bound the tables would
+    live as long as their caches, and the RL store keeps every cache for the whole run (objdel.verify.store.preload),
+    so each step's new caches would hold device memory to the end. A caller that collects handles cache by cache
+    (device()) must use them before MAX_TABLES other caches are built: the engine refuses a dropped handle.
+
+    RuntimeError in a forked child (os.getpid() is not the pid recorded at import): the device work runs in one
+    process (D7), and a child would open its own device context, tables and scratch."""
     if os.getpid() != _PID:
         raise RuntimeError("device() in a forked child")
-    cold = list({id(c): c for c in caches if c._device is None}.values())
-    if not cold:
-        return
-    r = _gpucheck.add_tables_from_raters([c.raters.view(np.uint8) for c in cold],
-                                         np.array([c.t5 for c in cold], np.float64),
-                                         np.array([c.min_area for c in cold], np.int64))
-    ss, sig, a = r["sig_start"], r["sig"].tolist(), r["rater_area_start"]
-    for i, c in enumerate(cold):
-        h = int(r["handles"][i])
-        weakref.finalize(c, _drop_tables, h).atexit = False  # the process's exit frees the device
-        c._device = h
-        c._built = (int(r["perimeter"][i]), tuple(tuple(sig[ss[j]:ss[j + 1]]) for j in range(a[i], a[i + 1])))
+    batch = list({id(c): c for c in caches}.values())
+    with _LOCK:
+        cold = [c for c in batch if c._device is None]
+        if cold:
+            r = _gpucheck.add_tables_from_raters([c.raters.view(np.uint8) for c in cold],
+                                                 np.array([c.t5 for c in cold], np.float64),
+                                                 np.array([c.min_area for c in cold], np.int64))
+            ss, sig, a = r["sig_start"], r["sig"].tolist(), r["rater_area_start"]
+            for i, c in enumerate(cold):
+                h = int(r["handles"][i])
+                fin = weakref.finalize(c, _drop_tables, h)
+                fin.atexit = False  # the process's exit frees the device
+                _TABLES[h], c._device = fin, h
+                c._built = (int(r["perimeter"][i]), tuple(tuple(sig[ss[j]:ss[j + 1]]) for j in range(a[i], a[i + 1])))
+        for c in batch:
+            if c._device in _TABLES:
+                _TABLES.move_to_end(c._device)
+        while len(_TABLES) > max(MAX_TABLES, len(batch)):
+            _, drop = _TABLES.popitem(last=False)
+            if (alive := drop.peek()) is not None:
+                alive[0]._device = None
+            drop()
 
 
 class StaleCacheError(ValueError):
@@ -248,7 +272,8 @@ class ExpertCache:
     Construction and `load` are host-only (numpy counts, no engine call: a parent must not open a CUDA context before
     it forks). The device tables, and the scalars that come back with them (perimeter, rater signatures, voters), are
     built by the first `device()` (or `device_many`) in the process that imported this module; in a forked child it
-    raises RuntimeError("device() in a forked child") (D7). The distance maps (edt) are computed only when read."""
+    raises RuntimeError("device() in a forked child") (D7). The scalars stay when device_many's bound drops the
+    tables. The distance maps (edt) are computed only when read."""
 
     def __init__(self, raters: np.ndarray, tau: float, t5: float):
         if not (math.isfinite(t5) and t5 > 0):
@@ -268,21 +293,24 @@ class ExpertCache:
 
     def device(self) -> int:
         """Handle of this cache's tables on the checker's device, which the reward scores against: built there from
-        the rater masks at the first call (device_many; RuntimeError in a forked child), resident until the cache is
-        garbage-collected."""
-        device_many([self])
+        the rater masks when it has none (device_many: RuntimeError in a forked child; the bound there may drop them
+        again), freed with the cache."""
+        if self._device is None or os.getpid() != _PID:
+            device_many([self])
         return self._device
 
     @property
     def perimeter(self) -> int:
-        """Contour length of the union: max(1, its 4-adjacent boundary pixels) (from the device tables)."""
-        self.device()
+        """Contour length of the union: max(1, its 4-adjacent boundary pixels) (from the device tables' build)."""
+        if self._built is None:
+            device_many([self])
         return self._built[0]
 
     @property
     def rater_sigs(self) -> tuple[tuple[int, ...], ...]:
-        """Per rater, the size-filtered topology signature at min_area (from the device tables)."""
-        self.device()
+        """Per rater, the size-filtered topology signature at min_area (from the device tables' build)."""
+        if self._built is None:
+            device_many([self])
         return self._built[1]
 
     @property
