@@ -1,4 +1,4 @@
-"""Copy the headline test and validation metrics of final_eval.json files into docs/results/headline.json.
+"""Copy the headline test and validation metrics of final_eval.json files into reference/headline.json.
 
     python -I -m experiments.phase2.headline --run r5 --model-ref svenk029/objdel-sft@rl-full-3ep
     python -I -m experiments.phase2.headline --test T/final_eval.json --val V/final_eval.json --model-ref REF
@@ -45,7 +45,7 @@ def main(argv=None) -> int:
     ap.add_argument("--test", type=Path)
     ap.add_argument("--val", type=Path)
     ap.add_argument("--model-ref", required=True)
-    ap.add_argument("--out", type=Path, default=Path("docs/results/headline.json"))
+    ap.add_argument("--out", type=Path, default=Path("reference/headline.json"))
     a = ap.parse_args(argv)
     if (bool(a.run), bool(a.test) + bool(a.val)) not in ((True, 0), (False, 2)):
         print("headline: give --run ID, or both --test and --val", file=sys.stderr)

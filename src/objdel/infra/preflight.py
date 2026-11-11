@@ -457,9 +457,12 @@ def checker_tests(s: Inputs) -> list[str]:
 
 def runbooks(s: Inputs, root: Path | None = None) -> list[str]:
     """The kernel drafts run from the synced code (Implementation.md D1 step 0): no scratch path in any of their files,
-    and no hand copy or stale box torch in their runbooks. `root`: default the repo."""
+    and no hand copy or stale box torch in their runbooks. `root`: default the repo. docs/ is local only (owner,
+    2026-11-11): a clone has no drafts and nothing to check."""
     root = root or repo_root()
     k = root / "docs/implementation2.0/kernels"
+    if not k.is_dir():
+        return []
     files = [p for p in k.rglob("*") if p.is_file() and "build" not in p.relative_to(k).parts]
     bad = [f"{p.relative_to(root)}: scratch path" for p in files if re.search(r"/[p]rivate/tmp",
         p.read_text("latin-1"))]

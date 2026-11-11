@@ -1,4 +1,4 @@
-"""DOC6: docs/results/headline.json is copied from final_eval files, never typed."""
+"""DOC6: reference/headline.json is copied from final_eval files, never typed."""
 
 import json
 
@@ -94,15 +94,6 @@ def test_run_short_form_reads_the_r5_layout(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert H.main(["--run", "r5", "--model-ref", "m", "--out", "h.json"]) == 0
     assert json.loads((tmp_path / "h.json").read_text())["run"] == "r5"
-
-
-def test_ci_unit_other_than_item_adds_a_string():
-    h = {"ci_unit": "patient", "test": {"view": "lidc-test-shifted", "metrics": {
-        k: {"mean": 0.5} for k in (*KEYS, "legal")}}}  # fmt: skip
-    from docs_check import headline_strings
-
-    assert "patient-level" in headline_strings(h)
-    assert "patient-level" not in headline_strings(h | {"ci_unit": "item"})
 
 
 def test_run_is_named_from_the_test_path_under_runs(tmp_path, monkeypatch):

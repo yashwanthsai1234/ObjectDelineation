@@ -29,7 +29,9 @@ def test_r5_shared_keeps_its_soft_steps():
 
 
 PLAN_ARGV = json.loads((ROOT / "tests/goldens/phase_e/plan_argv.json").read_text())
-PLAN_ARGV = {plan: later_edits(argvs) for plan, argvs in PLAN_ARGV.items()}
+# the one-time implementation-2.0 GPU test passed; its three specs left the repo (owner, 2026-11-11)
+RETIRED = {"impl2_gpu_test", "impl2_gpu_test_a", "impl2_gpu_test_b"}
+PLAN_ARGV = {plan: later_edits(argvs) for plan, argvs in PLAN_ARGV.items() if plan not in RETIRED}
 # (plan, step) pairs whose old text a spec cannot write string for string; the stage they parse to is the same
 SAME_STAGE = {("b3_v5", 3): "grpo JSON spacing and 2.20",
               ("c_speed_c6", 1): "the rows pins stood before --out"}

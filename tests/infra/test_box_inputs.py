@@ -15,7 +15,6 @@ from objdel.infra import preflight as PF
 from objdel.infra.vast import remote as P
 
 ROOT = Path(__file__).resolve().parents[2]
-KERNELS = ROOT / "docs/implementation2.0/kernels"
 SRC = "/workspace/src/"
 
 
@@ -54,10 +53,6 @@ def bundle(tmp_path_factory) -> set[str]:
     return {name for name, _ in BU.members("lidc", d)}
 
 
-def test_k3_reads_only_shipped_paths(code, bundle):
-    assert unshipped((KERNELS / "K3/GPU_RUN.md").read_text(), code, bundle) == []
-
-
 def test_a_planted_unshipped_read_fails(code, bundle):
     assert unshipped('- [bash, -c, "cat data/k1_bundle/lidc/in.bits"]', code, bundle) == [
         "relative data path: data/k1_bundle/lidc/in.bits"]
@@ -66,12 +61,10 @@ def test_a_planted_unshipped_read_fails(code, bundle):
         k9, f"{k9}/x.cpp", "{data}/k1_bundle/in"]
 
 
-def test_kernel_drafts_ship_without_build_or_results(code):
-    k1 = "docs/implementation2.0/kernels/K1/"
-    assert f"{k1}k1poly.cpp" in code and f"{k1}GPU_RUN.md" in code
-    assert not [f for f in code if f.startswith((f"{k1}build/", f"{k1}results/"))]
-    assert {f.split("/")[2] for f in code if f.startswith("docs/")} <= {"kernels", "frozen_views.json",
-                                                                      "val_halves.json"}
+def test_nothing_from_docs_ships(code):
+    """docs/ is local only (owner, 2026-11-11): the kernel drafts (shipped for R-D1 until then) stay on the Mac."""
+    assert not [f for f in code if f.startswith("docs/")]
+    assert {"reference/frozen_views.json", "reference/val_halves.json"} <= set(code)
 
 
 def test_runbooks_have_no_scratch_path_hand_copy_or_stale_torch(tmp_path):

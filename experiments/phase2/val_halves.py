@@ -1,8 +1,8 @@
-"""Write docs/reference/val_halves.json (Implementation.md B1.0): the val halves of objdel.data.splits.val_half_table
+"""Write reference/val_halves.json (Implementation.md B1.0): the val halves of objdel.data.splits.val_half_table
 on the frozen val shifted view, plus the 128 held-out item ids that chose R5 (B.6.2 Limitations).
 
     .venv/bin/python -I -m experiments.phase2.val_halves --view data/eval_views/lidc-val-shifted/lidc/val.jsonl \\
-        --heldout runs/rl/eval/final/heldout.json --out docs/reference/val_halves.json
+        --heldout runs/rl/eval/final/heldout.json --out reference/val_halves.json
 
 Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """

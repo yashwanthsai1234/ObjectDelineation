@@ -18,9 +18,9 @@ All three folders run today. What is frozen is the record, not the script:
 
 - `RESULTS.md` files: frozen sections are never edited. A correction is a dated note below them.
 - Plans and judge reports (`PLAN*.md`, `JUDGE_*.md`, `V0_V1.md`, `EXECUTION.md`, `RESEARCH.md`), every `impl/` folder and `cuda_checker/results/`: written once, kept as they were. The same holds for `docs/research/`.
-- Code that no script runs any more moves to `archive/<name>/` (local only; see [contributing](../docs/contributing.md#retired-code)).
+- Code that no script runs any more moves to `archive/<name>/` (local only).
 
 New scripts live in `experiments/<phase>/`. Plans for runs are typed run specs in `specs/`. The old chains and SFT configs of phase2/configs/ are archived, local only.
 
-Headline numbers are in [docs/results/headline.json](../docs/results/headline.json). `make headline` rebuilds that file from a `final_eval` result.
-Run configs are listed in [docs/reference/configs.md](../docs/reference/configs.md).
+Headline numbers are in [reference/headline.json](../reference/headline.json). `make headline` rebuilds that file from a `final_eval` result.
+Run specs are in [specs/](../specs/).

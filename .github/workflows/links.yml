@@ -29,15 +29,3 @@ jobs:
         with:
           path: .lycheecache
           key: cache-lychee-${{ github.sha }}
-
-  rollback-build:
-    name: docs site with Material (rollback check, not blocking)
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
-      - run: uv venv --python 3.12
-      - run: uv pip install mkdocs-material==9.8.1 mkdocs-api-autonav==0.4.0 mkdocstrings-python==2.0.10
-      - run: NO_MKDOCS_2_WARNING=1 .venv/bin/mkdocs build --strict

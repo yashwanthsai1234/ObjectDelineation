@@ -1,4 +1,4 @@
-"""B1.6: docs/reference/frozen_views.json (experiments.phase2.freeze_views): one entry per frozen view with its content
+"""B1.6: reference/frozen_views.json (experiments.phase2.freeze_views): one entry per frozen view with its content
 hash, target-set hash, build arguments, generator commit, render files and known label issues (I05, I38)."""
 import hashlib
 import json
@@ -13,7 +13,7 @@ from objdel.data import quality as Q
 from objdel.data import store
 
 ROOT = Path(__file__).resolve().parents[2]
-RECORD = ROOT / "docs/reference/frozen_views.json"
+RECORD = ROOT / "reference/frozen_views.json"
 KEYS = {"view", "items", "content_sha256", "target_set_sha256", "seed", "kinds", "store_manifest_sha256",
         "generator_commit", "render_files", "known_label_issues", "fallback", "padded", "r5_code_commit"}
 

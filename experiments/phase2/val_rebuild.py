@@ -64,7 +64,7 @@ def main(argv=None) -> None:
     w = sub.add_parser("swap")
     w.add_argument("--pre", type=Path, required=True)
     w.add_argument("--rebuilt", type=Path, required=True)
-    w.add_argument("--frozen", type=Path, default=ROOT / "docs/reference/frozen_views.json")
+    w.add_argument("--frozen", type=Path, default=ROOT / "reference/frozen_views.json")
     w.add_argument("--known", type=Path, default=ROOT / "runs/b1/series_z.json", help="as freeze_views --known")
     a = ap.parse_args(argv)
     if a.cmd == "stamp":

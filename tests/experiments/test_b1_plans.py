@@ -145,7 +145,7 @@ def test_every_spec_formats():
     from objdel.infra.vast import chain as C
 
     specs = sorted(CONFIGS.glob("*.yaml"))
-    assert {"b1_rows.yaml", "rl_full.yaml", "impl2_gpu_test.yaml"} <= {p.name for p in specs}
+    assert {"b1_rows.yaml", "rl_full.yaml", "r5_shared.yaml"} <= {p.name for p in specs}
     for p in specs:
         C.chain(p, "r")
     bad = ROOT / "build" / "test_cfgs" / "group.yaml"

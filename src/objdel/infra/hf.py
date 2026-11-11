@@ -16,7 +16,7 @@ not private, a run trained on anything but LIDC (RIGA's licence forbids redistri
 branch (select_ckpt: none passed D12). One commit on branch `revision` (created if missing): the files of
 <run>/branches/<selected>, the base model's LICENSE (Apache-2.0 for Qwen) and a model card
 stating the change, the base model, the selection and the LIDC-IDRI attribution (CC BY 3.0).
---card-only --headline docs/results/headline.json (no --run or --rl): the card's Evaluation and Limitations sections
+--card-only --headline reference/headline.json (no --run or --rl): the card's Evaluation and Limitations sections
 at <revision>, written by card_update; the weights stay. The full-push card() is unchanged.
 --rl (a train_rl output, always LIDC): <out>/final at the revision's root (the plain model folder fetch_hf.sh and
 final_eval --ckpt read) and <out>/final_adapter as final_adapter/ (the unmerged LoRA), with the licence and a card;
@@ -153,7 +153,7 @@ METRIC_NAMES = {"iou_tc": "IoU (against the expert band)", "f5": "boundary F-sco
 
 
 def card_sections(h: dict) -> str:
-    """The '## Evaluation' and '## Limitations' sections of the model card, from docs/results/headline.json; its
+    """The '## Evaluation' and '## Limitations' sections of the model card, from reference/headline.json; its
     optional `limitations` list adds the run's own lines (checkpoint selection, gate results) to the general ones."""
     t, v = h["test"], h["val"]
     rows = "\n".join(f"| {name} | {t['metrics'][k]['mean']:.3f} ({t['metrics'][k]['ci95'][0]:.3f} to "
@@ -191,7 +191,7 @@ def card_only(repo: str, revision: str, headline: Path, token: str) -> int:
     old = Path(hf_hub_download(repo, "README.md", revision=revision, token=token)).read_text()
     new = card_update(old, read_json(headline))
     hub.upload_file(path_or_fileobj=new.encode(), path_in_repo="README.md", repo_id=repo, revision=revision,
-                    repo_type="model", commit_message="card: headline from docs/results/headline.json")
+                    repo_type="model", commit_message="card: headline from reference/headline.json")
     print(f"hf_push: card of {repo}@{revision} updated")
     return 0
 

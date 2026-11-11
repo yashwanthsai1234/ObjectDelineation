@@ -58,9 +58,11 @@ def test_all_items_is_the_one_count_of_the_contract():
     assert set(T.SOURCE_SHA256) == set(T.METHODS) and set(T.TRAINER_ATTRS) == {"_step", "_buffered_inputs"}
     assert T.GLOBALS == {} and len(T.ALL_ITEMS) == 46
     doc = ROOT / "docs/reference/trl-coupling.md"  # A9 writes it: one table row per item (header and rule excluded)
-    assert sum(x.startswith("|") for x in doc.read_text().splitlines()) - 2 == len(T.ALL_ITEMS)
+    if doc.parent.is_dir():  # docs/ is local only (2026-11-11)
+        assert sum(x.startswith("|") for x in doc.read_text().splitlines()) - 2 == len(T.ALL_ITEMS)
 
 
+@pytest.mark.skipif(not (ROOT / "docs").is_dir(), reason="docs/ is local-only (git-ignored, 2026-11-11)")
 def test_the_coupling_page_has_one_row_per_item_with_the_case_that_breaks_it():
     """trl-coupling.md: each row's item, kind and place are the code's; its failing test is a real BREAKS case."""
     rows = [[c.strip().strip("`") for c in ln.strip("|\n").split("|")] for ln in

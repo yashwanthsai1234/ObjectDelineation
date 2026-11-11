@@ -1,4 +1,4 @@
-"""Freeze eval views into docs/reference/frozen_views.json (B1.6, DG15): one entry per view, keyed by its name.
+"""Freeze eval views into reference/frozen_views.json (B1.6, DG15): one entry per view, keyed by its name.
 
     .venv/bin/python -I -m experiments.phase2.freeze_views VIEW_DIR [VIEW_DIR ...] [--out FILE] [--known FILE]
     .venv/bin/python -I -m experiments.phase2.freeze_views --check [--out FILE]
@@ -65,7 +65,7 @@ def entry(view_dir, known: list[str]) -> dict:
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("views", nargs="*", type=Path)
-    ap.add_argument("--out", type=Path, default=ROOT / "docs/reference/frozen_views.json")
+    ap.add_argument("--out", type=Path, default=ROOT / "reference/frozen_views.json")
     ap.add_argument("--known", type=Path, default=ROOT / "runs/b1/series_z.json",
                     help="check_series_z report; its known_label_issues (val and test ids)")
     ap.add_argument("--check", action="store_true")

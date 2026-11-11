@@ -17,7 +17,7 @@ from pathlib import Path
 from objdel.data import quality as Q
 
 ROOT = Path(__file__).resolve().parents[2]
-REF = ROOT / "docs" / "reference"
+REF = ROOT / "reference"
 
 
 def main(argv=None) -> int:

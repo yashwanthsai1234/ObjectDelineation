@@ -40,7 +40,7 @@ identity record (content and target-set hashes, the last commit of each file tha
 --resummarize DIR: the schema-2 summary of a finished run's items.jsonl (no model, no scoring), with group_id joined
 from the LIDC store of the run's split; written to --out, never into DIR; exit 2 when an item has no group_id.
 A frozen view (objdel.data.quality.FROZEN) runs only when its content hash and target-set hash equal its entry in
-docs/reference/frozen_views.json (B1.6; shipped to the box by objdel.infra.vast.remote.code_files), and --split must
+reference/frozen_views.json (B1.6; shipped to the box by objdel.infra.vast.remote.code_files), and --split must
 name a set of the view (the test view is read only with --split test). Both checks run before any model load or
 rescoring.
 Reads untrusted data: run with python -I.
@@ -68,7 +68,7 @@ from objdel.policy.evaluate import METRICS, evaluate, per_item, score_items, sum
 from objdel.verify import device
 from objdel.verify import stats as signal
 
-FROZEN_VIEWS = repo_root() / "docs/reference/frozen_views.json"  # /workspace/src on the box
+FROZEN_VIEWS = repo_root() / "reference/frozen_views.json"  # /workspace/src on the box
 
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 TOPOLOGY_PERIOD_S = 5.0  # D-G17 (a): the sampler thread's period during scoring

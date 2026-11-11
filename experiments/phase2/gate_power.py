@@ -251,7 +251,7 @@ def main():
     ap.add_argument("--items", type=Path, default=Path("runs/r5/eval/eval_val/items.jsonl"))
     ap.add_argument("--view", type=Path, default=Path("data/eval_views/lidc-val-shifted"))
     ap.add_argument("--store", type=Path, default=Path("data/store"))
-    ap.add_argument("--halves", type=Path, default=Path("docs/reference/val_halves.json"))
+    ap.add_argument("--halves", type=Path, default=Path("reference/val_halves.json"))
     ap.add_argument("--runs", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--item-sd", type=float, help="A3's noise_floor.item_sd: adds a line, for the record only")

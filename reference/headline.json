@@ -1,0 +1,110 @@
+{
+ "run": "rl-full-780b",
+ "model_ref": "svenk029/objdel-sft@b1-rows",
+ "ckpt": "/workspace/runs/rl-full-780b/b1-rows/final",
+ "seed": 11,
+ "K": 8,
+ "ci_unit": "patient",
+ "test": {
+  "source": "runs/rl-full-780b/eval_b1_test/final_eval.json",
+  "view": "lidc-test-shifted",
+  "items": 2200,
+  "metrics": {
+   "iou_tc": {
+    "mean": 0.7345837023917626,
+    "ci95": [
+     0.7185172025600002,
+     0.7505756422081482
+    ]
+   },
+   "f5": {
+    "mean": 0.902340563206961,
+    "ci95": [
+     0.8886562054531327,
+     0.9146017750271506
+    ]
+   },
+   "precision_vote": {
+    "mean": 0.7623880300849375,
+    "ci95": [
+     0.7437880795159586,
+     0.7804715242737711
+    ]
+   },
+   "recall_vote": {
+    "mean": 0.8481354121009161,
+    "ci95": [
+     0.8304946315460782,
+     0.8646916294952328
+    ]
+   },
+   "dice_vote": {
+    "mean": 0.7858325169818867,
+    "ci95": [
+     0.7696454656610464,
+     0.8015649301565928
+    ]
+   },
+   "legal": {
+    "mean": 0.9982954545454545,
+    "ci95": [
+     0.9960347716511978,
+     0.9996460078570316
+    ]
+   }
+  }
+ },
+ "val": {
+  "source": "runs/rl-full-780b/eval_b1_val_shifted/final_eval.json",
+  "view": "lidc-val-shifted",
+  "items": 1084,
+  "metrics": {
+   "iou_tc": {
+    "mean": 0.7182179791796889,
+    "ci95": [
+     0.690225674421037,
+     0.7473934246896388
+    ]
+   },
+   "f5": {
+    "mean": 0.9047734496126337,
+    "ci95": [
+     0.88476978834981,
+     0.9221319056016507
+    ]
+   },
+   "precision_vote": {
+    "mean": 0.7703297613428033,
+    "ci95": [
+     0.7475658999304342,
+     0.7945085692808579
+    ]
+   },
+   "recall_vote": {
+    "mean": 0.8273170934877768,
+    "ci95": [
+     0.7908358821082261,
+     0.8615363129553375
+    ]
+   },
+   "dice_vote": {
+    "mean": 0.7767248648141316,
+    "ci95": [
+     0.7519100441004224,
+     0.8017348399335258
+    ]
+   },
+   "legal": {
+    "mean": 0.9993081180811808,
+    "ci95": [
+     0.9984739578339731,
+     0.9998922506369238
+    ]
+   }
+  }
+ },
+ "limitations": [
+  "No checkpoint selection: the model is the step-780 end of one run (the trainer's last checkpoint, merged).",
+  "Gate B1 (frozen val views, against rl-full-3ep re-scored on the same views) failed one rule, `centred`: on the 206 items with offset < 0.15 the IoU change is -0.005, 95 % patient CI -0.024 to +0.010, and the rule needs the lower end above -0.02. The other six rules pass. The owner adopted the model on review (2026-11-10)."
+ ]
+}

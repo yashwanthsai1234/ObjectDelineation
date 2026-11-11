@@ -12,7 +12,7 @@ and reinforcement learning teaches the model from those checks.
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.14-EE4C2C)
 ![CUDA](https://img.shields.io/badge/CUDA-13.0-76B900)
 
-<img src="docs/figures/hero.svg" alt="Image to VLM to polygon outline to checker reward" width="900">
+<img src="assets/hero.svg" alt="Image to VLM to polygon outline to checker reward" width="900">
 
 </div>
 
@@ -47,20 +47,17 @@ Lung nodule outlining on LIDC-IDRI CT scans, scored on images the model never sa
 - **Fast:** 7.7 M polygons checked per second on one RTX 5090, 141x the first GPU build.
 - **Cheap:** the latest RL run trained 780 steps in 2 h 17 min on one GPU; the whole rental cost about $2.40.
 
-<img src="docs/figures/rl_gallery.png" alt="Held-out CT crops: expert outlines in green, the model's outline in red, before and after RL" width="900">
+<img src="assets/rl_gallery.png" alt="Held-out CT crops: expert outlines in green, the model's outline in red, before and after RL" width="900">
 
 ## How it works
 
-<img src="docs/figures/pipeline.svg" alt="Data, supervised fine-tuning, then the reinforcement-learning loop" width="900">
+<img src="assets/pipeline.svg" alt="Data, supervised fine-tuning, then the reinforcement-learning loop" width="900">
 
 1. **Data.** Expert annotations become certified polygon targets, with patient-level train, validation and test splits.
 2. **Fine-tune.** The model learns the output format and a first estimate of each shape.
 3. **Reinforce.** The model writes several outlines per image. The checker scores each one, and the model learns
    from the differences.
 4. **Evaluate.** Every claim is reported with patient-level confidence intervals on held-out data.
-
-More detail: [architecture](docs/architecture/overview.md) and the
-[engineering deep dive](docs/architecture/engineering.md).
 
 ## Quick start
 
@@ -83,8 +80,6 @@ score = score_completion(outline, False, ("nodule",), {"nodule": ExpertCache.bui
 print(score["legal"], score["iou_tc"], score["topo_any"])  # 1.0 1.0 1.0
 ```
 
-[Getting started](docs/getting-started.md) covers the data download, training and evaluation.
-
 ## Repository layout
 
 ```text
@@ -100,20 +95,13 @@ src/objdel/      the library, in layers; each imports only the layers below it
 specs/           run specs: what a GPU run does, checked before any rental
 experiments/     thin command-line scripts, by phase
 tests/           the test suite, oracles and goldens
-docs/            documentation site (mkdocs.yml)
+reference/       records the code reads: frozen view hashes, validation halves, training exclusions, headline numbers
+assets/          the images in this README
 ```
-
-The layer rules are in [docs/architecture/layers.md](docs/architecture/layers.md); every module is in the
-[package reference](docs/reference/package.md).
 
 ## Built with
 
 PyTorch, Hugging Face Transformers and TRL, vLLM, and CUDA C++ with a single source for CPU and GPU builds.
-
-## Documentation
-
-[docs/README.md](docs/README.md) is the index: getting started, architecture and design decisions, reference,
-guides and runbooks. Contributing rules are in [docs/contributing.md](docs/contributing.md).
 
 ## Citation
 

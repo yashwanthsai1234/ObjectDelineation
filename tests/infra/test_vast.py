@@ -612,7 +612,7 @@ def test_rsync_never_sends_data_raw(E):
     assert all(not f.startswith("data/") for f in RM.code_files())
 
 
-SHIPPED = ("docs/reference/frozen_views.json", "docs/reference/val_halves.json")
+SHIPPED = ("reference/frozen_views.json", "reference/val_halves.json")
 
 
 def _child(cwd: Path, code: str) -> subprocess.CompletedProcess:
@@ -621,8 +621,8 @@ def _child(cwd: Path, code: str) -> subprocess.CompletedProcess:
 
 
 def test_frozen_views_ship(tmp_path, monkeypatch):
-    """I50: the code snapshot keeps the two docs/reference records the box reads (final_eval's frozen check, the
-    held-out val_half) and drops the rest of docs/; on a copy of the snapshot both lookups find their file."""
+    """I50: the code snapshot keeps the two reference/ records the box reads (final_eval's frozen check, the
+    held-out val_half) and drops docs/; on a copy of the snapshot both lookups find their file."""
     repo = tmp_path / "repo"
     for f in (*SHIPPED, "docs/a.md", "docs/reference/data.md", "tests/verify/test_gpu_scoring.py", "pyproject.toml"):
         (repo / f).parent.mkdir(parents=True, exist_ok=True)
@@ -632,9 +632,8 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
         m.setenv("OBJDEL_REPO", str(repo))
         assert sorted(RM.code_files()) == sorted([*SHIPPED, "tests/verify/test_gpu_scoring.py", "pyproject.toml"])
     files = RM.code_files()  # (b) the real repo
-    kernels = "docs/implementation2.0/kernels/"  # D1: the K1-K3 drafts ship for the R-D1 runbooks
     assert set(SHIPPED) <= set(files)
-    assert not [f for f in files if f.startswith("docs/") and f not in SHIPPED and not f.startswith(kernels)]
+    assert not [f for f in files if f.startswith("docs/")]
 
     box = tmp_path / "box"  # (c) the box's /workspace/src
     for f in files:
@@ -1423,13 +1422,13 @@ def test_launch_refuses_without_a_ledger(E):
     assert "no ledger.csv" in p.stderr and not E.vast("create instance")
 
 
-def test_code_files_ship_the_kernel_drafts_but_no_other_docs(tmp_path, monkeypatch):
-    """D1 step 0: the kernel drafts ship for R-D1 (K1-K3 runbooks run from /workspace/src/docs/...); their build/ and
-    results/ folders and every other docs/ path except the two reference tables do not."""
-    keep = ["docs/implementation2.0/kernels/K1/k1poly.cpp", "docs/implementation2.0/kernels/K3/GPU_RUN.md",
-            "docs/reference/frozen_views.json", "docs/reference/val_halves.json", "tests/verify/test_gpu_scoring.py",
+def test_code_files_ship_reference_but_nothing_from_docs(tmp_path, monkeypatch):
+    """docs/ is local only (owner, 2026-11-11): no docs/ path ships, the kernel drafts included (they shipped for
+    R-D1 until then); the two reference/ tables do."""
+    keep = ["reference/frozen_views.json", "reference/val_halves.json", "tests/verify/test_gpu_scoring.py",
             "pyproject.toml"]
-    drop = ["docs/implementation2.0/kernels/K1/build/x", "docs/implementation2.0/kernels/K1/results/x.txt",
+    drop = ["docs/implementation2.0/kernels/K1/k1poly.cpp", "docs/implementation2.0/kernels/K3/GPU_RUN.md",
+            "docs/implementation2.0/kernels/K1/build/x", "docs/implementation2.0/kernels/K1/results/x.txt",
             "docs/implementation2.0/kernels/README.md", "docs/implementation2.0/kernels/K4/a.cpp",
             "docs/reference/other.json", "docs/implementation2.0/Implementation.md"]
     for p in keep + drop:

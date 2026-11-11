@@ -137,18 +137,15 @@ def get_run(run_id: str) -> dict:
 def code_files() -> list[str]:
     """The code snapshot (tracked and new files), without the roots data/, docs/, archive/ and .claude/, lab or results
     dirs, or RIGA-derived tables (D16, BK4-13); only files on disk (rsync --files-from aborts on a missing one).
-    tests/ ships: the chain runs tests/verify/test_gpu_scoring.py on the box. Kept from docs/: the two records the box
-    reads
-    (final_eval's frozen view hashes, val_half's table; LIDC ids, counts and hashes, no pixels, no RIGA; B1.6) and the
-    kernel drafts K1-K3 without their build/ and results/ folders (the R-D1 runbooks run them on the box)."""
+    tests/ ships: the chain runs tests/verify/test_gpu_scoring.py on the box. The records the box reads (final_eval's
+    frozen view hashes, val_half's table; LIDC ids, counts and hashes, no pixels, no RIGA; B1.6) are in reference/.
+    docs/ is local only (owner, 2026-11-11): nothing in it ships."""
     git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole (V1)
     files = subprocess.run(git, cwd=repo_root(), capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
     riga = re.compile(r"riga[^/]*\.(csv|jsonl?)$", re.I)
     drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/", re.I)
-    keep = re.compile(r"^docs/reference/(frozen_views|val_halves)\.json$"
-                      r"|^docs/implementation2\.0/kernels/K[123]/(?!build/|results/)")
     files = [f for f in dict.fromkeys(files)
-             if not riga.search(f) and (keep.match(f) or not drop.search(f)) and (repo_root() / f).is_file()]
+             if not riga.search(f) and not drop.search(f) and (repo_root() / f).is_file()]
     if "tests/verify/test_gpu_scoring.py" not in files:  # the chain runs it on the box before any scoring stage
         die("tests/verify/test_gpu_scoring.py missing from the code snapshot")
     return files

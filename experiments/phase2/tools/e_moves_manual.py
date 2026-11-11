@@ -100,7 +100,7 @@ REPLACE_ALL: list[tuple[str, str, str, str]] = [
     # the render file of a split module: window_record and prepare (the frames) now live in data/prepare.py; the
     # frozen records keep their recorded commits (freeze_views --check then lists the file as moved, which it is)
     ("E3c", "experiments/phase2/freeze_views.py", '"src/objdel/train/dataset.py"', '"src/objdel/data/prepare.py"'),
-    ("E3c", "docs/reference/frozen_views.json", '"src/objdel/train/dataset.py"', '"src/objdel/data/prepare.py"'),
+    ("E3c", "reference/frozen_views.json", '"src/objdel/train/dataset.py"', '"src/objdel/data/prepare.py"'),
     # a skip on a split module would silently skip forever
     ("E3b", "tests/experiments/test_p2_probes.py", 'pytest.importorskip("objdel.train.serve")', 'pytest.importorskip("objdel.verify.store")'),
     # source scans that globbed the removed packages now glob their new homes

@@ -10,7 +10,7 @@
 - Val halves (Implementation.md B1.0): the val patients are dealt into "shape" (tunes reward v5) and "select"
   (judges it) per lidc_stratum, with the patient's item and disagreement-item counts in the frozen val view as its
   Patient. Seeds "val_half:0", "val_half:1", ... are tried; the first that balances items (within 4 %) and
-  disagreement items (within 4) is kept. The table is stored in docs/reference/val_halves.json; val_half reads it.
+  disagreement items (within 4) is kept. The table is stored in reference/val_halves.json; val_half reads it.
 - Assignment: within a stratum, groups are ordered by SHA-256(seed, group id) and dealt by a largest-remainder
   schedule, so the result depends only on the seed and the population (no RNG state, no library version).
 - Near-duplicates: a pair is a duplicate when either test fires.
@@ -141,7 +141,7 @@ def val_half_table(records, max_s=1000) -> dict:
 
 @functools.cache
 def _val_halves() -> dict:
-    return read_json(Path(__file__).resolve().parents[3] / "docs/reference/val_halves.json")["halves"]
+    return read_json(Path(__file__).resolve().parents[3] / "reference/val_halves.json")["halves"]
 
 
 def val_half(group_id: str) -> str:

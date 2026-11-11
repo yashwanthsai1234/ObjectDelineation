@@ -81,3 +81,11 @@ CLAUDE.md
 /experiments/*/impl/
 /experiments/phase2/perf/*.md
 /.import_linter_cache/
+
+# Documentation stays on the owner's machine (owner, 2026-11-11): the docs site, its config and the tests that
+# check it. reference/ holds the records the code reads; assets/ holds the README images.
+/docs/
+/mkdocs.yml
+/tests/docs_check.py
+/tests/infra/test_docs.py
+/tests/infra/test_docs_content.py

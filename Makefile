@@ -73,7 +73,7 @@ docs:             ## build the docs site into site/ (strict: any warning fails)
 docs-serve:       ## serve the docs site locally
 	.venv/bin/zensical serve
 
-headline:         ## copy the headline test and validation metrics into docs/results/headline.json (RUN=r5, or TEST=... VAL=...)
+headline:         ## copy the headline test and validation metrics into reference/headline.json (RUN=r5, or TEST=... VAL=...)
 	@test -n "$(RUN)$(TEST)" || { echo "headline: give RUN=<id>, or TEST=<final_eval.json> and VAL=<final_eval.json>"; exit 2; }
 	@test -n "$(RUN)" -o -n "$(VAL)" || { echo "headline: TEST needs VAL"; exit 2; }
 	$(PY) -I -m experiments.phase2.headline $(if $(RUN),--run $(RUN),--test $(TEST) --val $(VAL)) --model-ref $(MODEL_REF)

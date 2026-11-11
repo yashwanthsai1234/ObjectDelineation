@@ -15,6 +15,7 @@ from objdel.sft import train as sft_train
 
 ROOT = Path(__file__).resolve().parents[2]
 NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
+LOCAL_DOCS = pytest.mark.skipif(not (ROOT / "docs").is_dir(), reason="docs/ is local-only (git-ignored, 2026-11-11)")
 GOLDENS = ROOT / "tests" / "goldens"
 
 
@@ -182,6 +183,7 @@ def test_phase1_scripts_archived_and_their_tests_listed():
 
 
 @NEEDS_ARCHIVE
+@LOCAL_DOCS
 def test_archive_readmes_follow_the_contract():
     """CT-38: four headings in order, a retiring hash that is a prefix of the tag's commit, restore names the tag."""
     full = subprocess.run(
@@ -201,14 +203,16 @@ def test_archive_readmes_follow_the_contract():
 
 
 @NEEDS_ARCHIVE
+@LOCAL_DOCS
 def test_phase0_scripts_and_records_moved():
     """CT-87: 8 python files in the archive, records beside the research notes, the oracle parser stays in tests.
     Owner's layout (a255988): README.md, RESULTS.md and RESULTS_0b.md are tracked; the two plans (PLAN.md,
     PLAN_0b.md) stay on the owner's machine, git-ignored, so a worktree may not hold them."""
     assert len(list((ROOT / "archive/phase0").glob("*.py"))) == 8
-    rec = ROOT / "docs/research/records/phase0"
-    md = {f.rsplit("/", 1)[1] for f in tracked(":(glob)docs/research/records/phase0/*.md")}
-    assert (rec / "results").is_dir() and md == {"README.md", "RESULTS.md", "RESULTS_0b.md"}
+    rec = ROOT / "docs/research/records/phase0"  # local only since 2026-11-11, like the rest of docs/
+    md = {p.name for p in rec.glob("*.md")}
+    assert (rec / "results").is_dir() and {"README.md", "RESULTS.md", "RESULTS_0b.md"} <= md
+    assert not tracked("docs")
     plans = [f"docs/research/records/phase0/{n}" for n in ("PLAN.md", "PLAN_0b.md")]
     ignored = subprocess.run(["git", "check-ignore", *plans], cwd=ROOT, capture_output=True, text=True).stdout.split()
     assert ignored == plans
@@ -324,7 +328,8 @@ def test_vulture_is_pinned_and_configured():
 
 
 def test_vastai_pinned_in_runbook_and_not_a_project_dependency():
-    assert "uv tool install vastai==1.11.0" in (ROOT / "docs/runbooks/gpu-run.md").read_text()
+    if (ROOT / "docs").is_dir():  # the runbook is local only (docs/, 2026-11-11)
+        assert "uv tool install vastai==1.11.0" in (ROOT / "docs/runbooks/gpu-run.md").read_text()
     deps = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     assert not any("vastai" in d for d in deps["dependencies"] + sum(deps["optional-dependencies"].values(), []))
 
@@ -348,6 +353,7 @@ def _first_names(section: str) -> list[str]:  # first backticked token of each b
     return [_norm(m) for m in re.findall(r"^- `([^`]+)`", section, flags=re.M)]
 
 
+@LOCAL_DOCS
 def test_library_keep_list_adr_matches_pyproject():
     (path,) = ADR_DIR.glob("0021-*.md")
     text = path.read_text()

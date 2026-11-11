@@ -130,7 +130,7 @@ def test_val_half_table_raises_when_no_seed_passes(val_records):
 
 
 def test_val_half_reads_the_committed_table():
-    t = json.loads((ROOT / "docs/reference/val_halves.json").read_text())
+    t = json.loads((ROOT / "reference/val_halves.json").read_text())
     assert {g: val_half(g) for g in t["halves"]} == t["halves"]
     assert set(t["halves"].values()) == {"shape", "select"}
     assert t["patient_form"] == "items,disagreement_items" and len(t["r5_selection_items"]) == 128
@@ -148,13 +148,13 @@ def test_val_half_table_matches_the_val_view():
     if not path.is_file():
         pytest.skip("no local val view")
     recs = [json.loads(x) for x in path.read_text().splitlines()]
-    t = json.loads((ROOT / "docs/reference/val_halves.json").read_text())
+    t = json.loads((ROOT / "reference/val_halves.json").read_text())
     table = splits.val_half_table(recs)
     assert table == {k: t[k] for k in table} and table["s"] == 78  # s = 78: Implementation.md B1.0 [measured]
 
 
 def test_val_half_independent_of_hashseed():
-    want = json.loads((ROOT / "docs/reference/val_halves.json").read_text())["halves"]["LIDC-IDRI-0026"]
+    want = json.loads((ROOT / "reference/val_halves.json").read_text())["halves"]["LIDC-IDRI-0026"]
     code = "from objdel.data.splits import val_half;print(val_half('LIDC-IDRI-0026'))"  # a val id, no prefix
     outs = {subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, cwd=ROOT,
                            env={"PYTHONHASHSEED": s}).stdout for s in ("0", "1", "2")}

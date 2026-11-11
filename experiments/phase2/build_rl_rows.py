@@ -3,7 +3,7 @@ order, and a manifest written only when every hard B data gate passes.
 
     .venv/bin/python -I -m experiments.phase2.build_rl_rows --store data/store --target-law train-shifted
         --out data/views/lidc-train-b1-780 --steps 780 --per-step 32 [--draws N] --shares 0.15 0.75 0.10 --seed 0
-        --procs 6 --exclude docs/reference/train_exclusions.json
+        --procs 6 --exclude reference/train_exclusions.json
 
 1. `pool(train items, draws, seed, exclude)` with the `--exclude` file's keys (required; an empty list is `{}`). The
    target is `cell_shares` of the pool's draw-0 shifted windows (the train shifted law; train store only).
@@ -46,7 +46,7 @@ from objdel.data import store, windows
 from objdel.data.coverage import cell_coverage
 
 ROOT = Path(__file__).resolve().parents[2]
-REF = ROOT / "docs" / "reference"
+REF = ROOT / "reference"
 DRAWS_OPTIONS = (1, 2, 4, 8)
 BUILD_DIRS = ("caches", "images", "lidc")  # what a build writes before its manifest
 

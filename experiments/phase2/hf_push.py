@@ -4,7 +4,7 @@
     python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
     python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1-780 --repo svenk029/objdel-sft --revision main
         < token     # B1.4 step 5 on the Mac: prints rows_revision and rows_manifest_sha256 for specs/b1_rows.yaml
-    python -I -m experiments.phase2.hf_push --card-only --headline docs/results/headline.json --repo ... --revision ...
+    python -I -m experiments.phase2.hf_push --card-only --headline reference/headline.json --repo ... --revision ...
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
     be the run's)
 
@@ -24,7 +24,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--card-only", action="store_true", help="replace the card's Evaluation and Limitations only")
-    ap.add_argument("--headline", type=Path, help="with --card-only: docs/results/headline.json")
+    ap.add_argument("--headline", type=Path, help="with --card-only: reference/headline.json")
     src.add_argument("--run", type=Path, help="train_sft output dir (select/ inside)")
     src.add_argument("--rl", type=Path, help="train_rl output dir (final/ and final_adapter/ inside)")
     src.add_argument("--rows", type=Path, help="build_rl_rows root, to rows/<its name>/ (B1.4 step 5)")

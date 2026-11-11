@@ -3,7 +3,7 @@
 Gates (B.6.1; `gates(report)` returns the 21 in this order, `failures` the hard ones that fail):
 - DG1, DG2, DG3 `leakage(store_root, ...)`: patient, series and item overlap between splits; SHA-256 of every int16
   slice and of the 32x32 crop at the union-box centre shared across patients or splits; near-duplicate crops across
-  splits (`near_duplicates`), each needing a review in `docs/reference/neardup_review.json`.
+  splits (`near_duplicates`), each needing a review in `reference/neardup_review.json`.
 - DG1b `rows_leakage`: every row a train item of the store, no val or test patient, no val or test view image, no
   excluded item (and, on the Mac, the manifest's exclusions SHA-256 equal to the file's).
 - DG4, DG5, DG6, DG13, DG18 `window_checks(rows_root, store_root)`: each row's window box against its item (doctor
@@ -150,7 +150,7 @@ def dicom_z(folder, zvals) -> dict:
 # --- B1.3: the data gates -----------------------------------------------------------------------------------------
 NEAR = 0.98  # DG3 score limit (Pearson correlation of two 32x32 HU crops)
 CROSS = (("train", "val"), ("train", "test"), ("val", "test"))
-FROZEN = ("lidc-test-shifted", "lidc-val-edge", "lidc-val-shifted")  # docs/reference/frozen_views.json (B1.6)
+FROZEN = ("lidc-test-shifted", "lidc-val-edge", "lidc-val-shifted")  # reference/frozen_views.json (B1.6)
 SCHEDULE_ARGS = ("per_step", "block_steps", "shares", "disagreement_weight")  # manifest.schedule keys of the report
 LOW_CONTRAST = 5  # grey levels between the doctors' union and the ring around it (DG14)
 NULL_DRAWS = 500  # DG16 null: random train-patient subsamples
@@ -556,7 +556,7 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
     runs/b1/series_z.json and runs/b1/audit (DG3 PNGs). `plan`: the schedule dict (build_rl_rows passes it before the
     manifest exists); default the manifest's `schedule`."""
     root = repo_root()
-    ref = root / "docs" / "reference"
+    ref = root / "reference"
     rows, store_root, eval_views = Path(rows), Path(store_root), Path(eval_views)
     exclusions = Path(exclusions or ref / "train_exclusions.json")
     plan = plan or read_json(rows / "manifest.json")["schedule"]
