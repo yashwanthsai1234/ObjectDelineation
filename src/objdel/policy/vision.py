@@ -1,26 +1,18 @@
-"""G-vision (experiments/phase2/PLAN.md §5.1, revision 5): does the model still look at the image? The B1 §2.5
-protocol, promoted from archive/phase2_lab/B1/vision_feats.py and image_use.py:
+"""G-vision: does the model still look at the image? Two measures, both on the CPU in float32:
 
 (a) the mean pairwise cosine distance between the projector outputs (get_image_features, what the language model
     sees; all image tokens of one image flattened into one vector) of a fixed image set, the 4 centred LIDC val crops
-    plus a black image, as a ratio to the base model's value (measured once in R0: `projector_distance(base, ...)`);
+    plus a black image, as a ratio to the base model's value (`projector_distance(base, ...)`, measured once);
 (b) the teacher-forced next-token total variation over the first T = 24 tokens of the first rater target, on 8 fixed
     LIDC val items: real crop vs a black image and real crop vs the next item's crop; per item the mean over
     positions of 0.5 * sum |p - q|, then the mean over items.
 
-Thresholds: ratio >= 0.5 and both TVs >= 0.002 (B1 §2.5: collapsed checkpoints 0.001-0.064 and <= 0.0007, intact
-0.68-1.0 and >= 0.004; the thresholds hold only under this exact protocol). `decide` is the rule of select_ckpt (D12
-eligibility: pass needs both) and of train_sft at each rolling checkpoint (M8): both below threshold -> "abort" (D7
-repair), one -> "warn", none -> "ok". The fixed sets (`fixed_set`) are B1's: a seed-0 permutation of the RL-eligible
-LIDC val records, its first POOL in item-id order, the first n of those; every image is checked against its prepared
-image_sha256 and the set's SHA-256 (ids, image hashes, targets) is returned for the run manifest. torch is imported
-lazily: this module imports without it. Run on the CPU in float32, as in B1.
-
-References:
-- archive/phase2_lab/B1/REPORT.md §2.5 (protocol, table); PLAN.md §5.1 G-vision, §7 M4 / M8.
-- transformers get_image_features (projector output of the image-text-to-text models):
-  https://huggingface.co/docs/transformers/main/en/model_doc/llava ; total variation distance:
-  https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures
+Thresholds: ratio >= 0.5 and both TVs >= 0.002 (collapsed checkpoints measured 0.001-0.064 and <= 0.0007, intact ones
+0.68-1.0 and >= 0.004; the thresholds hold only under this exact protocol). `decide` is the rule of select_ckpt
+(eligibility needs both) and of train_sft at each rolling checkpoint: both below threshold is "abort", one is "warn",
+none is "ok". The fixed sets (`fixed_set`) are a seed-0 permutation of the RL-eligible LIDC val records, its first
+POOL in item-id order, the first n of those; every image is checked against its prepared image_sha256 and the set's
+SHA-256 (ids, image hashes, targets) is returned for the run manifest. torch is imported lazily.
 """
 import hashlib
 import json
@@ -28,11 +20,12 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core.io import read_jsonl
 from objdel.policy.prompt import PROMPTS
 
 RATIO, TV = 0.5, 0.002
 N_IMAGES, N_ITEMS, T = 4, 8, 24
-POOL, SEED = 64, 0  # B1: C.eval_records("lidc", 64) (seed 0), then [:4] images, [:8] items
+POOL, SEED = 64, 0  # a seed-0 draw of 64 RL-eligible val items, then [:4] images and [:8] items
 
 
 def decide(ratio: float, tv_black: float, tv_other: float) -> dict:
@@ -43,11 +36,11 @@ def decide(ratio: float, tv_black: float, tv_other: float) -> dict:
 
 
 def fixed_set(prepared_root, n: int = N_ITEMS) -> tuple[list[dict], str]:
-    """([{"item_id", "image": PIL RGB, "target"}], SHA-256 of the set) of B1's fixed LIDC val items (module
+    """([{"item_id", "image": PIL RGB, "target"}], SHA-256 of the set) of the fixed LIDC val items (module
     docstring); ValueError when an image is not the one recorded."""
     from PIL import Image
     root = Path(prepared_root)
-    recs = [r for r in map(json.loads, (root / "lidc" / "val.jsonl").read_text().splitlines()) if r["rl"]]
+    recs = [r for r in read_jsonl(root / "lidc" / "val.jsonl") if r["rl"]]
     idx = np.random.default_rng(SEED).permutation(len(recs))[:POOL]
     out = []
     for r in sorted((recs[i] for i in idx), key=lambda r: r["item_id"])[:n]:
@@ -66,16 +59,11 @@ def black(image):
     return Image.new("RGB", image.size)
 
 
-def _prompt(prompt):
-    if prompt is None:
-        prompt = PROMPTS["lidc"]
-    return prompt
-
-
 def _batch(model, processor, image, prompt):
-    msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": _prompt(prompt)}]}]
-    text = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-    b = processor(text=[text], images=[[image]], return_tensors="pt")
+    text = PROMPTS["lidc"] if prompt is None else prompt
+    msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]}]
+    chat = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+    b = processor(text=[chat], images=[[image]], return_tensors="pt")
     return {k: v.to(model.device, model.dtype) if v.is_floating_point() else v.to(model.device) for k, v in b.items()}
 
 

@@ -262,64 +262,6 @@ def sel_items(ids, mean, medoid, vote=None):
             for j, (i, a, b) in enumerate(zip(ids, mean, medoid, strict=True))]
 
 
-def test_paired_differences():
-    """U11: mean and both CIs of the per-item differences under the summary's draws; the unit is not swapped."""
-    s = EV.summarize(sel_items([f"x{i}" for i in range(4)], [.5, .5, .5, .5], [.6, .6, .45, .5]))
-    p = s["paired"]["medoid_minus_mean"]
-    assert set(p) == {"mean", "ci95_patient", "ci95_nodule"} and abs(p["mean"] - 0.0375) < 1e-12
-    assert s["paired"]["vote_minus_mean"] is None
-    ids, groups = layout(3, 2, 2)
-    diff = np.array([.1, .1, 0, 0, .05, .05, -.05, -.05, .2, .2, .1, .1])
-    s = EV.summarize(sel_items(ids, [.5] * 12, .5 + diff), groups)["paired"]["medoid_minus_mean"]
-    want = {k: S.ci(.5 + diff - .5, D)[1:] for k, D in (
-        ("ci95_patient", S.draws(ids, 2000, 0, key=groups.__getitem__)), ("ci95_nodule", S.draws(ids, 2000, 0)))}
-    for k, w in want.items():
-        assert np.allclose(s[k], w, rtol=0, atol=1e-12) and s[k][0] <= s["mean"] <= s[k][1], k
-    assert abs(s["ci95_nodule"][1] - 0.1333) < 1e-4 and abs(s["ci95_patient"][1] - 0.15) < 1e-12
-    v = np.random.default_rng(0).random(12)
-    s = EV.summarize(sel_items(ids, v, v + 0.05, v), groups)["paired"]
-    assert abs(s["medoid_minus_mean"]["mean"] - 0.05) < 1e-12
-    assert all(abs(x - 0.05) < 1e-12 for k in ("ci95_patient", "ci95_nodule") for x in s["medoid_minus_mean"][k])
-    assert set(s["vote_minus_mean"]) == {"mean", "ci95_patient", "ci95_nodule"}
-    items = sel_items(ids, v, v, v)
-    del items[3]["sel_vote"]
-    with pytest.raises(ValueError, match=ids[3]):
-        EV.summarize(items, groups)
-
-
-def test_paired_ci_is_narrower_than_the_unpaired_one_on_correlated_arms():
-    ids, groups = layout(6, 3, 2)
-    base = np.random.default_rng(1).random(len(ids))
-    s = EV.summarize(sel_items(ids, base, base + 0.02), groups)
-    paired = np.diff(s["paired"]["medoid_minus_mean"]["ci95_patient"])[0]
-    unpaired = np.diff(s["sel_medoid"]["ci95_patient"])[0] + np.diff(s["sel_mean_of_k"]["ci95_patient"])[0]
-    assert paired < unpaired
-
-
-def summary(mean, patient, nodule=(0.0, 0.1), vote=None):
-    pair = {"mean": mean, "ci95_patient": None if patient is None else list(patient), "ci95_nodule": list(nodule)}
-    return {"gate_ci": "ci95_patient", "paired": {"medoid_minus_mean": pair, "vote_minus_mean": vote}}
-
-
-def test_gate_a_rule():
-    """U51: the val patient CI decides; the nodule CI and the test summary never do."""
-    assert FE.gate_a(summary(0.015, (0.002, 0.03)), None)["change_default"] is True
-    assert FE.gate_a(summary(0.015, (0.002, 0.03)), None)["method"] == "medoid"
-    assert FE.gate_a(summary(0.0149, (0.002, 0.03)), None)["change_default"] is False
-    assert FE.gate_a(summary(0.02, (0.0, 0.04)), None)["change_default"] is False
-    g = FE.gate_a(summary(0.02, (-0.003, 0.043), nodule=(0.004, 0.036)), None)
-    assert (g["method"], g["change_default"]) == ("mean_of_k", False)
-    with pytest.raises(ValueError, match="ci95_patient"):
-        FE.gate_a(summary(0.02, None, nodule=(0.004, 0.036)), None)
-    vote = {"mean": 0.05, "ci95_patient": [0.03, 0.07], "ci95_nodule": [0.03, 0.07]}
-    g = FE.gate_a(summary(0.0, (-0.01, 0.01), vote=vote), None)
-    assert g["change_default"] is False and g["method"] == "mean_of_k" and "Phase D" in g["reason"]
-    val, test = summary(0.02, (0.005, 0.035)), summary(-0.01, (-0.02, 0.0))
-    a, b = FE.gate_a(val, None), FE.gate_a(val, test)
-    assert a["method"] == b["method"] == "medoid" and a["test_same_sign"] is None and b["test_same_sign"] is False
-    assert FE.gate_a(val, summary(0.01, (0.0, 0.02)))["test_same_sign"] is True
-
-
 def test_selection_key_invariants():
     """P08: 200 random items, K = 8."""
     rng = np.random.default_rng(8)
@@ -406,22 +348,8 @@ def test_summary_has_every_metric_and_selection_key():
     for m in [*EV.METRICS, *EV.SELECTION[:-1]]:
         assert set(s[m]) == CI_KEYS | ({"median"} if m == "iou_tc" else set()), m
         assert s[m]["higher_is_better"] is (m != "ged"), m
-    assert {"miss_rate", "iou_found", "paired"} <= set(s) and "sel_vote" not in s
+    assert {"miss_rate", "iou_found"} <= set(s) and "sel_vote" not in s
     json.dumps(s, allow_nan=False)
-
-
-def test_size_terciles():
-    """U52: terciles of the vote-mask area with their means; ties stay in one tercile; fewer than 3 items raise."""
-    items = [{"item_id": f"x{a}", "vote_area": a, "iou_tc": a / 100, "boundary_iou": a / 200}
-             for a in range(10, 100, 10)]
-    t = FE.size_terciles(items)
-    assert t["bounds"] == [30, 60] and [g["items"] for g in t["terciles"]] == [3, 3, 3]
-    assert [g["iou_tc"] for g in t["terciles"]] == pytest.approx([.2, .5, .8])
-    assert [g["boundary_iou"] for g in t["terciles"]] == pytest.approx([.1, .25, .4])
-    tied = [it | {"vote_area": 30} if it["vote_area"] == 40 else it for it in items]
-    assert [g["items"] for g in FE.size_terciles(tied)["terciles"]] == [4, 2, 3]
-    with pytest.raises(ValueError, match="3 items"):
-        FE.size_terciles(items[:2])
 
 
 # A3: saved answers, write order, rescore, code identity, view hashes, noise floor, view identity ----------------------
@@ -865,41 +793,6 @@ def identity_fixture(seed=0):
     return ids, {i: i.split("/")[1] for i in ids}, res
 
 
-def test_view_identity():
-    """U58: r_sh = 2 r_h / (1 + r_h) from the half means; a same-view R5 column passes; the same values shuffled
-    across items fail, and the message names the correlation and the bound."""
-    ids, groups, res = identity_fixture()
-    iou = np.array([r["samples"]["iou_tc"] for r in res])
-    r_h = np.corrcoef(iou[:, :4].mean(1), iou[:, 4:].mean(1))[0, 1]
-    old = {i: float(m + n) for i, m, n in zip(ids, iou.mean(1), np.random.default_rng(1).normal(0, .03, 40),
-                                              strict=True)}
-    v = FE.view_identity(res, old, groups)
-    assert abs(v["r_sh"] - 2 * r_h / (1 + r_h)) < 1e-12 and v["pass"] is True
-    assert abs(v["r_obs"] - np.corrcoef(iou.mean(1), [old[i] for i in ids])[0, 1]) < 1e-12
-    shuffled = dict(zip(ids, np.random.default_rng(2).permutation(list(old.values())).tolist(), strict=True))
-    v = FE.view_identity(res, shuffled, groups)
-    assert v["pass"] is False and f"{v['r_obs']:.4f}" in v["message"] and f"{v['r_sh']:.4f}" in v["message"]
-    with pytest.raises(ValueError, match=ids[0]):
-        FE.view_identity(res, {k: x for k, x in old.items() if k != ids[0]}, groups)
-
-
-def test_tost():
-    """A-G3: the 90 % patient CI of the mean paired difference inside +-bound passes; a wider CI is 'not shown'."""
-    ids, groups, _ = identity_fixture()
-    rng = np.random.default_rng(3)
-    old = {i: float(x) for i, x in zip(ids, rng.uniform(.2, .8, 40), strict=True)}
-    near = {i: x + float(rng.normal(0, .005)) for i, x in old.items()}
-    t = FE.tost(near, old, groups)
-    D = S.draws(ids, 2000, 0, key=groups.__getitem__)
-    d = np.array([near[i] - old[i] for i in ids])
-    assert t["ci90_patient"] == np.quantile([d[x].mean() for x in D], [.05, .95]).tolist()
-    assert t["pass"] is True and (t["items"], t["patients"]) == (40, 8)
-    far = {i: x + float(rng.normal(0, .1)) for i, x in old.items()}
-    assert FE.tost(far, old, groups)["pass"] is False
-    with pytest.raises(ValueError, match=ids[3]):
-        FE.tost({k: x for k, x in near.items() if k != ids[3]}, old, groups)
-
-
 def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
     """U49: vast sync_up's CODE_SHA text (objdel.core.io.git_sha): HEAD when clean; HEAD-dirty-<sha256(D)[:12]> with D =
     git diff HEAD plus the sorted untracked, not-ignored paths; staged-only changes count; ignored files do not; git
@@ -1064,7 +957,7 @@ def test_frozen_entry_is_a_content_hash_not_the_manifest_sha(frozen):
     d, f = frozen
     f.write_text(json.dumps({d.name: {"content_sha256": hashlib.sha256((d / "manifest.json").read_bytes()).hexdigest(),
                                       "target_set_sha256": "t" * 64}}))
-    with pytest.raises(SystemExit, match="content_sha256"):
+    with pytest.raises(FE.Refusal, match="content_sha256"):
         FE.check_view(d, "test")
 
 
@@ -1073,7 +966,7 @@ def test_frozen_view_without_its_record_is_refused(frozen, tmp_path, monkeypatch
     d, _ = frozen
     monkeypatch.setattr(FE, "FROZEN_VIEWS", tmp_path / "missing.json")
     assert FE.frozen_entry(d.name) is None
-    with pytest.raises(SystemExit, match="frozen_views.json"):
+    with pytest.raises(FE.Refusal, match="frozen_views.json"):
         FE.check_view(d, "test")
 
 

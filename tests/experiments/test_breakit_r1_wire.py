@@ -17,6 +17,7 @@ from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import remote as RM
 from objdel.policy import final_eval as FE
+from objdel.policy.errors import Refusal
 from objdel.rl import run as rl_run
 from tests.experiments.test_final_eval import ev, ev_root, jsonl, run_fe  # noqa: F401  (fixtures and helpers)
 
@@ -88,11 +89,11 @@ def test_check_view_frozen_check_survives_an_alias(ev, tmp_path, monkeypatch):  
     monkeypatch.setattr(FE, "FROZEN_VIEWS", tmp_path / "frozen.json")
     bad = {"content_sha256": "bad", "target_set_sha256": "bad"}
     (tmp_path / "frozen.json").write_text(json.dumps({frozen.name: bad}))
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal):
         FE.check_view(frozen, "val")  # control: the real name is refused
     alias = tmp_path / "alias"
     alias.symlink_to(frozen)
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal):
         FE.check_view(alias, "val")
 
 

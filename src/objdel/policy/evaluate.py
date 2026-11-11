@@ -1,9 +1,9 @@
-"""Evaluation without a trainer (Implementation.md E4), shared by checkpoint selection, the G-probe and the final exam:
+"""Evaluation without a trainer shared by checkpoint selection, the G-probe and the final exam:
 rows of an eval view, one item's checker metrics, and the per-item and summary statistics of final_eval.
 
 - eval_rows(view, items, rl_only): the prompt rows of a view's lidc/val records (a seeded subset with `items`).
 - score_items(rows, done, root): per-item metrics (objdel.verify.metrics on the preloaded caches, in this process: one
-  CUDA context, D7) and the signal groups.
+  CUDA context) and the signal groups.
 - per_item(result) and summarize(items, groups): final_eval's K-sample means, answer choices (A4) and the schema-2
   summary with item, nodule and patient bootstrap intervals (final_eval's module docstring names every key).
 - evaluate(sampler, rows, params, view_root, keep): the scoring half of final_eval on any objdel.policy.sampler
@@ -127,15 +127,6 @@ def summarize(items: list[dict], groups: dict[str, str] | None = None, draws: in
         "mean": float(iou[found].mean()), "items": len(fids),
         "ci95_patient": None if groups is None else signal.ci(iou[found], unit_draws(fids, groups.__getitem__))[1:],
         "ci95_nodule": signal.ci(iou[found], unit_draws(fids))[1:]}
-
-    def paired(arm: str) -> dict | None:  # the per-item difference arm - sel_mean_of_k under the same draws
-        if arm not in out:
-            return None
-        d = np.array([it[arm] - it["sel_mean_of_k"] for it in items])
-        return {"mean": float(d.mean()), "ci95_patient": None if D["ci95_patient"] is None
-                else signal.ci(d, D["ci95_patient"])[1:], "ci95_nodule": signal.ci(d, D["ci95_nodule"])[1:]}
-
-    out["paired"] = {"medoid_minus_mean": paired("sel_medoid"), "vote_minus_mean": paired("sel_vote")}
     return out
 
 

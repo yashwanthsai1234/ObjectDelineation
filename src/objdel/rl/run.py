@@ -1,39 +1,38 @@
 """The body of a full GRPO run (train_rl): `run_rl(stage)` trains an objdel.core.spec.RlStage for --steps, saves every
 --save-steps and keeps the tuned model; `merge_last(stage)` finishes a run that stopped early.
 
-Every refusal comes before any model or engine load, the session budget first (session_budget: the flags, else
-the environment run.sh exports; BudgetFlagError when a budget has no session start or rate).
+Every refusal comes before any model or engine load, the session budget first (session_budget: the flags, else the
+environment run.sh exports; BudgetFlagError when a budget has no session start or rate).
 
 The trainer is the G-probe's (objdel.rl.build.build_trainer): FastGRPO with OpenOnce and ImageMemo, vLLM colocate
 drawing, scoring on the GPU next to the CUDA checker, G = 8, 32 LIDC train prompts per step, the probe LR unless --lr.
 
-Rows. A rows root (build_rl_rows: manifest.json has `schedule`) is trained in its file order, which is the schedule:
-before any model or engine loads, train_rl refuses (ValueError) a manifest whose SHA-256 is not
+Rows. A rows root (build_rl_rows: manifest.json has `schedule`) is trained in its file order, which is the schedule.
+Before any model or engine loads, train_rl refuses (ValueError) a manifest whose SHA-256 is not
 --rows-manifest-sha256, rows that are not steps x per_step keys with the schedule's ids_sha256, a sampler that does
 not draw per_step prompts per optimizer step in order (TRL's RepeatSampler: generation_batch_size // num_generations,
 steps_per_generation == gradient_accumulation_steps, num_iterations 1), and --steps beyond the schedule or not whole
 blocks. shuffle_dataset is False, so an HF resume skips the consumed batches and keeps the order. A root without
-`schedule` (data/prepared) trains shuffled with disagreement items x4 until B1.8.
+`schedule` (data/prepared) trains shuffled with disagreement items x4.
 
-Saves. Every --save-steps it writes <out>/trainer/checkpoint-N: the LoRA adapter, optimizer, scheduler, RNG and
-trainer state, so --resume continues from the last one after a lost box (a run without --resume refuses an --out
-that holds checkpoints; --resume refuses one past --steps). At the end the unmerged adapter goes to
-<out>/final_adapter, then the LoRA is merged into the base and saved with its processor to <out>/final, a plain
-model folder (select_ckpt, final_eval and vLLM read it unchanged). --merge-last does the same from the last
-checkpoint of a run that did not reach its end (rl.json: partial true), and nothing when <out>/final exists (save_final
-writes final.tmp and renames it, so final is complete; a missing rl.json is written with steps null).
+Saves. Every --save-steps it writes <out>/trainer/checkpoint-N (LoRA adapter, optimizer, scheduler, RNG, trainer
+state), so --resume continues from the last one after a lost box (a run without --resume refuses an --out that holds
+checkpoints; --resume refuses one past --steps). At the end the unmerged adapter goes to <out>/final_adapter, then
+the LoRA is merged into the base and saved with its processor to <out>/final, a plain model folder (select_ckpt,
+final_eval and vLLM read it unchanged). --merge-last does the same from the last checkpoint of a run that did not
+reach its end (rl.json: partial true), and nothing when <out>/final exists (save_final writes final.tmp and renames
+it, so final is complete; a missing rl.json is written with steps null).
 
 Budget. --budget-usd stops and saves (callbacks.BudgetStop) when the session spend --fixed-usd + hours since
 --session-start x --rate-usd-per-h reaches it; a flag left out is read from OBJDEL_SESSION_START, OBJDEL_RATE_USD_PER_H
-and OBJDEL_FIXED_USD (run.sh exports them from the active run) at run time, by session_budget, not by the stage.
+and OBJDEL_FIXED_USD (run.sh exports them from the active run) by session_budget, not by the stage.
 
-Held-out curve (off by default): --heldout VIEW evaluates --heldout-items val-shape items (splits.val_half) of that
-eval view every --heldout-every steps, 8 answers each; rl.json "eval" holds eval/iou_tc and eval/allmiss_share.
+Held-out curve (off by default): --heldout VIEW evaluates --heldout-items val-shape items of that eval view every
+--heldout-every steps, 8 answers each; rl.json "eval" holds eval/iou_tc and eval/allmiss_share.
 
-<out>/rl.json: steps, LR, numerics, opsm_start_delta (None outside bf16-tis-opsm), beta, reward (name, fingerprint,
-c_topo, loc_width, area_gate), rows provenance, timing, `report` (run_report: the clipped_ratio slope, the
-truncated_grad_share median and max; printed on the result line) and TRL's log. --reward v5 trains on reward v5 and
-adds callbacks.LocGuard (stop and save; loc_guard_stopped).
+<out>/rl.json: steps, LR, numerics, opsm_start_delta, beta, reward (name, fingerprint, c_topo, loc_width, area_gate),
+rows provenance, timing, `report` (run_report: the clipped_ratio slope, the truncated_grad_share median and max) and
+TRL's log. --reward v5 trains on reward v5 and adds callbacks.LocGuard (stop and save; loc_guard_stopped).
 """
 
 import gc
@@ -79,7 +78,7 @@ def checked(a):
 
 
 def check_flags(a) -> None:
-    """Refusals that need no model: the completion limit (C7: set from the outline count, never above the model's
+    """Refusals that need no model: the completion limit (set from the outline count, never above the model's
     budget) and the runaway cap (C11: a capped answer is cut mid-text, so masking it would bias the update toward
     more capping)."""
     from objdel.policy import models as policy_models
@@ -228,7 +227,7 @@ def cut_seq_gaps(trainer_dir: Path, step: int) -> None:
 
 
 def run_report(log: list[dict]) -> dict:
-    """B3.5 run-report line: the least-squares slope of completions/clipped_ratio over the steps (None below two
+    """Run-report line: the least-squares slope of completions/clipped_ratio over the steps (None below two
     steps) and the median and max of completions/truncated_grad_share (None when the run logged none)."""
     import numpy as np
 
@@ -414,7 +413,7 @@ def run_rl(a) -> dict:
         "opsm_start_delta": a.opsm_start_delta if a.opsm_start_delta is not None else cfg.off_policy_mask_threshold,
         "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
         "max_completion_length": cfg.max_completion_length,
-        "loss_scale": policy_models.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L (C7)
+        "loss_scale": policy_models.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L
         "reward": {"name": spec.name, "fingerprint": reward_fingerprint(spec), "c_topo": spec.c_topo,
                    "loc_width": getattr(spec, "loc_width", None), "area_gate": getattr(spec, "area_gate", None)},
         "rows": rows, "train_rows": len(train), "budget_stopped": bool(stop and stop.tripped),

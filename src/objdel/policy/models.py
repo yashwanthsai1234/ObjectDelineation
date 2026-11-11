@@ -1,60 +1,15 @@
-"""TRL (version pinned in pyproject.toml) SFT and GRPO configurations for the screened models
-(plan D8, D10, D12; lab t_stack).
+"""Per-model constants and helpers shared by SFT, RL and sampling: MODELS (Hugging Face ids), MAX_COMPLETION, the
+LoRA config, the sampling fields, the stop ids and the truncation rule.
 
-GRPO (D8): loss_type="dr_grpo" (constant length normaliser, no std scaling), clip epsilon 0.2 / epsilon_high 0.28
-(DAPO clip-higher), beta = 1e-3 from the start (lab t_stack T3), mask_truncated_completions, constant learning rate,
-G = num_generations = 8 (REWARD_V4.group); any other num_generations or num_generations_eval raises ValueError,
-because TRLReward would score a TRL group of 16 as two v4 groups of 8 without noticing (break-it B2-5). Reward:
-TRLReward's weight-0 loggers plus the aggregator with multi_objective_aggregation="sum_then_normalize" and
-scale_rewards="none" (objdel.rl.reward).
-One step = 32 prompts x 8 completions (generation_batch_size 256, plan §3.2): per_device_train_batch_size 16 (two
-groups) with 16 accumulation steps on one GPU (perf F2, 2026-11-06: half the CPU launch work per answer of 8 x 32;
-the profiling run measures 8 / 16 / 32); per_device sizes are multiples of G so every process's reward call holds
-whole groups at any world size. vLLM colocate (perf F1): vllm_gpu_memory_utilization 0.35, sleep mode on (vLLM
-frees its memory during the update). num_generations_eval = None (= 8): held-out evaluation samples groups like
-training, which is what the Phase 2 GRPO-signal gate (duplicates, sigma above the floor at T = 1) measures.
-
-Owner decisions (C7, C8): beta stays 1e-3 in the control (B1) and is 0.0 for a B run that sets it through
-`--grpo '{"beta": 0.0}'` (with beta 0 TRL loads no reference adapter and skips the reference pass; with LoRA the
-reference is the adapter-off model, so beta can be raised again later). A completion limit L below the model's
-budget goes in through `--grpo '{"max_completion_length": L}'`: train_rl refuses L above the budget, records the
-dr_grpo loss scale budget / L in rl.json, and the soft overlong penalty (DAPO) needs `check_soft_overlong`. Truncated
-rows stay masked by default; the runaway cap (objdel.rl.runaway) needs them unmasked.
-
-max_completion_length: 1,536 tokens for Qwen3-VL (5.2 tokens per vertex, D10). Issue I5: on the final prepared
-set 1 of 3,282 RIGA train targets is over budget and 0 of 23,469 LIDC train targets (prepare_rl's token_budget;
-10 / 3,546 before BinRushed1 lost its model image, B3-1). The budget stays; such answers are dropped from SFT
-(objdel.sft.rows.sft_rows with the model's tokenizer and MAX_COMPLETION), see experiments/phase1/impl/M7_train.md.
-
-Generation: vLLM colocate for every model (each image placeholder expands to one contiguous run, lab t_stack T5);
-a CPU caller passes use_vllm=False for HF generate.
-
-Both configs (perf F3): logging_nan_inf_filter off (an isnan/isinf host sync on every micro-batch; a NaN loss still
-shows at the log steps) and non-blocking host-to-GPU copies (pinned memory is on).
-
-SFT: assistant-only loss (vision datasets need transformers >= 5.18; TRL swaps in its own training template for
-the processor's chat template, qwen3_vl_training for Qwen3-VL), max_length=None (truncation can cut image tokens),
-no packing. Every model is LoRA (ADR-0008): r16 on the language model's linear layers, lr 5e-4 (lab T4), over a
-frozen bf16 base (full fine-tuning of Qwen3-VL-2B with AdamW needs ~34 GB for weights, gradients and optimizer state,
-more than a 24 GB card has). GRPO learning rate: `rl_lr`, the default of `grpo_config` and the value
-`rl.build.build_trainer` uses; `tests/experiments/test_prereg_lr.py` pins it to the pre-registered `prereg.G_PROBE`.
-Precision: bf16 exactly where transformers accepts it (transformers.utils.is_torch_bf16_gpu_available: CUDA with
-bf16 support, i.e. Ampere or newer such as the Vast cards, MPS on macOS >= 14, XPU / NPU / TPU), else fp32. TRL's
-own default (bf16=True unless fp16) makes TrainingArguments raise "Your setup doesn't support bf16/gpu" on a
-CPU-only machine such as the Linux CI train job. fp16=True or an explicit bf16 override wins.
-
-Images (D12): every model keeps its processor's default image size (256 tokens at 512 px). Left padding for
-generation.
-
-References:
-- TRL GRPO trainer and config: https://huggingface.co/docs/trl/main/en/grpo_trainer ;
-  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_config.py
-- TRL SFT trainer (VLMs: max_length=None; assistant_only_loss with vision datasets): https://huggingface.co/docs/trl/main/en/sft_trainer
-- Dr. GRPO, "Understanding R1-Zero-Like Training": https://arxiv.org/abs/2503.20783
-- DAPO (clip-higher 0.28, dynamic sampling): https://arxiv.org/abs/2503.14476
-- transformers 5.20 TrainingArguments.__post_init__ (bf16 check) and utils.is_torch_bf16_gpu_available:
-  https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/training_args.py
-- Lab: archive/phase1_lab/t_stack/REPORT.md, results/INTEGRATION.md (K12, R7).
+- Sampling: every field is explicit (T = 1, no filter, no penalty), overriding the model card's defaults, spelled for
+  vLLM, GRPOConfig or HF generate by `sampling` and `as_names`.
+- Completion budget: 1,536 tokens for Qwen3-VL (about 5.2 tokens per vertex). SFT drops targets that would not fit
+  (objdel.sft.rows.sft_rows).
+- LoRA: r16 on the language model's linear layers over a frozen bf16 base; the vision tower and projector are excluded
+  (VISION).
+- Truncation: TRL's rule, a completion is truncated when its last id is not a stop id (`stop_ids`, `truncated`).
+- Images: every model keeps its processor's default image size (256 tokens at 512 px); left padding for generation.
+- NO_SYNC: TrainingArguments that avoid a host sync per micro-batch.
 """
 
 from peft import LoraConfig
@@ -70,13 +25,12 @@ _LORA = frozenset(MODELS)  # every model is LoRA (ADR-0008)
 
 _GRAD_CKPT = {"qwen3-vl-2b"}
 
-# vision tower + projector of every model (recorded module names in tests/sft/test_p2_train.py;
-# archive/phase2_lab/B1/common.VISION)
+# vision tower + projector of every model (recorded module names in tests/sft/test_p2_train.py)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
 
 
 def lora(model: str) -> LoraConfig | None:
-    """LoRA r16 on the language model's linear layers (vision tower and projector excluded, D6 / D7) for the models
+    """LoRA r16 on the language model's linear layers (vision tower and projector excluded) for the models
     trained with adapters (every model of MODELS), else None."""
     if model not in _LORA:
         return None
@@ -92,7 +46,7 @@ def tokenizer(model: str):
 
 
 def sampling(model: str, api: str = "vllm") -> dict:
-    """Every sampling field explicit (D13): T 1 and no filter or penalty, overriding the cards' defaults (Qwen3-VL
+    """Every sampling field explicit: T 1 and no filter or penalty, overriding the cards' defaults (Qwen3-VL
     T 0.7 / top_p 0.8 / top_k 20). One source of values,
     spelled for api "vllm" (SamplingParams), "grpo" (GRPOConfig) or "hf" (GenerationConfig), see as_names."""
     s = {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "min_p": 0.0, "repetition_penalty": 1.0,

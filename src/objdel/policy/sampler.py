@@ -1,62 +1,28 @@
-"""Sampling: one sampler interface for evaluation, the trainer's own generation, and the completions bridge.
-Completions go to the evaluation harness as JSONL rows {"item_id", "samples": [text, ...], "truncated": [bool, ...]}
-(plan §3.1 arrows "GRPO completions -> eval" and "checkpoint -> K samples per validation item -> eval", break-it B4-3).
+"""Sampling: one sampler interface for evaluation, the trainer's own generation and the JSONL bridge to the sampler
+child. Completions go to the evaluation harness as rows {"item_id", "samples": [text, ...], "truncated": [bool, ...]}.
 
-One sampler interface (Implementation.md E4): `Sampler.sample(rows, params) -> [Sample]`. params_for(model, n, seed,
-stop_token_ids) is the one source of the sampling fields (models.sampling: min_p and the penalties are set on purpose,
-overriding the model card, D13), a plain dict; each row's request seed is request_seed(seed, key).
-- VllmSampler: vllm.LLM offline in this process (vllm_native image only: vLLM and objdel share one venv, ADR 0023).
-  D13: the caller has not initialised CUDA, and it refuses to start unless torch.cuda.mem_get_info() reports >= FREE
-  of the device free. ENV is set before vLLM is imported: R1 (2026-11-05) failed at engine start because FlashInfer's
-  top-k sampler compiles with nvcc; vLLM's PyTorch sampler draws from the same distribution (top_k 0, top_p 1: the full
-  softmax). The profiling image is capped at 512 x 512 (inputs are <= 512 px; Qwen's default profile is a 16k-token
-  pass, B5). With `logprobs`, records also hold "logprobs" (the sampled tokens' processed logprobs, H-A5-2) and
-  "prompt_token_ids" (vLLM's prompt ids, H-A5-1); parity.py reads both. With `adapter` (a LoRA folder over the ckpt
-  base, option F) the engine serves the adapter unmerged, as in training (fast.vllm_engine_kwargs).
-- HfSampler: transformers generate, the Mac reference and the CPU test path (PLAN D13 fallback). Every sampling field
-  is passed explicitly (models.as_names(..., "hf"), eos_token_id = the stop ids) over a fresh GenerationConfig, so
-  nothing comes from the checkpoint's (Qwen3-VL's card: T 0.7, top_p 0.8, top_k 20); HF has no presence / frequency
-  penalty (as_names refuses one). batch_items prompts per generate call (each expanded to its n samples), padded on
-  the left, so a small model is not overhead-bound at one item per call. 8 items x 8 samples = 64 sequences: the KV
-  cache of Qwen3-VL-2B (112 KB per token) is then 13 GB at 1,856 tokens, so one runaway sample (1,536 tokens) cannot
-  overflow a 24 GB card. Batch b (prompt lines b*B .. b*B+B-1, B = batch_items) is seeded seed + b*B: the same lines,
-  B, model and hardware / library versions give the same samples.
-- build_prompt: TRL GRPO's generation prompt as text (prepare_multimodal_messages, then the processor's
-  apply_chat_template with add_generation_prompt=True, tokenize=False; B5: vLLM's prompt ids equal the training env's
-  in 64 / 64 items of a retired 450M model and through the renderer for Qwen3.5) and the row's image path.
-- Truncation is the reward's rule: models.truncated on the stop ids (TRL's EOS + pad rule); stop_ids(path, proc) is
-  that set for a checkpoint directory.
+- `Sampler.sample(rows, params) -> [Sample]`; params_for(model, n, seed, stop_token_ids) is the one source of the
+  sampling fields (objdel.policy.models.sampling), and each row's request seed is request_seed(seed, key).
+- VllmSampler: vllm.LLM offline in this process (the vLLM and objdel venv is one). The caller has not initialised
+  CUDA, and it refuses to start unless torch.cuda.mem_get_info() reports at least FREE of the device free. ENV is set
+  before vLLM is imported: FlashInfer's top-k sampler compiles with nvcc, and vLLM's PyTorch sampler draws from the
+  same distribution (top_k 0, top_p 1). With `logprobs`, records also hold the sampled tokens' processed logprobs and
+  vLLM's prompt ids (parity.py reads both). With `adapter` (a LoRA folder over the ckpt base) the engine serves the
+  adapter unmerged, as in training.
+- The HF path (load, generate, batches, todo, main --kind hf): transformers generate on left-padded batches of
+  `batch_items` prompts, every sampling field passed explicitly over a fresh GenerationConfig. Batch b is seeded
+  seed + b * batch_items, so the same lines, model and library versions give the same samples.
+- build_prompt: TRL GRPO's generation prompt as text and the row's image path.
+- Truncation is the reward's rule: models.truncated on the stop ids (`stop_ids(path, proc)` for a checkpoint).
+- export_prompts / import_completions: the JSONL bridge to the sampler child (prompt text, image path, processor
+  kwargs minus padding_side, every sampling field and n; completions come back as token ids). export reads TRL's
+  completions tables back into rows; write(rows, path) writes JSONL.
 - main: the child-process entry, `python -I -m objdel.policy.sampler --kind vllm|hf --prompts P --model DIR --out C`
-  (select_ckpt's sampler child; D13: CUDA untouched in the parent, a timeout, kill of the process group, resume).
+  (CUDA untouched in the parent; the caller sets a timeout, kills the process group and resumes).
 
-The trainer path and the bridge:
-- sample(trainer, rows, k, items): k completions per prompt row through the GRPOTrainer's own generation
-  (GRPOTrainer._generate in eval mode: the same chat template, image injection, sampling settings and backend as
-  training), `items` rows x k prompts per call, each row's k as whole groups of G = 8 identical prompts. The G-probe's
-  draw from the trainer in memory.
-- export(paths, keys): TRL's completions tables (log_completions=True writes
-  <output_dir>/completions/completions_<step>.parquet with every log_extra column; TRLReward logs key, truncated
-  and group) as rows, one per run of consecutive groups of one key in a table. TRL keeps the last
-  generation_batch_size completions and writes the table at every log; an evaluation's log writes the same
-  step's file again, holding held-out completions (possibly after the step's training ones), so pass `keys`
-  (e.g. the validation ids) to keep one split.
-- write(rows, path): the JSONL file.
-- export_prompts / import_completions: the JSONL bridge to the sampler child (plan D13, C-BRIDGE; promoted from
-  archive/phase2_lab/B5 export_prompts.py and vllm_parity.py): per prompt the build_prompt text, the image path, the
-  processor kwargs minus padding_side (vLLM's mm_processor_kwargs), every sampling field and n. Completions come back
-  as token ids; truncation is models.truncated.
-
-References:
-- TRL (version pinned in pyproject.toml) GRPOTrainer: _generate, _generate_and_score_completions
-  (prepare_multimodal_messages, is_truncated),
-  log (completions table, log_extra columns, deque of generation_batch_size):
-  https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py
-- TRL GRPO docs (log_completions, log_extra): https://huggingface.co/docs/trl/main/en/grpo_trainer
-- TRL vLLM generation (one request with n = num_generations per G-th prompt):
-  https://github.com/huggingface/trl/blob/v1.17.1/trl/generation/vllm_generation.py
-- vLLM offline inference and SamplingParams: https://docs.vllm.ai/en/latest/serving/offline_inference.html ,
-  https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html
-- HF generate: https://huggingface.co/docs/transformers/main_classes/text_generation
+References: TRL GRPOTrainer (https://github.com/huggingface/trl/blob/v1.17.1/trl/trainer/grpo_trainer.py),
+vLLM offline inference (https://docs.vllm.ai/en/latest/serving/offline_inference.html), HF generate
+(https://huggingface.co/docs/transformers/main_classes/text_generation).
 """
 
 import argparse
@@ -74,7 +40,9 @@ from typing import Any, Protocol
 import pandas as pd
 from trl.data_utils import prepare_multimodal_messages
 
+from objdel.core.io import read_jsonl
 from objdel.policy import models
+from objdel.policy.errors import Refusal
 from objdel.verify.reward.spec import REWARD_V4
 
 G = REWARD_V4.group
@@ -160,12 +128,11 @@ def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = N
     """The sampler child's completions -> eval_run rows {"item_id", "samples", "truncated", "tokens"} (tokens:
     completion length in token ids, for verify.metrics' token stats; samples in k order, items in first-seen order).
     ValueError unless every id has exactly the exported n samples k = 0 .. n-1, each once, and (with ids, the
-    exported keys) the ids are exactly those (BK2-3, BK3-7: a cut or doubled file would change K silently)."""
+    exported keys) the ids are exactly those (a cut or doubled file would change K silently)."""
     by: dict[str, dict[int, dict]] = {}
-    with open(path) as f:
-        for c in map(json.loads, f):
-            if by.setdefault(c["id"], {}).setdefault(c["k"], c) is not c:
-                raise ValueError(f"{c['id']}: sample k = {c['k']} twice")
+    for c in read_jsonl(path):
+        if by.setdefault(c["id"], {}).setdefault(c["k"], c) is not c:
+            raise ValueError(f"{c['id']}: sample k = {c['k']} twice")
     if ids is not None and set(by) != set(ids):
         raise ValueError(f"{path}: missing: {sorted(set(ids) - set(by))[:5]}, not exported: "
                          f"{sorted(set(by) - set(ids))[:5]}")
@@ -236,17 +203,17 @@ def samples(lines: list[dict], recs: Iterable[dict], stop) -> list[Sample]:
     return out
 
 
-FREE = 0.90  # of total device memory, before the vLLM engine starts (D13)
+FREE = 0.90  # of total device memory, before the vLLM engine starts
 
 ENV = {"VLLM_USE_FLASHINFER_SAMPLER": "0"}  # the PyTorch sampler: no JIT build (module docstring)
 
 
 def check_memory(mem_get_info, need: float = FREE) -> None:
-    """Exit unless mem_get_info() reports at least `need` of the device free (D13: no other process on the GPU)."""
+    """Refusal unless mem_get_info() reports at least `need` of the device free (D13: no other process on the GPU)."""
     free, total = mem_get_info()
     if free < need * total:
-        raise SystemExit(f"sampler: {100 * free / total:.0f} % of GPU memory free, need {100 * need:.0f} % "
-                         "(another process holds the GPU)")
+        raise Refusal(f"sampler: {100 * free / total:.0f} % of GPU memory free, need {100 * need:.0f} % "
+                      "(another process holds the GPU)")
 
 
 def request_seed(seed: int, item_id: str) -> int:
@@ -334,7 +301,7 @@ def load(path, device: str):
     model.generation_config = GenerationConfig()
     proc = AutoProcessor.from_pretrained(path, padding_side="left")
     if proc.tokenizer.padding_side != "left":
-        raise SystemExit(f"sampler: {path}: the tokenizer pads on the {proc.tokenizer.padding_side}")
+        raise Refusal(f"sampler: {path}: the tokenizer pads on the {proc.tokenizer.padding_side}")
     return model, proc
 
 
@@ -367,9 +334,9 @@ def generate(model, proc, dev, batch: list[tuple[int, dict]]) -> list[dict]:
 
 
 def batches(lines: list[dict], batch_items: int) -> list[list[tuple[int, dict]]]:
-    """(line index, line) batches of batch_items lines; SystemExit unless all lines share sampling, n and kwargs."""
+    """(line index, line) batches of batch_items lines; Refusal unless all lines share sampling, n and kwargs."""
     if len({json.dumps([p["sampling"], p["n"], p["processor_kwargs"]], sort_keys=True) for p in lines}) > 1:
-        raise SystemExit("sampler: prompts differ in sampling, n or processor_kwargs; a batch needs one setting")
+        raise Refusal("sampler: prompts differ in sampling, n or processor_kwargs; a batch needs one setting")
     indexed = list(enumerate(lines))
     return [indexed[i : i + batch_items] for i in range(0, len(lines), batch_items)]
 
@@ -456,8 +423,10 @@ def main(argv=None) -> None:
     ap.add_argument("--batch_items", type=int, default=8, help="hf: prompts per generate call (x n samples each)")
     ap.add_argument("--timing", type=Path, help="hf: write generate seconds per item-sample here (R0 rate)")
     a = ap.parse_args(argv)
-    lines = [json.loads(x) for x in a.prompts.read_text().splitlines()]
-    (_main_vllm if a.kind == "vllm" else _main_hf)(a, lines)
+    try:
+        (_main_vllm if a.kind == "vllm" else _main_hf)(a, read_jsonl(a.prompts))
+    except Refusal as e:
+        raise e.system_exit() from None
 
 
 if __name__ == "__main__":

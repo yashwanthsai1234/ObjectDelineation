@@ -1,55 +1,37 @@
-"""Phase 2 SFT with WSD decay branches (plan D5, D7, §3.2 ①): one stable run, then one decay continuation per branch.
+"""SFT with WSD decay branches: one stable run, then one decay continuation per branch.
 
-`train(stage)` runs one objdel.core.spec.SftStage; experiments/phase2/train_sft.py is its CLI.
+`train(stage)` runs one objdel.core.spec.SftStage; experiments/phase2/train_sft.py is its CLI. The stage is frozen, so
+resolve() returns a resolved copy.
 
-The flags are an objdel.core.spec.SftStage (cli_stage: one kebab flag per field, lists and dicts as JSON, a bare flag
-for True); the stage is frozen, so resolve() returns a resolved copy.
+Schedule: warmup 3 % of the stable steps, constant LR, and per branch point b (epochs, default 0.5 / 1 / 2) a linear
+decay to 0 over 15 % of b. The stable run uses the deepest branch's schedule and stops at its point, so every branch
+point sits at LR factor 1; it saves a full checkpoint (model, optimizer, scheduler, RNG, data position) at every b,
+and each branch is a new trainer resumed from it whose schedule ends at b + d: bit-identical to an uninterrupted WSD
+run decaying at b. Colliding branch points and 0-step decays are refused. `branches: []` is the stable run only, one
+epoch, nothing saved. Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor, LoRA saved merged.
 
-Schedule (D5, configs.sft_config): warmup 3 % of the stable steps, constant LR, and per branch point b (epochs,
-default 0.5 / 1 / 2) a linear decay to 0 over 15 % of b. The stable run uses the deepest branch's schedule and stops
-at its point, so every branch point sits at LR factor 1; it saves a full checkpoint (model, optimizer, scheduler, RNG,
-data position) at every b, and each branch is a new trainer resumed from it whose schedule ends at b + d
-(sft_config(steps, branch_at=b)): bit-identical to an uninterrupted WSD run decaying at b (impl/M8.md). Colliding
-branch points and 0-step decays are refused. `branches: []` = stable only, one epoch, nothing saved (R0
-timing). Kept: `stable/e<b>` and `branches/e<b>`, model-only with the processor; LoRA runs (D6) saved merged.
-Rolling checkpoints (optimizer included, limit 3; stable/e<b> hard-links one; rolling/ is deleted once every stable/e<b>
-exists, decay/<b> once branches/<b> does) every `rolling_minutes`, each with the G-vision check
-(objdel.policy.vision, §5.1) on the training device and dtype (the reference is CPU float32, B1): ratio < 0.5 **and**
-TV < 0.002 aborts with the reason in manifest.json (exit 3), one alone warns.
+Rolling checkpoints (optimizer included, limit 3) every `rolling_minutes`, each with the G-vision check
+(objdel.policy.vision) on the training device and dtype: ratio < 0.5 and TV < 0.002 aborts with the reason in
+manifest.json (exit 3), one alone warns. G-vision is required: `vision: {prepared, reference}`, the reference a number
+or the JSON `--vision-reference-only` writes from the base model; `vision: off` only for discarded timing runs.
 
-G-vision is required (D7, D12): `vision: {prepared, reference}`, reference = the base projector distance, a number or
-the JSON `--vision-reference-only` writes in R0 (§4.7 step 8: base model, CPU, float32, vision.fixed_set).
-`vision: off` only for the discarded timing runs; `vision: {}` is refused.
+Paths: view and vision.prepared under data_root ($OBJDEL_DATA_ROOT, else the Vast bundle dir, else data); output_dir
+and a vision.reference JSON under run_dir ($OBJDEL_RUN_DIR, else runs).
 
-Paths: view and vision.prepared under data_root ($OBJDEL_DATA_ROOT, else /workspace/data/lidc on a Vast box, else
-data); output_dir and a vision.reference JSON under run_dir ($OBJDEL_RUN_DIR, else runs), on a box under
-/workspace/runs (pull.sh).
+Data: view_rows in view-epoch order, length-grouped within each epoch (seed data_seed + e), so "b epochs" is the first
+b passes over fresh views; the view must hold max(b) + its decay epochs (checked before anything loads). manifest.json
+holds the config, view hash, code SHA-256, step plan, G-vision log, pid, status, `timing` and `peak_memory_gib` per
+phase. `--resume` continues a crashed run (status "running", same config and view) from the newest complete rolling
+checkpoint, then each unsaved branch. Every model is LoRA over a frozen bf16 base.
 
-Data: view_rows in view-epoch order, length-grouped within each epoch (seed data_seed + e), so "b epochs" = the first
-b passes over fresh views (D10); the view must hold max(b) + its decay epochs (checked before anything loads). No
-sampling here: select_ckpt starts after exit (D13). manifest.json: config, view hash, code SHA-256, step plan, G-vision
-log, pid, status and `timing` (stable optimizer steps, mean s/step after WARM steps, samples/s, effective batch, peak
-CUDA GiB or null, rows per view epoch; a resumed segment keeps the first) and `peak_memory_gib` per
-phase (stable, e<b>). `--resume` continues a crashed run (status "running", same config and view): the newest
-complete rolling checkpoint (refused if it is past a branch point whose stable/e<b> is missing), then each unsaved
-branch (from its own decay checkpoint when there is one). Every model is LoRA (ADR-0008) over a frozen bf16 base.
-PYTORCH_ALLOC_CONF=expandable_segments:True unless set (D4).
+`deterministic: true` sets CUBLAS_WORKSPACE_CONFIG=:4096:8 unless set and torch.use_deterministic_algorithms(True,
+warn_only=True) before anything loads. `branches_from: <run_dir-relative g_probe.json>` takes branches = [the depth of
+the checkpoint with the final G-probe verdict] (Refusal when there is none). `profile: <dir>` (timing runs only)
+writes torch.profiler traces of optimizer step WARM + 2 to <dir>/trace.json.gz and <dir>/ops.txt.
 
-`deterministic: true` (D24, R0 timing arms): CUBLAS_WORKSPACE_CONFIG=:4096:8 unless set, and
-torch.use_deterministic_algorithms(True, warn_only=True), before anything loads; never `sft: full_determinism` (it
-sets CUDA_LAUNCH_BLOCKING=1). `branches_from: <run_dir-relative g_probe.json>` (C2, R-x8): branches = [depth of the
-checkpoint ("ckpt", e<depth>) with the final G-probe verdict]; none exits before anything is written.
-
-`profile: <dir>` (timing runs only): torch.profiler traces optimizer step WARM + 2 (CPU ops, and CUDA
-kernels on a GPU) to <dir>/trace.json.gz (Perfetto / chrome://tracing) and <dir>/ops.txt (top ops by GPU and CPU time).
-
-References:
-- transformers 5.20 get_wsd_schedule, Trainer resume (optimizer, scheduler, RNG, data skip), LengthGroupedSampler:
-  https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/optimization.py ,
-  https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/trainer.py
-- TRL (version pinned in pyproject.toml) SFTTrainer: https://huggingface.co/docs/trl/main/en/sft_trainer
-- PEFT merge_and_unload: https://huggingface.co/docs/peft/main/en/package_reference/lora
-- WSD: Hu et al., MiniCPM (2404.06395); Hägele et al. (2405.18392)
+References: transformers get_wsd_schedule and Trainer resume
+(https://github.com/huggingface/transformers/blob/v5.20.1/src/transformers/trainer.py); WSD: Hu et al., MiniCPM
+(2404.06395); Hagele et al. (2405.18392).
 """
 
 import gc
@@ -65,6 +47,7 @@ from pathlib import Path
 from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json, write_json
 from objdel.core.provenance import code_hashes
+from objdel.policy.errors import Refusal
 
 ABORTED = 3  # exit code of a G-vision abort
 
@@ -114,7 +97,7 @@ def probed_depth(path: Path) -> float:
     if doc.get("verdict") and (m := re.fullmatch(r"e(\d+(\.\d+)?)", Path(doc.get("ckpt") or "").name)):
         return float(m[1])
     why = doc.get("skipped") or "missing or unfinished R2"
-    raise SystemExit(f"branches_from {path}: no G-probe verdict on a branch checkpoint ({why}): C2 must not start")
+    raise Refusal(f"branches_from {path}: no G-probe verdict on a branch checkpoint ({why}): C2 must not start")
 
 
 def resolve(args):
@@ -151,7 +134,7 @@ def load_items(cfg: dict, model: str | None) -> dict:
 
 
 def vision_reference(args) -> int:
-    """R0 (§4.7 step 8): projector_distance of the base model on the fixed set, CPU float32 (B1) -> vision.reference."""
+    """projector_distance of the base model on the fixed set, CPU float32 -> vision.reference."""
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -184,7 +167,7 @@ def vision_check(model, processor, cfg: dict) -> dict:
 
 
 def record_vision(man: dict, step: int, res: dict) -> bool:
-    """Log one G-vision result in the manifest; True (stop training) on "abort": ratio and TV both fail (D7)."""
+    """Log one G-vision result in the manifest; True (stop training) on "abort": ratio and TV both fail."""
     keys = ("action", "ratio", "tv", "tv_black", "tv_other", "set_sha256", "device", "dtype")
     man["vision"].append({"step": step} | {k: res.get(k) for k in keys})
     if res["action"] == "abort":
@@ -224,7 +207,7 @@ def validate(args) -> dict:
     if args.profile and args.branches:
         raise ValueError("profile is for timing runs: branches: []")
     if args.vision == {}:
-        raise ValueError("vision: {} skips G-vision (D7, D12): give {prepared, reference}; `vision: off` for timing")
+        raise ValueError("vision: {} skips G-vision: give {prepared, reference}; `vision: off` for timing")
     out = Path(args.output_dir)
     if BOX_RUNS.is_dir() and BOX_RUNS.resolve() not in out.resolve().parents:
         raise ValueError(f"{out}: on a Vast box outputs go under {BOX_RUNS}/<RUN_ID> (pull.sh): set OBJDEL_RUN_DIR")
@@ -309,7 +292,7 @@ class Rolling:
 
 
 def trainer(args, base: Base, rows, stable: int, out_dir, rolling: Rolling, branch_at=None):
-    """One trainer from base: SFTConfig (stable steps; branch_at = a branch's decay), the LM-only LoRA (D6), callbacks
+    """One trainer from base: SFTConfig (stable steps; branch_at = a branch's decay), the LM-only LoRA, callbacks
     rolling and the profiler."""
     import torch
     from transformers import AutoModelForImageTextToText
@@ -347,7 +330,7 @@ def finish(base: Base, d: Path) -> None:
 
 def train(args) -> int:
     """One SFT run of an objdel.core.spec.SftStage."""
-    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")  # D4, read at the first CUDA allocation
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")  # read at the first CUDA allocation
     import torch
     from transformers import AutoProcessor, TrainerCallback
 
@@ -359,7 +342,7 @@ def train(args) -> int:
         return vision_reference(args)
     if args.branches_from:
         args = args.model_copy(update={"branches": (probed_depth(Path(args.run_dir, args.branches_from)),)})
-    if args.deterministic:  # D24, before CUDA and cuBLAS initialise
+    if args.deterministic:  # before CUDA and cuBLAS initialise
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         torch.use_deterministic_algorithms(True, warn_only=True)
     view, out = validate(args), Path(args.output_dir)

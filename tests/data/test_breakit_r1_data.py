@@ -41,15 +41,6 @@ def test_bootstrap_one_cluster_is_refused_or_not_degenerate():
     assert lo < mean < hi
 
 
-def test_gate_a_needs_more_than_one_patient():
-    items, groups = _gate_items(1)
-    try:
-        s = FE().summarize(items, groups, 200, 0)
-    except ValueError:
-        return
-    assert FE().gate_a(s, None)["change_default"] is False
-
-
 # --- medoid ties ----------------------------------------------------------------------------------------------------
 def test_medoid_identical_answers_pick_lowest_index():
     rng = np.random.default_rng(0)

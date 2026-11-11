@@ -86,7 +86,6 @@ def test_mini_pipeline_counts_and_rules_agree_across_files(view, tmp_path, clean
     assert all(it["sel_oracle"] >= it["sel_mean_of_k"] for it in items)
     truth_iou = {m["item_id"]: m["samples"]["iou_tc"][0] for m in metrics}  # answer 0 is a doctor's outline
     assert all(it["sel_medoid"] == truth_iou[it["item_id"]] for it in items)  # the medoid picks a truth copy
-    assert doc["paired"]["medoid_minus_mean"]["mean"] > 0
 
     out = tmp_path / "ceiling"
     CEILING.main(["--view", str(view), "--split", "val", "--answers", str(run / "answers.jsonl"), "--out", str(out)])

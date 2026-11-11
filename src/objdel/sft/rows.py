@@ -19,8 +19,7 @@ from objdel.verify.store import voting
 
 
 def sft_rows(root, dataset: str, split: str, tokenizer=None, max_tokens: int | None = None) -> Dataset:
-    """One row per voting rater's target (B2-4); with tokenizer and max_tokens, answers over the budget are dropped
-    (I5)."""
+    """One row per voting rater's target; with tokenizer and max_tokens, answers over the budget are dropped."""
     rows = []
     for r in _verified(root, records(root, dataset, split)):
         voters = voting(root, r, dataset)
@@ -66,7 +65,7 @@ def _inside(ring: np.ndarray, other: np.ndarray) -> bool:
 
 def _no_holes(text: str, names) -> str:
     """A0: every holes list emptied, canonical text (objdel.geom.text round trip). A part inside another part's hole
-    (an island) is dropped with the hole: its outer ring would otherwise nest in the filled part's (illegal, BK1-4)."""
+    (an island) is dropped with the hole: its outer ring would otherwise nest in the filled part's (illegal)."""
     objs = parse(text, names).objs
     keep = {n: [(o, []) for o, _ in parts if not any(_inside(o, q) for q, _ in parts if q is not o)]
             for n, parts in objs.items()}
@@ -74,7 +73,7 @@ def _no_holes(text: str, names) -> str:
 
 
 def _contexts(view_dir: Path, manifest: dict, items: set[str]) -> None:
-    """BK1-3: every row's context file must hash to the manifest's contexts[item_id] (SHA-256 of the npz bytes,
+    """Every row's context file must hash to the manifest's contexts[item_id] (SHA-256 of the npz bytes,
     written by build_views). Checked once at load, before training starts: 0.3 s (warm) to 1.2 s (cold) for the
     7,341 LIDC train contexts (223 MB, impl note M2), instead of failing inside a DataLoader worker hours in."""
     want = manifest.get("contexts")
@@ -91,8 +90,8 @@ def view_rows(view_dir, tokenizer=None, max_tokens: int | None = None, a0: bool 
     DataLoader workers), key, rater, row_id, epoch (the view epoch), length (target tokens with a tokenizer, else
     characters; the group_by_length column). The rows are the view's (voting raters only, non-simple targets
     repeated); rows.jsonl must hash to the manifest's view_hash and every context to its contexts entry.
-    max_tokens drops answers over the budget (I5, as sft_rows; it needs the tokenizer); a0 empties every holes
-    list and keeps the outermost parts (plan D11)."""
+    max_tokens drops answers over the budget (as sft_rows; it needs the tokenizer); a0 empties every holes
+    list and keeps the outermost parts."""
     if max_tokens and tokenizer is None:
         raise ValueError("max_tokens is a token budget: pass the tokenizer")
     view_dir = Path(view_dir)
