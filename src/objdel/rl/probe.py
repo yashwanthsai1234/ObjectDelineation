@@ -34,7 +34,7 @@ import numpy as np
 from objdel.core.io import read_json
 from objdel.policy.evaluate import eval_rows, score_items
 from objdel.rl.build import build_trainer
-from objdel.rl.run import finite, save_json
+from objdel.rl.run import finite, rl_refusal, save_json
 from objdel.verify import stats as signal
 
 SEEDS = (11, 12, 13)  # step-0 draw a, step-0 draw b, step 20
@@ -100,8 +100,14 @@ def probe(a, ckpt: Path, train, rows, prereg) -> dict:
 def run(a, prereg) -> int:
     """The ProbeStage `a` -> one probe per candidate checkpoint (at most two) -> <out>/g_probe.json. prereg is the
     pre-registered record (G_PROBE, g_probe), passed in by the CLI."""
+    from objdel.policy import models as policy_models
+    from objdel.policy import rows as policy_rows
     from objdel.verify import store as serve
 
+    if a.no_ckpt_layers and a.no_ckpt_layers > (n := policy_models.get(a.model).text_layers):  # as rl.run.checked
+        raise ValueError(f"--no-ckpt-layers {a.no_ckpt_layers}: {a.model} has {n} text decoder layers")
+    if (why := rl_refusal(a.dataset)) is not None:
+        raise ValueError(why)
     out = Path(a.out)
     ckpts = [Path(a.ckpt)] if a.ckpt else []
     if a.select:
@@ -112,14 +118,13 @@ def run(a, prereg) -> int:
                             "gates_branch": sel["gates_branch"]})
         ckpts = [Path(sel["run"]) / "branches" / n for n in candidates(sel)]
     for root in (a.train, a.probe):
-        serve.preload(root, ["lidc"])
+        serve.preload(root, [a.dataset])
     from PIL import Image
 
-    from objdel.policy import rows as policy_rows
     from objdel.rl import rows as rl_rows
 
-    train = rl_rows.grpo_rows(a.train, "lidc", "train", oversample=policy_rows.DISAGREEMENT_OVERSAMPLE)
-    rows = eval_rows(a.probe, a.items or prereg.G_PROBE["items"])
+    train = rl_rows.grpo_rows(a.train, a.dataset, "train", oversample=policy_rows.DISAGREEMENT_OVERSAMPLE)
+    rows = eval_rows(a.probe, a.dataset, a.items or prereg.G_PROBE["items"])
     rows = [r | {"image": Image.open(r["image"]).convert("RGB")} for r in rows]
     docs = []
     for ckpt in ckpts:  # at most the selected branch and one repair branch

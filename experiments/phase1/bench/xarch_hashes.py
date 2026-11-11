@@ -43,12 +43,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from objdel.core import datasets
 from objdel.data import splits
 from objdel.data.store import Item
 from objdel.data.targets.build import BuildConfig, build_target, target_set_hash
 from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_masks
-from objdel.geom.text import SCHEMAS, parse, serialize
+from objdel.geom.text import parse, serialize
 from objdel.geom.topology import betti, instance_topology, min_area, signature, size_filter
 from objdel.verify.metrics import metrics
 from objdel.verify.reward.advantages import advantages_v4, topology_reward
@@ -132,7 +133,13 @@ def _jitter(rng, m):
     return m8.astype(bool)
 
 
+# The RIGA-like items' dataset (the retired RIGA set's facts; the library registers LIDC only), registered by corpus()
+RIGA_LIKE = datasets.Dataset("riga", (datasets.Structure("disc", 9.0, 9), datasets.Structure("cup", 16.0, 16)), "",
+                             ("uint8", 3))
+
+
 def corpus(n_riga=6, n_lidc=12) -> list[Item]:
+    datasets.DATASETS.setdefault(RIGA_LIKE.name, RIGA_LIKE)
     rng = np.random.default_rng(SEED)
     items = []
     for i in range(n_riga):
@@ -244,7 +251,7 @@ def run() -> dict:
     names_of = {}
     rows = []
     for it in items:
-        names = SCHEMAS[it.dataset]
+        names = datasets.get(it.dataset).names
         names_of[it.item_id] = names
         f = frame(it)
         sec["frame.masks"].append(_h(it.item_id, f.W, f.H, f.box, f.scale, *(f.masks[n] for n in names)))

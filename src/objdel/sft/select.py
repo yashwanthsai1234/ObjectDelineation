@@ -174,7 +174,7 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     proc = AutoProcessor.from_pretrained(branch)  # saved by train_sft with the run's processor kwargs
     stop = sample.stop_ids(branch, proc)
     prompts, comps = out / "prompts.jsonl", out / "completions.jsonl"
-    sample.export_prompts(rows, prompts, a.model, "lidc", k, processor=proc, stop_ids=stop, seed=a.seed,
+    sample.export_prompts(rows, prompts, a.model, k, processor=proc, stop_ids=stop, seed=a.seed,
                           max_tokens=a.max_tokens)
     run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), extra)
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
@@ -186,14 +186,14 @@ def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:
     from objdel.verify import stats as signal
     from objdel.verify.metrics import summarize
 
-    rows = evaluate.eval_rows(view, a.items)
+    rows = evaluate.eval_rows(view, a.dataset, a.items)
     results, groups = evaluate.score_items(rows, sample_view(a, branch, rows, out, k), view.resolve())
     (out / "items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in results))
     iou = {r["item_id"]: {n: float(np.mean(o["iou_tc"])) for n, o in r["objects"].items()} for r in results}
     return {"summary": summarize(results), "panel": signal.panel(groups), "iou": iou}
 
 
-def prior_ci(model_iou: dict, prior_rows: list[dict]) -> dict:
+def prior_ci(model_iou: dict, prior_rows: list[dict], dataset: str) -> dict:
     """G-prior (b): paired per-item (model - image-blind prior) IoU_tc per structure, nodule-cluster bootstrap."""
     from objdel.verify import stats as signal
 
@@ -203,7 +203,7 @@ def prior_ci(model_iou: dict, prior_rows: list[dict]) -> dict:
     for n in model_iou[ids[0]] if ids else ():
         mean, lo, hi = signal.ci(np.array([model_iou[i][n] - prior[i][n] for i in ids]), D)
         out[n] = {"diff": mean, "ci": [lo, hi], "items": len(ids)}
-    return {"lidc": out}
+    return {dataset: out}
 
 
 def score_probe(a, branch: Path, p: str, out: Path) -> dict:
@@ -212,7 +212,7 @@ def score_probe(a, branch: Path, p: str, out: Path) -> dict:
     from objdel.data import probes
 
     d = a.probes / f"probe-{p}"
-    done = sample_view(a, branch, evaluate.eval_rows(d, rl_only=False), out / f"probe-{p}", a.k)
+    done = sample_view(a, branch, evaluate.eval_rows(d, a.dataset, rl_only=False), out / f"probe-{p}", a.k)
     return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # ids pair the seeds
 
 
@@ -223,7 +223,7 @@ def hf_check(a, name: str, out: Path) -> dict:
     bootstrap 95 % CI (every difference inside its CI); pass = 0 inside every CI."""
     from objdel.verify import stats as signal
 
-    rows = evaluate.eval_rows(a.shifted, HF_CHECK_ITEMS)
+    rows = evaluate.eval_rows(a.shifted, a.dataset, HF_CHECK_ITEMS)
     hf = argparse.Namespace(**vars(a) | {"sampler": "hf"})
     done = sample_view(hf, a.run / "branches" / name, rows, out / name / "hf-check", a.k)
     got = {"hf": {r["item_id"]: r["samples"] for r in evaluate.score_items(rows, done, a.shifted.resolve())[0]}}
@@ -267,9 +267,9 @@ def judge(a, sel: dict, out: Path, baselines) -> dict:
         diff = stats.paired(rot["panel"], scored["shifted"]["panel"], "iou_median")
         report["attribution"] = {"summary": rot["summary"], "iou_median_rotated_minus_identity": diff}
     if a.prepared:
-        fit = baselines.fit_prior(a.prepared, "lidc", "train")
+        fit = baselines.fit_prior(a.prepared, a.dataset, "train")
         views = {"shifted": a.shifted, "rescaled": a.rescaled}
-        report["prior"] = {v: prior_ci(r["iou"], baselines.score_prior(views[v], "lidc", "val", fit))
+        report["prior"] = {v: prior_ci(r["iou"], baselines.score_prior(views[v], a.dataset, "val", fit), a.dataset)
                            for v, r in scored.items()}  # fmt: skip
     if a.probes:
         report["probes"] = {p: score_probe(whole, best, p, out) for p in ("precision", "topology")}
@@ -326,9 +326,9 @@ def run(st, prereg, baselines) -> int:
     a.model, out = a.model or exited(a.run)["config"]["model"], a.out or a.run / "select"
     if a.only:
         return topology_only(a, out)
-    vision_cfg = vision_cfg and {"model": a.model} | vision_cfg  # sft.train.reference checks R0's JSON model
+    vision_cfg = vision_cfg and {"model": a.model, "dataset": a.dataset} | vision_cfg  # reference checks R0's model
     for v in filter(None, (a.shifted, a.rescaled, a.rotated)):
-        serve.preload(v, ["lidc"])
+        serve.preload(v, [a.dataset])
     branches = []
     for b in sorted((a.run / "branches").iterdir(), key=lambda p: float(p.name[1:])):
         res = score_view(a, b, a.shifted, out / b.name / "shifted", a.k)
@@ -339,7 +339,7 @@ def run(st, prereg, baselines) -> int:
     gate, judged = None, name or (branches[-1]["name"] if branches else None)  # none eligible: the deepest (§6.3)
     if judged:
         report = judge(a, next(x for x in branches if x["name"] == judged), out / judged, baselines)
-        gate = prereg.entry(report, ["lidc"])  # phase2_entry with the pre-registered G-prior (a) slot
+        gate = prereg.entry(report, [a.dataset])  # phase2_entry with the pre-registered G-prior (a) slot
         if a.sampler == "vllm":  # D13: the gates stand only if vLLM's answers score like HF's
             report["hf_check"] = check = hf_check(a, judged, out)
             gate["gates"]["G-hf-check"] = {"requirement": "every vLLM - HF metric difference: 0 inside its 95 % CI",
@@ -355,7 +355,8 @@ def run(st, prereg, baselines) -> int:
         "gates_failed": [n for n, g in gate["gates"].items() if not g["pass"]] if gate else [],
         "sampler": a.sampler, "checker": _gpucheck.build(), "k": a.k, "items": a.items,
         "branches": {x["name"]: {k: x[k] for k in ("depth", "eligible", "vision")}
-                     | {"summary": x["summary"]["datasets"]["lidc"], "panel": x["panel"]["summary"]} for x in branches},
+                     | {"summary": x["summary"]["datasets"][a.dataset], "panel": x["panel"]["summary"]}
+                     for x in branches},
     })  # fmt: skip
     print(json.dumps({"selected": name, "eligible": why["eligible"]}))
     return 0

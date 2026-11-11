@@ -28,10 +28,25 @@ NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="arch
 
 def test_models_and_budgets():
     """CT-05: no exact set (a 4B row may join); every model has a budget, the retired keys are gone."""
-    assert policy_models.MODELS["qwen3-vl-2b"] == "Qwen/Qwen3-VL-2B-Instruct"
+    assert policy_models.get("qwen3-vl-2b").hf_id == "Qwen/Qwen3-VL-2B-Instruct"
     for old in (OLD, OLD8):
         assert old not in policy_models.MODELS and old not in policy_models.MAX_COMPLETION
     assert set(policy_models.MODELS) == set(policy_models.MAX_COMPLETION)
+
+
+def test_model_entry_holds_the_values_it_replaced():
+    """The registry entry equals the tables and literals it replaced: the hub id, MAX_COMPLETION, _GRAD_CKPT,
+    lora()'s r16 / alpha 32 / VISION, sft_config's 5e-4, rl_lr's 5e-5 and processor_kwargs' left padding."""
+    m = policy_models.get("qwen3-vl-2b")
+    assert (m.hf_id, m.max_completion, m.grad_ckpt) == ("Qwen/Qwen3-VL-2B-Instruct", 1536, True)
+    assert (m.lora_r, m.lora_alpha, m.lora_exclude) == (16, 32, policy_models.VISION)
+    assert (m.sft_lr, m.rl_lr, dict(m.processor)) == (5e-4, 5e-5, {"padding_side": "left"})
+    assert (m.text_layers, m.groups_per_device, m.grad_accum) == (28, 2, 16)  # spec le=28; grpo_config 2 * g, 16
+    assert (m.vllm_train, m.vllm_eval) == ((0.35, 4096), (0.85, 2048))  # grpo_config; VllmSampler's defaults
+    lc = policy_models.lora("qwen3-vl-2b")
+    assert (lc.r, lc.lora_alpha, lc.exclude_modules, lc.target_modules) == (16, 32, policy_models.VISION, "all-linear")
+    with pytest.raises(KeyError, match="unknown model 'qwen3-vl-7b'; registered"):
+        policy_models.get("qwen3-vl-7b")
 
 
 @pytest.mark.parametrize("model", list(policy_models.MODELS))
@@ -65,11 +80,9 @@ def test_lora_for_every_model():
 
 
 def test_processors_keep_their_default_image_sizes():
-    """CT-05 (D12 after CLEAN7): left padding only, for every model and any dataset string (no size key, no
-    lookup on the dataset)."""
+    """CT-05 (D12 after CLEAN7): left padding only, for every model (no size key; no dataset argument)."""
     for m in policy_models.MODELS:
-        for d in ("lidc", "riga", "anything"):
-            assert policy_models.processor_kwargs(m, d) == {"padding_side": "left"}
+        assert policy_models.processor_kwargs(m) == {"padding_side": "left"}
     with pytest.raises(KeyError):
         policy_models.sampling(OLD)  # the retired key has no budget
 
@@ -137,7 +150,8 @@ def _defs(path: Path) -> set[str]:
 def test_retired_450m_model_and_full_fine_tuning_gone():
     """CT-62: the model tables are the parent commit's minus the retired key (every other row survives); every model
     is LoRA; the full fine-tuning branches are gone (the pre-registered record: tests/experiments/test_prereg_lr.py)."""
-    assert policy_models.MODELS == KEPT_MODELS and policy_models.MAX_COMPLETION == KEPT_MAX
+    assert {k: m.hf_id for k, m in policy_models.MODELS.items()} == KEPT_MODELS
+    assert policy_models.MAX_COMPLETION == KEPT_MAX
     assert policy_models._LORA == frozenset(policy_models.MODELS) and policy_models._GRAD_CKPT
     assert rl_config.rl_lr("qwen3-vl-2b") == 5e-5
     for f in ("policy/models.py", "rl/config.py", "sft/config.py"):

@@ -128,6 +128,7 @@ def test_vllm_sampler_serves_an_adapter_unmerged(monkeypatch, tmp_path):
     _fake_vllm(monkeypatch, seen)
     s = S.VllmSampler(Path("ckpt"), "qwen3-vl-2b", adapter=tmp_path)
     assert seen["llm"]["enable_lora"] is True and seen["llm"]["max_lora_rank"] == 16
+    assert (seen["llm"]["gpu_memory_utilization"], seen["llm"]["max_model_len"]) == (0.85, 2048)  # the entry's
     assert s.lora == ("lora", "adapter", 1, str(tmp_path))
 
 
@@ -169,8 +170,8 @@ def test_build_prompt_ids_equal_trls_own_on_64_validation_rows():
 
     os.environ["HF_HUB_OFFLINE"] = "1"
     try:
-        proc = AutoProcessor.from_pretrained(configs.MODELS["qwen3-vl-2b"],
-                                             **configs.processor_kwargs("qwen3-vl-2b", "lidc"))
+        proc = AutoProcessor.from_pretrained(configs.get("qwen3-vl-2b").hf_id,
+                                             **configs.processor_kwargs("qwen3-vl-2b"))
     except OSError:
         pytest.skip("Qwen3-VL-2B processor not in the local HF cache")
     rows = dataset.prompts(VIEW, "lidc", "val")[:64]

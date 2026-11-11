@@ -111,7 +111,7 @@ def test_hf_check_compares_vllm_and_hf_metrics_per_item(tmp_path, monkeypatch, s
         return {k: list(vals[i] + d) for k in sft_select.HF_CHECK_KEYS}
 
     seen = {}
-    monkeypatch.setattr(evaluate, "eval_rows", lambda view, items=None: seen.setdefault("items", items) and
+    monkeypatch.setattr(evaluate, "eval_rows", lambda view, dataset, items=None: seen.setdefault("items", items) and
                         [{"key": i} for i in keys])  # fmt: skip
     monkeypatch.setattr(sft_select, "sample_view",
                         lambda a, b, rows, out, k: seen.update(sampler=a.sampler, out=out) or {})
@@ -120,7 +120,7 @@ def test_hf_check_compares_vllm_and_hf_metrics_per_item(tmp_path, monkeypatch, s
     (tmp_path / "e1/shifted").mkdir(parents=True)
     (tmp_path / "e1/shifted/items.jsonl").write_text(
         "".join(json.dumps({"item_id": i, "samples": samples(i, shift)}) + "\n" for i in keys))
-    a = SimpleNamespace(shifted=tmp_path / "view", run=tmp_path / "run", k=8, sampler="vllm")
+    a = SimpleNamespace(shifted=tmp_path / "view", run=tmp_path / "run", k=8, sampler="vllm", dataset="lidc")
     r = sft_select.hf_check(a, "e1", tmp_path)
     assert seen == {"items": sft_select.HF_CHECK_ITEMS, "sampler": "hf", "out": tmp_path / "e1/hf-check"}
     assert r["items"] == sft_select.HF_CHECK_ITEMS and r["pass"] is ok
@@ -144,8 +144,8 @@ def _c2_run(tmp_path, monkeypatch, names=("e1",)):
         return {r["key"]: {"item_id": r["key"], "samples": ["{}"] * k} for r in rows}
 
     monkeypatch.setattr(sft_select, "exited", lambda run: {"config": {"model": "qwen3-vl-2b"}})
-    monkeypatch.setattr(evaluate, "eval_rows", lambda view, items=None, rl_only=True: [{"key": f"{view.name}/{i}"}
-                                                                                 for i in range(3)])
+    monkeypatch.setattr(evaluate, "eval_rows", lambda view, dataset, items=None, rl_only=True:
+                        [{"key": f"{view.name}/{i}"} for i in range(3)])
     monkeypatch.setattr(sft_select, "sample_view", sample_view)
     monkeypatch.setattr(sft_select, "score_view", _boom)
     monkeypatch.setattr(sft_select, "vision_check", _boom)

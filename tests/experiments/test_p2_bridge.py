@@ -43,7 +43,7 @@ def export(rows, tmp_path, model="qwen3-vl-2b", **kw):
     pytest.importorskip("trl")
     from objdel.policy import sampler as sample
     path = tmp_path / "prompts.jsonl"
-    sample.export_prompts(rows, path, model, "lidc", 8, processor=Processor(), **kw)
+    sample.export_prompts(rows, path, model, 8, processor=Processor(), **kw)
     return path, [json.loads(line) for line in path.read_text().splitlines()]
 
 
@@ -56,7 +56,7 @@ def test_export_schema_kwargs_and_sampling(rows, tmp_path):
     assert (x["id"], x["image"], x["n"]) == (rows[0]["key"], rows[0]["image"], 8)
     assert x["prompt"] == f"<user><image>{PROMPTS['lidc']}<assistant>"
     assert x["processor_kwargs"] == {}  # configs.processor_kwargs minus padding_side
-    assert configs.processor_kwargs("qwen3-vl-2b", "lidc")["padding_side"] == "left"
+    assert configs.processor_kwargs("qwen3-vl-2b")["padding_side"] == "left"
     assert x["sampling"] == configs.sampling("qwen3-vl-2b") | {"seed": 3, "stop_token_ids": [1, 2]}
 
 
@@ -188,7 +188,7 @@ def test_logprob_parity_on_a_tiny_model(tmp_path):
     for i in range(2):
         Image.fromarray(rng.integers(0, 256, (64, 64, 3), np.uint8)).save(tmp_path / f"im{i}.png")
         rows.append({"prompt": [_user("lidc")], "image": str(tmp_path / f"im{i}.png"), "key": f"k{i}"})
-    sample.export_prompts(rows, tmp_path / "p.jsonl", "qwen3-vl-2b", "lidc", 2, processor=proc)
+    sample.export_prompts(rows, tmp_path / "p.jsonl", "qwen3-vl-2b", 2, processor=proc)
     comps = []
     for r in rows:
         conv = prepare_multimodal_messages(r["prompt"], images=[Image.open(r["image"]).convert("RGB")])

@@ -28,6 +28,7 @@ from collections.abc import Callable, Sequence
 import numpy as np
 from scipy import stats
 
+from objdel.core import datasets
 from objdel.verify.reward.spec import REWARD_V4, TERMS
 
 WEIGHTS = dict(zip(TERMS, REWARD_V4.weights, strict=True))  # REWARD_V4.weights on the raw gated terms
@@ -99,8 +100,10 @@ def per_item(groups: Sequence[dict]) -> dict[str, np.ndarray]:
 
 
 def cluster(item_id: str) -> str:
-    """The cluster (nodule) of an item id: the id without its last path part for `lidc/` items, else the id itself."""
-    return item_id.rsplit("/", 1)[0] if item_id.startswith("lidc/") else item_id
+    """The cluster of an item id (LIDC: its nodule): the id without its dataset entry's last cluster_depth path parts
+    (objdel.core.datasets), the id itself for depth 0 or an unregistered prefix."""
+    entry = datasets.DATASETS.get(item_id.split("/")[0])
+    return item_id.rsplit("/", entry.cluster_depth)[0] if entry and entry.cluster_depth else item_id
 
 
 def draws(ids: Sequence[str], boot: int = BOOT, seed: int = SEED, key: Callable[[str], str] = cluster

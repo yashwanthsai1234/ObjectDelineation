@@ -162,7 +162,7 @@ def main(argv=None) -> int:
         add_fused_lm_head(m, temperature=1.0, outputs=("log_probs", "entropy"))  # as GRPOTrainer (T = 1)
         return m
 
-    proc = AutoProcessor.from_pretrained(a.base, **configs.processor_kwargs("qwen3-vl-2b", "lidc"))
+    proc = AutoProcessor.from_pretrained(a.base, **configs.processor_kwargs("qwen3-vl-2b"))
     rows = pick(a.answers, a.prompts, a.k)
     batches = [batch(proc, p, ans, a.views, proc.tokenizer.pad_token_id) for p, ans in rows]
     masks = [m for _, m, _, _ in batches]

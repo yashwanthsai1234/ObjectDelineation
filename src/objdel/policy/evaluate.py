@@ -1,7 +1,8 @@
 """Evaluation without a trainer shared by checkpoint selection, the G-probe and the final exam:
 rows of an eval view, one item's checker metrics, and the per-item and summary statistics of final_eval.
 
-- eval_rows(view, items, rl_only): the prompt rows of a view's lidc/val records (a seeded subset with `items`).
+- eval_rows(view, dataset, items, rl_only): the prompt rows of a view's <dataset>/val records (a seeded subset with
+  `items`).
 - score_items(rows, done, root): per-item metrics (objdel.verify.metrics on the preloaded caches, in this process: one
   CUDA context) and the signal groups.
 - per_item(result) and summarize(items, groups): final_eval's K-sample means, answer choices (A4) and the schema-2
@@ -48,12 +49,12 @@ def _score(job) -> dict:
     return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
 
 
-def eval_rows(view: Path, items: int | None = None, rl_only: bool = True) -> list[dict]:
-    """Prompt rows of an eval view's lidc/val records (images checked against their records): the scored items (rl,
-    with caches) or, with rl_only=False, every record (probe records are rl: false); `items` = a seeded subset."""
+def eval_rows(view: Path, dataset: str, items: int | None = None, rl_only: bool = True) -> list[dict]:
+    """Prompt rows of an eval view's <dataset>/val records (images checked against their records): the scored items
+    (rl, with caches) or, with rl_only=False, every record (probe records are rl: false); `items` = a seeded subset."""
     from objdel.policy import rows as D
 
-    return D.prompts(view, "lidc", "val", rl_only, subset=items and (items, SUBSET_SEED))
+    return D.prompts(view, dataset, "val", rl_only, subset=items and (items, SUBSET_SEED))
 
 
 def score_items(rows: list[dict], done: dict, root: Path) -> tuple[list[dict], list[dict]]:
@@ -65,20 +66,27 @@ def score_items(rows: list[dict], done: dict, root: Path) -> tuple[list[dict], l
     return results, [signal.group(r["item_id"], done[r["item_id"]]["samples"], r) for r in results]
 
 
-def per_item(result: dict, obj: str = "nodule") -> dict:
-    """K-sample means of one item's scores (metrics' output; METRICS), `miss` (the K-mean IoU_tc below signal.MISS),
-    the doctors' vote area, and the answer choices (A4): the mean of the K IoU_tc,
+def per_item(result: dict) -> dict:
+    """K-sample means of one item's scores (metrics' output; METRICS; a per-structure score is the mean over the
+    item's structures, one structure: its own), `miss` (the K-mean IoU_tc below signal.MISS), the doctors' vote area
+    (summed over the structures), and the answer choices (A4): the mean of the K IoU_tc,
     the mean over legal answers (0 if none), the medoid's (with its legality), the best one (it reads the labels: an
     upper bound, never deployed) and the pixel vote's (analysis only: a mask is not an answer; absent when the
     result has no `pixel_vote_iou_tc`)."""
-    o = result["objects"][obj]
-    src = {"samples": result["samples"], "objects": o, "item": o}
+    objs = list(result["objects"].values())
     iou, legal = np.array(result["samples"]["iou_tc"], float), np.array(result["samples"]["legal"]) > 0
     i = select.medoid(select.sample_iou(result["objects"]), legal)
-    vote = o.get("pixel_vote_iou_tc")
-    means = {m: float(np.mean(src[s][m])) for m, (s, _) in METRICS.items()}
+    votes = [o.get("pixel_vote_iou_tc") for o in objs]
+    vote = None if None in votes else float(np.mean(votes))
+
+    def mean(src: str, m: str) -> float:
+        if src == "samples":
+            return float(np.mean(result["samples"][m]))
+        return float(np.mean([np.mean(o[m]) for o in objs]))
+
+    means = {m: mean(s, m) for m, (s, _) in METRICS.items()}
     return {"item_id": result["item_id"], **means, "miss": float(means["iou_tc"] < signal.MISS),
-            "vote_area": o["vote_area"],
+            "vote_area": sum(o["vote_area"] for o in objs),
             "sel_mean_of_k": float(iou.mean()), "sel_legal_mean": float(iou[legal].mean()) if legal.any() else 0.0,
             "sel_medoid": float(iou[i]), "sel_medoid_legal": float(legal[i]), "sel_oracle": float(iou.max()),
             **({} if vote is None else {"sel_vote": float(vote)})}

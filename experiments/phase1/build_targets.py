@@ -30,11 +30,12 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core import datasets
 from objdel.data import store
 from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
-from objdel.data.targets.frame import FRAMES, frame
+from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_mask
-from objdel.geom.text import SCHEMAS, parse, serialize
+from objdel.geom.text import parse, serialize
 from objdel.geom.topology import signature
 from objdel.policy.models import MODELS  # the three screened models; their tokenizers measure answer lengths
 
@@ -45,14 +46,14 @@ _TOK = {}
 def _tokens(text):
     if not _TOK:
         from transformers import AutoTokenizer
-        _TOK.update({k: AutoTokenizer.from_pretrained(v) for k, v in MODELS.items()})
+        _TOK.update({k: AutoTokenizer.from_pretrained(v.hf_id) for k, v in MODELS.items()})
     return {k: len(t(text, add_special_tokens=False)["input_ids"]) for k, t in _TOK.items()}
 
 
 def _job(job):
     """All raters of one framed item -> rows (one per rater) with the text and its independent re-check."""
     item_id, ds, raters, masks = job
-    names = SCHEMAS[ds]
+    names = datasets.get(ds).names
     W = next(iter(masks.values())).shape[2]
     ma = min_areas(masks)
     rows = []
@@ -122,14 +123,15 @@ def main():
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()
     out = Path(a.out)
-    manifest = {"config": {"build": BuildConfig().__dict__, "frames": {k: v.__dict__ for k, v in FRAMES.items()}},
+    manifest = {"config": {"build": BuildConfig().__dict__,
+                           "frames": {k: d.frame.__dict__ for k, d in datasets.DATASETS.items()}},
                 "versions": {"python": platform.python_version(), **{p: version(p) for p in PINS}},
                 "store_manifest_sha256": hashlib.sha256((Path(a.store) / "manifest.json").read_bytes()).hexdigest(),
                 "files": {}}
     summary, all_rows = {}, []
     t0 = time.time()
     with get_context("spawn").Pool(a.procs) as pool:
-        for ds in ("riga", "lidc"):
+        for ds in datasets.DATASETS:
             for split in ("train", "val"):
                 frames, rows = [], []
                 for rs in pool.imap(_job, _jobs(a.store, ds, split, frames), chunksize=4):

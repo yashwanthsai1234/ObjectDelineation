@@ -47,14 +47,16 @@ def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
 
 def test_metric_definitions_are_in_the_code():
     """S11 (A5): the metrics module docstring states GED's squared form and K, HM-IoU8, and the official boundary
-    IoU band; the band widths are BIOU_D."""
+    IoU band; the band widths are the structures' biou_d."""
     import importlib
+
+    from objdel.core.datasets import structure
 
     metrics = importlib.import_module("objdel.verify.metrics")
     doc = metrics.__doc__
     assert re.search(r"D(2|²)_GED[^\n]*K = 8", doc) and re.search(r"HM-IoU8[^\n]*not comparable", doc)
     assert re.search(r"[Bb]oundary IoU[^\n]*mask_to_boundary", doc)
-    assert metrics.BIOU_D == {"nodule": 2, "disc": 9, "cup": 16}
+    assert {n: structure(n).biou_d for n in ("nodule", "disc", "cup")} == {"nodule": 2, "disc": 9, "cup": 16}
 
 
 # --- CLEAN phase ----------------------------------------------------------------------------------------------------

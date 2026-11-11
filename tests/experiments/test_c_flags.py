@@ -17,18 +17,20 @@ def test_train_rl_flags_default_off():
     a = train_rl.parse(BASE)
     assert (a.fast_sync, a.group_requests, a.no_ckpt_layers) == (False, False, 0)
     assert not hasattr(a, "lora_sync")  # option F is --numerics lora-seqmask (B2.2), not a C5 flag
-    a = train_rl.parse([*BASE, "--fast-sync", "--group-requests", "--no-ckpt-layers", "4"])
+    a = train_rl.parse(["--model", "qwen3-vl-2b", *BASE[2:], "--fast-sync", "--group-requests",
+                        "--no-ckpt-layers", "4"])
     assert (a.fast_sync, a.group_requests, a.no_ckpt_layers) == (True, True, 4)
 
 
 def test_no_ckpt_layers_is_a_range_checked_count_with_no_clamp(capsys):
-    """U-CF1 / U-CO3: 0..28 (Qwen3-VL-2B's text decoder layers); -1 and 29 exit 2."""
+    """U-CF1 / U-CO3: 0..28 (Qwen3-VL-2B's text decoder layers, its model entry); -1 and 29 exit 2."""
     from experiments.phase2 import train_rl
 
-    assert train_rl.parse([*BASE, "--no-ckpt-layers", "28"]).no_ckpt_layers == 28
+    qwen = ["--model", "qwen3-vl-2b", *BASE[2:]]
+    assert train_rl.parse([*qwen, "--no-ckpt-layers", "28"]).no_ckpt_layers == 28
     for bad in ("-1", "29"):
         with pytest.raises(SystemExit) as e:
-            train_rl.parse([*BASE, "--no-ckpt-layers", bad])
+            train_rl.parse([*qwen, "--no-ckpt-layers", bad])
         assert e.value.code == 2
         assert "--no-ckpt-layers" in capsys.readouterr().err
 

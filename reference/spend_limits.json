@@ -1,0 +1,5 @@
+{
+ "_doc": "The money guard of objdel.infra.vast: alarm at alarm_usd, refuse past hard_stop_usd (the owner's approved total, edited by hand).",
+ "alarm_usd": 10.0,
+ "hard_stop_usd": 31.45
+}

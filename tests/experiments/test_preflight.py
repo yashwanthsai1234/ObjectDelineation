@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from objdel.core import datasets
 from objdel.infra import preflight as PF
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +23,7 @@ def tiny_data(tmp: Path) -> Path:
     """A data root with a training view, prepared and the exam views' and checker eval set's manifests: enough to
     hash."""
     data = tmp / "data"
-    for d in ("views/v", "checker_eval", "prepared", *(f"eval_views/{v}" for v in PF.EXAMS)):
+    for d in ("views/v", "checker_eval", "prepared", *(f"eval_views/{v}" for v in datasets.LIDC.exams)):
         (data / d).mkdir(parents=True)
         (data / d / "manifest.json").write_text(json.dumps({"view_hash": "h", "dir": d}))
     return data
@@ -211,14 +212,14 @@ def test_a_planted_shared_patient_fails_disjointness(cfg, tmp_path):
         (data / "prepared/lidc").mkdir(parents=True, exist_ok=True)
         (data / f"prepared/lidc/{split}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
     (data / "views/v/rows.jsonl").write_text(json.dumps({"item_id": "lidc/s1/a"}) + "\n")
-    for v in PF.EXAMS:
+    for v in datasets.LIDC.exams:
         (data / f"eval_views/{v}/lidc").mkdir()
         row = {"item_id": "lidc/s3/c", "group_id": "P3"}
         (data / f"eval_views/{v}/lidc/val.jsonl").write_text(json.dumps(row) + "\n")
     assert PF.patients(PF.inputs(cfg)) == []
-    (data / f"eval_views/{PF.EXAMS[0]}/lidc/val.jsonl").write_text(
+    (data / f"eval_views/{datasets.LIDC.exams[0]}/lidc/val.jsonl").write_text(
         json.dumps({"item_id": "lidc/s9/c", "group_id": "P1"}) + "\n")
-    assert PF.patients(PF.inputs(cfg)) == [f"{PF.EXAMS[0]}: 1 patients also in training, e.g. ['P1']"]
+    assert PF.patients(PF.inputs(cfg)) == [f"{datasets.LIDC.exams[0]}: 1 patients also in training, e.g. ['P1']"]
 
 
 # ------------------------------------------------------------------------------- the upload bundle (gpu-c, 2026-11-10)

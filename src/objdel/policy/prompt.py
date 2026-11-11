@@ -1,15 +1,9 @@
-"""The prompt table: one user turn per dataset (PROMPTS), shared by the RL and SFT rows, G-vision and the
-prepared-set manifest (prepare_rl passes it to objdel.data.prepare, which stores it)."""
+"""The user turn of a dataset (its entry's verbatim prompt, objdel.core.datasets), shared by the RL and SFT rows,
+G-vision and the prepared-set manifest (PROMPTS: the table the builders store)."""
+from objdel.core import datasets
 
-PROMPTS = {
-    "riga": 'Outline the optic disc and the optic cup in this fundus crop. Answer with JSON only: '
-            '{"disc":[{"outer":[[x,y],...],"holes":[]}],"cup":[{"outer":[[x,y],...],"holes":[]}]}, '
-            'integers 0-1000 relative to the crop, outer rings clockwise.',
-    "lidc": 'Outline the lung nodule in this CT crop. Answer with JSON only: '
-            '{"nodule":[{"outer":[[x,y],...],"holes":[[[x,y],...]]}]}, '
-            'integers 0-1000 relative to the crop, outer rings clockwise, holes counter-clockwise.',
-}
+PROMPTS = {name: d.prompt for name, d in datasets.DATASETS.items()}  # the library's datasets, derived at import
 
 
 def _user(dataset: str) -> dict:
-    return {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": PROMPTS[dataset]}]}
+    return {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": datasets.get(dataset).prompt}]}

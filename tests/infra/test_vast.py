@@ -21,6 +21,7 @@ from unittest import mock
 
 import pytest
 
+from objdel.core import datasets
 from objdel.core.io import git_sha
 from objdel.infra import bundle as B
 from objdel.infra import preflight as PF
@@ -108,7 +109,7 @@ def PF_config(tmp: Path) -> Path:
     """A run spec over a tiny data root (tmp/data: a bundle view manifest and the exam views' manifests): enough to
     hash."""
     data = tmp / "data"
-    for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in PF.EXAMS)):
+    for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in datasets.LIDC.exams)):
         (data / d).mkdir(parents=True)
         (data / d / "manifest.json").write_text(json.dumps({"view_hash": "h", "dir": d}))
     cfg = tmp / "pf_run.yaml"
@@ -664,6 +665,14 @@ def _child(cwd: Path, code: str) -> subprocess.CompletedProcess:
                           env=dict(os.environ, OBJDEL_REPO=str(cwd)))
 
 
+def test_the_money_guard_reads_its_limits_from_reference():
+    """ALARM and HARD_STOP come from reference/spend_limits.json (an owner edit, not a code edit); the file ships,
+    since the box imports the ledger (run_spec)."""
+    lim = json.loads((ROOT / "reference/spend_limits.json").read_text())
+    assert (LG.ALARM, LG.HARD_STOP) == (lim["alarm_usd"], lim["hard_stop_usd"]) == (10.0, 31.45)
+    assert "reference/spend_limits.json" in RM.code_files()
+
+
 def test_frozen_views_ship(tmp_path, monkeypatch):
     """I50: the code snapshot keeps the two reference/ records the box reads (final_eval's frozen check, the
     held-out val_half) and drops docs/; on a copy of the snapshot both lookups find their file."""
@@ -691,7 +700,7 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
     fe = ("import json; from objdel.policy import final_eval as FE; "  # OBJDEL_REPO=box: the box's repo_root()
           f"assert str(FE.FROZEN_VIEWS).startswith({str(box)!r}), FE.FROZEN_VIEWS; "
           "print(json.dumps(FE.frozen_entry('lidc-val-edge')), flush=True); "
-          f"FE.check_view(FE.Path({str(view)!r}), 'val')")
+          f"FE.check_view(FE.Path({str(view)!r}), 'lidc', 'val')")
     p = _child(box, fe)
     assert p.returncode != 0 and "content_sha256" in json.loads(p.stdout.splitlines()[0])  # the entry, then E05
     assert "content_sha256" in p.stderr
@@ -975,7 +984,7 @@ def test_dockerfile_phase2():
 
 # --- bundle builder (§4.4) ------------------------------------------------------------------------------------------
 
-LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
+LIDC_EVAL = datasets.LIDC.exams  # the bundle requires every exam view of the entry
 
 
 def data_tree(root: Path) -> Path:
@@ -1157,6 +1166,8 @@ def test_soft_steps_continue_and_hard_steps_stop_the_chain(E, tmp_path):
     repo = tmp_path / "repo"
     (repo / "specs").mkdir(parents=True)
     (repo / "pyproject.toml").write_text("")
+    (repo / "reference").mkdir()  # the ledger reads its money limits from the repo it runs in
+    (repo / "reference/spend_limits.json").write_bytes((ROOT / "reference/spend_limits.json").read_bytes())
     argvs = [(True, ["bash", "-c", "exit 3  # it's"]), (True, ["-m", "experiments.phase2.a", "it's"]),
              (False, ["-m", "experiments.phase2.b"]), (False, ["bash", "-c", "exit 4"]),
              (False, ["-m", "experiments.phase2.c"])]
@@ -1181,7 +1192,7 @@ def test_chain_passes_a_numeric_g_vision_reference_as_is():
     stage = S.SelectStage(name="select", run="{rd}/o", prepared="{data}/prepared", probes="{data}/eval_views",
                           shifted="{data}/eval_views/lidc-val-shifted",
                           vision=S.VisionRef(prepared="{data}/prepared", reference=0.25))
-    select = S.to_argv(stage, "/workspace/runs/v1", CH.DATA)
+    select = S.to_argv(stage, "/workspace/runs/v1", CH.BOX_DATA.format(dataset="lidc"))
     assert json.loads(after(select, "--vision")) == {"prepared": "/workspace/data/lidc/prepared", "reference": 0.25}
 
 

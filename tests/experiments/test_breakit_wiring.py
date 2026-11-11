@@ -56,7 +56,8 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 
     work = tmp_path_factory.mktemp("b4")
     store.write(synthetic_items(("train", "val"), unanimous=True), work / "store")
-    data_prepare.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1, prompts=policy_prompt.PROMPTS)
+    data_prepare.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1,
+                         prompts=policy_prompt.PROMPTS)
     recs = {r["item_id"]: r for d in ("riga", "lidc") for s in ("train",
         "val") for r in policy_rows.records(work / "prep", d, s)}
     path, tok = char_model
@@ -102,7 +103,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
 
 def _reference_advantages(chain, keys):
     """advantages_v4 of the scripted texts, scored independently of TRL on the prepared caches."""
-    from objdel.geom.text import SCHEMAS
+    from objdel.core import datasets
     from objdel.verify import store as verify_store
     from objdel.verify.reward.advantages import advantages_v4
     from objdel.verify.reward.score import score_batch
@@ -110,7 +111,7 @@ def _reference_advantages(chain, keys):
     for k in keys:
         i = seen[k] = seen.get(k, -1) + 1
         text, eos = chain["script"][k][i % G]
-        jobs.append((text, not eos, SCHEMAS[k.split("/")[0]], load(k), rec[k]["W"], rec[k]["H"]))
+        jobs.append((text, not eos, datasets.get(k.split("/")[0]).names, load(k), rec[k]["W"], rec[k]["H"]))
     return advantages_v4(score_batch(jobs)), score_batch(jobs)
 
 
@@ -281,17 +282,17 @@ def test_real_lidc_sample_prepared_equals_store_and_eval_frames(store_dir):
     if not (PREPARED / "manifest.json").is_file():
         pytest.skip("data/prepared absent")
     from experiments.phase1 import eval_run
+    from objdel.core import datasets
     from objdel.data import store
     from objdel.data.targets.build import build_target
     from objdel.data.targets.frame import frame
-    from objdel.geom.text import SCHEMAS
     from objdel.geom.topology import min_area
     from objdel.policy import rows as policy_rows
     from objdel.verify import store as verify_store
     from objdel.verify.reward.cache import ExpertCache
     from objdel.verify.reward.score import score_completion
     recs = {r["item_id"]: r for r in policy_rows.records(PREPARED, "lidc", "val")}
-    load, names, seen = verify_store.cache_loader(PREPARED, maxsize=4), SCHEMAS["lidc"], []
+    load, names, seen = verify_store.cache_loader(PREPARED, maxsize=4), datasets.get("lidc").names, []
     for it in store.load("lidc", "val", store_dir):  # the first 4 items and the first disagreement item
         rec = recs[it.item_id]
         if len(seen) >= 4 and not rec["disagreement"]:

@@ -12,10 +12,10 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("datasets")
 
+from objdel.core import datasets  # noqa: E402
 from objdel.data import prepare as data_prepare  # noqa: E402
 from objdel.data import store  # noqa: E402
 from objdel.data.store import Item  # noqa: E402
-from objdel.geom.text import SCHEMAS  # noqa: E402
 from objdel.policy import prompt as policy_prompt  # noqa: E402
 from objdel.policy import rows as policy_rows  # noqa: E402
 from objdel.rl import rows as rl_rows  # noqa: E402
@@ -211,14 +211,14 @@ def round_trip(root, dataset, split):
         if not r["rl"]:
             continue
         caches = load(r["item_id"])
-        voting = {i for rs in rater_answers(caches, SCHEMAS[dataset]).values() for i in rs}
+        voting = {i for rs in rater_answers(caches, datasets.get(dataset).names).values() for i in rs}
         for i, (rater, text) in enumerate(zip(r["raters"], r["targets"], strict=True)):
             if text is None:
                 continue
             if i not in voting:
                 abstained += 1
                 continue
-            s = score_completion(text, False, SCHEMAS[dataset], caches, r["W"], r["H"])
+            s = score_completion(text, False, datasets.get(dataset).names, caches, r["W"], r["H"])
             n += 1
             if not (s["format_ok"] == 1 and s["legal"] == 1 and s["iou_tc"] >= 0.99 and s["topo_any"] == 1):
                 bad.append((r["item_id"], rater, s))

@@ -3,7 +3,8 @@ The reasons for each setting are in objdel.policy.models."""
 
 from typing import TYPE_CHECKING
 
-from objdel.policy.models import _LORA, MAX_COMPLETION, NO_SYNC, _bf16
+from objdel.policy import models as policy_models
+from objdel.policy.models import NO_SYNC, _bf16
 from objdel.verify.reward.advantages import LOGGED
 from objdel.verify.reward.spec import REWARD_V4
 
@@ -25,9 +26,9 @@ def check_soft_overlong(limit: int, cache: int) -> None:
 def rl_lr(model: str) -> float:
     """The GRPO learning rate of every real run: 5e-5 (every model of policy.models.MODELS is LoRA, ADR-0008). An
     unknown model raises: the full fine-tuning rate 5e-6 is a frozen record (prereg.G_PROBE), never a default."""
-    if model not in _LORA:
-        raise ValueError(f"rl_lr: unknown model {model!r}; the models are {sorted(_LORA)}")
-    return 5e-5
+    if model not in policy_models.MODELS:
+        raise ValueError(f"rl_lr: unknown model {model!r}; the models are {sorted(policy_models.MODELS)}")
+    return policy_models.MODELS[model].rl_lr
 
 
 # Numerics presets (B2.2, ADR-0013): the importance-sampling mode and dtype of a run. The shared parts are named first
@@ -65,18 +66,18 @@ def grpo_config(model: str, output_dir: str, reward=REWARD_V4, numerics: str = D
             raise ValueError(f"{k}={overrides[k]}: {reward.name} scores groups of exactly {g} (its group)")
     from trl import GRPOConfig  # here, as in sft_config
 
+    m = policy_models.get(model)
     cfg = GRPOConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
-        # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM
-        "per_device_train_batch_size": 2 * g, "gradient_accumulation_steps": 16, "per_device_eval_batch_size": 2 * g,
-        "gradient_checkpointing": True,
-        "max_completion_length": MAX_COMPLETION[model], "temperature": 1.0,
+        "per_device_train_batch_size": m.groups_per_device * g, "gradient_accumulation_steps": m.grad_accum,
+        "per_device_eval_batch_size": m.groups_per_device * g, "gradient_checkpointing": m.grad_ckpt,
+        "max_completion_length": m.max_completion, "temperature": 1.0,
         "loss_type": "dr_grpo", "epsilon": 0.2, "epsilon_high": 0.28, "beta": 1e-3, "mask_truncated_completions": True,
         "learning_rate": rl_lr(model), "lr_scheduler_type": "constant", "warmup_steps": 0,
         "multi_objective_aggregation": "sum_then_normalize", "scale_rewards": "none",
         "reward_weights": [0.0] * len(LOGGED) + [1.0],  # TRLReward.funcs() order: loggers, then AGGREGATOR
-        "use_vllm": True, "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,
-        "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
+        "use_vllm": True, "vllm_mode": "colocate", "vllm_gpu_memory_utilization": m.vllm_train[0],
+        "vllm_enable_sleep_mode": True, "vllm_max_model_length": m.vllm_train[1], **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
     train, spg = cfg.per_device_train_batch_size, cfg.steps_per_generation

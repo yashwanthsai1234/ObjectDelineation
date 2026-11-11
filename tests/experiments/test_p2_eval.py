@@ -12,9 +12,10 @@ from oracles.eval_oracle import nsd
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment, linprog
 
+from objdel.core.datasets import structure
 from objdel.data.targets.build import build_target, min_areas
 from objdel.verify import gates
-from objdel.verify.metrics import NSD_TAU, hm_iou, metrics, min_mode_retention, summarize, tv_js
+from objdel.verify.metrics import hm_iou, metrics, min_mode_retention, summarize, tv_js
 from objdel.verify.reward.cache import ExpertCache
 
 S = 50
@@ -187,7 +188,7 @@ def test_nsd_in_metrics_is_one_on_the_raters_own_targets():
     t = [build_target({n: riga[n][r] for n in names}, names, min_area=ma).text for r in range(2)]
     m = metrics(t, riga, 100, 100, names)
     assert all(m["objects"][n]["nsd"] == [1.0, 1.0] for n in names)
-    assert NSD_TAU == {"nodule": 2.0, "disc": 9.0, "cup": 16.0}
+    assert {n: structure(n).nsd_tau for n in ("nodule", "disc", "cup")} == {"nodule": 2.0, "disc": 9.0, "cup": 16.0}
 
 
 # ---------------------------------------------------------------- summarize: truncation and tokens, new metrics
@@ -606,7 +607,7 @@ def test_next_token_probs_keeps_every_input_on_the_model_device(monkeypatch):
         assert {k: v.device for k, v in b.items()} == {k: dev for k in b} and b["mm_token_type_ids"].shape == (1, 7)
         return SimpleNamespace(logits=torch.zeros(1, 7, 11))
 
-    p = vision.next_token_probs(model, proc, None, "x", T=3)
+    p = vision.next_token_probs(model, proc, None, "x", "p", T=3)
     assert p.shape == (3, 11) and np.allclose(p.sum(-1), 1.0)
 
 
@@ -653,8 +654,8 @@ def test_vision_fixed_sets_are_pinned_by_hash(tmp_path):
         sha = hashlib.sha256(repr(a.shape).encode() + a.tobytes()).hexdigest()
         recs.append({"item_id": item_id, "rl": i != 5, "image_sha256": sha, "targets": [None, f'{{"t":{i}}}']})
     (tmp_path / "lidc" / "val.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
-    items, h = vision.fixed_set(tmp_path, 4)
-    again, h2 = vision.fixed_set(tmp_path, 4)
+    items, h = vision.fixed_set(tmp_path, "lidc", 4)
+    again, h2 = vision.fixed_set(tmp_path, "lidc", 4)
     assert h == h2 and [it["item_id"] for it in items] == [it["item_id"] for it in again]
     rl = [r for r in recs if r["rl"]]
     want = sorted((rl[j] for j in np.random.default_rng(0).permutation(len(rl))[:vision.POOL]),
@@ -663,7 +664,7 @@ def test_vision_fixed_sets_are_pinned_by_hash(tmp_path):
     assert all(it["target"] == r["targets"][1] for it, r in zip(items, want, strict=True))
     Image.fromarray(np.zeros((50, 50, 3), np.uint8)).save(tmp_path / "images" / f"{items[0]['item_id']}.png")
     with pytest.raises(ValueError, match="image_sha256"):
-        vision.fixed_set(tmp_path, 4)
+        vision.fixed_set(tmp_path, "lidc", 4)
 
 
 PREPARED = __import__("pathlib").Path(__file__).resolve().parents[2] / "data" / "prepared"
@@ -676,5 +677,5 @@ def test_vision_fixed_set_on_the_prepared_val_is_pinned():
     from objdel.policy import vision
     if not (PREPARED / "lidc" / "val.jsonl").is_file():
         pytest.skip("data/prepared not found")
-    items, h = vision.fixed_set(PREPARED, vision.N_ITEMS)
+    items, h = vision.fixed_set(PREPARED, "lidc", vision.N_ITEMS)
     assert h == B1_SET_SHA256 and len(items) == 8 and all(it["image"].size == items[0]["image"].size for it in items)

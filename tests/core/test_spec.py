@@ -173,8 +173,11 @@ def test_same_stage_ignores_only_name_and_soft():
 CLI_STAGES = {"train_rl": S.RlStage, "g_probe": S.ProbeStage, "final_eval": S.EvalStage, "select_ckpt": S.SelectStage,
               "train_sft": S.SftStage}
 # CLEAN8 (full fine-tuning retired): train_sft drops freeze_vision (its D7 repair); select_ckpt gains max_tokens (the
-# CPU smoke's completion cap on a random Qwen3-VL). The golden is recorded once, so the changes are listed here.
-CLEAN8_DROPPED, CLEAN8_ADDED = {"train_sft": {"freeze_vision"}}, {"select_ckpt": {"max_tokens"}}
+# CPU smoke's completion cap on a random Qwen3-VL). The four stages that read a dataset gain dataset (default lidc).
+# The golden is recorded once, so the changes are listed here.
+CLEAN8_DROPPED = {"train_sft": {"freeze_vision"}}
+CLEAN8_ADDED = {"select_ckpt": {"max_tokens", "dataset"}, "train_rl": {"dataset"}, "g_probe": {"dataset"},
+                "final_eval": {"dataset"}}
 
 
 @pytest.mark.parametrize("cli", CLI_STAGES)
@@ -250,3 +253,23 @@ def test_an_rl_stage_refuses_save_steps_past_its_steps():
     with pytest.raises(ValueError, match="save_steps"):
         S.RlStage(model="m", ckpt="c", train="t", out="o", steps=20, save_steps=1000)
     assert S.RlStage(model="m", ckpt="c", train="t", out="o", steps=20, save_steps=20).save_steps == 20
+
+
+def test_run_level_settings_fill_the_stages_that_leave_them_unset(tmp_path):
+    """RunSpec model, dataset, rows and compute.budget_usd reach each stage that has the field and leaves it unset,
+    unless the value is the field's default (to_argv writes only set fields, so the argv is the same either way); the
+    budget reaches the rl stages that train only, rows (train and both pins) those that also leave train unset."""
+    rows = {"name": "r2", "revision": HEX40, "manifest_sha256": HEX64}
+    bare = {k: v for k, v in RL.items() if k not in ("model", "train")}
+    merge = {"kind": "rl", "name": "m", "merge_last": True, "ckpt": "{rd}/c", "out": "{rd}/o"}
+    s = load(tmp_path, doc(bare, merge, EVAL, RL | {"name": "own", "model": "x"}, model="m2", dataset="d2", rows=rows,
+                           compute={"gpu": "RTX_5090", "cap_hours": 1.0, "budget_usd": 3.0}))
+    train, m, ev, own = s.stages
+    assert (train.model, train.dataset, train.train, train.rows_revision, train.rows_manifest_sha256,
+            train.budget_usd) == ("m2", "d2", "{data}/rows/r2", HEX40, HEX64, 3.0)
+    assert (m.model, m.dataset, m.train, m.rows_revision, m.budget_usd) == ("m2", "d2", None, None, None)
+    assert (ev.model, ev.dataset) == ("m2", "d2")
+    assert (own.model, own.train, own.rows_revision, own.budget_usd) == ("x", "{data}/rows/r", None, 3.0)
+    plain, same = (load(tmp_path, doc(RL, EVAL, **kw)) for kw in ({"model": "qwen3-vl-2b", "dataset": "lidc"}, {}))
+    assert not {"model", "dataset"} & plain.stages[1].model_fields_set  # the eval stage's defaults: not copied
+    assert [S.to_argv(x, RD, DATA) for x in plain.stages] == [S.to_argv(x, RD, DATA) for x in same.stages]

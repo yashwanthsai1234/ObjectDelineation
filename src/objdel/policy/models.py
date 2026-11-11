@@ -1,5 +1,7 @@
-"""Per-model constants and helpers shared by SFT, RL and sampling: MODELS (Hugging Face ids), MAX_COMPLETION, the
-LoRA config, the sampling fields, the stop ids and the truncation rule.
+"""The model registry and the helpers shared by SFT, RL and sampling: MODELS (one `Model` entry per model key: the
+Hugging Face id, the completion budget, the LoRA and learning-rate settings, the processor keywords), the LoRA config,
+the sampling fields, the stop ids and the truncation rule. Adding a model = one entry in MODELS; code reads it at call
+time through `get`.
 
 - Sampling: every field is explicit (T = 1, no filter, no penalty), overriding the model card's defaults, spelled for
   vLLM, GRPOConfig or HF generate by `sampling` and `as_names`.
@@ -12,29 +14,59 @@ LoRA config, the sampling fields, the stop ids and the truncation rule.
 - NO_SYNC: TrainingArguments that avoid a host sync per micro-batch.
 """
 
+from dataclasses import dataclass
+
 from peft import LoraConfig
 from transformers.utils import is_torch_bf16_gpu_available
-
-MODELS = {
-    "qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct",
-}
-
-MAX_COMPLETION = {"qwen3-vl-2b": 1536}
-
-_LORA = frozenset(MODELS)  # every model is LoRA (ADR-0008)
-
-_GRAD_CKPT = {"qwen3-vl-2b"}
 
 # vision tower + projector of every model (recorded module names in tests/sft/test_p2_train.py)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
 
 
-def lora(model: str) -> LoraConfig | None:
-    """LoRA r16 on the language model's linear layers (vision tower and projector excluded) for the models
-    trained with adapters (every model of MODELS), else None."""
-    if model not in _LORA:
-        return None
-    return LoraConfig(r=16, lora_alpha=32, target_modules="all-linear", exclude_modules=VISION, task_type="CAUSAL_LM")
+@dataclass(frozen=True)
+class Model:
+    """A base model and the settings tuned for it. Every model is LoRA (ADR-0008)."""
+    hf_id: str  # Hugging Face repo id of the base
+    max_completion: int  # completion budget, tokens (module docstring)
+    text_layers: int  # text decoder layers: the bound of --no-ckpt-layers (objdel.rl.run.checked)
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_exclude: str = VISION  # regex of the modules LoRA leaves out
+    grad_ckpt: bool = True  # gradient checkpointing, SFT and GRPO (GRPO without it: OOM on the RTX 5090)
+    sft_lr: float = 5e-4
+    rl_lr: float = 5e-5  # the GRPO rate (prereg.G_PROBE["lr_lora"])
+    processor: tuple[tuple[str, str], ...] = (("padding_side", "left"),)  # AutoProcessor keywords
+    # GRPO batch on the reference card (RTX 5090, 2026-11-06, perf/p1_results.md: 16 x 16 44.3 s/step; 32 x 8 59.1):
+    # groups per device (x the reward's group = the per-device batch) and gradient accumulation steps
+    groups_per_device: int = 2
+    grad_accum: int = 16
+    vllm_train: tuple[float, int] = (0.35, 4096)  # colocated GRPO engine: GPU memory share, max model length
+    vllm_eval: tuple[float, int] = (0.85, 2048)  # the eval sampler's engine (objdel.policy.sampler.VllmSampler)
+
+
+MODELS: dict[str, Model] = {
+    "qwen3-vl-2b": Model("Qwen/Qwen3-VL-2B-Instruct", max_completion=1536, text_layers=28),
+}
+
+# views of the library's entries, derived at import
+MAX_COMPLETION = {k: m.max_completion for k, m in MODELS.items()}
+_LORA = frozenset(MODELS)
+_GRAD_CKPT = {k for k, m in MODELS.items() if m.grad_ckpt}
+
+
+def get(model: str) -> Model:
+    """The entry of a model key; KeyError naming the registered models."""
+    if model not in MODELS:
+        raise KeyError(f"unknown model {model!r}; registered: {sorted(MODELS)} (objdel.policy.models)")
+    return MODELS[model]
+
+
+def lora(model: str) -> LoraConfig:
+    """LoRA on the language model's linear layers (vision tower and projector excluded), rank and alpha of the
+    model's entry."""
+    m = get(model)
+    return LoraConfig(r=m.lora_r, lora_alpha=m.lora_alpha, target_modules="all-linear", exclude_modules=m.lora_exclude,
+                      task_type="CAUSAL_LM")
 
 
 def tokenizer(model: str):
@@ -42,7 +74,8 @@ def tokenizer(model: str):
     objdel.data.quality.audit."""
     from transformers import AutoTokenizer
 
-    return AutoTokenizer.from_pretrained(MODELS[model]), MAX_COMPLETION[model]
+    m = get(model)
+    return AutoTokenizer.from_pretrained(m.hf_id), m.max_completion
 
 
 def sampling(model: str, api: str = "vllm") -> dict:
@@ -50,7 +83,7 @@ def sampling(model: str, api: str = "vllm") -> dict:
     T 0.7 / top_p 0.8 / top_k 20). One source of values,
     spelled for api "vllm" (SamplingParams), "grpo" (GRPOConfig) or "hf" (GenerationConfig), see as_names."""
     s = {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "min_p": 0.0, "repetition_penalty": 1.0,
-         "presence_penalty": 0.0, "frequency_penalty": 0.0, "max_tokens": MAX_COMPLETION[model]}
+         "presence_penalty": 0.0, "frequency_penalty": 0.0, "max_tokens": get(model).max_completion}
     return as_names(s, api)
 
 
@@ -71,9 +104,9 @@ def as_names(s: dict, api: str) -> dict:
     return out | {"do_sample": True} if api == "hf" else out
 
 
-def processor_kwargs(model: str, dataset: str) -> dict:
-    """AutoProcessor.from_pretrained(MODELS[model], **processor_kwargs(model, dataset))."""
-    return {"padding_side": "left"}
+def processor_kwargs(model: str) -> dict:
+    """AutoProcessor.from_pretrained(path, **processor_kwargs(model)): the entry's processor keywords."""
+    return dict(get(model).processor)
 
 
 def _bf16(overrides: dict) -> bool:

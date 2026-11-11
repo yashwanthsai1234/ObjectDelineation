@@ -10,9 +10,10 @@ import numpy as np
 from datasets import Dataset, Image
 from PIL import Image as PILImage
 
+from objdel.core import datasets
 from objdel.core.io import read_json
 from objdel.geom.shape import canonicalize
-from objdel.geom.text import SCHEMAS, parse, serialize
+from objdel.geom.text import parse, serialize
 from objdel.policy.prompt import _user
 from objdel.policy.rows import _image, _verified, records, target_tokens
 from objdel.verify.store import voting
@@ -103,7 +104,7 @@ def view_rows(view_dir, tokenizer=None, max_tokens: int | None = None, a0: bool 
     for spec in map(json.loads, text.splitlines()):
         target = spec.pop("target")
         if a0:
-            target = _no_holes(target, SCHEMAS[spec["dataset"]])
+            target = _no_holes(target, datasets.get(spec["dataset"]).names)
         n = target_tokens(tokenizer, target) if tokenizer else len(target)
         if max_tokens and n + 1 > max_tokens:
             continue  # + 1: the end-of-turn token

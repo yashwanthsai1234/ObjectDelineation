@@ -31,10 +31,10 @@ from dataclasses import replace
 from multiprocessing import get_context
 from pathlib import Path
 
+from objdel.core import datasets as registry
 from objdel.data import store
 from objdel.data.audit import hack_audit
 from objdel.data.targets.frame import frame
-from objdel.geom.text import SCHEMAS
 from objdel.verify import gates
 from objdel.verify.metrics import metrics, summarize
 
@@ -44,7 +44,7 @@ def load_frames(root, split: str, ids=None, every: dict | None = None) -> dict:
     every = {dataset: n} keeps every n-th item). Streams the store and keeps only the framed masks (a RIGA item's
     full-size rater stacks are ~40 MB, its frame ~3 MB). KeyError if a requested id is missing."""
     want = None if ids is None else set(ids)
-    datasets = store.DATASETS if want is None else sorted({i.split("/")[0] for i in want})
+    datasets = tuple(registry.DATASETS) if want is None else sorted({i.split("/")[0] for i in want})
     out = {}
     for ds in datasets:
         for i, it in enumerate(store.load(ds, split, root)):
@@ -64,7 +64,7 @@ def load_prepared(root, split: str, ids=None) -> dict:
     want = None if ids is None else set(ids)
     out = {r["item_id"]: {"dataset": ds, "W": r["W"], "H": r["H"], "k": len(r["raters"]) if r["rl"] else 1,
                           "prepared": str(Path(root).resolve())}
-           for ds in store.DATASETS if Path(root, ds, f"{split}.jsonl").is_file()
+           for ds in registry.DATASETS if Path(root, ds, f"{split}.jsonl").is_file()
            for r in records(root, ds, split) if want is None or r["item_id"] in want}
     missing = (want or set()) - out.keys()
     if missing:
@@ -86,7 +86,7 @@ _LOADERS: dict = {}
 
 def _job(args) -> dict:
     row, fr, caches = args
-    names = SCHEMAS[fr["dataset"]]
+    names = registry.get(fr["dataset"]).names
     if caches is None and "prepared" in fr:
         if fr["prepared"] not in _LOADERS:  # one LRU loader per process
             from objdel.verify.store import cache_loader

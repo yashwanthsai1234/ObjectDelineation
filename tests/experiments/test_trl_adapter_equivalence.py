@@ -1527,7 +1527,7 @@ def test_vllm_engine_kwargs_follow_the_config_and_default_to_none():
 
     assert rl_trl_adapter.vllm_engine_kwargs(NS(fp16=False)) == {}  # the B1 control: TRL's engine untouched
     assert rl_trl_adapter.vllm_engine_kwargs(NS(fp16=True)) == {"dtype": "float16"}
-    assert rl_trl_adapter.vllm_engine_kwargs(NS(fp16=False, vllm_lora=True)) == {"enable_lora": True,
+    assert rl_trl_adapter.vllm_engine_kwargs(NS(fp16=False, vllm_lora=True), NS(r=16)) == {"enable_lora": True,
         "max_lora_rank": 16}
 
 

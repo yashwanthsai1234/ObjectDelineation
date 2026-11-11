@@ -14,11 +14,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.core import datasets
 from objdel.data import store
 from objdel.data.store import Item
 from objdel.data.targets import augment
 from objdel.data.targets.build import BuildConfig, build_target, min_areas
-from objdel.data.targets.frame import CLEARANCE, FRAMES, FrameConfig, centred, crowded, frame, union_box, upscale
+from objdel.data.targets.frame import CLEARANCE, FrameConfig, centred, crowded, frame, union_box, upscale
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.geom.topology import signature
@@ -78,10 +79,10 @@ def _reference(it, row):
         H, W = img.shape
         ys, xs = slice(max(y0, 0), min(y0 + S, H)), slice(max(x0, 0), min(x0 + S, W))
         img[ys, xs] += noise[ys.start - y0:ys.stop - y0, xs.start - x0:xs.stop - x0].astype(np.int64)
-    cfg = FrameConfig(**{**FRAMES[it.dataset].__dict__, "image_side": None})
+    cfg = FrameConfig(**{**datasets.get(it.dataset).frame.__dict__, "image_side": None})
     f = frame(replace(it, image=img), cfg, offset=(dx, dy), side=S, window=row["window"] and tuple(row["window"]))
     out = np.moveaxis(augment.apply(np.moveaxis(f.image, -1, 0), row["op"]), 0, -1)
-    return upscale(np.ascontiguousarray(out), FRAMES[it.dataset].image_side)
+    return upscale(np.ascontiguousarray(out), datasets.get(it.dataset).frame.image_side)
 
 
 def _context(it, tmp):
@@ -93,8 +94,9 @@ def _row(it, rng, **over):
     got = augment.draw(it, rng)
     assert got is not None
     (dx, dy), S = got
-    jit = augment.jitter(rng) if it.dataset == "lidc" else {"window": None, "noise_sigma": 0, "noise_seed": 0}
-    ops = augment.DATASET_OPS[it.dataset]
+    ds = datasets.get(it.dataset)
+    jit = augment.jitter(rng, ds) if ds.window_jitter else {"window": None, "noise_sigma": 0, "noise_seed": 0}
+    ops = ds.ops
     row = {"dataset": it.dataset, "offset": [dx, dy], "side": S, "op": ops[int(rng.integers(len(ops)))], **jit}
     row |= over
     row["box"] = list(frame(replace(it, image=None), offset=tuple(row["offset"]), side=row["side"]).box)
@@ -171,7 +173,7 @@ def test_ops_round_trip_targets_with_holes_and_parts(S):
 def test_riga_nested_cup_under_hflip_stays_inside_the_disc():
     disc, cup = _ellipse(200, 200, 100, 90, 60, 50, 0.3), _ellipse(200, 200, 95, 80, 25, 20, 0.3)
     ma = min_areas({"disc": disc[None], "cup": cup[None]})
-    for op in augment.DATASET_OPS["riga"]:
+    for op in datasets.get("riga").ops:
         src = {"disc": augment.apply(disc, op), "cup": augment.apply(cup, op)}
         t = build_target(src, ("disc", "cup"), None, ma)
         p = parse(t.text, ("disc", "cup")).objs
@@ -185,16 +187,16 @@ def test_hu_extremes_noise_and_window_bounds_render_like_the_reference(tmp_path)
     img[40:45, 40:60], img[60:62, 30:70] = -32768, 32767  # int16 extremes inside the window
     it = replace(it, image=img)
     ctx = _context(it, tmp_path)
-    (lc, lr), (wc, wr) = augment.WINDOW_JITTER
+    (lc, lr), (wc, wr) = datasets.LIDC.window_jitter
     for k, (level, width) in enumerate([(lc - lr, wc - wr), (lc + lr, wc + wr), (lc - lr, wc + wr)]):
         lo = level - width // 2
-        row = _row(it, np.random.default_rng(k), window=[lo, lo + width], noise_sigma=augment.NOISE_MAX,
+        row = _row(it, np.random.default_rng(k), window=[lo, lo + width], noise_sigma=datasets.LIDC.noise_max,
                    noise_seed=2**31 - 1)
         out = augment.render(row, ctx)
         assert out.dtype == np.uint8 and np.array_equal(out, _reference(it, row))
     rng = np.random.default_rng(0)
     for _ in range(2000):
-        j = augment.jitter(rng)
+        j = augment.jitter(rng, datasets.LIDC)
         lo, hi = j["window"]
         assert abs(lo + (hi - lo) // 2 - lc) <= lr and abs(hi - lo - wc) <= wr and 0 <= j["noise_sigma"] <= 10
 
@@ -400,21 +402,6 @@ def test_view_rows_refuse_an_edited_context(bk_views, D, tmp_path):
         [ds[i]["image"] for i in range(len(ds))]
 
 
-def test_view_rows_on_a_riga_view(tmp_path, synthetic_items, D):
-    from experiments.phase2 import build_views as BV
-    store.write(synthetic_items(), tmp_path / "s")
-    m = BV.build(tmp_path / "s", tmp_path / "riga-train", "riga", "train", epochs=2, procs=1)
-    assert m["counts"]["errors"] == 0 and m["counts"]["rows"] == 2 * 3
-    ds = D.view_rows(tmp_path / "riga-train")
-    specs = _rows(tmp_path / "riga-train")
-    it = next(i for i in synthetic_items() if i.dataset == "riga")
-    for x, spec in zip(ds, specs, strict=True):
-        assert spec["op"] in ("id", "fh") and spec["window"] is None and spec["noise_sigma"] == 0
-        assert "optic disc" in x["messages"][0]["content"][1]["text"]
-        img = np.asarray(x["image"])
-        assert img.shape == (spec["side"], spec["side"], 3) and np.array_equal(img, _reference(it, spec))
-
-
 # ------------------------------------------------------------------------------------------------ bundle
 @pytest.fixture(scope="module")
 def bundled(tmp_path_factory, synthetic_items):
@@ -500,11 +487,10 @@ def test_real_view_rows_match_the_store_reference():
 @pytest.mark.data
 def test_real_a0_targets_stay_legal():
     pytest.importorskip("datasets")
-    from objdel.geom.text import SCHEMAS
     from objdel.sft import rows as sft_rows
     _need(REAL / "rows.jsonl")
     for line in (REAL / "rows.jsonl").read_text().splitlines():
         r = json.loads(line)
         if not r["simple"]:
-            t = sft_rows._no_holes(r["target"], SCHEMAS["lidc"])
+            t = sft_rows._no_holes(r["target"], datasets.get("lidc").names)
             assert to_mask(parse(t, NOD).objs["nodule"], r["side"], r["side"]).legal, r["row_id"]

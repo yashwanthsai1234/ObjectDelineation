@@ -1,6 +1,7 @@
 """Model text <-> polygon objects: the compact grammar, its serializer and its strict parser.
 
-Grammar (no whitespace inside; surrounding JSON whitespace is stripped; names in schema order, all present once):
+Grammar (no whitespace inside; surrounding JSON whitespace is stripped; names in schema order, all present once; a
+dataset's schema is its structure names, objdel.core.datasets):
 
     doc   := '{' '"' name '":' parts (',' '"' name '":' parts)* '}'
     parts := '[' ']' | '[' part (',' part)* ']'
@@ -55,7 +56,6 @@ from typing import NamedTuple
 import numpy as np
 
 GRID = 1000
-SCHEMAS = {"riga": ("disc", "cup"), "lidc": ("nodule",)}
 MAX_VERTICES, MAX_RINGS = 1000, 10
 MAX_CHARS = 16_384  # >= 5x a 1,536-token completion at 2.14 characters per token (module docstring)
 _JSON_WS = " \t\n\r"  # RFC 8259 §2

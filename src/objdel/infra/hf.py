@@ -30,6 +30,7 @@ import re
 from importlib import resources
 from pathlib import Path
 
+from objdel.core import datasets
 from objdel.core.io import read_json
 from objdel.infra.errors import InfraError
 
@@ -144,7 +145,7 @@ def rl_ops(out: Path, hub, repo: str) -> list:
             raise InfraError(f"{out}/{d} missing (train_rl --merge-last writes both from the last checkpoint)")
     require_private(hub, repo)
     doc = read_json(out / "rl.json")
-    base = models.MODELS[doc["model"]]
+    base = models.get(doc["model"]).hf_id
     lic, meta = base_card(base)
     files = [(f.relative_to(out / "final"), f) for f in sorted((out / "final").rglob("*")) if f.is_file()]
     files += [(f.relative_to(out), f) for f in sorted((out / "final_adapter").rglob("*")) if f.is_file()]
@@ -221,14 +222,14 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
     vm = read_json((view or Path(man["config"]["view"])) / "manifest.json")
     if vm["view_hash"] != man["view"]["view_hash"]:
         raise InfraError(f"{view}: view_hash {vm['view_hash']} is not the run's {man['view']['view_hash']}")
-    if (ds := vm["dataset"]) != "lidc":
-        raise InfraError(f"{run} trained on {ds}: only LIDC runs are uploaded (RIGA's licence forbids "
-                 "redistribution)")  # fmt: skip
+    if (ds := vm["dataset"]) not in datasets.DATASETS or datasets.get(ds).restricted:
+        raise InfraError(f"{run} trained on {ds}: not uploaded (unregistered, or its licence forbids redistribution: "
+                         "objdel.core.datasets restricted)")
     hub = api(token)
     require_private(hub, repo)
     from huggingface_hub import CommitOperationAdd
 
-    base = models.MODELS[man["config"]["model"]]
+    base = models.get(man["config"]["model"]).hf_id
     lic, meta = base_card(base)
     src = run / "branches" / sel["selected"]
     ops = [CommitOperationAdd(f.relative_to(src).as_posix(), str(f)) for f in sorted(src.rglob("*")) if f.is_file()]
@@ -272,8 +273,11 @@ def push_rows(root: Path, repo: str, revision: str, token: str) -> int:
     man = root / "manifest.json"
     if not man.is_file():
         raise InfraError(f"{man} missing (build_rl_rows writes it only when every hard gate passes); nothing uploaded")
-    if bad := [k for k in read_json(man)["sets"] if not k.startswith("lidc/")]:
-        raise InfraError(f"{root} holds {bad}: only LIDC rows are uploaded (RIGA's licence forbids redistribution)")
+    held = [k for k in read_json(man)["sets"] if (ds := k.split("/")[0]) not in datasets.DATASETS
+            or datasets.get(ds).restricted]
+    if held:
+        raise InfraError(f"{root} holds {held}: not uploaded (unregistered, or a licence that forbids redistribution: "
+                         "objdel.core.datasets restricted)")
     hub = api(token)
     require_private(hub, repo)
     prefix = f"rows/{root.name}"

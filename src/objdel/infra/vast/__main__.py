@@ -18,7 +18,8 @@ there is the only logic that runs on the box.
                                                                alarm and hard stop: see ALARM and HARD_STOP below
 
 Money: a launch is refused when the money committed (closed sessions + every active run to its deadline) plus its own
-worst case passes HARD_STOP, and needs --owner-approved (recorded in the ledger) when that projection reaches ALARM.
+worst case passes HARD_STOP, and needs --owner-approved (recorded in the ledger) when that projection reaches ALARM
+(both in reference/spend_limits.json: the owner edits the file, not the code).
 Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB);
 teardown saves the raw charges and records what Vast billed beside that estimate (`billed`).
 
@@ -42,12 +43,13 @@ import sys
 import time
 from pathlib import Path
 
+from objdel.core import datasets
 from objdel.core.io import code_sha, git_sha, read_json
 from objdel.core.provenance import repo_root
 from objdel.core.spec import load_spec
 from objdel.infra import hf
 from objdel.infra.errors import InfraError
-from objdel.infra.vast.chain import chain, push_target, vision_refs
+from objdel.infra.vast.chain import BOX_DATA, chain, push_target, vision_refs
 from objdel.infra.vast.ledger import (
     ALARM,
     DOWN_GB,
@@ -330,10 +332,15 @@ UNTAR = ("import os, sys, tarfile; t, d = sys.argv[1:]; f = tarfile.open(t); f.e
          "f.close(); os.remove(t)")  # hf.ROWS_TAR into the root, then gone (ROWS_CHECK counts the root's files)
 
 
+def pinning(revision: str) -> list:
+    """The rl stages of specs/ that pin REVISION as their rows revision."""
+    return [s for p in sorted((repo_root() / "specs").glob("*.yaml")) for s in load_spec(p).stages
+            if s.kind == "rl" and s.rows_revision == revision]
+
+
 def rows_pin(revision: str) -> str:
     """The rows_manifest_sha256 that the rl stages of specs/ pin beside REVISION."""
-    pins = {s.rows_manifest_sha256 for p in sorted((repo_root() / "specs").glob("*.yaml")) for s in load_spec(p).stages
-             if s.kind == "rl" and s.rows_revision == revision}
+    pins = {s.rows_manifest_sha256 for s in pinning(revision)}
     if len(pins) != 1:
         raise InfraError(f"--rows {revision}: the plans pin {len(pins)} manifest SHA-256 values for it "
                          "(need exactly one)")
@@ -342,7 +349,8 @@ def rows_pin(revision: str) -> str:
 
 def cmd_fetch_hf(a) -> None:
     """hf_pull on the box: REVISION of the private HF repo to /workspace/runs/RUN_ID/NAME (--as; default ckpt, RL's
-    start checkpoint); or --rows REVISION ROOT: the repo folder rows/ROOT/ to /workspace/data/lidc/rows/ROOT, then
+    start checkpoint); or --rows REVISION ROOT: the repo folder rows/ROOT/ to <box data>/rows/ROOT (the dataset of
+    the stages that pin REVISION, chain.BOX_DATA), then
     the same ssh call unpacks hf.ROWS_TAR there (UNTAR) and checks the root (manifest.json with the SHA-256 the plans
     pin for REVISION, files_count files)."""
     if (a.revision is None) == (a.rows is None):
@@ -353,10 +361,14 @@ def cmd_fetch_hf(a) -> None:
     pull = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_pull --repo {hf.REPO} "
             f"--revision {shlex.quote(rev)}")
     if a.rows:
-        d = f"/workspace/data/lidc/rows/{name}"
-        cmd = (f"{pull} --out /workspace/data/lidc --allow {shlex.quote(f'rows/{name}/**')} && /opt/venv/bin/python "
+        pin = rows_pin(rev)  # refuses a revision no plan pins, or pins twice
+        if len(found := {s.dataset for s in pinning(rev)}) != 1:
+            raise InfraError(f"--rows {rev}: the plans that pin it name {len(found)} datasets (need exactly one)")
+        box = BOX_DATA.format(dataset=found.pop())
+        d = f"{box}/rows/{name}"
+        cmd = (f"{pull} --out {box} --allow {shlex.quote(f'rows/{name}/**')} && /opt/venv/bin/python "
                f"-I -c {shlex.quote(UNTAR)} {shlex.quote(f'{d}/{hf.ROWS_TAR}')} {shlex.quote(d)} && "
-               f"/opt/venv/bin/python -I -c {shlex.quote(ROWS_CHECK)} {shlex.quote(d)} {rows_pin(rev)}")
+               f"/opt/venv/bin/python -I -c {shlex.quote(ROWS_CHECK)} {shlex.quote(d)} {pin}")
     else:
         cmd = f"{pull} --out /workspace/runs/{a.run_id}/{name}"
     run, token = get_run(a.run_id), hf_token()
@@ -420,7 +432,7 @@ CLI = {  # subcommand -> its arguments, in order
                "--cap-hours": {"type": float, "default": 4},
                "--allow-parallel": FLAG, "--owner-approved": FLAG,
                "--idle-minutes": {"type": float, "default": 30, "help": "watchdog idle destroy after a pulled EXIT"}},
-    "sync_up": {"run_id": {}, "--bundle": {"default": "lidc", "choices": ["lidc"]},
+    "sync_up": {"run_id": {}, "--bundle": {"default": "lidc", "choices": sorted(datasets.DATASETS)},
                 "--bundle-dir": {"type": Path, "default": repo_root() / "build" / "bundles"}, "--code-only": FLAG},
     "run": {"run_id": {}, "module": {}, "--cap-hours": {"type": float, "default": 24},
             "args": {"nargs": argparse.REMAINDER}},

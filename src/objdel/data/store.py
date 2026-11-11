@@ -5,19 +5,19 @@ the library versions that wrote it). Rows are sorted by ``item_id`` and written 
 items give the same bytes.
 
 Encodings:
-- image: the decoded pixel array as NPY bytes (uint8 RGB for RIGA, int16 Hounsfield units for LIDC), compressed by
-  Parquet zstd. Lossless for any dtype, decoder-independent (no JPEG/PNG library in the loop), 25x faster to decode
-  than PNG; about 1.3x larger than PNG on RIGA photographs.
+- image: the decoded pixel array as NPY bytes (the dtype and ndim of the dataset entry, objdel.core.datasets:
+  int16 Hounsfield units for LIDC), compressed by Parquet zstd. Lossless for any dtype, decoder-independent (no
+  JPEG/PNG library in the loop), 25x faster to decode than PNG; about 1.3x larger than PNG on RGB photographs.
 - masks: per structure, the bool stack (k, H, W) bit-packed along W (``np.packbits``) as NPY bytes. Exact, 8x
   smaller in memory than bool, and after zstd within a few KB of run-length encoding, which needs custom code.
 - row groups close at about ROW_GROUP_BYTES of uncompressed payload; `load` decodes one row at a time without
-  pre-buffering the row group (a RIGA val pass peaks at 455 MB RSS instead of 1,543 MB with 16-row batches, at the same
-  speed).
+  pre-buffering the row group (an RGB fundus val pass peaked at 455 MB RSS instead of 1,543 MB with 16-row batches,
+  at the same speed).
 
 Contract checked on write and on load: item ids unique across the whole store (one id in two splits is a leak);
-every row's dataset and split are those of its file (on load); images uint8 (H, W, 3) RGB for RIGA and int16 (H, W)
-Hounsfield units for LIDC, or None (a uint16 HU + 1024 or a pre-windowed uint8 slice would silently get the
-wrong lung window downstream).
+every row's dataset and split are those of its file (on load); the dataset is registered (objdel.core.datasets);
+images have the entry's dtype and ndim (uint8 (H, W, 3) RGB, or int16 (H, W) Hounsfield units for LIDC) or are None
+(a uint16 HU + 1024 or a pre-windowed uint8 slice would silently get the wrong lung window downstream).
 
 References:
 - Apache Parquet configuration (row group and page sizes): https://parquet.apache.org/docs/file-format/configurations/
@@ -41,14 +41,13 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from objdel.core import datasets
 from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json, write_json
 
-DATASETS = ("riga", "lidc")
 SPLITS = ("train", "val", "test")
 ROW_GROUP_BYTES = 128 << 20
-BATCH_ROWS = 1  # rows are up to 16 MB (RIGA); one at a time bounds the reader's memory
-IMAGE = {"riga": (np.dtype(np.uint8), 3), "lidc": (np.dtype(np.int16), 2)}  # dtype, ndim
+BATCH_ROWS = 1  # rows are up to 16 MB (RGB photographs); one at a time bounds the reader's memory
 SCHEMA = pa.schema([
     ("item_id", pa.string()), ("dataset", pa.string()), ("group_id", pa.string()), ("split", pa.string()),
     ("raters", pa.list_(pa.string())), ("height", pa.int32()), ("width", pa.int32()), ("image", pa.binary()),
@@ -61,8 +60,8 @@ WRITE_OPTIONS = {"compression": "zstd", "compression_level": 6, "use_dictionary"
 class Item:
     """One prompt's data: an image and every rater's exact mask per structure.
 
-    image: uint8 (H, W, 3) RGB for RIGA, int16 (H, W) Hounsfield units for LIDC, or None when there is no model
-    image (LIDC CT pixels not available locally; the BinRushed1 reconstruction). masks: structure name -> bool
+    image: the entry's pixels (uint8 (H, W, 3) RGB, int16 (H, W) Hounsfield units for LIDC), or None when there is no
+    model image (LIDC CT pixels not available locally; the BinRushed1 reconstruction). masks: structure name -> bool
     (k, H, W), one layer per rater, in the image frame. raters: k rater ids, in layer order. meta: JSON-serializable
     provenance (see the objdel.data.lidc builders).
     """
@@ -99,7 +98,7 @@ def decode_masks(bits: bytes, width: int) -> np.ndarray:
 
 def _check(it: Item) -> tuple[int, int]:
     """The (H, W) frame of a valid item; ValueError on any contract violation."""
-    if it.dataset not in DATASETS or it.split not in SPLITS:
+    if it.dataset not in datasets.DATASETS or it.split not in SPLITS:
         raise ValueError(f"{it.item_id}: dataset {it.dataset!r} / split {it.split!r}")
     if not it.masks or {m.dtype for m in it.masks.values()} != {np.dtype(bool)}:
         raise ValueError(f"{it.item_id}: masks must be non-empty bool stacks")
@@ -107,7 +106,8 @@ def _check(it: Item) -> tuple[int, int]:
     if len(shapes) != 1 or len(shape := shapes.pop()) != 3 or shape[0] != len(it.raters):
         raise ValueError(f"{it.item_id}: masks must share one (k, H, W) shape with k = len(raters)")
     if it.image is not None:
-        dtype, ndim = IMAGE[it.dataset]
+        name, ndim = datasets.get(it.dataset).pixels
+        dtype = np.dtype(name)
         if it.image.dtype != dtype or it.image.ndim != ndim or it.image.shape[:2] != shape[1:] or (
                 ndim == 3 and it.image.shape[2] != 3):
             raise ValueError(f"{it.item_id}: image {it.image.dtype} {it.image.shape}, expected {dtype} "

@@ -30,13 +30,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from objdel.core import datasets
 from objdel.geom.shape import canonicalize
-from objdel.geom.text import SCHEMAS, serialize
+from objdel.geom.text import serialize
 from objdel.verify import store as serve
 from objdel.verify.reward.advantages import advantages_v4
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import NUMERIC, score_batch, score_completion
 from tests.oracles import reward_harness as H
+
+TWO = ("disc", "cup")  # the synthetic RIGA-like schema
 
 SIDE, K, N_VERT = 500, 6, 720
 DISC_HF, CUP_HF = 0.0055, 0.013  # high-harmonic roughness: sets the traced vertex count (completion length)
@@ -203,13 +206,13 @@ def main(argv=None) -> int:
     res["lidc_items_preloaded"] = serve.preload(a.root, ("lidc",))
     res["preload_s"] = time.perf_counter() - t0
     root = str(Path(a.root).resolve())
-    lidc = [(SCHEMAS["lidc"], serve.CacheRef(k, root)) for k in list(serve.STORE[root])[: a.lidc]]  # train first
+    lidc = [(datasets.LIDC.names, serve.CacheRef(k, root)) for k in list(serve.STORE[root])[: a.lidc]]  # train first
     t0 = time.perf_counter()
     items = corpus(a.synth)
     serve.STORE["synthetic"] = {
-        f"synth/{i}": {n: ExpertCache.build(it[n]) for n in SCHEMAS["riga"]} for i, it in enumerate(items)
+        f"synth/{i}": {n: ExpertCache.build(it[n]) for n in TWO} for i, it in enumerate(items)
     }
-    riga = [(SCHEMAS["riga"], serve.CacheRef(f"synth/{i}", "synthetic")) for i in range(a.synth)]
+    riga = [(TWO, serve.CacheRef(f"synth/{i}", "synthetic")) for i in range(a.synth)]
     res |= {"synthetic_digest": corpus_digest(items), "synthetic_build_s": time.perf_counter() - t0}
     batches = {w: [batch(riga, lidc, s, b) for b in range(a.batches)] for w, s in WORKLOADS.items()}
     for w, bl in batches.items():

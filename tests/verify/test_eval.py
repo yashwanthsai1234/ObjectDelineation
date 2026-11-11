@@ -12,12 +12,12 @@ from hypothesis import strategies as st
 from oracles import reward_harness as H
 from oracles.eval_oracle import band, boundary_iou, pairwise_iou
 
+from objdel.core.datasets import structure
 from objdel.data.audit import hack_audit
 from objdel.data.targets.build import BuildConfig, build_target, min_areas
 from objdel.verify import gates, select
 from objdel.verify.metrics import (
     _ZEROED,
-    BIOU_D,
     _ged,
     _iou,
     metrics,
@@ -626,7 +626,7 @@ def test_boundary_iou_in_metrics(k):
     if k == 2:
         assert np.array_equal(vote, raters["nodule"][0] & raters["nodule"][1])
     assert o["boundary_iou"][0] == 1.0 and o["boundary_iou"][2:] == o["boundary_iou_vote"][2:] == [0.0, 0.0]
-    assert o["boundary_iou"][1] == max(official_biou(shifted, r, BIOU_D["nodule"]) for r in raters["nodule"])
+    assert o["boundary_iou"][1] == max(official_biou(shifted, r, structure("nodule").biou_d) for r in raters["nodule"])
     assert o["boundary_iou_vote"][:2] == [official_biou(m, vote, 2) for m in (raters["nodule"][0], shifted)]
 
 

@@ -475,10 +475,11 @@ def vllm_kwargs(**kw):
         vg.LLM = orig
 
 
-def vllm_engine_kwargs(args) -> dict:
-    """The LLM(...) keywords TRL leaves out: float16 under fp16, LoRA serving under option F (args.vllm_lora)."""
+def vllm_engine_kwargs(args, peft_config=None) -> dict:
+    """The LLM(...) keywords TRL leaves out: float16 under fp16, LoRA serving at the trainer's adapter rank under
+    option F (args.vllm_lora)."""
     return ({"dtype": "float16"} if getattr(args, "fp16", False) else {}) | (
-        {"enable_lora": True, "max_lora_rank": 16} if getattr(args, "vllm_lora", False) else {})
+        {"enable_lora": True, "max_lora_rank": peft_config.r} if getattr(args, "vllm_lora", False) else {})
 
 
 class FastGRPO(FastForward, GRPOTrainer):
@@ -513,7 +514,7 @@ class FastGRPO(FastForward, GRPOTrainer):
 
     def __init__(self, *args, **kwargs):
         check()  # the private TRL names this class relies on, before TRL builds anything
-        with vllm_kwargs(**vllm_engine_kwargs(kwargs.get("args"))):  # TRL builds its vLLM engine without these
+        with vllm_kwargs(**vllm_engine_kwargs(kwargs.get("args"), kwargs.get("peft_config"))):  # TRL omits these
             super().__init__(*args, **kwargs)
         check_trainer(self)  # the attributes the copied _prepare_inputs body reads
         self.check_engine_dtype()

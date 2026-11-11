@@ -20,13 +20,14 @@ import sys
 import tarfile
 from pathlib import Path
 
+from objdel.core import datasets
 from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json
 from objdel.core.provenance import repo_root
 from objdel.infra.errors import InfraError
 from objdel.infra.vast.offers import is_raw
 
-LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
+LIDC_EVAL = datasets.LIDC.exams  # the LIDC bundle's exam views (each dataset's are its entry's `exams`)
 SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view would differ
 
 
@@ -53,7 +54,7 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
     """The bundle's (archive name, path or bytes) entries for dataset `ds`; refuses anything under data/raw."""
     if is_raw(data):
         raise InfraError("refusing to bundle anything under data/raw")
-    prep = data / "prepared"
+    prep, entry = data / "prepared", datasets.get(ds)
     picked = [f for sub in (ds, f"images/{ds}", f"caches/{ds}") for f in walk(data, prep / sub, f"prepared/{sub}")]
     for kind in ("views", "eval_views"):
         names = set(views) if kind == "views" and views else {p.name for p in (data / kind).glob(f"{ds}-*")}
@@ -61,16 +62,16 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
             names = {n for n in names if not n.startswith(f"{ds}-train-")}
         if missing := [n for n in names if not (data / kind / n).is_dir()]:
             raise InfraError(f"{kind} missing: {missing}")
-        if kind == "eval_views" and ds == "lidc":
-            if missing := [n for n in LIDC_EVAL if not (data / kind / n).is_dir()]:
+        if kind == "eval_views":
+            if missing := [n for n in entry.exams if not (data / kind / n).is_dir()]:
                 raise InfraError(f"eval views missing: {missing}")
-            names |= set(LIDC_EVAL)
+            names |= set(entry.exams)
         if kind == "eval_views":  # held-out test views never ride in a train bundle (plan B1 rental 4c)
             names = {n for n in names if not n.startswith(f"{ds}-test-")}
         if not names:
             raise InfraError(f"no {ds} {kind} under {data / kind}")
         picked += [f for n in sorted(names) for f in walk(data, data / kind / n, f"{kind}/{n}")]
-    if ds == "lidc":  # the CUDA checker eval set (LIDC only; archive/cpu_checker/experiments/prepare_data.py)
+    if entry.checker_eval:  # the CUDA checker eval set (archive/cpu_checker/experiments/prepare_data.py)
         if not (data / "checker_eval" / "manifest.json").is_file():
             raise InfraError("data/checker_eval missing: it holds the archived CPU checker's references and cannot be "
                              "rebuilt; copy it from a checkout that has it")
@@ -114,7 +115,7 @@ def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Pat
 def main(argv: list[str] | None = None) -> None:
     """The bundle CLI (dataset, --view, --data, --out)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("dataset", choices=["lidc"])
+    ap.add_argument("dataset", choices=sorted(datasets.DATASETS))
     ap.add_argument("--view", action="append", help="training view to ship (repeatable; default every <ds>-*)")
     ap.add_argument("--data", type=Path, default=repo_root() / "data")
     ap.add_argument("--out", type=Path, default=repo_root() / "build" / "bundles")

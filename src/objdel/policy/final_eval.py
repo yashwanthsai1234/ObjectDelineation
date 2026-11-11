@@ -76,11 +76,12 @@ def limit_rows(rows: list[dict], limit: int | None) -> list[dict]:
     return rows[:: -(-len(rows) // limit)][:limit]
 
 
-def view_groups(view: Path, split: str) -> dict[str, str]:
-    """{item_id: group_id} of a view's LIDC records (never from the prompt rows: TRL forwards their columns)."""
-    from objdel.policy import rows as dataset
+def view_groups(view: Path, dataset: str, split: str) -> dict[str, str]:
+    """{item_id: group_id} of a view's records of `dataset` (never from the prompt rows: TRL forwards their
+    columns)."""
+    from objdel.policy import rows as policy_rows
 
-    return {r["item_id"]: r["group_id"] for r in dataset.records(view, "lidc", split)}
+    return {r["item_id"]: r["group_id"] for r in policy_rows.records(view, dataset, split)}
 
 
 def view_manifest_sha256(view: Path) -> str:
@@ -89,8 +90,8 @@ def view_manifest_sha256(view: Path) -> str:
 
 
 def _view_records(view: Path) -> list[dict]:
-    """Every LIDC record of the view, file by file in name order."""
-    return [r for f in sorted(Path(view, "lidc").glob("*.jsonl")) for r in read_jsonl(f)]
+    """Every record of the view, file by file in name order."""
+    return [r for f in sorted(Path(view).glob("*/*.jsonl")) for r in read_jsonl(f)]
 
 
 def frozen_entry(view_name: str) -> dict | None:
@@ -98,11 +99,15 @@ def frozen_entry(view_name: str) -> dict | None:
     return read_json(FROZEN_VIEWS).get(view_name) if FROZEN_VIEWS.is_file() else None
 
 
-def check_view(view: Path, split: str) -> None:
-    """Refusal unless `split` is a set of the view and a frozen view's hashes equal its frozen_views.json entry."""
-    sets = read_json(view / "manifest.json")["sets"]
-    if f"lidc/{split}" not in sets:
-        raise Refusal(f"final_eval: {view} holds {sorted(sets)}, not lidc/{split} (the test view needs --split test)")
+def check_view(view: Path, dataset: str, split: str) -> None:
+    """Refusal unless `<dataset>/<split>` is a set of the view and a frozen view's hashes equal its frozen_views.json
+    entry."""
+    from objdel.policy import rows as policy_rows
+
+    try:
+        policy_rows.check_root(view, dataset, split)
+    except ValueError as e:
+        raise Refusal(f"final_eval: {e} (the test view needs --split test)") from e
     name = view.resolve().name  # an alias (symlink) of a frozen view is that view
     if name not in Q.FROZEN:
         return
@@ -119,7 +124,7 @@ def hash_view(view: Path, out: Path, commits: dict[str, str]) -> None:
     """--hash-view: the view's identity record (the pre-rental record); `commits`: the last commit of each
     file that renders it (freeze_views.render_files)."""
     sets = read_json(view / "manifest.json")["sets"]
-    (target_set,) = [s["target_set_sha256"] for k, s in sets.items() if k.startswith("lidc/")]
+    (target_set,) = [s["target_set_sha256"] for s in sets.values()]
     _write(out, json.dumps({
         "view": str(view), "items": len(_view_records(view)), "content_sha256": Q.view_content_sha256(view),
         "target_set_sha256": target_set, "generator_commit": commits["experiments/phase2/build_eval_views.py"],
@@ -139,7 +144,8 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
 
     doc = read_json(run / "final_eval.json")
     items = read_jsonl(run / "items.jsonl")
-    table = pq.read_table(store / "lidc" / f"{doc['split']}.parquet", columns=["item_id", "group_id"])
+    (dataset,) = {it["item_id"].split("/")[0] for it in items}  # an item id starts with its dataset
+    table = pq.read_table(store / dataset / f"{doc['split']}.parquet", columns=["item_id", "group_id"])
     found = {i: g for i, g in zip(*table.to_pydict().values(), strict=True) if g}
     lost = [it["item_id"] for it in items if it["item_id"] not in found]
     if lost:
@@ -176,9 +182,9 @@ def start_scoring() -> None:
     device.eval_sets_s = 0.0
 
 
-def write_scored(view: Path, split: str, out: Path, results: list[dict], run: dict, t0: float):
+def write_scored(view: Path, dataset: str, split: str, out: Path, results: list[dict], run: dict, t0: float):
     """Writes metrics.jsonl, items.jsonl and the full final_eval.json (schema 2, with the view's engine record)."""
-    items, groups = [per_item(r) for r in results], view_groups(view, split)
+    items, groups = [per_item(r) for r in results], view_groups(view, dataset, split)
     doc = run | summarize(items, groups) | {"noise_floor": noise_floor(results, groups), "partial": False,
                                             "engine": engine_record()}
     doc["seconds"] = run["seconds"] | {"total": time.time() - t0}
@@ -196,10 +202,10 @@ def _identity(view: Path, split: str) -> dict:
             "checker_build": _gpucheck.build()}
 
 
-def rescore(src: Path, view: Path, split: str, out: Path) -> None:
+def rescore(src: Path, view: Path, dataset: str, split: str, out: Path) -> None:
     """--rescore: score src/answers.jsonl again on the view, with no model; exit 2 when the view's manifest is not
     the one src was sampled on."""
-    from objdel.policy import rows as dataset
+    from objdel.policy import rows as policy_rows
     from objdel.verify import store as serve
 
     f = src / "final_eval.json"
@@ -210,15 +216,15 @@ def rescore(src: Path, view: Path, split: str, out: Path) -> None:
         raise Refusal(f"rescore: {view}/manifest.json is not the manifest {src} was sampled on", 2)
     t0 = time.time()
     answers = read_jsonl(src / "answers.jsonl")
-    by_key = {r["key"]: r for r in dataset.prompts(view, "lidc", split)}
+    by_key = {r["key"]: r for r in policy_rows.prompts(view, dataset, split)}
     rows = [by_key[d["item_id"]] for d in answers]
     run = ({k: old[k] for k in ("ckpt", "K", "seed", "sampler") if k in old} | _identity(view, split)
            | {"rescored_from": str(src), "seconds": {}})
-    serve.preload(view, ["lidc"])
+    serve.preload(view, [dataset])
     _write(out / "answers.jsonl", _lines(answers))
     start_scoring()
     results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view.resolve())
-    write_scored(view, split, out, results, run, t0)
+    write_scored(view, dataset, split, out, results, run, t0)
 
 
 def run(a) -> None:
@@ -232,7 +238,7 @@ def run(a) -> None:
     views, splits = [Path(v) for v in a.view], list(a.split) or ["val"] * len(a.view)
     outs = [Path(o) for o in a.out] if len(a.out) == len(views) else [Path(a.out[0]) / v.resolve().name for v in views]
     for view, split in zip(views, splits, strict=True):
-        check_view(view, split)
+        check_view(view, a.dataset, split)
     if len({o.resolve() for o in outs}) != len(outs):
         error("two views write the same --out folder: give distinct --view directory names or one --out each")
     if a.rescore:
@@ -240,20 +246,20 @@ def run(a) -> None:
             error("--out must not be the --rescore folder")
         if len(views) != 1:
             error("--rescore takes one --view")
-        return rescore(Path(a.rescore), views[0], splits[0], outs[0])
+        return rescore(Path(a.rescore), views[0], a.dataset, splits[0], outs[0])
 
     import torch
 
-    from objdel.policy import rows as dataset
+    from objdel.policy import rows as policy_rows
     from objdel.verify import store as serve
 
     t0 = time.time()
     for root in dict.fromkeys(v.resolve() for v in views):
-        serve.preload(root, ["lidc"])
+        serve.preload(root, [a.dataset])
     sampler, params = load_sampler(a)
     for view, split, out in zip(views, splits, outs, strict=True):
-        rows = limit_rows(dataset.prompts(view, "lidc", split), a.limit)
-        groups = view_groups(view, split)
+        rows = limit_rows(policy_rows.prompts(view, a.dataset, split), a.limit)
+        groups = view_groups(view, a.dataset, split)
         run = {"ckpt": str(a.ckpt), "K": a.k, "seed": a.seed, "sampler": SAMPLER_LABEL} | (
             {"adapter": str(a.adapter), "adapter_sha256": file_sha256(Path(a.adapter) / "adapter_model.safetensors")}
             if a.adapter else {}) | _identity(view, split) | ({"limit": a.limit} if a.limit else {})
@@ -270,5 +276,5 @@ def run(a) -> None:
 
         torch.manual_seed(a.seed)
         results = evaluate(sampler, rows, params, view.resolve(), keep)["results"]
-        write_scored(view, split, out, results, run, t0)
+        write_scored(view, a.dataset, split, out, results, run, t0)
         t0 = time.time()

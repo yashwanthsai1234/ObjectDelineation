@@ -62,7 +62,7 @@ class TrainerFlags(BaseModel, frozen=True, extra="forbid"):
     log_by_prompt: bool = False
     fast_sync: bool = False
     group_requests: bool = False
-    no_ckpt_layers: int = Field(0, ge=0, le=28)  # C9 arm (a): of Qwen3-VL-2B's 28 text decoder layers; no clamp
+    no_ckpt_layers: int = Field(0, ge=0)  # C9 arm (a): <= the model's text decoder layers (rl.run.checked); no clamp
     runaway_cap: float = Field(0, ge=0)
     profile_window: tuple[int, int] | None = None  # S,E: NvtxSteps; 1,steps traces every step; S >= 2 with trace
     count_syncs: bool = False
@@ -120,6 +120,7 @@ class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
     record_batches: str | None = None  # C0: each generation batch from checks_from_step on, to DIR/step<N>.pt
     expect_step1: str | None = None  # C0 (E-EQ6): another arm's rl.json; needs encode_check
     encode_check: str | None = None  # C0: c_speed_check --encoder's encoder.json
+    dataset: str = "lidc"  # a key of objdel.core.datasets; its data folders must hold it (policy.rows.check_root)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -206,8 +207,9 @@ class SelectStage(StageBase, frozen=True, extra="forbid"):  # select_ckpt
     k: int = 8
     seed: int = 0
     timeout_s: float | None = None
-    max_tokens: int | None = Field(None, ge=1)  # sampled completion cap (CPU smoke); None: configs.MAX_COMPLETION
+    max_tokens: int | None = Field(None, ge=1)  # sampled completion cap (CPU smoke); None: the model's max_completion
     out: str | None = None
+    dataset: str = "lidc"  # a key of objdel.core.datasets; its data folders must hold it (policy.rows.check_root)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -231,6 +233,7 @@ class ProbeStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # g_pro
     probe: str
     out: str
     items: int | None = None
+    dataset: str = "lidc"  # a key of objdel.core.datasets; its data folders must hold it (policy.rows.check_root)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -253,6 +256,7 @@ class EvalStage(StageBase, frozen=True, extra="forbid"):  # final_eval
     seed: int = 11
     rescore: str | None = None
     limit: int | None = Field(None, ge=1)  # smoke runs: at most N items per view
+    dataset: str = "lidc"  # a key of objdel.core.datasets; its data folders must hold it (policy.rows.check_root)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -290,34 +294,82 @@ FLAG_ORDER = {
            "lr", "resume", "reward", "numerics", "f_check", "no_f_check", "b1_adapter", "opsm_start_delta", "grpo",
            "rows_revision", "rows_manifest_sha256", "budget_usd", "session_start", "rate_usd_per_h", "fixed_usd",
            "heldout", "heldout_items", "heldout_every", *TRAINER_ORDER, "record_batches", "expect_step1",
-           "encode_check"),
+           "encode_check", "dataset"),
     "sft": ("model", "view", "output_dir", "data_root", "run_dir", "model_path", "branches", "a0", "seed",
             "rolling_minutes", "vision", "vision_reference_only", "resume", "steps_per_epoch", "sft",
             "deterministic", "branches_from", "profile"),
     "select": ("run", "prepared", "probes", "sampler", "shifted", "rescaled", "rotated", "items", "vision",
-               "no_vision", "only", "model", "k", "seed", "timeout_s", "max_tokens", "out"),
+               "no_vision", "only", "model", "k", "seed", "timeout_s", "max_tokens", "out", "dataset"),
     "probe": ("model", "ckpt", "select", "train", "probe", "out", "items", "grpo", "compile", "shared_prefix", "plain",
               "trace", "lr", "log_by_prompt", *(f for f in TRAINER_ORDER if f not in ("compile", "plain",
-                                                                                               "trace"))),
-    "eval": ("ckpt", "views", "model", "adapter", "k", "seed", "rescore", "limit"),
+                                                                                               "trace")), "dataset"),
+    "eval": ("ckpt", "views", "model", "adapter", "k", "seed", "rescore", "limit", "dataset"),
 }
 
 
+def spec_dataset(spec: "RunSpec") -> str:
+    """The one dataset the spec's stages name (the stages with a dataset field; default lidc when none has one)."""
+    found = {s.dataset for s in spec.stages if "dataset" in type(s).model_fields}
+    if len(found) > 1:
+        raise ValueError(f"{spec.name}: stages name {sorted(found)}; a run reads one dataset")
+    return found.pop() if found else RlStage.model_fields["dataset"].default
+
+
 class ComputeSpec(Base):
-    """The rented GPU and the hour cap of a run."""
+    """The rented GPU, the hour cap and the run budget (inherited by the rl stages that train) of a run."""
 
     gpu: str
     cap_hours: float = Field(gt=0)
+    budget_usd: Money | None = Field(None, gt=0)
+
+
+class RowsRef(Base):
+    """A rows root on the Hub: its folder name under {data}/rows, its revision and its manifest's SHA-256."""
+
+    name: str
+    revision: str
+    manifest_sha256: str
+
+
+def _inherit(data: dict) -> dict:
+    """The run-level model, dataset, rows and compute.budget_usd copied into each stage (a dict) whose class has the
+    field and that does not set it, when the value is not the field's default (to_argv emits only set fields, so a
+    spec written either way gives the same argv). The budget goes to the rl stages that train only; rows (train
+    and both pins, as one unit) to those that also leave train unset."""
+    rows = data.get("rows")
+    top = {"model": data.get("model"), "dataset": data.get("dataset"),
+           "budget_usd": (data.get("compute") or {}).get("budget_usd")}
+    stages = []
+    for st in data.get("stages") or ():
+        cls = STAGE_CLASSES.get(st.get("kind")) if isinstance(st, dict) else None
+        trains = cls is RlStage and not st.get("merge_last")
+        add = {} if cls is None else {
+            k: v for k, v in top.items() if k in cls.model_fields and k not in st and v is not None
+            and v != cls.model_fields[k].default and (k != "budget_usd" or trains)}
+        if trains and isinstance(rows, dict) and "train" not in st:
+            add |= {k: v for k, v in {"train": f"{{data}}/rows/{rows.get('name')}", "rows_revision": rows.get(
+                "revision"), "rows_manifest_sha256": rows.get("manifest_sha256")}.items() if k not in st}
+        stages.append(st | add if add else st)
+    return data | {"stages": stages}
 
 
 class RunSpec(Base):
-    """One run: its compute and its ordered stages."""
+    """One run: its compute, the settings its stages inherit (model, dataset, rows; `_inherit`) and its ordered
+    stages."""
 
     schema_version: Literal[1]
     name: str
+    model: str | None = None
+    dataset: str | None = None
+    rows: RowsRef | None = None
     compute: ComputeSpec
     stages: Annotated[tuple[Stage, ...], BeforeValidator(_tuple), Field(min_length=1)]
     bundle_view: str | None = None  # the SFT training view under the data root, read by the preflight DATA checks
+
+    @model_validator(mode="before")
+    @classmethod
+    def _defaults(cls, data):
+        return _inherit(data) if isinstance(data, dict) else data
 
     @model_validator(mode="after")
     def _rules(self):

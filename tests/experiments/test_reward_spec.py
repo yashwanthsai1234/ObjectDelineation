@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import scipy
 
+from objdel.core import datasets
 from objdel.data import splits
 from objdel.data.splits import val_half
 from objdel.verify.reward import spec as S
@@ -185,7 +186,7 @@ def test_r5_view_stamp_chain(tmp_path, monkeypatch):
 
     from objdel.infra import preflight as PF
     data = tmp_path / "data"
-    for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in PF.EXAMS)):
+    for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in datasets.LIDC.exams)):
         (data / d).mkdir(parents=True)
         (data / d / "manifest.json").write_text(json.dumps({"view_hash": "h"}))
     val = data / "eval_views/lidc-val-shifted"

@@ -39,13 +39,13 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core import datasets
 from objdel.core.io import write_json
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import BuildConfig, build_target, min_areas
 from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_mask
-from objdel.geom.text import SCHEMAS
 from objdel.geom.topology import signature
 from objdel.verify.reward.cache import voters
 
@@ -56,7 +56,8 @@ def _item(job):
     it, out, epochs, seed, repeat = job
     if it.image is None:
         return None  # counted as skipped
-    ds, names = it.dataset, SCHEMAS[it.dataset]
+    ds = datasets.get(it.dataset)
+    names = ds.names
     policy = frame(replace(it, image=None))
     ma = min_areas(policy.masks)
     sigs = {n: [signature(m, ma[n]) for m in policy.masks[n]] for n in names}
@@ -73,12 +74,11 @@ def _item(job):
                 if got is None:  # no admissible moved window: the policy frame (always valid)
                     stats["fallback"] += 1
                 (dx, dy), S = got or ((0, 0), policy.W)
-                ops = augment.DATASET_OPS[ds]
-                op = ops[int(rng.integers(len(ops)))]
-                jit = augment.jitter(rng) if ds == "lidc" else NO_JITTER
+                op = ds.ops[int(rng.integers(len(ds.ops)))]
+                jit = augment.jitter(rng, ds) if ds.window_jitter else NO_JITTER
                 f = frame(bare, offset=(dx, dy), side=S)
                 src = {n: augment.apply(f.masks[n][r], op) for n in names}
-                row = {"row_id": f"{e}/{it.item_id}/{r}/{rep}", "epoch": e, "item_id": it.item_id, "dataset": ds,
+                row = {"row_id": f"{e}/{it.item_id}/{r}/{rep}", "epoch": e, "item_id": it.item_id, "dataset": ds.name,
                        "rater": it.raters[r], "rater_index": r, "op": op, "offset": [dx, dy], "side": S,
                        "box": list(f.box), **jit, "simple": simple, "rep": rep}
                 try:
@@ -115,16 +115,15 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
     text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
     (out / "rows.jsonl").write_text(text)
     sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest() if p and Path(p).is_file() else None  # noqa: E731
-    per_op = {op: {k: stats[f"{k}/{op}"] for k in ("rows", "exact", "error")}
-              for op in augment.DATASET_OPS[dataset]}
+    entry = datasets.get(dataset)
+    per_op = {op: {k: stats[f"{k}/{op}"] for k in ("rows", "exact", "error")} for op in entry.ops}
     manifest = {
         "view": out.name, "dataset": dataset, "split": split,
         "config": {
             "epochs": epochs, "seed": seed, "nonsimple_repeat": nonsimple_repeat,
-            "ops": augment.DATASET_OPS[dataset],
+            "ops": entry.ops,
             "scale": "policy side or a LADDER neighbour, uniform", "clearance": augment.CLEARANCE,
-            "window_jitter": augment.WINDOW_JITTER if dataset == "lidc" else None,
-            "noise_max": augment.NOISE_MAX if dataset == "lidc" else None, "build": BuildConfig().__dict__},
+            "window_jitter": entry.window_jitter, "noise_max": entry.noise_max, "build": BuildConfig().__dict__},
         "sources": {"store_manifest_sha256": sha(Path(store_root, "manifest.json")),
                     "prepared_manifest_sha256": sha(Path(prepared, "manifest.json")) if prepared else None},
         "counts": {"items": len({r["item_id"] for r in rows}), "skipped_no_image": skipped, "rows": len(rows),
@@ -154,7 +153,7 @@ def main(argv=None):
     ap.add_argument("--store", default="data/store")
     ap.add_argument("--prepared", default="data/prepared")
     ap.add_argument("--out", required=True, help="e.g. data/views/lidc-bundle-v2")
-    ap.add_argument("--dataset", default="lidc", choices=sorted(SCHEMAS))
+    ap.add_argument("--dataset", default="lidc", choices=sorted(datasets.DATASETS))
     ap.add_argument("--split", default="train")
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--seed", type=int, default=0)

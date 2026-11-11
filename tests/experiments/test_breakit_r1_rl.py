@@ -45,7 +45,7 @@ def stub(tmp_path, monkeypatch):
 
     monkeypatch.setattr(build, "build_trainer", make)
     (tmp_path / "root").mkdir()
-    (tmp_path / "root/manifest.json").write_text("{}")
+    (tmp_path / "root/manifest.json").write_text('{"sets": {"lidc/train": {}}}')  # the train set check_root looks for
     out = tmp_path / "out"
     base = ["--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "c"), "--out", str(out), "--train",
             str(tmp_path / "root")]

@@ -7,7 +7,9 @@ import numpy as np
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from objdel.geom.text import GRID, MAX_RINGS, MAX_VERTICES, SCHEMAS, parse, serialize
+from objdel.geom.text import GRID, MAX_RINGS, MAX_VERTICES, parse, serialize
+
+SCHEMAS = (("disc", "cup"), ("nodule",))  # a two-structure schema and LIDC's
 
 
 class _Fail(Exception):
@@ -119,7 +121,7 @@ EXTRA = st.sampled_from([" ", "\n", "-", ".", "e", "0", "00", "1000", "1001", "9
 @st.composite
 def near_miss(draw):
     """A serialized (possibly cap-violating, < 3-point) object set with a few random edits."""
-    names = draw(st.sampled_from(list(SCHEMAS.values())))
+    names = draw(st.sampled_from(SCHEMAS))
     text = serialize({n: draw(parts) for n in names}, names)
     digits = [k + 1 for k, c in enumerate(text) if c.isdigit()]  # edits right after a digit are the subtle ones
     for _ in range(draw(st.integers(0, 3))):
@@ -147,7 +149,7 @@ def test_unicode_digits_are_rejected():
 
 
 @settings(max_examples=1000, deadline=None)
-@given(st.text(), st.sampled_from(list(SCHEMAS.values())))
+@given(st.text(), st.sampled_from(SCHEMAS))
 def test_parse_never_raises(text, names):
     p = parse(text, names)
     assert p.ok == (lab_parse(text, names) is not None) and isinstance(p.error, str)

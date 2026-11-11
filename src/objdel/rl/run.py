@@ -53,6 +53,7 @@ from objdel.rl import build
 def checked(a):
     """The RlStage `a` with f_check resolved (--f-check, --no-f-check, else on under the f_check.PRESETS), after the
     rules that need objdel.rl (numerics preset names, the --grpo keys train_rl owns); exit 2 on a broken one."""
+    from objdel.policy import models as policy_models
     from objdel.rl import config as configs
     from objdel.rl import f_check
 
@@ -74,7 +75,24 @@ def checked(a):
         error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     if a.grpo.get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
         error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
+    if a.no_ckpt_layers and a.no_ckpt_layers > (n := policy_models.get(a.model).text_layers):
+        error(f"--no-ckpt-layers {a.no_ckpt_layers}: {a.model} has {n} text decoder layers")
+    if (why := rl_refusal(a.dataset)) is not None:
+        error(why)
     return a
+
+
+def rl_refusal(dataset: str) -> str | None:
+    """Why RL cannot train on the dataset (unknown, or fewer raters per item than the reward needs), else None."""
+    from objdel.core import datasets
+    from objdel.verify.reward.cache import MIN_RATERS
+
+    if dataset not in datasets.DATASETS:
+        return f"--dataset {dataset}: not one of {sorted(datasets.DATASETS)} (objdel.core.datasets)"
+    if (k := datasets.get(dataset).min_raters) < MIN_RATERS:
+        return (f"--dataset {dataset}: {k} rater(s) per item; the RL reward needs {MIN_RATERS} (its band and "
+                "topology vote), and there is no single-rater mode")
+    return None
 
 
 def check_flags(a) -> None:
@@ -84,7 +102,7 @@ def check_flags(a) -> None:
     from objdel.policy import models as policy_models
 
     over = a.grpo
-    budget = policy_models.MAX_COMPLETION[a.model]
+    budget = policy_models.get(a.model).max_completion
     if over.get("max_completion_length", budget) > budget:
         raise ValueError(f"max_completion_length {over['max_completion_length']} is above the model's {budget}")
     if a.runaway_cap and over.get("mask_truncated_completions", True):
@@ -178,7 +196,7 @@ def check_sampler(cfg, schedule: dict, steps: int) -> None:
         raise ValueError(f"--steps {steps} is not a whole number of {schedule['block_steps']}-step blocks")
 
 
-def heldout_rows(view: Path, n: int):
+def heldout_rows(view: Path, n: int, dataset: str):
     """n val-shape items of an eval view (a seeded draw in record order), as GRPO rows: val-select items never enter
     training's held-out curve."""
     import numpy as np
@@ -187,8 +205,9 @@ def heldout_rows(view: Path, n: int):
     from objdel.data.splits import val_half
     from objdel.policy import rows as policy_rows
 
-    shape = {r["item_id"] for r in policy_rows.records(view, "lidc", "val") if val_half(r["group_id"]) == "shape"}
-    rows = [r for r in policy_rows.prompts(view, "lidc", "val") if r["key"] in shape]
+    policy_rows.check_root(view, dataset, "val")
+    shape = {r["item_id"] for r in policy_rows.records(view, dataset, "val") if val_half(r["group_id"]) == "shape"}
+    rows = [r for r in policy_rows.prompts(view, dataset, "val") if r["key"] in shape]
     if not rows:
         raise ValueError(f"--heldout {view}: no val-shape RL item")
     if n < len(rows):
@@ -263,7 +282,7 @@ def merge_last(a) -> int:
     from objdel.policy import models as policy_models
 
     model = PeftModel.from_pretrained(AutoModelForImageTextToText.from_pretrained(a.ckpt), last)
-    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model, "lidc")), out)
+    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)), out)
     return save_json(out / "rl.json", {
         "model": a.model, "steps": int(Path(last).name.split("-")[1]), "partial": True, "merged_from": last,
         "ckpt": str(a.ckpt),
@@ -280,10 +299,10 @@ def with_caps(train, a):
     from objdel.policy import rows as policy_rows
     from objdel.rl import runaway
 
-    tok = AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model, "lidc")).tokenizer
-    caps = runaway.row_caps(train["key"], policy_rows.records(a.train, "lidc", "train"),
+    tok = AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)).tokenizer
+    caps = runaway.row_caps(train["key"], policy_rows.records(a.train, a.dataset, "train"),
                             lambda text: policy_rows.target_tokens(tok, text),
-                            a.grpo.get("max_completion_length", policy_models.MAX_COMPLETION[a.model]),
+                            a.grpo.get("max_completion_length", policy_models.get(a.model).max_completion),
                             a.runaway_cap, runaway.MARGIN)
     return train.add_column("cap", caps)
 
@@ -365,13 +384,14 @@ def run_rl(a) -> dict:
     if a.record_batches:
         record.open_dir(a.record_batches)
     schedule = rows_schedule(a.train, a.rows_manifest_sha256)
-    train = rl_rows.grpo_rows(a.train, "lidc", "train",
+    policy_rows.check_root(a.train, a.dataset, "train")
+    train = rl_rows.grpo_rows(a.train, a.dataset, "train",
                               oversample=1 if schedule is not None else policy_rows.DISAGREEMENT_OVERSAMPLE)
     if schedule is not None:
         check_rows(train["key"], schedule)
     if a.runaway_cap:
         train = with_caps(train, a)
-    heldout = heldout_rows(a.heldout, a.heldout_items) if a.heldout else None
+    heldout = heldout_rows(a.heldout, a.heldout_items, a.dataset) if a.heldout else None
     last = get_last_checkpoint(str(out / "trainer")) if (out / "trainer").is_dir() else None
     if not a.resume and last:
         raise ValueError(f"{last} exists: a fresh run needs an --out without checkpoints (or pass --resume)")
@@ -383,7 +403,7 @@ def run_rl(a) -> dict:
     cut_seq_gaps(out / "trainer", start)
     roots = ([Path(a.heldout)] if a.heldout else []) + [Path(a.train)]
     for root in roots[::-1]:
-        serve.preload(root, ["lidc"])
+        serve.preload(root, [a.dataset])
     gc.freeze()  # preloaded store: leave it out of the GC scans (it ran inside the retired worker pool)
     over = {"save_strategy": "steps", "save_steps": a.save_steps} | numerics_overrides(a)
     over |= {"shuffle_dataset": False} if schedule is not None else {}
@@ -413,7 +433,7 @@ def run_rl(a) -> dict:
         "opsm_start_delta": a.opsm_start_delta if a.opsm_start_delta is not None else cfg.off_policy_mask_threshold,
         "beta": cfg.beta, "mask_truncated_completions": cfg.mask_truncated_completions,
         "max_completion_length": cfg.max_completion_length,
-        "loss_scale": policy_models.MAX_COMPLETION[a.model] / cfg.max_completion_length,  # dr_grpo divides by L
+        "loss_scale": policy_models.get(a.model).max_completion / cfg.max_completion_length,  # dr_grpo divides by L
         "reward": {"name": spec.name, "fingerprint": reward_fingerprint(spec), "c_topo": spec.c_topo,
                    "loc_width": getattr(spec, "loc_width", None), "area_gate": getattr(spec, "area_gate", None)},
         "rows": rows, "train_rows": len(train), "budget_stopped": bool(stop and stop.tripped),

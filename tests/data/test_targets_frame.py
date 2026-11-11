@@ -6,9 +6,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from PIL import Image
 
+from objdel.core import datasets
 from objdel.data.store import Item
 from objdel.data.targets.build import build_target
-from objdel.data.targets.frame import FRAMES, FrameConfig, frame
+from objdel.data.targets.frame import FrameConfig, frame
 
 DIVISORS = {d for d in range(1, 501) if 1000 % d == 0}
 
@@ -51,7 +52,7 @@ def check_frame(it, cfg):
 def test_crop_is_exact_slice_at_scale_1():
     s = np.stack([blob((400, 600), 100, 200, 160, 290), blob((400, 600), 110, 190, 150, 300)])
     img = np.random.default_rng(0).integers(0, 256, (400, 600, 3), dtype=np.uint8)
-    f = check_frame(item({"disc": s, "cup": s & blob((400, 600), 120, 220, 140, 260)}, img), FRAMES["riga"])
+    f = check_frame(item({"disc": s, "cup": s & blob((400, 600), 120, 220, 140, 260)}, img), datasets.get("riga").frame)
     x0, y0, x1, y1 = f.box
     assert f.scale == 1 and 0 <= x0 and x1 <= 600 and 0 <= y0 and y1 <= 400  # shifted inside the image, no padding
     assert np.array_equal(f.masks["disc"], s[:, y0:y1, x0:x1])
@@ -63,7 +64,7 @@ def test_crop_is_exact_slice_at_scale_1():
 def test_grid_maps_to_integer_pixels():
     """A target vertex g on the frame grid is the item pixel corner box[0] + scale * g * W / 1000, exactly."""
     s = np.stack([blob((300, 300), 120, 130, 141, 171)])
-    f = frame(item({"nodule": s}, dataset="lidc"), FRAMES["lidc"])
+    f = frame(item({"nodule": s}, dataset="lidc"), datasets.get("lidc").frame)
     assert 1000 % f.W == 0
     t = build_target({"nodule": f.masks["nodule"][0]}, ("nodule",), None, {"nodule": 5})
     xy = t.objs["nodule"][0][0]
@@ -75,10 +76,10 @@ def test_grid_maps_to_integer_pixels():
 def test_padding_when_the_object_touches_the_image_border():
     s = np.stack([blob((60, 70), 0, 0, 30, 25)])
     img = np.full((60, 70), 400, np.int16)  # Hounsfield units
-    f = check_frame(item({"nodule": s}, img, "lidc"), FRAMES["lidc"])
+    f = check_frame(item({"nodule": s}, img, "lidc"), datasets.get("lidc").frame)
     assert f.W == 50 and f.box[:2] == (0, 0)  # 30 + 2 x 8 = 46 -> 50; fits the 60 x 70 image after shifting
     s2 = np.stack([blob((40, 40), 0, 0, 30, 25)])
-    f2 = frame(item({"nodule": s2}, np.full((40, 40), 400, np.int16), "lidc"), FRAMES["lidc"])
+    f2 = frame(item({"nodule": s2}, np.full((40, 40), 400, np.int16), "lidc"), datasets.get("lidc").frame)
     x0, y0, x1, y1 = f2.box
     assert x1 - x0 == 50 and (x0 < 0 or x1 > 40)  # image smaller than the crop: padded
     assert f2.masks["nodule"].sum() == s2.sum()
@@ -88,7 +89,7 @@ def test_lidc_image_is_windowed_rgb_upscaled_to_512_masks_not():
     s = np.stack([blob((512, 512), 200, 200, 230, 240)] * 3)
     hu = np.full((512, 512), -1000, np.int16)
     hu[200:230, 200:240] = 400
-    f = frame(item({"nodule": s}, hu, "lidc"), FRAMES["lidc"])
+    f = frame(item({"nodule": s}, hu, "lidc"), datasets.get("lidc").frame)
     assert f.image.shape == (512, 512, 3) and f.image.dtype == np.uint8
     assert f.image.min() == 0 and f.image.max() == 255  # lung window [-1000, 400]
     assert f.masks["nodule"].shape == (3, f.H, f.W) and f.W < 512
@@ -100,7 +101,7 @@ def test_lidc_upscale_is_pillow_bicubic():
     rng = np.random.default_rng(3)
     s = np.stack([blob((300, 300), 120, 130, 160, 170)])
     hu = rng.integers(-1200, 600, (300, 300)).astype(np.int16)
-    f = frame(item({"nodule": s}, hu, "lidc"), FRAMES["lidc"])
+    f = frame(item({"nodule": s}, hu, "lidc"), datasets.get("lidc").frame)
     small = frame(item({"nodule": s}, hu, "lidc"), FrameConfig(image_side=None)).image  # same crop, not upscaled
     assert small.shape == (f.H, f.W, 3) and f.image.shape == (512, 512, 3)
     expect = np.asarray(Image.fromarray(small).resize((512, 512), Image.Resampling.BICUBIC))
@@ -109,7 +110,7 @@ def test_lidc_upscale_is_pillow_bicubic():
 
 def test_missing_image_gives_none():
     s = np.stack([blob((512, 512), 200, 200, 230, 240)])
-    assert frame(item({"nodule": s}, None, "lidc"), FRAMES["lidc"]).image is None
+    assert frame(item({"nodule": s}, None, "lidc"), datasets.get("lidc").frame).image is None
 
 
 def test_large_object_is_downscaled_by_block_majority():
@@ -118,7 +119,7 @@ def test_large_object_is_downscaled_by_block_majority():
     d = (yy - 800) ** 2 + (xx - 850) ** 2 <= 430 ** 2
     c = (yy - 790) ** 2 + (xx - 860) ** 2 <= 200 ** 2
     img = np.random.default_rng(1).integers(0, 256, (H, W, 3), dtype=np.uint8)
-    f = check_frame(item({"disc": np.stack([d, d]), "cup": np.stack([c, c])}, img), FRAMES["riga"])
+    f = check_frame(item({"disc": np.stack([d, d]), "cup": np.stack([c, c])}, img), datasets.get("riga").frame)
     # 861 px + 2 x 216 px = 1293 -> factor 3 -> 431 -> 500 px
     assert f.scale == 3 and f.W == 500
     x0, y0, x1, y1 = f.box
@@ -145,13 +146,13 @@ def test_reproducible():
     s = rng.random((4, 300, 300)) < 0.001
     s[:, 100:150, 120:160] = True
     it = item({"nodule": s}, None, "lidc")
-    a, b = frame(it, FRAMES["lidc"]), frame(it, FRAMES["lidc"])
+    a, b = frame(it, datasets.get("lidc").frame), frame(it, datasets.get("lidc").frame)
     assert a.box == b.box and a.scale == b.scale and np.array_equal(a.masks["nodule"], b.masks["nodule"])
 
 
 def test_empty_union_raises():
     with pytest.raises(ValueError):
-        frame(item({"nodule": np.zeros((2, 50, 50), bool)}), FRAMES["lidc"])
+        frame(item({"nodule": np.zeros((2, 50, 50), bool)}), datasets.get("lidc").frame)
 
 
 @settings(max_examples=60, deadline=None)
@@ -160,7 +161,7 @@ def test_empty_union_raises():
 def test_policy_properties(h, w, y, x, ds):
     Hs, Ws = y + h + 20, x + w + 30
     s = np.stack([blob((Hs, Ws), y, x, y + h, x + w)])
-    f = check_frame(item({"nodule": s}, None, ds), FRAMES[ds])
+    f = check_frame(item({"nodule": s}, None, ds), datasets.get(ds).frame)
     if f.scale == 1:
         assert f.masks["nodule"].sum() == h * w
 
@@ -194,3 +195,13 @@ def test_frame_masks_are_canonical_bools():
     nb = (m.view(np.uint8) * np.uint8(255)).view(bool)
     f, g = frame(item({"nodule": nb}, dataset="lidc")), frame(item({"nodule": m}, dataset="lidc"))
     assert f.masks["nodule"].view(np.uint8).max() == 1 and np.array_equal(f.masks["nodule"], g.masks["nodule"])
+
+
+def test_pixels_windows_by_the_window_not_by_the_dtype():
+    """frame.pixels: a window maps intensities to 0..255 (any dtype); no window keeps the crop as is (a uint8
+    dataset); frame() passes the item's dataset window (LIDC: the lung window)."""
+    from objdel.data.targets.frame import hu_window, pixels
+
+    hu = np.arange(-1200, 600, 50, dtype=np.int16).reshape(4, 9)
+    assert (pixels(hu, 0, 0, 4)[0] == hu[:4, :4]).all()  # no window: as is
+    assert (pixels(hu, 0, 0, 4, (-1000, 400))[0] == hu_window(hu[:4, :4], (-1000, 400))).all()

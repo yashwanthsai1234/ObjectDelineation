@@ -36,7 +36,7 @@ class ItemCounts:
     inter: np.ndarray       # (M, M) popcount(a & b); the diagonal holds the areas
     inter_raw: np.ndarray   # (K, K) the same between the raw sample rasters (before the legal gate)
     area_raw: np.ndarray    # (K,)
-    band_inter: np.ndarray  # (M, M) the same between the boundary-IoU bands (metrics.BIOU_D)
+    band_inter: np.ndarray  # (M, M) the same between the boundary-IoU bands (the structure's biou_d)
     soft: np.ndarray        # (T, 3) |P_t|, |R_t|, |P_t & R_t| per soft-Dice threshold
     surf: np.ndarray        # (K + k, 3) surfels of the drawn samples and raters by length (sqrt(2)/2, 1, sqrt(2))
     nsd_out: np.ndarray     # (K, k, 2, 3) per (sample, rater), direction, length: surfels beyond the NSD cut

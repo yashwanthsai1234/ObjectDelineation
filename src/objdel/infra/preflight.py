@@ -10,9 +10,9 @@ data; `local`). The training view T of each check is each sft stage's view, else
 neither (no training) has no T. Checks, in order; the stage (DATA / CHECKER / CODE) with a failure is finished, the
 later stages are not run:
   DATA     every {data}/... input of the rl, eval, select and probe stages exists; the upload bundle
-           (DIR/bundle-lidc.tar) holds each of them but rows/<name> and a sample of its expert caches has the current
-           reward fingerprint; bundle integrity (each T's rows.jsonl and context hashes, the eval-view file hashes),
-           patients shared between T and any exam (or probe) view,
+           (DIR/bundle-<dataset>.tar) holds each of them but rows/<name> and a sample of its expert caches has the
+           current reward fingerprint; bundle integrity (each T's rows.jsonl and context hashes, the eval-view file
+           hashes), patients shared between T and any exam (or probe) view,
            coverage of every exam view by T (objdel.data.coverage), prompt text identical, T's CT window consistent,
            every T target parses and is legal for the reference checker; per rl stage trained on {data}/rows/<name>
            (a train_rl run inside a cmd stage's `bash -c` string, the nsys-wrapped arms of the C specs, counts
@@ -47,8 +47,6 @@ from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json
 from objdel.core.provenance import repo_root
 
-# the exam views policy.chain passes to select_ckpt (gates: shifted, rescaled; report: rotated; probes)
-EXAMS = ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-precision", "probe-topology")
 CHECKER_TESTS = ["tests/geom/test_checker.py", "tests/geom/test_checker_oracle.py", "tests/geom/test_checker_host.py",
                  "tests/geom/test_topology.py", "tests/geom/test_geometry.py", "tests/geom/test_geometry_mask.py",
                  "tests/geom/test_geometry_oracle.py"]  # fmt: skip
@@ -63,10 +61,12 @@ CACHE_SAMPLE = 16  # expert caches whose fingerprint the bundle check reads (of 
 
 @dataclass(frozen=True)
 class Inputs:
-    """What the checks read: the spec, the Mac data root, the training views T, the rl stages on a rows root and the
-    LIDC bundle sync_up uploads."""
+    """What the checks read: the spec, its dataset entry (objdel.core.datasets: the exam views, prompt, window and
+    structure names), the Mac data root, the training views T, the rl stages on a rows root and the bundle sync_up
+    uploads."""
 
     spec: object
+    dataset: object
     root: Path
     views: tuple[Path, ...]
     rows: tuple
@@ -99,13 +99,15 @@ def local(template: str) -> Path | None:
 
 def inputs(cfg: Path, bundle_dir: Path = BUNDLE_DIR) -> Inputs:
     """The spec's inputs on the Mac: the sft views, the rl rows stages and the data root."""
-    from objdel.core.spec import load_spec
+    from objdel.core import datasets
+    from objdel.core.spec import load_spec, spec_dataset
 
     spec, root = load_spec(cfg), data_root()
+    ds = datasets.get(spec_dataset(spec))
     views = [Path(s.data_root) / s.view if s.data_root else root / s.view for s in spec.stages if s.kind == "sft"]
     views = views or ([root / spec.bundle_view] if spec.bundle_view else [])
     rows = [s for s in rl_stages(spec) if s.train and rows_name(s.train)]
-    return Inputs(spec, root, tuple(views), tuple(rows), Path(bundle_dir) / "bundle-lidc.tar")
+    return Inputs(spec, ds, root, tuple(views), tuple(rows), Path(bundle_dir) / f"bundle-{ds.name}.tar")
 
 
 def spec_inputs(spec) -> list[str]:
@@ -127,8 +129,8 @@ def hashes(cfg: Path) -> dict:
 
     s = inputs(cfg)
     views = [read_json(t / "manifest.json")["view_hash"] for t in s.views]
-    exams = [file_sha256(s.root / "eval_views" / v / "manifest.json") for v in EXAMS]
-    exams.append(file_sha256(s.root / "checker_eval" / "manifest.json"))
+    exams = [file_sha256(s.root / "eval_views" / v / "manifest.json") for v in s.dataset.exams]
+    exams += [file_sha256(s.root / "checker_eval" / "manifest.json")] if s.dataset.checker_eval else []
     manifests = []
     for t in [st.train for st in s.rows] + spec_inputs(s.spec):  # an edited rows root or input refuses the launch
         with contextlib.suppress(OSError, ValueError):
@@ -190,7 +192,7 @@ def sampled(names: list[str]) -> list[str]:
 
 
 def bundle(s: Inputs) -> list[str]:
-    """The LIDC bundle sync_up uploads holds every {data} input of the spec (but rows/<name>, which fetch_hf.sh
+    """The bundle sync_up uploads holds every {data} input of the spec (but rows/<name>, which fetch_hf.sh
     brings), and a sample of its expert caches (caches/**.npz) has the current reward fingerprint. Reads the tar
     headers and the sampled members only. A stale bundle (old reward fingerprint, a missing eval view) fails here,
     not after training."""
@@ -230,7 +232,7 @@ def view_integrity(s: Inputs) -> list[str]:
             sft_rows._contexts(vdir, man, {r["item_id"] for r in rows})
         except ValueError as e:
             bad.append(str(e))
-    for v in EXAMS:
+    for v in s.dataset.exams:
         d = s.root / "eval_views" / v
         for name, f in read_json(d / "manifest.json")["files"].items():
             if not (d / name).is_file() or file_sha256(d / name) != f["sha256"]:
@@ -245,9 +247,10 @@ def patients(s: Inputs) -> list[str]:
 
     if not s.views:
         return []
+    ds = s.dataset.name
     group = {r["item_id"]: r["group_id"] for x in ("train", "val") for r in policy_rows.records(s.root / "prepared",
-        "lidc", x)}
-    val, bad = {r["group_id"] for r in policy_rows.records(s.root / "prepared", "lidc", "val")}, []
+        ds, x)}
+    val, bad = {r["group_id"] for r in policy_rows.records(s.root / "prepared", ds, "val")}, []
     for t in s.views:
         train_items = {r["item_id"] for r in lines(t / "rows.jsonl")}
         train_groups, series = {group.get(i) for i in train_items}, {i.split("/")[1] for i in train_items}
@@ -255,20 +258,20 @@ def patients(s: Inputs) -> list[str]:
             bad.append(f"{sum(i not in group for i in train_items)} training items have no patient")
         if shared := train_groups & val:
             bad.append(f"{len(shared)} patients in training and prepared val, e.g. {sorted(shared)[:3]}")
-        for v in EXAMS:
-            rows = lines(s.root / "eval_views" / v / "lidc" / "val.jsonl")
+        for v in s.dataset.exams:
+            rows = lines(s.root / "eval_views" / v / ds / "val.jsonl")
             shared = train_groups & {r["group_id"] for r in rows}
             if shared or series & {r["item_id"].split("/")[1] for r in rows}:
                 bad.append(f"{v}: {len(shared)} patients also in training, e.g. {sorted(shared)[:3]}")
     return bad
 
 
-def exam_props(root: Path, v: str) -> list[dict]:
+def exam_props(root: Path, v: str, dataset: str) -> list[dict]:
     """The coverage properties of each record of exam view `v`."""
     from objdel.data import coverage as C
 
     out = []
-    for r in lines(root / "eval_views" / v / "lidc" / "val.jsonl"):
+    for r in lines(root / "eval_views" / v / dataset / "val.jsonl"):
         out += [p for t in r["targets"] if (p := C.props(t, r["W"], r["view"].get("op", "id")))]
     return out
 
@@ -282,38 +285,36 @@ def coverage(s: Inputs) -> list[str]:
         train = [p for r in lines(t / "rows.jsonl") if r["epoch"] == 0
                  and (p := C.props(r["target"], r["side"], r["op"]))]  # fmt: skip
         td = C.distribution(train)
-        for v in EXAMS:
-            for g in C.gaps(td, C.distribution(exam_props(s.root, v))):
+        for v in s.dataset.exams:
+            for g in C.gaps(td, C.distribution(exam_props(s.root, v, s.dataset.name))):
                 bad.append(f"{v}: {g['key']}={g['category']} is {g['exam']:.1%} of the exam, {g['train']:.2%} of "
                            f"training (floor {C.TRAIN_MAX:.0%}, exam share >= {C.EVAL_MIN:.0%})")  # fmt: skip
     return bad
 
 
 def prompts(s: Inputs) -> list[str]:
-    """Each exam view's prompt text equals the training prompt."""
-    from objdel.policy import prompt as policy_prompt
-
-    want = next(c["text"] for c in policy_prompt._user("lidc")["content"] if c.get("type") == "text")
+    """Each exam view's prompt text equals the training prompt (the dataset entry's)."""
+    ds, want = s.dataset.name, s.dataset.prompt
     return [f"{v}: exam prompt differs from the training prompt"
-            for v in EXAMS if read_json(s.root / "eval_views" / v / "manifest.json")
-            .get("prompts", {"lidc": want})["lidc"] != want]  # fmt: skip  (probe manifests carry no prompt)
+            for v in s.dataset.exams if read_json(s.root / "eval_views" / v / "manifest.json")
+            .get("prompts", {ds: want})[ds] != want]  # fmt: skip  (probe manifests carry no prompt)
 
 
 def ct_window(s: Inputs) -> list[str]:
-    """Every training window is a proper (lo < hi) window, and the exams' fixed lung window lies in the 1-99 percentile
-    range the training jitter covers."""
+    """Every training window is a proper (lo < hi) window, and the exams' fixed window (the dataset entry's) lies in the
+    1-99 percentile range the training jitter covers. A dataset without a window (uint8 images) has nothing to check."""
     import numpy as np
 
-    from objdel.data.targets.frame import LUNG_WINDOW
-
+    if (window := s.dataset.window) is None:
+        return []
     bad = []
     for t in s.views:
         w = np.array([r["window"] for r in lines(t / "rows.jsonl")])
         bad += [f"{t}: training rows with lo >= hi"] if (w[:, 0] >= w[:, 1]).any() else []
         for i, name in enumerate(("lo", "hi")):
             lo, hi = np.percentile(w[:, i], [1, 99])
-            if not lo <= LUNG_WINDOW[i] <= hi:
-                bad.append(f"{t}: exam window {name} {LUNG_WINDOW[i]} outside training 1-99 % range "
+            if not lo <= window[i] <= hi:
+                bad.append(f"{t}: exam window {name} {window[i]} outside training 1-99 % range "
                            f"[{lo:.0f}, {hi:.0f}]")
     return bad
 
@@ -323,11 +324,11 @@ def targets(s: Inputs) -> list[str]:
     from objdel.geom.shape import to_mask
     from objdel.geom.text import parse
 
-    bad = []
+    bad, names = [], list(s.dataset.names)
     for t in s.views:
         for r in lines(t / "rows.jsonl"):
-            p = parse(r["target"], ["nodule"])
-            if not p.ok or not to_mask(p.objs["nodule"], r["side"], r["side"]).legal:
+            p = parse(r["target"], names)
+            if not p.ok or not all(to_mask(p.objs[n], r["side"], r["side"]).legal for n in names):
                 bad.append(f"{r['row_id']}: {p.error or 'illegal'}")
     return [f"{len(bad)} training targets rejected by the reference checker, e.g. {bad[:3]}"] if bad else []
 

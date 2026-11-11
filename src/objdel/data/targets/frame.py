@@ -45,32 +45,20 @@ References:
     OpenCV INTER_CUBIC (A = -0.75, same half-pixel centres), replaced:
         https://github.com/opencv/opencv/blob/4.x/modules/imgproc/src/resize.cpp
 """
-from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
 from PIL import Image
 
+from objdel.core import datasets
+from objdel.core.datasets import FrameConfig
 from objdel.data.store import Item
 from objdel.geom.box import boxes_meet
 from objdel.geom.topology import as_mask
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
-LUNG_WINDOW = (-1000, 400)
+LUNG_WINDOW = datasets.LIDC.window
 CLEARANCE = 2  # px between the rater union and the edge of a moved or resized window
-
-
-@dataclass(frozen=True)
-class FrameConfig:
-    """Frame policy: largest and smallest side and margins (pixels, percent) and the model image side."""
-    max_side: int = 500  # a divisor of 1000
-    min_side: int = 50
-    margin_px: int = 8
-    margin_pct: int = 25
-    image_side: int | None = None  # upscale the model image to this side (LIDC), else the frame side
-
-
-FRAMES = {"riga": FrameConfig(), "lidc": FrameConfig(image_side=512)}
 
 
 class Frame(NamedTuple):
@@ -128,21 +116,29 @@ def crowded(item: Item, box) -> bool:
 
 def pixels(image: np.ndarray, x0: int, y0: int, side: int, window=None, noise=None) -> np.ndarray:
     """(c, side, side) crop at (x0, y0) of an (H, W[, c]) image, zero (black) outside it, channels first, alpha
-    dropped. Hounsfield units (any dtype but uint8) get `noise` (side, side) added, then the HU window (default
-    LUNG_WINDOW), inside the image only. Shared by frame and augment.render, so the two cannot drift."""
+    dropped. With a `window` (lo, hi: the dataset entry's, or a view's jittered one) the intensities (CT Hounsfield
+    units) get `noise` (side, side) added, then the window to 0..255, inside the image only; window None (a dataset
+    whose images are uint8 already): the crop as is. Shared by frame and augment.render, so the two cannot drift."""
     chw = _crop(np.atleast_3d(image)[..., :3].transpose(2, 0, 1), x0, y0, side)
-    if image.dtype == np.uint8:
+    if window is None:
         return chw
     H, W = image.shape[:2]
     y, x = np.arange(y0, y0 + side), np.arange(x0, x0 + side)
     inside = ((y >= 0) & (y < H))[:, None] & ((x >= 0) & (x < W))
     chw = chw.astype(np.int64) + (0 if noise is None else noise)
-    return np.where(inside, hu_window(chw, LUNG_WINDOW if window is None else window), 0)
+    return np.where(inside, hu_window(chw, window), 0)
 
 
 def rgb(chw: np.ndarray, side: int | None) -> np.ndarray:
     """(1 | 3, S, S) 0..255 -> uint8 (S, S, 3), upscaled to `side`."""
     return upscale(np.ascontiguousarray(np.repeat(chw, 3 // len(chw), 0).transpose(1, 2, 0), np.uint8), side)
+
+
+def view_window(dataset: str, window=None) -> tuple[int, int] | None:
+    """The window a view of `dataset` uses: its own (a jittered one) or the entry's; None for an entry without one
+    (uint8 images), whatever the view asks."""
+    own = datasets.get(dataset).window
+    return own and tuple(window or own)
 
 
 def hu_window(a: np.ndarray, window=LUNG_WINDOW) -> np.ndarray:
@@ -176,7 +172,7 @@ def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: in
     Raises ValueError for a `side` that is not a divisor of 1000 in range, or when a moved window leaves the union
     without clearance or meets another outlined nodule.
     """
-    cfg = cfg or FRAMES[item.dataset]
+    cfg = cfg or datasets.get(item.dataset).frame
     stacks = {n: as_mask(s, 3) for n, s in item.masks.items()}
     ux0, uy0, ux1, uy1 = ub = union_box(item)
     f, S = policy_side(ub, cfg)
@@ -203,7 +199,7 @@ def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: in
     if image is not None:
         if image.ndim not in (2, 3) or image.ndim == 3 and image.shape[2] not in (1, 3, 4):
             raise ValueError(f"{item.item_id}: image must be gray, RGB or RGBA (H, W[, 1|3|4]), got {image.shape}")
-        image = pixels(image, x0, y0, f * S, window)
+        image = pixels(image, x0, y0, f * S, view_window(item.dataset, window))
         if f > 1:
             image = (_blocks(image, f) + f * f // 2) // (f * f)  # block mean, rounded half up
         image = rgb(image, cfg.image_side)  # Pillow, not cv2.INTER_CUBIC: bit-identical on every CPU (F3)
