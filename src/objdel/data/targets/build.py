@@ -1,4 +1,4 @@
-"""SFT targets: rater masks of one item -> certified, canonical polygon text (plan D11, gates K5-K7, R1).
+"""SFT targets: rater masks of one item -> certified, canonical polygon text .
 
 Per object (structure) of one rater:
 1. exact crack-edge rings (objdel.geom.rings.trace), each ring's holes grouped with its 8-connected component;
@@ -8,23 +8,23 @@ Per object (structure) of one rater:
    pixel-neutral for crops <= 500 px); repeated and straight-through vertices dropped;
 4. certified on the CUDA engine (objdel.geom.engine.certify_polygons: raster, legality, IoU and the size-filtered
    signatures of the rung and the mask, only numbers leave the device): legal, at most MAX_VERTICES per ring, the
-   same per-instance signature as the mask under the size rule (plan §4.2: the rule applies to targets, reward and
-   eval), and IoU >= iou_min. The rule is the reward's min_area of the raters' union, which every caller passes
-   (`min_areas`). The raw signature is not required: on jagged masks the tau = 3 polygon rasterizes with sub-filter
+   same per-instance signature as the mask under the size rule (the rule applies to targets, reward and eval), and
+   IoU >= iou_min. The rule is the reward's min_area of the raters' union, which every caller passes (`min_areas`).
+   The raw signature is not required: on jagged masks the tau = 3 polygon rasterizes with sub-filter
    pinholes or specks, and demanding the raw signature pushed objects to near-lossless answers.
-   The ring cap MAX_RINGS applies after the size rule (break-it B1-4): an object with more raw rings is traced from
+   The ring cap MAX_RINGS applies after the size rule: an object with more raw rings is traced from
    its size-filtered mask instead, and still certified against the raw mask.
-   LIDC nodules (BuildConfig.exact) must also rasterize to the mask pixel for pixel (D9). tau is in grid units and
+   LIDC nodules (BuildConfig.exact) must also rasterize to the mask pixel for pixel. tau is in grid units and
    a pixel is 1000 / S of them, so at S >= 167 tau = 3 is >= 1/2 px and a shortcut can cross a pixel centre
-   (break-it BK1-1: 20 % of S = 200 view rows were certified but not exact). The check steps those down the
+   (20 % of S = 200 view rows were certified but not exact). The check steps those down the
    ladder; every identity (policy-frame) LIDC target is already exact, so the Phase 1 target-set hashes do not
    change. If no rung is exact (rings traced from the size-filtered mask, or the vertex cap), the object falls
    back to the certificate alone.
 5. If an object fails, it is rebuilt one rung lower on the tolerance ladder tau = 3, 2.75, ..., 0.25, then lossless
-   only, then the exact rings, which pass by construction for crops <= 500 px (the lab's stress test, S = 125-501).
+   only, then the exact rings, which pass by construction for crops <= 500 px (stress test, S = 125-501).
    Rungs are certified in engine calls of 1, 2, 4, ... rungs from the current one (one call per start rung); the
    first certified rung wins, so the text is the one rung-by-rung certification gives. Simplifying every remaining
-   rung up front would cost 3x the whole build on LIDC, where 99 % pass the first rung (D4).
+   rung up front would cost 3x the whole build on LIDC, where 99 % pass the first rung.
 The answer is the canonical text of all objects (objdel.geom.shape.canonicalize / serialize); it must parse.
 
 References:
@@ -50,7 +50,7 @@ from objdel.geom.shape import canonicalize, pack_objects
 from objdel.geom.text import GRID, MAX_RINGS, MAX_VERTICES, Objects, parse, serialize
 from objdel.geom.topology import as_mask, pack_masks, size_filter
 
-MAX_SIDE = 500  # crop policy; beyond it the exact-ring fallback is no longer guaranteed (lab stress test, S = 640)
+MAX_SIDE = 500  # crop policy; beyond it the exact-ring fallback is no longer guaranteed (stress test, S = 640)
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ class Target(NamedTuple):
 def _rings(mask):
     """(lattice path, step directions, component, is hole) of every ring, traced on the mask cut to its bounding box
     (crop before trace: every target text and hash unchanged). The component is
-    the ring's part (the 8-connected component it bounds, D3; it replaced cv2.connectedComponents labels, which group
+    the ring's part (the 8-connected component it bounds; it replaced cv2.connectedComponents labels, which group
     the rings the same way). The texts cannot change: the ring start key orders vertices by (y, x, d) for any width,
     so a translation keeps every ring's start and order."""
     mask = np.ascontiguousarray(mask, dtype=bool)
@@ -103,8 +103,8 @@ def _clean(v):
 def _bevel(rings, steps_in, steps_out):
     """Split each vertex the object uses more than once (a pinch) into two points one grid unit back along the crack
     step arriving there and one unit along the step leaving it. The cut stays inside the pinch's background pixel
-    corner, so no pixel centre changes side for crops <= 500 px. (The lab stepped along the simplified edges; on a
-    slanted edge that rounds to a pixel centre at S = 500 and flips it.)"""
+    corner, so no pixel centre changes side for crops <= 500 px. (Stepping along the simplified edges instead
+    would, on a slanted edge at S = 500, round to a pixel centre and flip it.)"""
     pts, counts = np.unique(np.concatenate(rings), axis=0, return_counts=True)
     twice = {tuple(p) for p in pts[counts > 1].tolist()}
     if not twice:

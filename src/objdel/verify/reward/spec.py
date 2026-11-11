@@ -1,16 +1,14 @@
-"""REWARD_V4: the frozen constants of reward v4 (plan §4.3; archive/phase1_lab/t_reward/results/ITERATION4.md);
+"""REWARD_V4: the frozen constants of reward v4;
 CACHE_SPEC: the constants stored ExpertCache values (tau, T5) depend on.
 
-Changing a REWARD_V4 value is a change of the reward definition, not of its implementation: it needs a new lab
-round, but it leaves stored caches valid. Changing a CACHE_SPEC value invalidates every stored ExpertCache (their
-fingerprint covers CACHE_SPEC, not the reward weights; Implementation.md B1.0).
+Changing a REWARD_V4 value is a change of the reward definition, not of its implementation: it needs a new round of
+tuning, but it leaves stored caches valid. Changing a CACHE_SPEC value invalidates every stored ExpertCache (their
+fingerprint covers CACHE_SPEC, not the reward weights).
 
 References:
-- Values: experiments/phase1/PLAN.md §4.3 and archive/phase1_lab/t_reward/results/ITERATION4.md (weights, floors,
-  c_topo, lam, eps, iou_gate), ITERATION3.md (debias, clip, no batch z).
 - Frozen dataclasses, astuple for the fingerprint: https://docs.python.org/3/library/dataclasses.html ; SHA-256:
   https://docs.python.org/3/library/hashlib.html
-- Library versions in the fingerprint (plan §6, caches rebuilt when a pin changes): numpy.__version__,
+- Library versions in the fingerprint (caches rebuilt when a pin changes): numpy.__version__,
   scipy.__version__, cv2.__version__ (https://numpy.org/doc/stable/reference/routines.version.html).
 """
 import hashlib
@@ -90,9 +88,10 @@ def reward_fingerprint(spec) -> str:
 def fingerprint() -> str:
     """SHA-256 of everything a stored ExpertCache value depends on besides the rater masks: CACHE_SPEC, the size rule
     (probed at fixed union areas) and the versions of the libraries that compute tau and T5: numpy (percentile,
-    sums), OpenCV (contour erosion) and scipy (quad and the normal law in S_m beyond the frozen m <= 8; until D7 also
-    the distance transforms, which the engine's bit-identical EDT replaced without a fingerprint change, runs/d7).
-    Plan §6: caches are rebuilt when a pin changes. Signatures, the vote and the band are rederived on load and need
+    sums), OpenCV (contour erosion) and scipy (quad and the normal law in S_m beyond the frozen m <= 8; until the
+    engine took over, also the distance transforms: its bit-identical EDT replaced them without a fingerprint
+    change).
+    Caches are rebuilt when a pin changes. Signatures, the vote and the band are rederived on load and need
     no fingerprint; reward weights are not stored, so they are not in it."""
     parts = (astuple(CACHE_SPEC), [min_area(a) for a in (0, 999, 1001, 10**4, 10**6)], np.__version__, cv2.__version__,
              scipy.__version__)

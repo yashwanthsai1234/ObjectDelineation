@@ -12,12 +12,11 @@ prepare(store, out, prompts=...) reads the item store (objdel.data.store) and wr
   disagreement items, items skipped for lack of pixels, target errors), the store manifest's SHA-256, the reward
   fingerprint, the prompt table the caller passes (the policy's prompts; data names no policy module) and library
   versions. Re-running gives the same manifest (rows sorted by item_id, content hashes).
-Items without a model image (Item.image None: RIGA BinRushed1 reconstructions, break-it B3-1; LIDC series without CT)
-are skipped and counted. window_record builds the same record for one window of an item (B1.4 rows, eval views).
+Items without a model image (Item.image None: RIGA BinRushed1 reconstructions; LIDC series without CT)
+are skipped and counted. window_record builds the same record for one window of an item (RL rows, eval views).
 
 References:
 - Python multiprocessing Pool: https://docs.python.org/3/library/multiprocessing.html
-- Plan §4.3 (caches stored with a hash), §4.4 (targets).
 """
 
 import hashlib
@@ -68,7 +67,7 @@ def _prepare(job) -> dict:
             errors.append([item_id, rater, str(e)])
     path = Path(out, "images", item_id + ".png")
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(path), cv2.cvtColor(f.image, cv2.COLOR_RGB2BGR)):  # I45: cv2 reports failure by value
+    if not cv2.imwrite(str(path), cv2.cvtColor(f.image, cv2.COLOR_RGB2BGR)):  # cv2 reports failure by value
         raise OSError(f"{path}: cv2.imwrite failed")
     rec = {"item_id": item_id, "group_id": group_id, "W": f.W, "H": f.H, "box": list(map(int, f.box)),
            "scale": f.scale, "raters": list(raters), "targets": targets, "rl": rl_eligible(raters),
@@ -78,14 +77,14 @@ def _prepare(job) -> dict:
         cdir = Path(out, "caches", item_id)
         cdir.mkdir(parents=True, exist_ok=True)
         rec["caches"] = {n: c.save(cdir / f"{n}.npz") for n, c in caches.items()}
-        rec["disagreement"] = len(rater_answers(caches, names)) > 1  # voting raters only (B2-4)
+        rec["disagreement"] = len(rater_answers(caches, names)) > 1  # voting raters only
     return rec
 
 
 def window_record(out, item, window=None, *, f=None) -> dict:
     """The `_prepare` record of one window of `item`, writing its image and caches under `out`.
 
-    window (an objdel.data.windows.Window, B1.4 rows): framed at (dx, dy) and side, keyed by `window.window_id` (so
+    window (an objdel.data.windows.Window, RL rows): framed at (dx, dy) and side, keyed by `window.window_id` (so
     two windows of one item never share an image or a cache folder), plus `source_item_id`, `cell` and
     `view = {kind, draw, offset, side, fallback: false, kept_side: false, op: "id"}`.
     window None (eval views): the given frame `f`, keyed by the item's own id; the caller adds its `view`."""

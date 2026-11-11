@@ -18,7 +18,7 @@ lower end > -0.02; `legal` B1 legal share >= 0.99; `view_hash` every B1 and A3 `
 entry. Baseline (front 6.2): A3's item 5 when it ran; else R5's items.jsonl when the hash chain of B1.0 holds
 ("hash only, correlation not run"), else the gate waits for V2 item 1b. The edge rule pairs with item 4; without it
 the gate is "open: edge baseline missing", never a pass. The view-identity correlation is not a hard rule: when it
-fails, only the R5 report line is dropped. A near-subset headroom upper bound below 0.013 (A2) marks the
+fails, only the R5 report line is dropped. A near-subset headroom upper bound below 0.013 marks the
 difference-in-differences rule uninformative and names the result "B1 vs R5", not "data effect"; pass/fail is
 unchanged. Report-only lines never change the result.
 

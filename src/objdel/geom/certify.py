@@ -48,7 +48,7 @@ class Report:
 
 def crop(mask):
     """Crop to the foreground bounding box; returns the crop and its offset (x, y). Topology is unchanged; functions
-    pad internally. Also used by the lab target builders (archive/phase1_lab)."""
+    pad internally."""
     m = as_mask(mask)
     x, y, w, h = bbox(m)
     return m[y:y + h, x:x + w], (x, y)

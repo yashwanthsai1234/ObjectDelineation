@@ -1,4 +1,4 @@
-"""The pixel work of objdel.verify.metrics on the CUDA checker (Implementation.md D7): one objdel.geom.engine.eval_sets
+"""The pixel work of objdel.verify.metrics on the CUDA checker: one objdel.geom.engine.eval_sets
 call per item rasterizes its K answers and compares them, per object, with the raters and the vote of the object's
 device tables (ExpertCache.device). Only integer counts come back (ItemCounts); metrics() makes every score from them
 with the formulas it used on host masks, so the values do not change (B14 of D.spec.md).
@@ -26,7 +26,7 @@ from objdel.geom.shape import pack_objects
 from objdel.geom.text import GRID, Parsed
 from objdel.verify.reward.cache import ExpertCache, device_many
 
-MAX_SCRATCH_BYTES = 256 << 20  # eval_sets scratch cap per chunk [estimate; D1 arena measurement]
+MAX_SCRATCH_BYTES = 256 << 20  # eval_sets scratch cap per chunk (an estimate)
 eval_sets_s = 0.0  # wall time of this process's eval_sets calls (final_eval resets it per view: D-G14 record)
 
 

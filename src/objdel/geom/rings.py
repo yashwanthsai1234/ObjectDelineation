@@ -1,5 +1,5 @@
 """Mask -> rectilinear rings on the CUDA engine (objdel.geom.engine.check_masks: nvcc build on the box, CPU build of the
-same source on the Mac). The polygonizer seam of the plan (B1.4a polygonize, D3 trace).
+same source on the Mac). polygonize is trace of one mask.
 
 The rings are the cracks between pixels, clockwise on screen (y down) around foreground, so outer rings have positive
 shoelace area and holes negative; at a saddle vertex the walk turns left (8-connected foreground, 4-connected
@@ -8,7 +8,7 @@ A ring's part is the raster rank (by first pixel) of the 8-connected foreground 
 outer ring, the surrounding one for a hole. One engine call also gives each mask's bit-quad counts and Betti numbers
 from the same run labeller (so certify takes b0, b1 from an independent one).
 The numpy references are tests/oracles/polygonize_oracle.py and bitquad_oracle.py; the engine equals them on all
-37,093 LIDC crops and the fuzz families (tests/experiments/test_rings.py; docs/implementation2.0/kernels/K1/results).
+37,093 LIDC crops and the fuzz families (tests/experiments/test_rings.py).
 """
 from collections.abc import Sequence
 from dataclasses import dataclass

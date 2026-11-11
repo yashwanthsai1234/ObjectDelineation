@@ -1,4 +1,4 @@
-"""Model text <-> polygon objects: the compact grammar, its serializer and its strict parser (plan D10).
+"""Model text <-> polygon objects: the compact grammar, its serializer and its strict parser.
 
 Grammar (no whitespace inside; surrounding JSON whitespace is stripped; names in schema order, all present once):
 
@@ -14,7 +14,7 @@ points per ring and <= MAX_RINGS rings per object. A completion cut at the token
 if its prefix parses.
 
 Surrounding whitespace is exactly JSON's insignificant whitespace, space, tab, LF and CR (RFC 8259 §2); str.strip()
-with no argument would also strip Unicode spaces and the separators U+001C-U+001F (break-it B1-1).
+with no argument would also strip Unicode spaces and the separators U+001C-U+001F.
 Texts longer than MAX_CHARS = 16,384 characters are refused first ("too_long"), so parse time is bounded by the
 cap and not by the input. The densest grammar text measured costs 2.14 characters per token (a retired 450M
 tokenizer; Qwen3-VL 1.7; real targets and adversarial texts), so a 1,536-token completion is at most ~3,300
@@ -26,7 +26,7 @@ Parsing is a regular-language check followed by json.loads: `pattern(names)` is 
 compiled once per schema; `re.fullmatch` decides acceptance and json.loads (C) builds the lists. The grammar is
 deterministic (every choice is decided by the next one or two characters), so a failed match backtracks O(1)
 per quantifier step and the check is linear; tests feed 200 k-character near-misses. Measured on 50-1,000-vertex
-completions it is 5-6x faster than the lab's hand-written recursive-descent parser (implementation note M2).
+completions it is 5-6x faster than a hand-written recursive-descent parser.
 Only rejected texts are walked again, by `_diagnose`, to give a short stable error code for typed logging.
 The same regex string has no Python-only syntax (no lookarounds, possessive or atomic groups), so it can be passed
 to vLLM / xgrammar constrained decoding (TRL `GRPOConfig.vllm_structured_outputs_regex`).
@@ -43,7 +43,6 @@ References:
     https://docs.vllm.ai/en/latest/features/structured_outputs/ (regex structured outputs; Rust-style regex)
     https://xgrammar.mlc.ai/docs/latest/api/python/grammar.html (Grammar.from_regex; compiles this pattern)
     https://github.com/huggingface/trl/blob/main/trl/trainer/grpo_config.py (vllm_structured_outputs_regex)
-    archive/phase1_lab/t_stack/prod.py (the lab grammar and parser this replaces)
 """
 from __future__ import annotations
 

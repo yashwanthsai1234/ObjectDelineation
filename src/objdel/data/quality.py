@@ -1,6 +1,6 @@
-"""Data quality gates of the LIDC store and the scheduled RL rows (Implementation.md B1.3, B1.7; gates DG1-DG18).
+"""Data quality gates of the LIDC store and the scheduled RL rows (gates DG1-DG18).
 
-Gates (B.6.1; `gates(report)` returns the 21 in this order, `failures` the hard ones that fail):
+Gates (`gates(report)` returns the 21 in this order, `failures` the hard ones that fail):
 - DG1, DG2, DG3 `leakage(store_root, ...)`: patient, series and item overlap between splits; SHA-256 of every int16
   slice and of the 32x32 crop at the union-box centre shared across patients or splits; near-duplicate crops across
   splits (`near_duplicates`), each needing a review in `reference/neardup_review.json`.
@@ -10,11 +10,11 @@ Gates (B.6.1; `gates(report)` returns the 21 in this order, `failures` the hard 
   pixels inside, clearance, other outlined nodules, padding) and a fresh render (box, side, image SHA-256 of the
   render and of the PNG on disk).
 - DG7-DG11, DG14, DG16 `schedule_report`: coverage of the off-centre rows against the train shifted law (the pool's
-  draw-0 shifted windows) on every block prefix, the full mix (DG9b), policy-side share, exact block counts, the
+  draw-0 shifted windows) on every block prefix, the full mix, policy-side share, exact block counts, the
   report numbers and the val coverage with its train-patient null.
 - DG12 `tokens`, DG14b `agreement`, DG15 `frozen`, DG17 `dg17` (contour-to-slice check, below).
 
-Contour-to-slice check (B1.7, DG17). `lidc.slice_index` puts each contour on the scan slice nearest to its z, so a
+Contour-to-slice check. `lidc.slice_index` puts each contour on the scan slice nearest to its z, so a
 series with an ambiguous z can put a contour on the wrong slice. Per series of the store, from the XML and the fetch
 sidecars only (no DICOM):
 - (a) ``shared_z``: one z cited by two or more SOP UIDs (two images at one position);
@@ -147,12 +147,12 @@ def dicom_z(folder, zvals) -> dict:
             "slice_z_without_dicom": [float(z) for z in zvals if not any(abs(z - d) < 0.01 for d in by_z)]}
 
 
-# --- B1.3: the data gates -----------------------------------------------------------------------------------------
+# --- the data gates -----------------------------------------------------------------------------------------
 NEAR = 0.98  # DG3 score limit (Pearson correlation of two 32x32 HU crops)
 CROSS = (("train", "val"), ("train", "test"), ("val", "test"))
-FROZEN = ("lidc-test-shifted", "lidc-val-edge", "lidc-val-shifted")  # reference/frozen_views.json (B1.6)
+FROZEN = ("lidc-test-shifted", "lidc-val-edge", "lidc-val-shifted")  # reference/frozen_views.json
 SCHEDULE_ARGS = ("per_step", "block_steps", "shares", "disagreement_weight")  # manifest.schedule keys of the report
-LOW_CONTRAST = 5  # grey levels between the doctors' union and the ring around it (DG14)
+LOW_CONTRAST = 5  # grey levels between the doctors' union and the ring around it
 NULL_DRAWS = 500  # DG16 null: random train-patient subsamples
 
 
@@ -256,7 +256,7 @@ def leakage(store_root, review: Mapping[str, str], exclusions: Mapping, out) -> 
 
 
 def view_image_hashes(eval_views_root) -> set[str]:
-    """image_sha256 of every record of every val and test view under `eval_views_root` (DG1b)."""
+    """image_sha256 of every record of every val and test view under `eval_views_root`."""
     return {r["image_sha256"] for p in sorted(Path(eval_views_root).glob("*/lidc/*.jsonl"))
             if p.stem in ("val", "test") for r in read_jsonl(p)}
 
@@ -290,7 +290,7 @@ def window_checks(rows_root, store_root) -> dict:
     """DG4, DG5, DG6, DG13, DG18 over every row: its box against its source item (all doctor pixels inside;
     clearance >= CLEARANCE and no other outlined nodule, the policy frame included; inside the slice), its view flags,
     and a fresh render (frame) whose box, side and image SHA-256 must equal the record's and the PNG's; plus the
-    window ids of low-contrast items (DG14)."""
+    window ids of low-contrast items."""
     rows_root, recs = Path(rows_root), records(rows_root)
     by_src = {}
     for r in recs:
@@ -434,7 +434,7 @@ def agreement(rows_root, low_contrast) -> dict:
     """DG14b (report): per RL row, the mean doctor leave-one-out IoU_tc (objdel.verify.ceiling.loo_caches, each left-out
     doctor scored with score_mask against the other doctors); per cell, overall, the share below 0.3 and that share
     jointly with low contrast (window ids in `low_contrast`)."""
-    from objdel.verify.ceiling import loo_caches  # A2
+    from objdel.verify.ceiling import loo_caches
     from objdel.verify.reward import score
     from objdel.verify.reward.cache import ExpertCache
 
@@ -456,7 +456,7 @@ def agreement(rows_root, low_contrast) -> dict:
 
 
 def view_content_sha256(view_dir) -> str:
-    """B1.6 content hash: SHA-256 of the newline-joined JSON tuples [item_id, view.offset, view.side, image_sha256]
+    """Content hash: SHA-256 of the newline-joined JSON tuples [item_id, view.offset, view.side, image_sha256]
     of the view's LIDC records in file order (a prepared root without windows has null offset and side). Manifest
     versions and the reward fingerprint do not enter it."""
     recs = [r for f in sorted(Path(view_dir, "lidc").glob("*.jsonl")) for r in read_jsonl(f)]

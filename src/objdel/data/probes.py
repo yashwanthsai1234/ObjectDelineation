@@ -1,23 +1,19 @@
-"""Synthetic precision (D19) and topology (D20) probes: build them as eval-view directories, score sampled answers.
+"""Synthetic precision and topology probes: build them as eval-view directories, score sampled answers.
 
     stats = lidc_stats("data/store")                                   # train diameters, hole and part records
     build_precision(out, patches("data/store", "val"), stats["diams"], n=1000, seed=2026)
     build_topology(out, patches("data/store", "val"), stats["holes"], stats["multis"], stats["diams"], seed=2027)
     score_precision(rows, out); score_topology(rows, out)             # rows: {"item_id", "samples": [text, ...]}
 
-Promoted from archive/phase2_lab/B3 (probe_lib, precision_probe, probe_rule, topo_probe_v3 = generator v3e, hole_census,
-power_c2) and archive/phase2_lab/A4/probe_proto; REPORT.md P2 and Addendum A hold the evidence.
-
-Generator 2 (D19): star polygons r(t) = r0 (1 + E e cos(2t + p2) + A sum_{k=3..12} c_k cos(kt + pk)), E = 0.2,
+Generator 2: star polygons r(t) = r0 (1 + E e cos(2t + p2) + A sum_{k=3..12} c_k cos(kt + pk)), E = 0.2,
 A = 0.15 (calibrated: centroid-disc IoU 0.822 vs real 0.806), spicules with p = 0.3, rasterized on the 0-1000 grid by
 objdel.geom.shape.to_mask; frame side = the targets.frame divisor rule with a margin drawn from [8 px, 60 %] (scale
 jitter), object placed uniformly with >= 2 px clearance (translation jitter). Families of the precision probe:
 fourier 60 % / lobulated 30 % / hole 5 % / two 5 %, diameters resampled from the LIDC train voting raters.
-Topology probe (D20, v3e): every hole jointly resamples one train hole record (part diameter, hole area, centroid
+Topology probe: every hole jointly resamples one train hole record (part diameter, hole area, centroid
 offset, wall; accepted at area +- max(1 px, 10 %) inside the record's bin, wall +- 0.45 px, offset +- 0.15), every
 two-part item one train multi-part record (diameter, part ratio, gap); every hole >= the size rule (signature (1,)
-raw and at min_area(|GT|)). P5.2 fidelity failed narrowly (seed 7: hole-area KS p 0.004; seed 8 passes): a ~1 px
-area under-draw of 5-px holes in the smallest bin.
+raw and at min_area(|GT|)).
 
 Directory = the data/prepared layout (images/<item_id>.png, caches/, lidc/<split>.jsonl, manifest.json); each
 record has one "rater" ("gt") whose certified target text is pixel-exact to the ground truth (checked at build), plus
@@ -28,9 +24,9 @@ lidc/train.jsonl = probe-train (the 20k capacity set, built on demand, on patche
 
 Metrics (frame px): boundary = foreground pixels with a 4-adjacent background pixel; ASSD pooled over both
 directions; HD95 = max of the directed 95th percentiles; centroid error between pixel-centre centroids.
-score_precision (D19, §5.1 G-precision) on 6-16 px items, every sample: legal >= 95 %; medians over legal samples
+score_precision on 6-16 px items, every sample: legal >= 95 %; medians over legal samples
 ASSD <= 0.6 px, IoU >= 0.80, centroid <= 0.5 px; per-item mean IoU (illegal = 0) beats the equal-area centroid disc
-on >= 60 % of items. score_topology (D20): per hole item the mean over its samples (all rows of an item pooled, so
+on >= 60 % of items. score_topology: per hole item the mean over its samples (all rows of an item pooled, so
 seeds pool) of "has a hole", per bin, pooled = train-share-weighted bins with a within-bin bootstrap (B = 2,000);
 gate (a) = simple controls answered (1, 0) >= 95 %; hole recall is reported against 0.30.
 """
@@ -299,8 +295,7 @@ def fidelity(holes, multis, seed, n_holes=300, n_two=200):
 # ------------------------------------------------------------------------------------------------- real data
 def lidc_stats(store_root):
     """Train diameters of the voting raters (>= 2.5 px), the median per frame side, and the hole / multi-part
-    geometry records of the non-simple targets after the size rule
-    (archive/phase2_lab/B3 census + hole_census, same order)."""
+    geometry records of the non-simple targets after the size rule."""
     from objdel.data import store
     from objdel.data.targets.frame import frame
     from objdel.verify.reward.cache import voters
@@ -330,8 +325,7 @@ def lidc_stats(store_root):
 
 
 def patches(store_root, split, n=200, side=125, per_patient=3, seed=11):
-    """[(group_id, HU patch)]: lung-parenchyma windows away from the nodules
-    (archive/phase2_lab/B3 background_patches)."""
+    """[(group_id, HU patch)]: lung-parenchyma windows away from the nodules."""
     from objdel.data import store
 
     rng, out, count = np.random.default_rng(seed), [], {}
@@ -443,14 +437,14 @@ def build_precision(out, patch_list, diams, n=1000, seed=2026, split="val"):
 
 
 def build_topology(out, patch_list, holes, multis, diams, seed=2027, per_bin=120, n_two=160, n_simple=160):
-    """Topology probe (D20): per_bin one-hole items per hole-area bin, n_two two-part items, n_simple controls."""
+    """Topology probe : per_bin one-hole items per hole-area bin, n_two two-part items, n_simple controls."""
     t0, rng = time.time(), np.random.default_rng(seed)
     items = [
         it for b in range(3) for it in _draw([h for h in holes if bin_of(h["area"]) == b], per_bin, make_hole, rng)
     ]
     items += _draw(multis, n_two, make_two, rng)
     ctrl = []
-    # generator-2 controls, fourier / lobulated alternating (archive/phase2_lab/B3 topo_probe_v3)
+    # generator-2 controls, fourier / lobulated alternating
     while len(ctrl) < n_simple:
         if (it := make_item(("fourier", "lobulated")[len(ctrl) % 2], float(rng.choice(diams)), rng)) is not None:
             ctrl.append(it | {"family": "simple"})
@@ -553,10 +547,9 @@ def score_precision(rows, root="data/eval_views/probe-precision", split="val", r
 
 
 def stratified_ci(per_bin, weights, rng, B=2000):
-    """Weighted mean of the bin means and its within-bin percentile bootstrap 95 % CI
-    (archive/phase2_lab/B3 power_c2.pooled; also the archived c2_analyze's pooled CI).
+    """Weighted mean of the bin means and its within-bin percentile bootstrap 95 % CI.
     Rounded to 12 decimals: an exact 288 / 960 hits sums to 0.29999999999999993 in floats and would miss the
-    C2 floor 0.30 (BK2-4; the same tolerance as objdel.verify.stats.DIGITS)."""
+    C2 floor 0.30 (the same tolerance as objdel.verify.stats.DIGITS)."""
     per_bin = [np.asarray(x, float) for x in per_bin]
     est = sum(w * x[rng.integers(0, len(x), (B, len(x)))].mean(1) for w, x in zip(weights, per_bin, strict=True))
     lo, hi = np.percentile(est, [2.5, 97.5])
@@ -605,7 +598,7 @@ def score_topology(rows, root="data/eval_views/probe-topology", split="val", B=2
     }
     return res | {
         "gate": {"controls": res["controls_correct"] >= rule["controls"]},
-        "pass": res["controls_correct"] >= rule["controls"],  # rule (a) only; hole recall is report-only (C2)
+        "pass": res["controls_correct"] >= rule["controls"],  # rule (a) only; hole recall is report-only
     }
 
 

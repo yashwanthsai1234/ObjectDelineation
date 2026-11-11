@@ -6,7 +6,7 @@ form a voxel mask. Each voxel is a closed unit cube, so parts are 26-connected a
 - b0, parts: 26-connected foreground components;
 - b2, cavities: 6-connected background components that do not reach the border;
 - b1, tunnels: from the Euler characteristic chi = V - E + F - C of the cube complex, chi = b0 - b1 + b2.
-`topology_any` is used by tests; phase G (3D) uses it for topology against any doctor.
+`topology_any` is used by tests; phase G (3D) will use it for topology against any doctor.
 """
 
 from collections.abc import Iterable, Mapping

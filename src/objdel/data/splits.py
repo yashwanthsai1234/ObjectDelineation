@@ -1,10 +1,10 @@
-"""Group-aware, seeded, deterministic splits and leak checks (K11).
+"""Group-aware, seeded, deterministic splits and leak checks.
 
 - LIDC: the unit is the patient (both scans of the 8 two-scan patients stay together), 70 / 10 / 20. Patients
   without reader-topology disagreement are dealt per stratum of multi-reader slice count; patients with disagreement
   are dealt by weighted greedy on their disagreement-slice count, so those (rare, concentrated) slices split about
   70 / 10 / 20 too.
-- Val halves (Implementation.md B1.0): the val patients are dealt into "shape" (tunes reward v5) and "select"
+- Val halves: the val patients are dealt into "shape" (tunes reward v5) and "select"
   (judges it) per lidc_stratum, with the patient's item and disagreement-item counts in the frozen val view as its
   Patient. Seeds "val_half:0", "val_half:1", ... are tried; the first that balances items (within 4 %) and
   disagreement items (within 4) is kept. The table is stored in reference/val_halves.json; val_half reads it.
@@ -87,7 +87,7 @@ def lidc_split(patients: dict[str, Patient], seed=0) -> dict[str, str]:
 
 
 def val_half_table(records, max_s=1000) -> dict:
-    """The val halves of B1.0 from the val view's records (dicts with group_id and disagreement; nothing else is
+    """The val halves from the val view's records (dicts with group_id and disagreement; nothing else is
     read): the first seed s < max_s that balances items and disagreement items (module docstring)."""
     if not records:
         raise ValueError("val_half_table: no records")

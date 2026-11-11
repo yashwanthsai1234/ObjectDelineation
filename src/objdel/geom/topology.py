@@ -25,9 +25,9 @@ Input: any 2-D array-like; every nonzero value is foreground (NaN included). `as
 used here and by objdel.data.targets. A numpy bool array may hold bytes other than 0 and 1 (np.asarray(PIL "1" image,
 bool) stores 255; views of other dtypes store anything), and bool -> bool copies (asarray, astype, ascontiguousarray,
 pad) keep those bytes, while every cast to or from bool computes x != 0 [numpy casts]; so a bool array is cast
-to uint8 (5 us at 500 x 500, 10x cheaper than a != 0 comparison) and viewed back (issue I1, break-it B1-5, B2-10).
+to uint8 (5 us at 500 x 500, 10x cheaper than a != 0 comparison) and viewed back.
 
-Size rule (plan §4.2): `min_area(|U|) = max(5, ceil(0.5 % of the rater union))`. `size_filter` is an area
+Size rule: `min_area(|U|) = max(5, ceil(0.5 % of the rater union))`. `size_filter` is an area
 opening (drop 8-connected components with < min_area pixels) followed by an area closing (fill holes with
 < min_area pixels) [Vincent 1994]. A hole's size is its own background pixel count, measured after the
 opening, so removed specks inside it count toward it and an island it encloses does not; filling a small hole

@@ -1,23 +1,23 @@
-"""Phase 2 training views (D9, D10; plan §6.0): exact dihedral ops, view draws, context crops and the renderer.
+"""Training views: exact dihedral ops, view draws, context crops and the renderer.
 
 OPS: the dihedral group D4 on the last two axes (y, x) of an array: "id"; "r90", "r180", "r270" (np.rot90 with
 k = 1, 2, 3, counter-clockwise as displayed); "fh" (x mirrored), "fv" (y mirrored), "tr" (transpose), "at"
 (anti-transpose). LIDC uses all eight, RIGA ("id", "fh"): fundus orientation is physiological. The ops map the
 pixel lattice onto itself, so masks are transformed exactly and targets are rebuilt from them (build_target: the
-top-left tie rule is not mirror-symmetric, issue I7); vertices are never transformed.
+top-left tie rule is not mirror-symmetric, an old rule); vertices are never transformed.
 
-draw(item, rng, side=None): one D10 window: side S uniform over `sides(item)`, the policy side and its LADDER
-neighbours (scale 1), i.e. every side the shifted and rescaled eval views ask for (plan §5.0), then an offset uniform
+draw(item, rng, side=None): one window: side S uniform over `sides(item)`, the policy side and its LADDER
+neighbours (scale 1), i.e. every side the shifted and rescaled eval views ask for, then an offset uniform
 over the windows that keep the union inside with CLEARANCE px and meet no other outlined nodule (rejection sampling,
-so uniform over the admissible sides and offsets). neighbour_side: the eval "rescaled" view's S (plan §5.0); edge:
-the eval "edge" view's offset, uniform on the boundary of the admissible rectangle (B1.6).
+so uniform over the admissible sides and offsets). neighbour_side: the eval "rescaled" view's S; edge:
+the eval "edge" view's offset, uniform on the boundary of the admissible rectangle.
 The side set is the eval views' on purpose: a margin draw ([8 px, 60 % of the union's extent], the R1 bundle) pinned
 every union under 23 px at S = 50 (min_side), so 27 % of the rescaled val's nodules fill < 10 % of the frame against
 0.5 % of those training rows.
 
 Context crops (C-VIEW): per item the image region every admissible window of every side the scale draw can give
 (and the policy window) can show, clipped to the image: int16 Hounsfield units for LIDC (window
-jitter and noise act on raw HU, D10), uint8 RGB for RIGA. render(spec, context) = frame(item, offset, side, window)
+jitter and noise act on raw HU), uint8 RGB for RIGA. render(spec, context) = frame(item, offset, side, window)
 on the context with the spec's HU noise added, the op applied at frame resolution, then the Pillow upscale; with
 op "id", sigma 0 and the policy window and side it is the prepared PNG byte for byte
 (tests/experiments/test_p2_views.py).
@@ -48,8 +48,8 @@ from objdel.data.targets.frame import (
 OPS = ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")
 DATASET_OPS = {"lidc": OPS, "riga": ("id", "fh")}
 LADDER = tuple(d for d in DIVISORS if 50 <= d <= 500)  # 50, 100, 125, 200, 250, 500
-WINDOW_JITTER = ((-300, 60), (1400, 80))  # CT level and width, centre and half-range in HU (D10)
-NOISE_MAX = 10.0  # HU, Gaussian sigma upper bound (D10)
+WINDOW_JITTER = ((-300, 60), (1400, 80))  # CT level and width, centre and half-range in HU
+NOISE_MAX = 10.0  # HU, Gaussian sigma upper bound
 
 
 _OP = {"id": lambda a: a, "r90": lambda a: np.rot90(a, 1, (-2, -1)), "r180": lambda a: np.rot90(a, 2, (-2, -1)),
@@ -89,7 +89,7 @@ def shift(item: Item, side: int, rng, tries: int = 200, box=None) -> tuple[int, 
 
 
 def edge(item: Item, side: int, rng, tries: int = 64) -> tuple[int, int] | None:
-    """The guard view's offset (B1.6): a lattice point drawn uniformly on the boundary of shift's admissible
+    """The guard view's offset: a lattice point drawn uniformly on the boundary of shift's admissible
     rectangle (one coordinate at its lo or hi: the largest legal shift that way), the first of `tries` draws that
     meets no other outlined nodule, or None."""
     (cx, cy), lo, hi = _admissible(item, side, union_box(item))
@@ -111,14 +111,14 @@ def _neighbours(side: int) -> list[int]:
 
 
 def sides(item: Item, box=None) -> list[int]:
-    """The sides of the scale draw (D10): the policy side and its LADDER neighbours up to max_side, ascending."""
+    """The sides of the scale draw: the policy side and its LADDER neighbours up to max_side, ascending."""
     cfg = FRAMES[item.dataset]
     S0 = policy_side(box or union_box(item), cfg)[1]
     return sorted(s for s in (S0, *_neighbours(S0)) if s <= cfg.max_side)
 
 
 def draw(item: Item, rng, side: int | None = None, tries: int = 20) -> tuple[tuple[int, int], int] | None:
-    """((dx, dy), S) of one D10 window (module docstring; a fixed `side`, as in the eval views, draws the shift
+    """((dx, dy), S) of one window (module docstring; a fixed `side`, as in the eval views, draws the shift
     only), or None when no admissible window was found."""
     box = union_box(item)
     choices = [side] if side else sides(item, box)
@@ -130,7 +130,7 @@ def draw(item: Item, rng, side: int | None = None, tries: int = 20) -> tuple[tup
 
 
 def neighbour_side(item: Item, side: int, rng, box=None) -> tuple[tuple[int, int], int] | None:
-    """The rescaled view (plan §5.0): S moved to a neighbouring LADDER divisor where an admissible shifted window
+    """The rescaled view: S moved to a neighbouring LADDER divisor where an admissible shifted window
     exists (one drawn uniformly when both do), with a uniform shift; None when neither neighbour is admissible.
     `box`: the item's union_box, when the caller has it."""
     box = box or union_box(item)
@@ -141,7 +141,7 @@ def neighbour_side(item: Item, side: int, rng, box=None) -> tuple[tuple[int, int
 
 
 def jitter(rng) -> dict:
-    """CT window and noise of one LIDC row (D10)."""
+    """CT window and noise of one LIDC row."""
     (lc, lr), (wc, wr) = WINDOW_JITTER
     level, width = lc + int(rng.integers(-lr, lr + 1)), wc + int(rng.integers(-wr, wr + 1))
     lo = level - width // 2

@@ -32,7 +32,7 @@ class ScoreItem:
     id: str
     key: str  # item id in the view root
     text: str  # the model's outline text
-    truncated: bool  # generation hit the token limit (a format failure, plan D10)
+    truncated: bool  # generation hit the token limit (a format failure)
 
 
 @dataclasses.dataclass(frozen=True)

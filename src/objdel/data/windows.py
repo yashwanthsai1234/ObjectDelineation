@@ -1,4 +1,4 @@
-"""Train windows for scheduled RL rows (ADR-0015; plan B1.1, B1.2): a geometry-only pool of windows per RL item and
+"""Train windows for scheduled RL rows (ADR-0015): a geometry-only pool of windows per RL item and
 the cells of the coverage target.
 
 Cells: (size bin, offset bin) over SIZE_EDGES px and OFFSET_EDGES (SD3's cells). The size is the apparent size
