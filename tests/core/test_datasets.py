@@ -28,6 +28,7 @@ def test_lidc_entry_equals_the_tables_it_replaced():
     assert d.exams == ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-precision",
                        "probe-topology")  # preflight EXAMS (bundle LIDC_EVAL plus the rotated view)
     assert d.checker_eval and not d.restricted  # bundle's ds == "lidc" checker set; hf's LIDC-only upload rule
+    assert d.cluster_depth == 1  # verify.stats.cluster's "lidc/" rule: the nodule, without the slice
 
 
 def test_the_library_registers_lidc_only():
@@ -64,3 +65,24 @@ def test_lookups_fail_loudly(monkeypatch):
     monkeypatch.setitem(datasets.DATASETS, "ct2", other)
     with pytest.raises(KeyError, match="'nodule': 2 different"):  # one name, two thresholds: ambiguous
         datasets.structure("nodule")
+
+
+def test_cluster_and_per_item_read_the_entry_and_every_structure():
+    """stats.cluster drops cluster_depth id parts (LIDC 1, a depth-0 or unregistered dataset none); per_item means a
+    two-structure item's per-structure scores and sums its vote areas (one structure: its own values)."""
+    from objdel.policy.evaluate import METRICS, per_item
+    from objdel.verify.stats import cluster
+
+    assert cluster("lidc/s1/n2/z3") == "lidc/s1/n2" and cluster("riga/a/b") == "riga/a/b"
+    assert cluster("other/a/b") == "other/a/b"
+    k = 2
+    samples = {m: [1.0] * k for m, (s, _) in METRICS.items() if s == "samples"} | {"iou_tc": [0.5, 0.7]}
+
+    def obj(v):
+        per = {m: [v] * k for m, (s, _) in METRICS.items() if s != "samples"}
+        return per | {"vote_area": 10, "sample_iou": np.eye(k).tolist()}
+
+    one = per_item({"item_id": "lidc/a/b/c", "samples": samples, "objects": {"nodule": obj(0.4)}})
+    two = per_item({"item_id": "riga/x", "samples": samples, "objects": {"disc": obj(0.2), "cup": obj(0.6)}})
+    assert one["nsd"] == 0.4 and two["nsd"] == np.mean([0.2, 0.6]) and two["vote_area"] == 20
+    assert one["iou_tc"] == two["iou_tc"] == 0.6

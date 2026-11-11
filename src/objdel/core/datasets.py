@@ -44,6 +44,7 @@ class Dataset:
     exams: tuple[str, ...] = ()  # the eval views (data/eval_views/<name>) a bundle carries and preflight checks
     checker_eval: bool = False  # data/checker_eval (the CUDA checker's archived references) rides in its bundle
     restricted: bool = False  # its licence forbids uploads (no rows, no model trained on it, on the Hub)
+    cluster_depth: int = 0  # item id parts dropped for the cluster bootstrap (verify.stats.cluster; 0: the item)
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -66,6 +67,7 @@ LIDC = Dataset(
     rotated_op="r90",
     exams=("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-precision", "probe-topology"),
     checker_eval=True,
+    cluster_depth=1,  # lidc/<series>/<nodule>/<slice>: the slices of one nodule are one cluster
 )
 
 DATASETS: dict[str, Dataset] = {d.name: d for d in (LIDC,)}

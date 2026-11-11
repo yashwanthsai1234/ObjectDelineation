@@ -303,9 +303,7 @@ def test_per_item_sources_averages_and_miss():
         assert EV.per_item(k4_result(iou=(x,) * 4))["miss"] == miss
     # literal pin: numpy's mean of eight 0.1 is 0.1 exactly (pairwise sum), so K = 8 answers at 0.1 are found
     assert np.mean([0.1] * 8) == 0.1 and EV.per_item(k4_result(iou=(0.1,) * 8, legal=(1,) * 8))["miss"] == 0.0
-    assert EV.per_item(k4_result(obj="cup"), "cup")["ged"] == .55
-    with pytest.raises(KeyError):
-        EV.per_item(k4_result(obj="cup"))
+    assert EV.per_item(k4_result(obj="cup"))["ged"] == .55  # any structure name: per_item reads the item's structures
     for K in (1, 8):
         it = EV.per_item(k4_result(legal=(0,) * K, iou=(0,) * K))
         assert (it["legal"], it["sel_legal_mean"], it["miss"]) == (0.0, 0.0, 1.0)
