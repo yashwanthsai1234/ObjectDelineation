@@ -316,20 +316,60 @@ def spec_dataset(spec: "RunSpec") -> str:
 
 
 class ComputeSpec(Base):
-    """The rented GPU and the hour cap of a run."""
+    """The rented GPU, the hour cap and the run budget (inherited by the rl stages that train) of a run."""
 
     gpu: str
     cap_hours: float = Field(gt=0)
+    budget_usd: Money | None = Field(None, gt=0)
+
+
+class RowsRef(Base):
+    """A rows root on the Hub: its folder name under {data}/rows, its revision and its manifest's SHA-256."""
+
+    name: str
+    revision: str
+    manifest_sha256: str
+
+
+def _inherit(data: dict) -> dict:
+    """The run-level model, dataset, rows and compute.budget_usd copied into each stage (a dict) whose class has the
+    field and that does not set it, when the value is not the field's default (to_argv emits only set fields, so a
+    spec written either way gives the same argv). The budget goes to the rl stages that train only; rows (train
+    and both pins, as one unit) to those that also leave train unset."""
+    rows = data.get("rows")
+    top = {"model": data.get("model"), "dataset": data.get("dataset"),
+           "budget_usd": (data.get("compute") or {}).get("budget_usd")}
+    stages = []
+    for st in data.get("stages") or ():
+        cls = STAGE_CLASSES.get(st.get("kind")) if isinstance(st, dict) else None
+        trains = cls is RlStage and not st.get("merge_last")
+        add = {} if cls is None else {
+            k: v for k, v in top.items() if k in cls.model_fields and k not in st and v is not None
+            and v != cls.model_fields[k].default and (k != "budget_usd" or trains)}
+        if trains and isinstance(rows, dict) and "train" not in st:
+            add |= {k: v for k, v in {"train": f"{{data}}/rows/{rows.get('name')}", "rows_revision": rows.get(
+                "revision"), "rows_manifest_sha256": rows.get("manifest_sha256")}.items() if k not in st}
+        stages.append(st | add if add else st)
+    return data | {"stages": stages}
 
 
 class RunSpec(Base):
-    """One run: its compute and its ordered stages."""
+    """One run: its compute, the settings its stages inherit (model, dataset, rows; `_inherit`) and its ordered
+    stages."""
 
     schema_version: Literal[1]
     name: str
+    model: str | None = None
+    dataset: str | None = None
+    rows: RowsRef | None = None
     compute: ComputeSpec
     stages: Annotated[tuple[Stage, ...], BeforeValidator(_tuple), Field(min_length=1)]
     bundle_view: str | None = None  # the SFT training view under the data root, read by the preflight DATA checks
+
+    @model_validator(mode="before")
+    @classmethod
+    def _defaults(cls, data):
+        return _inherit(data) if isinstance(data, dict) else data
 
     @model_validator(mode="after")
     def _rules(self):
