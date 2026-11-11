@@ -1,4 +1,4 @@
-"""SFT configuration: sft_config and the WSD schedule fractions WARMUP and DECAY (D5). The reasons for each setting
+"""SFT configuration: sft_config and the WSD schedule fractions WARMUP and DECAY. The reasons for each setting
 are in objdel.policy.models."""
 
 from typing import TYPE_CHECKING
@@ -14,11 +14,11 @@ WARMUP, DECAY = 0.03, 0.15  # D5: of the stable run's steps; of the branch point
 
 def sft_config(model: str, output_dir: str, steps: int | None = None, branch_at: int | None = None,
                **overrides) -> "SFTConfig":
-    """The bundle's SFT settings (§6.0). Schedule (D5, WSD): linear warmup over 3 % of the stable run's `steps`,
+    """The bundle's SFT settings. Schedule (WSD): linear warmup over 3 % of the stable run's `steps`,
     then constant; `branch_at=s` is a decay branch from the stable run's step-s checkpoint, decaying linearly to 0
     over 15 % of s (max_steps = s + that), identical to the stable run up to s. steps=None (smoke tests): 3 %
-    warmup of max_steps, no decay. Loader (D4): group_by_length on the `length` column, 6 persistent workers,
-    prefetch 2 (with dataloader_num_workers=0 neither, as TrainingArguments requires; BK3-1); gradient checkpointing
+    warmup of max_steps, no decay. Loader: group_by_length on the `length` column, 6 persistent workers,
+    prefetch 2 (with dataloader_num_workers=0 neither, as TrainingArguments requires); gradient checkpointing
     only for Qwen3-VL-2B. lr: 5e-4 with LoRA (the models in _LORA), else 5e-5; an explicit learning_rate wins."""
     if branch_at is not None and steps is None:
         raise ValueError("a decay branch needs the stable run's steps")

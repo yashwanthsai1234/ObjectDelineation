@@ -1,4 +1,4 @@
-"""G-probe (PLAN §5.1, §3.2 ④): can GRPO improve this checkpoint? 20 GRPO steps at the pre-registered probe LR.
+"""G-probe: can GRPO improve this checkpoint? 20 GRPO steps at the pre-registered probe LR.
 
 `run(stage, prereg)` runs one objdel.core.spec.ProbeStage; experiments/phase2/g_probe.py is its CLI and passes the
 pre-registered record (experiments/phase2/prereg.py: G_PROBE and the g_probe rule), which src never imports.
@@ -7,27 +7,23 @@ pre-registered record (experiments/phase2/prereg.py: G_PROBE and the g_probe rul
         --train data/prepared --probe data/eval_views/lidc-val-shifted --out runs/r1/g_probe
     python -I -m experiments.phase2.g_probe --spec specs/r1_qwen3vl2b.yaml --stage probe [--rd RD] [--data DATA]
 
-The flags are an objdel.core.spec.ProbeStage (cli_stage), with the trainer flags train_rl has (TrainerFlags: --lr,
---grpo JSON, --shared-prefix, --compile, --plain, --trace, the C flags); objdel.rl.build.build_trainer builds the
-trainer from them.
+The flags are an objdel.core.spec.ProbeStage (cli_stage) with the trainer flags train_rl has;
+objdel.rl.build.build_trainer builds the trainer from them.
 
-rl.config.grpo_config with prereg.G_PROBE: LR 5e-5 (LoRA; every model, ADR-0008), constant, 20 steps, G = 8, 32 LIDC
-train prompts per step (disagreement items x4), vLLM colocate generation (owner 2026-11-06, perf F1: HF generate of 256
-sequences needs 20-51 GiB of KV cache; needs the Phase 3 single-venv image, D15), sampling from
-policy.models.sampling(model, "grpo") (D13);
-rl.trl_adapter.FastGRPO (per-chunk trimmed forwards, a per-step vision cache: perf C1, C6), TRLReward on the
-preloaded caches; the probe metrics run in this process (D7). Probe set: a seeded subset of `items`
-(128) shifted-val records (policy.evaluate.eval_rows), K = 8 through the trainer's own generation (trl_adapter.sample),
-twice at step 0 (the null, h0) and once at step 20; per item the raw composite R. Verdict: prereg.g_probe, step-0
-legal = the mean of both draws. Also: Spearman of step-0 sd_geom / r_std / mixed with the gain (D12 veto, §6.2), the
-training-log form (mean logged R, steps 1-5 vs 11-20) and the step timing.
+Training: rl.config.grpo_config with prereg.G_PROBE (LR 5e-5, constant, 20 steps, G = 8, 32 LIDC train prompts per
+step with disagreement items x4), vLLM colocate generation, sampling from policy.models.sampling(model, "grpo"),
+rl.trl_adapter.FastGRPO and TRLReward on the preloaded caches; the probe metrics run in this process. Probe set: a
+seeded subset of `items` (128) shifted-val records (policy.evaluate.eval_rows), K = 8 through the trainer's own
+generation (trl_adapter.sample), twice at step 0 (the null, h0) and once at step 20; per item the raw composite R.
+Verdict: prereg.g_probe, step-0 legal = the mean of both draws. Also reported: Spearman of step-0 sd_geom / r_std /
+mixed with the gain (a veto), the training-log form (mean logged R, steps 1-5 vs 11-20) and the step timing.
 
---select (select_ckpt's dir): probe the selected branch, then (not PASS) the D12(c) repair: the next-earlier
-eligible branch, once. <out>/g_probe.json = the last probe's result + "probed" (names) + "earlier" (results before);
-its "ckpt" received the final verdict (C2 depth); NaN (e.g. Spearman of constant gains) is written as null. When
-R1's §5.1 gates failed (selected.json "gates_pass" not true) nothing is probed: {"verdict": null, "skipped": "§5.1
-gates failed: <gate names>", "probed": [], "gates_branch"}, exit 0, so the chain (train_sft && select_ckpt &&
-g_probe) ends cleanly with the reason on disk.
+--select (select_ckpt's dir): probe the selected branch, then (not PASS) the repair: the next-earlier eligible branch,
+once. <out>/g_probe.json is the last probe's result + "probed" (names) + "earlier" (results before); its "ckpt"
+received the final verdict; NaN (e.g. Spearman of constant gains) is written as null. When the gates failed
+(selected.json "gates_pass" not true) nothing is probed: {"verdict": null, "skipped": "§5.1 gates failed: <gate names>",
+"probed": [], "gates_branch"}, exit 0, so the chain (train_sft && select_ckpt && g_probe) ends cleanly with the reason
+on disk.
 """
 import gc
 import time

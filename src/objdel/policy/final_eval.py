@@ -1,49 +1,30 @@
 """Final evaluation of a tuned model on a whole split: K samples per item, scored by the checker. The CLI is
-experiments/phase2/final_eval.py (its flags, then `run`, `rescore`'s guards included, or a no-model form).
+experiments/phase2/final_eval.py; the flags are an objdel.core.spec.EvalStage.
 
-The model forms read their flags as an objdel.core.spec.EvalStage (cli_stage: kebab flags, K as -k, or a spec stage);
---hash-view and --resummarize load no model and are read before it.
+Samples every RL-eligible item of the view's <split> records with objdel.policy.sampler.VllmSampler (T = 1, the
+checkpoint's stop ids, `--adapter` served unmerged, each request seeded by request_seed(seed, item_id)), then scores
+in this process through objdel.policy.evaluate. Write order per view, so a crash in scoring keeps the paid sampling:
+1. <out>/answers.jsonl and a partial <out>/final_eval.json ("partial": true, the run keys, seconds.load_and_sample);
+2. after scoring, <out>/metrics.jsonl (every metric per item), <out>/items.jsonl (the per-item K-means) and the full
+   <out>/final_eval.json (schema 2, "partial": false). Every file goes through a temp file.
+Run keys: ckpt, view, split, K, seed, sampler, view_manifest_sha256, view_content_sha256, code_sha, checker_build.
 
-Every RL-eligible item of the view's <split> records (the G-probe uses a 128-item subset of the val view; this uses
-all of them, and runs on the test split's view built by build_eval_views --split test). Samples with
-objdel.policy.sampler.VllmSampler, no trainer (E4: vllm_native image only; one engine per process, built from --ckpt,
-serving --adapter unmerged when given; params_for's sampling at T = 1 with the checkpoint's stop ids; torch seeded
-before each view, each request seeded request_seed(seed, item_id)) and scores through objdel.policy.evaluate.evaluate
-(score_items in this process: D7, one CUDA context, after sampling). Until V4 passes every result carries
-"sampler": SAMPLER_LABEL (E-G10 open). Write order per view, so a crash in scoring keeps the paid sampling:
-1. <out>/answers.jsonl (item_id, group_id, W, H, samples, truncated, tokens per item) and a partial
-   <out>/final_eval.json ("partial": true, the run keys, seconds.load_and_sample);
-2. after scoring, <out>/metrics.jsonl (the whole metrics() result per item), <out>/items.jsonl (per-item metrics) and
-   the full <out>/final_eval.json (summary, schema 2, "partial": false). Every file goes through a temp file.
-Run keys: ckpt, view, split, K, seed, sampler, view_manifest_sha256 (manifest.json bytes), view_content_sha256 (B1.6's
-content hash, view_content_sha256), code_sha (objdel.core.io.code_sha: <repo>/CODE_SHA, written by vast sync_up on the
-box; else git HEAD plus -dirty-<sha12> on an edited tree; else null), checker_build ("cuda" or "cpu").
-Per item the K-sample mean; then the mean over items with three 95 % percentile bootstrap intervals (B = 2,000,
-seed 0): `ci95_patient` resamples patients (`group_id`; the gate CI, named by `gate_ci`), `ci95_nodule` resamples
-nodules, `ci95_item` single items (the schema-1 `ci95`). Illegal samples score 0 on every geometric term (the
-reward's rule).
-- iou_tc: IoU against the doctors' band (the reward's term); f5: the boundary score (calibrated so a new doctor
-  scores 0.95); precision / recall / dice: pixels against the doctors' strict-majority outline;
-- nsd, boundary_iou (best doctor) and boundary_iou_vote (the majority outline); soft_dice, hm_iou (HM-IoU8) and ged
-  (lower is better) per item: objdel.verify.metrics defines them;
-- miss_rate: the share of items whose K-mean IoU_tc is below 0.1 (not the best of K); iou_found: the mean IoU_tc of
-  the other items, its CIs drawn on that subset; `size_terciles`: iou_tc and boundary_iou by nodule size (the doctors'
-  vote area), the result note's tercile table;
-- sel_*: one answer chosen per item with no doctor masks (objdel.verify.select; `per_item`), and `paired`: the per-item
-  differences medoid - mean of K and vote - mean of K with their patient and nodule CIs. `gate_a` decides Gate A
-  from the val patient CI. Run gates keep sel_mean_of_k (= iou_tc);
-- noise_floor: K-answer sampling noise from the two answer halves (`noise_floor`); printed beside gains, never a rule.
---rescore DIR: score DIR/answers.jsonl again with no model and write the same four files to --out (exit 2, no output,
-when the view's manifest.json is not the one DIR/final_eval.json was sampled on). --hash-view VIEW: the view's
-identity record (content and target-set hashes, the last commit of each file that renders it) and exit.
-`tost` and `view_identity` are A-G3's paired checks against an older run (tests/experiments/test_a_gpu.py G01).
---resummarize DIR: the schema-2 summary of a finished run's items.jsonl (no model, no scoring), with group_id joined
-from the LIDC store of the run's split; written to --out, never into DIR; exit 2 when an item has no group_id.
-A frozen view (objdel.data.quality.FROZEN) runs only when its content hash and target-set hash equal its entry in
-reference/frozen_views.json (B1.6; shipped to the box by objdel.infra.vast.remote.code_files), and --split must
-name a set of the view (the test view is read only with --split test). Both checks run before any model load or
-rescoring.
-Reads untrusted data: run with python -I.
+The summary holds the K-sample mean per item, then the mean over items with three 95 % percentile bootstrap intervals
+(B = 2,000, seed 0): `ci95_patient` (the gate CI, named by `gate_ci`), `ci95_nodule` and `ci95_item`. Illegal samples
+score 0 on every geometric term. Keys: the METRICS of objdel.policy.evaluate (iou_tc is IoU against the doctors'
+band, the reward's term), miss_rate (items whose K-mean IoU_tc is below 0.1), iou_found (the mean over the other
+items), sel_* (one answer chosen per item with no doctor masks, objdel.verify.select) and noise_floor (K-answer
+sampling noise from two answer halves; printed beside gains, never a rule).
+
+Other forms, none loads a model:
+- --rescore DIR: score DIR/answers.jsonl again and write the same four files to --out (refused, exit 2, when the
+  view's manifest.json is not the one DIR/final_eval.json was sampled on);
+- --hash-view VIEW: the view's identity record (content and target-set hashes, the last commit of each file that
+  renders it);
+- --resummarize DIR: the schema-2 summary of a finished run's items.jsonl, group_id joined from the LIDC store.
+A frozen view (objdel.data.quality.FROZEN) runs only when its content and target-set hashes equal its entry in
+reference/frozen_views.json, and --split must name a set of the view (the test view needs --split test). Both checks
+run before any model load or rescoring; a failed one raises Refusal. Reads untrusted data: run with python -I.
 """
 
 import json
@@ -67,11 +48,11 @@ from objdel.verify import stats as signal
 FROZEN_VIEWS = repo_root() / "reference/frozen_views.json"  # /workspace/src on the box
 
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
-SAMPLER_LABEL = "VllmSampler; sampler not box-verified (E-G10 open)"  # until V4's deterministic check passes
+SAMPLER_LABEL = "VllmSampler; sampler not box-verified (E-G10 open)"  # written into every result
 
 
 def noise_floor(results: list[dict], groups: dict[str, str], draws: int = 2000, seed: int = 0) -> dict:
-    """K-sample noise from one run's answers (A3 step 7): d_i = mean of answers 0..K/2-1 minus mean of the rest.
+    """K-sample noise from one run's answers: d_i = mean of answers 0..K/2-1 minus mean of the rest.
     item_sd = sd(d) / sqrt 2 and mean_sd = the patient-bootstrap SD of mean(d) / sqrt 2. Both are the SD of a
     difference of two independent K-answer means (a retest difference), not of one mean: one K-answer mean has
     item_sd / sqrt 2 (math-stats §2, §11 item 1). Assumes the answers of one image are independent draws. A gate
@@ -135,7 +116,7 @@ def check_view(view: Path, split: str) -> None:
 
 
 def hash_view(view: Path, out: Path, commits: dict[str, str]) -> None:
-    """--hash-view: the view's identity record (the pre-rental record of A3 step 1); `commits`: the last commit of each
+    """--hash-view: the view's identity record (the pre-rental record); `commits`: the last commit of each
     file that renders it (freeze_views.render_files)."""
     sets = read_json(view / "manifest.json")["sets"]
     (target_set,) = [s["target_set_sha256"] for k, s in sets.items() if k.startswith("lidc/")]
@@ -181,7 +162,7 @@ def load_sampler(a):
 
 
 def engine_record() -> dict:
-    """D-G14: the view's eval_sets wall time, the scratch cap the loop passed and the engine's memory counters, read
+    """The view's eval_sets wall time, the scratch cap the loop passed and the engine's memory counters, read
     after its scoring (the counters were reset just before it)."""
     s, torch = _gpucheck.stats(), sys.modules.get("torch")  # a rescore imports no torch
     return {"eval_sets_s": device.eval_sets_s, "max_scratch_bytes": device.MAX_SCRATCH_BYTES,

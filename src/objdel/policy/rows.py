@@ -1,39 +1,26 @@
 """Training data: TRL rows built from the prepared set (objdel.data.prepare).
 
-Rows (Hugging Face datasets, conversational, one {"type": "image"} placeholder that TRL fills from the "image"
-column, decoded lazily from the PNG path):
+Rows are Hugging Face datasets in conversational form with one {"type": "image"} placeholder that TRL fills from the
+"image" column (decoded lazily from the PNG path):
 - sft_rows: messages = [user: image + PROMPTS[dataset], assistant: target text], one row per voting rater with a
-  target. A rater whose whole mask is below the reward's size filter abstains from the topology vote (break-it B2-4,
-  objdel.verify.reward.score.rater_answers): its own answer can never be topo-any, so SFT does not teach it (10 / 23,469
-  LIDC train targets; RL keeps the items). All voting raters are rows (not one random rater per epoch): an epoch then
-  shows each item's whole rater distribution, which is the topology histogram the RL reward matches; it needs no custom
-  sampler. Issue I5: with tokenizer and
-  max_tokens (the model's max_completion_length), targets longer than the budget (+1 end-of-turn token) are
-  dropped, so SFT never teaches an answer that GRPO generation would truncate.
-- prompt_rows / grpo_rows: prompt (the same user turn), image, key (item_id, the cache key), W, H, names; only
-  RL-eligible items (prompt_rows(rl_only=False): every item, for probe views).
-  oversample > 1 repeats disagreement items (plan §10). TRL's RepeatSampler permutes rows uniformly and takes no
-  weights, so a repeated row is the simplest sampler-free weighting; the factor is decided in
-  experiments/phase1/impl/M7_train.md (DISAGREEMENT_OVERSAMPLE).
-Both row builders decode every image they reference and compare its pixels with the record's image_sha256
-(break-it B3-5): rows are the only way images reach a trainer, so a swapped or edited PNG cannot be trained on
-(ValueError). Cost: about 1 ms per image with 3 threads.
-cache_loader checks every cache against the record's digest when loading it (ExpertCache.load(expected_digest));
-a cache built under another reward fingerprint raises StaleCacheError ("re-run prepare_rl"), distinct from a
-corrupted or swapped file (break-it B2-8).
+  target. A rater whose whole mask is below the reward's size filter abstains from the topology vote, so SFT does not
+  teach its answer (RL keeps the item). Every voting rater is a row: an epoch shows each item's whole rater
+  distribution, the topology histogram the RL reward matches, and needs no custom sampler. With tokenizer and
+  max_tokens, targets longer than the budget (+1 end-of-turn token) are dropped, so SFT never teaches an answer that
+  GRPO generation would truncate.
+- prompt_rows: prompt (the same user turn), image, key (item_id, the cache key), W, H, names; only RL-eligible items
+  (rl_only=False: every item, for probe views). oversample > 1 repeats disagreement items: TRL's RepeatSampler takes
+  no weights, so a repeated row is the simplest weighting (DISAGREEMENT_OVERSAMPLE).
+Both builders decode every image they reference and compare its pixels with the record's image_sha256 (ValueError):
+rows are the only way images reach a trainer, so a swapped or edited PNG cannot be trained on. cache_loader checks
+every cache against the record's digest; a cache built under another reward fingerprint raises StaleCacheError
+("re-run prepare_rl"), distinct from a corrupted file.
 
-Flip augmentation (issue I7) is not implemented: Phase 1 runs no training. If Phase 2 adds it, flip the image and
-the rater masks and rebuild targets (build_target) and caches (ExpertCache.build) from the flipped masks; never
-mirror polygon vertices, because the top-left pixel-centre tie rule is not mirror-symmetric.
+Flip augmentation is not implemented. If added, flip the image and the rater masks and rebuild targets and caches from
+the flipped masks; never mirror polygon vertices, because the top-left pixel-centre tie rule is not mirror-symmetric.
 
-References:
-- TRL dataset formats (conversational, vision: "image" column + {"type": "image"}):
-https://huggingface.co/docs/trl/main/en/dataset_formats
-- TRL GRPO (image column, extra columns reach reward functions): https://huggingface.co/docs/trl/main/en/grpo_trainer
-- datasets Image feature (paths decoded on access): https://huggingface.co/docs/datasets/main/en/image_load
-- OpenCV Python bindings release the GIL around every call (PyAllowThreads, modules/python/src2/cv2_util.hpp):
-  https://github.com/opencv/opencv/blob/4.x/modules/python/src2/cv2_util.hpp
-- Plan §4.3 (caches stored with a hash), §4.4 (targets), §10 (oversample disagreement items).
+References: TRL dataset formats (https://huggingface.co/docs/trl/main/en/dataset_formats), TRL GRPO (extra columns
+reach reward functions: https://huggingface.co/docs/trl/main/en/grpo_trainer).
 """
 
 from concurrent.futures import ThreadPoolExecutor

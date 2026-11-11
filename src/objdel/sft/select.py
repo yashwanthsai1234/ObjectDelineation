@@ -1,38 +1,27 @@
-"""D12 checkpoint selection over a train_sft run's WSD branches (PLAN D12, D13, §3.2 ②, §5.1); never touches CUDA.
+"""Checkpoint selection over a train_sft run's WSD branches; never touches CUDA.
 
 `run(stage, prereg, baselines)` runs one objdel.core.spec.SelectStage: the sampler children, scoring per view and
-probe, G-vision, the HF check, judge and the gates. experiments/phase2/select_ckpt.py is its CLI and passes the
+probe, G-vision, the HF check, the judge and the gates. experiments/phase2/select_ckpt.py is its CLI and passes the
 pre-registered record (prereg: rule R-B, the entry gates) and the experiment baselines, which src never imports.
 
+Order: refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches; per
+branch, export the prompts and run the sampler child (`python -I -m objdel.policy.sampler --kind vllm|hf`) with CUDA
+asserted untouched here, a timeout of 600 s + --timeout-s per item-sample and a completeness check (every prompt id
+has its n samples). The completions' `.meta.json` stamp (prompts SHA-256, child command) is written before the child
+starts: a matching stamp reuses the file when complete and resumes it otherwise, another stamp empties it; an attempt
+that finishes no new item counts against TRIES. SIGTERM / SIGINT kill the child's process group before this exits.
+Scoring runs in this process; G-vision runs on the CPU. A branch is eligible when it passes gates.eligible (G-format,
+G-signal, G-vision; an unmeasured G-vision fails, so --no-vision makes every branch ineligible); rule R-B
+(prereg.select_rb) picks, and with none eligible the deepest is gated. --items N: a seeded subset for selection only.
 
-Order (D13): refuse until train_sft has exited (manifest "done", pid gone on this host); preload the views' caches;
-per branch, export the prompts and run the sampler child
-(`python -I -m objdel.policy.sampler --kind vllm|hf`; one JSONL bridge) with CUDA asserted untouched here, a timeout
-of 600 s + --timeout-s per item-sample, and a completeness check (every prompt id has its n samples). The
-completions' `.meta.json` stamp (prompts SHA-256, child command) is written before the child starts: a matching
-stamp means the file is reused when complete and resumed otherwise (the HF sampler keeps whole finished batches), on a
-retry or a rerun alike; another stamp empties it. An attempt that finishes no new item counts against TRIES.
-SIGTERM / SIGINT (the run cap's `timeout`) kill the child's process group before select_ckpt exits. Score them in
-this process (objdel.verify.metrics: the device work runs in one process, D7), build the B2 signal panel and run
-G-vision on the CPU. Eligible (D12) = gates.eligible: G-format, G-signal (groups of 8),
-G-vision; an unmeasured G-vision fails (--vision is required, --no-vision makes every branch ineligible). Rule R-B
-(prereg.select_rb) picks; none eligible -> the deepest is gated (§6.3). --items N: a seeded subset (SUBSET_SEED)
-for selection only (D13 HF path).
+The selected (or gated) branch is judged on the full views: shifted and rescaled at K = 8 (gates), shifted at K = 16
+(report-only), the prior (--prepared), both probes on every probe record (--probes) and the rotated-vs-identity check
+(--rotated, report-only). With --sampler vllm, `hf_check` re-samples that branch with HF on HF_CHECK_ITEMS shifted-val
+items; a vLLM - HF metric difference outside its 95 % CI fails the gates. Writes <out>/selected.json ("gates_pass" and
+"gates_failed" are what g_probe --select reads), report.json and gates.json; samples stay in <out>/<branch>/<view>/.
 
-The selected (or gated) branch is then judged on the full views: shifted and rescaled at K = 8 (gates), shifted at
-K = 16 (report-only), G-prior (b) (--prepared), both probes on every probe record (--probes) and the rotated-vs-
-identity attribution check (--rotated, report-only, §6.1). With --sampler vllm, `hf_check` then re-samples that
-branch with HF on HF_CHECK_ITEMS shifted-val items; a vLLM - HF metric difference outside its 95 % CI fails the gates
-(gate "G-hf-check", D13, owner 2026-11-05). Writes <out>/selected.json ("gates_pass" /
-"gates_failed" are what g_probe --select reads), report.json and gates.json (prereg.entry); samples stay in
-<out>/<branch>/<view>/ for re-scoring on the Mac.
-
---only topology (C2, PLAN §6.1 R3-R5): the topology probe alone on the run's single branch at K = --k into
-<out>/report.json {"only", "branch", "sampler", "k", "probes": {"topology"}} (archive/phase2_runs/c2_analyze.py read
-probes.topology).
-No selection, other views, G-vision, prior or gates; --vision and --no-vision are refused, the other flags ignored.
-
-References: PLAN D12 (R-B), D13, §5.1, §6.1 R1; https://docs.vllm.ai/en/stable/serving/offline_inference.html
+--only topology: the topology probe alone on the run's single branch at K = --k into <out>/report.json; no selection,
+other views, G-vision, prior or gates, and --vision / --no-vision are refused.
 """
 
 import argparse
@@ -62,7 +51,7 @@ TRIES = 2  # sampler child attempts that finish no new item
 TIMEOUT_S = {"vllm": 0.75, "hf": 3.0}
 
 
-HF_CHECK_ITEMS = 64  # D13 (owner 2026-11-05): HF re-samples the vLLM-judged branch on this seeded shifted-val subset
+HF_CHECK_ITEMS = 64  # HF re-samples the vLLM-judged branch on this seeded shifted-val subset
 
 
 HF_CHECK_KEYS = ("format_ok", "legal", "iou_tc", "f5", "g_area")
@@ -85,7 +74,7 @@ def exited(run: Path) -> dict:
 
 
 def cuda_untouched() -> None:
-    """Refuse when this process initialised CUDA: the sampler child needs the whole GPU (D13)."""
+    """Refuse when this process initialised CUDA: the sampler child needs the whole GPU."""
     torch = sys.modules.get("torch")
     if torch is not None and torch.cuda.is_initialized():
         raise RuntimeError("CUDA is initialized in select_ckpt: the sampler child would share the GPU (D13)")
@@ -224,14 +213,14 @@ def score_probe(a, branch: Path, p: str, out: Path) -> dict:
 
     d = a.probes / f"probe-{p}"
     done = sample_view(a, branch, evaluate.eval_rows(d, rl_only=False), out / f"probe-{p}", a.k)
-    return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # ids pair the seeds (C2)
+    return getattr(probes, f"score_{p}")(list(done.values()), d) | {"ids": list(done)}  # ids pair the seeds
 
 
 def hf_check(a, name: str, out: Path) -> dict:
-    """D13 (owner 2026-11-05): with --sampler vllm, do vLLM's answers score like HF's on the trained model? HF samples
+    """With --sampler vllm, do vLLM's answers score like HF's on the trained model? HF samples
     branch `name` on HF_CHECK_ITEMS seeded shifted-val items at K; vLLM's answers are that branch's shifted samples
     (<out>/<name>/shifted/items.jsonl). Per metric, the per-item mean difference vLLM - HF with the nodule-cluster
-    bootstrap 95 % CI (PLAN G-parity: every difference inside its CI); pass = 0 inside every CI."""
+    bootstrap 95 % CI (every difference inside its CI); pass = 0 inside every CI."""
     from objdel.verify import stats as signal
 
     rows = evaluate.eval_rows(a.shifted, HF_CHECK_ITEMS)
@@ -248,7 +237,7 @@ def hf_check(a, name: str, out: Path) -> dict:
 
 
 def vision_check(branch: Path, cfg: dict | None) -> dict:
-    """G-vision on the CPU in float32 (B1 protocol); not measured (pass None, so it fails) under --no-vision."""
+    """G-vision on the CPU in float32 ; not measured (pass None, so it fails) under --no-vision."""
     if cfg is None:
         return {"pass": None, "measured": False}
     from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -260,7 +249,7 @@ def vision_check(branch: Path, cfg: dict | None) -> dict:
 
 
 def judge(a, sel: dict, out: Path, baselines) -> dict:
-    """The §5.1 report of the selected (or gated) branch, on the full views (--items never applies here, D13).
+    """The report of the selected (or gated) branch, on the full views (--items never applies here).
     baselines (the experiment module, passed in by the CLI) fits and scores G-prior (b) under --prepared."""
     from objdel.verify import stats
 
@@ -294,7 +283,7 @@ def dump(path: Path, doc: dict) -> None:
 
 
 def topology_only(a, out: Path) -> int:
-    """--only topology (C2): the topology probe on the run's single branch -> <out>/report.json."""
+    """--only topology: the topology probe on the run's single branch -> <out>/report.json."""
     names = sorted(p.name for p in (a.run / "branches").iterdir())
     if a.probes is None or len(names) != 1:
         raise Refusal(f"select_ckpt --only topology: needs --probes and one branch, found {names}")
@@ -344,7 +333,7 @@ def run(st, prereg, baselines) -> int:
     for b in sorted((a.run / "branches").iterdir(), key=lambda p: float(p.name[1:])):
         res = score_view(a, b, a.shifted, out / b.name / "shifted", a.k)
         res["vision"] = vision_check(b, vision_cfg)
-        res["eligible"] = gates.eligible(res["summary"], res["vision"])  # D12: G-format, G-signal, G-vision
+        res["eligible"] = gates.eligible(res["summary"], res["vision"])  # G-format, G-signal, G-vision
         branches.append({"name": b.name, "depth": float(b.name[1:]), **res})
     name, why = prereg.select_rb(branches)
     gate, judged = None, name or (branches[-1]["name"] if branches else None)  # none eligible: the deepest (§6.3)
