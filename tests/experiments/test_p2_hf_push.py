@@ -10,6 +10,7 @@ import pytest
 
 from experiments.phase2 import hf_push as HP
 from objdel.infra import hf as H
+from objdel.infra.errors import InfraError
 from objdel.infra.vast import __main__ as P
 
 REPO = "svenk029/objdel-sft"
@@ -152,7 +153,7 @@ def test_push_hf_streams_the_token_over_stdin_only(monkeypatch):
 
 def test_push_hf_refuses_an_over_broad_token_before_touching_the_box(monkeypatch):
     sent = _mac(monkeypatch, token(role="write"))
-    with pytest.raises(SystemExit, match="objdel-hf-write.*role write"):
+    with pytest.raises(InfraError, match="objdel-hf-write.*role write"):
         P.cmd_push_hf(SimpleNamespace(run_id="v1", config="specs/r1_qwen3vl2b.yaml"))
     assert sent == []
 

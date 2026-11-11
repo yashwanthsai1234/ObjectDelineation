@@ -5,7 +5,7 @@ from pathlib import Path
 
 from objdel.core.provenance import repo_root
 from objdel.core.spec import RunSpec, fill, load_spec, to_argv
-from objdel.infra.vast.remote import die
+from objdel.infra.errors import InfraError
 
 DATA = "/workspace/data/lidc"  # {data} on the box
 
@@ -38,7 +38,7 @@ def push_target(spec: RunSpec, run_id: str) -> tuple[str, str, bool]:
     last part of its out folder; for sft the output_dir."""
     last = next((s for s in reversed(spec.stages) if s.kind in ("rl", "sft")), None)
     if last is None:
-        die("nothing to push: the spec has no rl or sft stage")
+        raise InfraError("nothing to push: the spec has no rl or sft stage")
     rd = f"/workspace/runs/{run_id}"
     if last.kind == "rl":
         path = fill(last.out, rd, DATA)

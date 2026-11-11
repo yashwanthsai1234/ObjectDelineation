@@ -15,6 +15,7 @@ import pytest
 hub = pytest.importorskip("huggingface_hub")
 from experiments.phase2 import hf_pull as L  # noqa: E402
 from objdel.infra import hf as H  # noqa: E402
+from objdel.infra.errors import InfraError  # noqa: E402
 from objdel.infra.vast import __main__ as P  # noqa: E402
 from tests.experiments.test_p2_hf_push import REPO, token  # noqa: E402
 
@@ -142,7 +143,7 @@ def test_box_unpacks_the_pushed_tar_and_the_check_passes(tmp_path):
 
 def test_fetch_rows_refuses_a_revision_no_plan_pins(monkeypatch):
     sent = box(monkeypatch)
-    with pytest.raises(SystemExit, match="manifest SHA-256"):
+    with pytest.raises(InfraError, match="manifest SHA-256"):
         fetch(rows=["f" * 40, "lidc-train-b1"])
     assert sent == []
 
@@ -155,18 +156,18 @@ def test_fetch_as_names_the_checkpoint_folder(monkeypatch):
     assert sent[0][0].endswith("--revision b1-rows --out /workspace/runs/p1/b1")
     assert sent[1][0].endswith("--revision rl-full-3ep --out /workspace/runs/p1/ckpt")
     for bad in ("a/b", "..", "../x"):
-        with pytest.raises(SystemExit):
+        with pytest.raises(InfraError):
             fetch("b1-rows", name=bad)
-        with pytest.raises(SystemExit):
+        with pytest.raises(InfraError):
             fetch(rows=[ROWS_REV, bad])
     assert len(sent) == 2
 
 
 def test_fetch_hf_takes_a_revision_or_rows(monkeypatch):
     sent = box(monkeypatch)
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         fetch()  # neither
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         fetch("x", rows=[ROWS_REV, "lidc-train-b1"])  # both
     assert sent == []
     got = []

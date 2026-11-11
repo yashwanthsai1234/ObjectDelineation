@@ -39,6 +39,7 @@ IDENTITY = "AGE-SECRET-KEY-1FAKEIDENTITYFORTESTSQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 API_KEY = "fakevastscopedkey0123456789abcdef"
 PAT = "ghp_fakeGHCRreadPAT0123456789"
 SECRETS = {"objdel-vast-scoped": API_KEY, "objdel-ghcr-read": PAT, "objdel-riga-age": IDENTITY}
+SPENDING_SCRIPTS = ("launch.sh", "teardown.sh", "sweep_orphans.sh")
 SCRIPTS = ["offers.sh", "launch.sh", "sync_up.sh", "run.sh", "pull.sh", "teardown.sh", "sweep_orphans.sh"]
 
 FAKE = r"""
@@ -169,6 +170,8 @@ class Env:
     def sh(self, script, *args, ok=True, **env):
         if script == "launch.sh" and "--config" not in args:
             args = (*args, "--config", self.config)
+        if script in SPENDING_SCRIPTS:  # DRY_RUN=1 never rents or destroys: these run against the fake vastai
+            env = {"DRY_RUN": "0", **env}
         p = subprocess.run(["bash", str(VAST / script), *map(str, args)], env=dict(self.env, **env),
                            capture_output=True, text=True, timeout=60)  # fmt: skip
         assert ok is None or (p.returncode == 0) == ok, p.stdout + p.stderr
@@ -260,7 +263,7 @@ def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
     err = '{"error": true, "status_code": 400, "msg": "offer no longer available"}\n'
     monkeypatch.setenv("VAST_API_KEY", "k")
     monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", err))
-    with pytest.raises(SystemExit, match="offer no longer available"):
+    with pytest.raises(InfraError, match="offer no longer available"):
         RM.vast("create", "instance", "1", "--raw")
 
 
@@ -274,7 +277,7 @@ def test_vast_call_has_a_timeout_and_a_timeout_is_a_failed_try(monkeypatch):
     monkeypatch.setenv("VAST_API_KEY", "k")
     monkeypatch.setenv("VAST_POLL_S", "0")
     monkeypatch.setattr(RM.subprocess, "run", run)
-    with pytest.raises(SystemExit, match="no answer in 120 s"):
+    with pytest.raises(InfraError, match="no answer in 120 s"):
         RM.vast("show", "instances", "--raw", tries=3)
     assert seen == [RM.VAST_TIMEOUT_S] * 3
 
@@ -290,12 +293,13 @@ def test_vast_retries_back_off_exponentially_with_jitter_and_a_cap(monkeypatch):
     monkeypatch.setattr(RM.time, "sleep", sleeps.append)
     monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: tries.append(1) or subprocess.CompletedProcess(
         cmd, 1, "", "429"))
-    with pytest.raises(SystemExit, match="429"):
+    with pytest.raises(InfraError, match="429"):
         RM.vast("destroy", "instance", "1", tries=3)
     assert len(tries) == 3 and sleeps == [15, 30]
 
 
-def test_destroy_tries_six_times_and_create_once(monkeypatch):
+def test_destroy_tries_six_times(monkeypatch, tmp_path):
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
     calls = []
     monkeypatch.setattr(RM, "vast", lambda *a, **k: calls.append((a[:2], k.get("tries", 1))) or [])
     monkeypatch.setattr(RM, "active", lambda *a: {})
@@ -318,7 +322,7 @@ def test_ssh_and_rsync_carry_timeouts_and_sh_has_one(monkeypatch, tmp_path):
         raise subprocess.TimeoutExpired(cmd, kw["timeout"])
 
     monkeypatch.setattr(RM.subprocess, "run", hang)
-    with pytest.raises(SystemExit, match="rsync timed out"):
+    with pytest.raises(InfraError, match="rsync timed out"):
         RM.rsync({"port": 1}, "a", "b")
 
 
@@ -421,7 +425,7 @@ def test_onstart_length_is_checked_and_run_ids_are_short():
     """Vast refuses an onstart over 4048 characters; the run_id appears in it twice and had no length limit."""
     assert RM.RUN_ID_RE.fullmatch("a" * 40) and not RM.RUN_ID_RE.fullmatch("a" * 41)
     assert len(RM.onstart_cmd("a" * 40, 10**7, idle_s=10**6)) <= 4048
-    with pytest.raises(SystemExit, match="4048"):
+    with pytest.raises(InfraError, match="4048"):
         RM.onstart_cmd("a" * 1000, 7200)
 
 
@@ -442,6 +446,9 @@ def test_end_to_end_dry_run(E):
     (q,) = E.vast("search offers")
     assert "dph<=1.0" in q[2] and "--storage" in q
     E.pick()
+    dry = E.sh("launch.sh", "111", "r1", "--cap-hours", "2", DRY_RUN="1")  # printed, never rented
+    assert "DRY_RUN: vastai create instance 111" in dry.stdout and PAT not in dry.stdout + dry.stderr
+    assert not E.vast("create instance") and E.instances() == {} and not (E.home / "active_runs.json").exists()
     o2 = E.sh("launch.sh", "111", "r1", "--cap-hours", "2")
     (c,) = E.vast("create instance")
     assert {"--ssh", "--direct", "--cancel-unavail", "--onstart-cmd", "--disk", "--image", "--login"} <= set(c)
@@ -454,10 +461,10 @@ def test_end_to_end_dry_run(E):
     assert "timeout" in o4.stdout and "tmux new-session" in o4.stdout and "HEARTBEAT" in o4.stdout
     o5 = E.sh("pull.sh", "r1")
     assert "PULLED_OK" in o5.stdout
-    o6 = E.sh("teardown.sh", "r1")
+    assert not E.calls("ssh") and not E.calls("rsync")  # dry run: printed, never executed
+    o6 = E.sh("teardown.sh", "r1")  # a spending script: DRY_RUN=0 against the fake tools
     assert E.vast("destroy instance") == [["destroy", "instance", "4242", "-y"]]
     assert E.instances() == {} and E.vast("show instances")  # verified absent after destroy
-    assert not E.calls("ssh") and not E.calls("rsync")  # dry run: printed, never executed
     rsyncs = [ln for o in (o3, o5) for ln in o.stdout.splitlines() if ln.startswith("DRY_RUN: rsync")]
     assert len(rsyncs) >= 3 and all("--exclude=data/raw/" in ln for ln in rsyncs)
     assert [r["event"] for r in E.ledger()] == ["offer", "launch", "sync", "run", "teardown", "invoice"]
@@ -467,11 +474,31 @@ def test_end_to_end_dry_run(E):
     assert not [s for s in SECRETS.values() if s in text]
 
 
+def test_dry_run_never_destroys(E):
+    E.launched()
+    p = E.sh("teardown.sh", "r1", DRY_RUN="1")
+    assert "DRY_RUN: vastai destroy instance 4242 -y" in p.stdout
+    assert not E.vast("destroy instance") and list(E.instances()) == ["4242"]  # still rented
+    assert "r1" in E.active()  # and still recorded
+
+
+def test_the_cli_turns_an_infra_error_into_its_message_and_exit_status(E):
+    p = E.sh("pull.sh", "nope", ok=False)
+    assert p.returncode == 1 and p.stderr.strip() == "vast: no active run nope"
+
+
+def test_make_without_a_target_lists_the_targets_and_smoke_names_the_preflight_test():
+    out = subprocess.run(["make"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    assert all(t in out for t in ("preflight", "smoke", "lint", "test "))
+    dry = subprocess.run(["make", "-n", "smoke"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    assert PF.DRY_RUN in dry
+
+
 def test_launch_destroys_on_sigterm_while_polling(E):
     # BK4-3: an interrupt (Ctrl-C, SIGTERM, SIGHUP) after `create instance` destroys the instance
     E.state(statuses=["loading"])
     E.pick()
-    env = dict(E.env, VAST_LAUNCH_TIMEOUT_S="60", VAST_POLL_S="0.05")
+    env = dict(E.env, VAST_LAUNCH_TIMEOUT_S="60", VAST_POLL_S="0.05", DRY_RUN="0")
     argv = ["bash", str(VAST / "launch.sh"), "111", "r1", "--config", str(E.config)]
     p = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     t0 = time.time()
@@ -1026,13 +1053,13 @@ def test_bundle_lidc_members_manifest_and_determinism(tmp_path):
 def test_bundle_refuses_raw_and_incomplete(tmp_path):
     d = data_tree(tmp_path)
     (d / "views/lidc-train/leak.dcm").symlink_to(d / "raw/LIDC/secret.dcm")
-    with pytest.raises(SystemExit, match="data/raw|symlink"):
+    with pytest.raises(InfraError, match="data/raw|symlink"):
         B.build("lidc", d, tmp_path / "out")
     (d / "views/lidc-train/leak.dcm").unlink()
-    with pytest.raises(SystemExit, match="data/raw"):
+    with pytest.raises(InfraError, match="data/raw"):
         B.build("lidc", d / "raw", tmp_path / "out")
     shutil.rmtree(d / "eval_views/probe-topology")
-    with pytest.raises(SystemExit, match="probe-topology"):
+    with pytest.raises(InfraError, match="probe-topology"):
         B.build("lidc", d, tmp_path / "out")
     assert not (tmp_path / "out" / "bundle-lidc.tar").exists()
 
@@ -1053,7 +1080,7 @@ def test_bundle_riga_only_encrypted_to_recorded_recipient(E, monkeypatch):
     body = out.read_bytes()
     assert b"prepared/images/riga/r.png" in body and b"lidc" not in body.replace(b"riga", b"")
     E.allow(riga_recipient=None)
-    with pytest.raises(SystemExit, match="recipient"):
+    with pytest.raises(InfraError, match="recipient"):
         B.build("riga", d, E.tmp / "out3")
 
 
@@ -1061,7 +1088,7 @@ def test_bundle_ships_only_the_named_view(tmp_path):
     d = data_tree(tmp_path)
     names = [n for n, _ in B.members("lidc", d, ["lidc-train"])]
     assert "views/lidc-train/rows.jsonl" in names and not [n for n in names if n.startswith("views/lidc-old/")]
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         B.members("lidc", d, ["lidc-nope"])
 
 
@@ -1080,7 +1107,7 @@ def test_bundle_ships_rl_train_windows_only_when_named(tmp_path):
 def test_bundle_lidc_needs_the_checker_eval_set(tmp_path):
     d = data_tree(tmp_path)
     shutil.rmtree(d / "checker_eval")
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         B.members("lidc", d)
 
 
@@ -1220,7 +1247,7 @@ def test_sync_up_code_only_skips_the_bundle(E):
 def test_code_snapshot_ships_no_local_vast_state():
     """Audit: `git ls-files -co --exclude-standard` also lists untracked files, so the ledger, offers, invoices and run
     records would reach the rented host. They are ignored; the allowlist (image pin, no secret) stays tracked."""
-    state = ("ledger.csv", "offers/", "invoices/", "active_runs.json", "code_files.txt", "known_hosts")
+    state = ("ledger.csv", "offers/", "invoices/", "active_runs.json", "code_files.txt", "known_hosts", ".lock")
     assert not {f for f in RM.code_files() for s in state if f.startswith(f"experiments/phase2/vast/{s}")}
 
 
@@ -1260,11 +1287,11 @@ def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path)
     calls = []
     monkeypatch.setattr(P, "home", lambda: tmp_path)
     monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "port": 40022})
-    monkeypatch.setattr(P, "cmd_pull", lambda a: RM.die("rsync failed: ..."))
+    monkeypatch.setattr(P, "cmd_pull", lambda a: (_ for _ in ()).throw(InfraError("rsync failed: ...")))
     monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
     monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
     monkeypatch.setattr(P, "ledger", lambda **kw: calls.append(kw["event"]))
-    with pytest.raises(SystemExit, match="final pull failed.*destroyed"):
+    with pytest.raises(InfraError, match="final pull failed.*destroyed"):
         P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls[0] == (7, "teardown") and "invoice" in calls
 
@@ -1288,17 +1315,17 @@ def _teardown(monkeypatch, tmp_path, pulls):
 
 
 def test_teardown_retries_the_final_pull_twice(monkeypatch, tmp_path):
-    calls = _teardown(monkeypatch, tmp_path, [SystemExit("ssh"), SystemExit("ssh"), None])
+    calls = _teardown(monkeypatch, tmp_path, [InfraError("ssh"), InfraError("ssh"), None])
     P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls[:4] == ["pull", "pull", "pull", (7, "teardown")]
-    calls = _teardown(monkeypatch, tmp_path, [SystemExit("ssh")] * 3)
-    with pytest.raises(SystemExit, match="final pull failed"):
+    calls = _teardown(monkeypatch, tmp_path, [InfraError("ssh")] * 3)
+    with pytest.raises(InfraError, match="final pull failed"):
         P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls[:4] == ["pull", "pull", "pull", (7, "teardown")]
 
 
 def test_teardown_destroys_on_ctrl_c_during_the_final_pull(monkeypatch, tmp_path):
-    """Only SystemExit was caught: a Ctrl-C (KeyboardInterrupt) in a long final pull skipped the destroy (G8)."""
+    """Only InfraError was caught: a Ctrl-C (KeyboardInterrupt) in a long final pull skipped the destroy (G8)."""
     calls = _teardown(monkeypatch, tmp_path, [KeyboardInterrupt()])
     with pytest.raises(KeyboardInterrupt):
         P.cmd_teardown(SimpleNamespace(run_id="v1"))
@@ -1565,7 +1592,7 @@ def test_run_spec_json_holds_the_spec_code_and_versions_and_never_overwrites_ano
     P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))  # the same spec again: fine
     (tmp_path / "CODE_SHA").unlink()
     spec.write_text(spec.read_text().replace("cap_hours: 9.5", "cap_hours: 2.0"))
-    with pytest.raises(SystemExit, match="different spec"):
+    with pytest.raises(InfraError, match="different spec"):
         P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
     out.unlink()
     P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
@@ -1587,7 +1614,7 @@ def test_launch_without_an_image_in_the_allowlist_refuses(monkeypatch, tmp_path)
     monkeypatch.setattr("objdel.infra.preflight.refusal", lambda cfg: "")
     a = SimpleNamespace(run_id="r1", config="c.yaml", offer=1, cap_hours=2.0, owner_approved=False,
                         allow_parallel=False, idle_minutes=30)
-    with pytest.raises(SystemExit, match="no image in .vast-allowlist"):
+    with pytest.raises(InfraError, match="no image in .vast-allowlist"):
         P.cmd_launch(a)
 
 

@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from objdel.infra import hf
+from objdel.infra.errors import InfraError
 
 
 def main(argv=None) -> int:
@@ -33,12 +34,16 @@ def main(argv=None) -> int:
     ap.add_argument("--view", type=Path, help="local copy of the training view (default: the manifest's path)")
     a = ap.parse_args(argv)
     token = sys.stdin.readline().strip() or sys.exit("hf_push: no token on stdin")
-    if a.rows:
-        return hf.push_rows(a.rows, a.repo, a.revision, token)
-    if a.card_only:
-        return hf.card_only(a.repo, a.revision, a.headline, token) if a.headline else sys.exit(
-            "hf_push: --card-only needs --headline")
-    return hf.push(a.run, a.rl, a.repo, a.revision, a.view, token)
+    try:
+        if a.rows:
+            return hf.push_rows(a.rows, a.repo, a.revision, token)
+        if a.card_only:
+            if not a.headline:
+                raise InfraError("--card-only needs --headline")
+            return hf.card_only(a.repo, a.revision, a.headline, token)
+        return hf.push(a.run, a.rl, a.repo, a.revision, a.view, token)
+    except InfraError as e:
+        sys.exit(f"hf_push: {e}")
 
 
 if __name__ == "__main__":

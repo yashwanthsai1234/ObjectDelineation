@@ -18,15 +18,16 @@ import hashlib
 import io
 import json
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
 from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json
 from objdel.core.provenance import repo_root
+from objdel.infra.errors import InfraError
 from objdel.infra.vast.ledger import load
 from objdel.infra.vast.offers import is_raw
-from objdel.infra.vast.remote import die
 
 LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
 SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view would differ (BK1-7)
@@ -35,10 +36,10 @@ SKIP = ("build_report.json",)  # wall-clock timings: two builds of one view woul
 def walk(data: Path, top: Path, prefix: str) -> list[tuple[str, Path]]:
     """(archive name, path) of every file under `top`; refuses a symlink anywhere between data/ and the files."""
     if top.resolve() != data.resolve() / top.relative_to(data):  # a symlink between data/ and top (BK4-14)
-        die(f"refusing symlinked path {top}")
+        raise InfraError(f"refusing symlinked path {top}")
     paths = list(top.rglob("*"))  # lists symlinks without following them
     if links := [p for p in paths if p.is_symlink()]:
-        die(f"refusing symlink {links[0]}")
+        raise InfraError(f"refusing symlink {links[0]}")
     return [(f"{prefix}/{p.relative_to(top).as_posix()}", p) for p in paths if not p.is_dir() and p.name not in SKIP]
 
 
@@ -47,14 +48,14 @@ def manifest(ds: str, prep: Path) -> bytes:
     m = read_json(prep / "manifest.json")
     m["files"], m["sets"] = ({k: v for k, v in m[s].items() if k.startswith(f"{ds}/")} for s in ("files", "sets"))
     if missing := [k for k in m["files"] if not (prep / k).is_file()]:
-        die(f"prepared/manifest.json lists missing files: {missing}")
+        raise InfraError(f"prepared/manifest.json lists missing files: {missing}")
     return (json.dumps(m, indent=1, sort_keys=True) + "\n").encode()
 
 
 def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[str, Path | bytes]]:
     """The bundle's (archive name, path or bytes) entries for dataset `ds`; refuses anything under data/raw."""
     if is_raw(data):
-        die("refusing to bundle anything under data/raw")
+        raise InfraError("refusing to bundle anything under data/raw")
     prep = data / "prepared"
     picked = [f for sub in (ds, f"images/{ds}", f"caches/{ds}") for f in walk(data, prep / sub, f"prepared/{sub}")]
     for kind in ("views", "eval_views"):
@@ -62,23 +63,23 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
         if kind == "views" and not views:  # RL train windows (build_eval_views --split train): only when named
             names = {n for n in names if not n.startswith(f"{ds}-train-")}
         if missing := [n for n in names if not (data / kind / n).is_dir()]:
-            die(f"{kind} missing: {missing}")
+            raise InfraError(f"{kind} missing: {missing}")
         if kind == "eval_views" and ds == "lidc":
             if missing := [n for n in LIDC_EVAL if not (data / kind / n).is_dir()]:
-                die(f"eval views missing: {missing}")
+                raise InfraError(f"eval views missing: {missing}")
             names |= set(LIDC_EVAL)
         if kind == "eval_views":  # held-out test views never ride in a train bundle (plan B1 rental 4c)
             names = {n for n in names if not n.startswith(f"{ds}-test-")}
         if not names:
-            die(f"no {ds} {kind} under {data / kind}")
+            raise InfraError(f"no {ds} {kind} under {data / kind}")
         picked += [f for n in sorted(names) for f in walk(data, data / kind / n, f"{kind}/{n}")]
     if ds == "lidc":  # the CUDA checker eval set (LIDC only; archive/cpu_checker/experiments/prepare_data.py)
         if not (data / "checker_eval" / "manifest.json").is_file():
-            die("data/checker_eval missing: it holds the archived CPU checker's references and cannot be rebuilt; "
-                "copy it from a checkout that has it")
+            raise InfraError("data/checker_eval missing: it holds the archived CPU checker's references and cannot be "
+                             "rebuilt; copy it from a checkout that has it")
         picked += walk(data, data / "checker_eval", "checker_eval")
     if bad := [p for _, p in picked if is_raw(p) or not p.is_file()]:
-        die(f"refusing (data/raw or not a file): {bad[:3]}")
+        raise InfraError(f"refusing (data/raw or not a file): {bad[:3]}")
     return sorted([*picked, ("prepared/manifest.json", manifest(ds, prep))])
 
 
@@ -107,13 +108,13 @@ def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Pat
     tmp = target.with_name(target.name + ".part")
     if ds == "riga":  # D16: plaintext never on disk
         if not (rcpt := load(".vast-allowlist").get("riga_recipient", "")).startswith("age1"):
-            die("no age riga_recipient recorded in .vast-allowlist")
+            raise InfraError("no age riga_recipient recorded in .vast-allowlist")
         with subprocess.Popen(["age", "-r", rcpt, "-o", str(tmp)], stdin=subprocess.PIPE) as age:
             write_tar(age.stdin, files)
             age.stdin.close()
         if age.returncode:
             tmp.unlink(missing_ok=True)
-            die("age encryption failed")
+            raise InfraError("age encryption failed")
     else:
         with tmp.open("wb") as f:
             write_tar(f, files)
@@ -131,7 +132,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--data", type=Path, default=repo_root() / "data")
     ap.add_argument("--out", type=Path, default=repo_root() / "build" / "bundles")
     a = ap.parse_args(argv)
-    build(a.dataset, a.data, a.out, a.view)
+    try:
+        build(a.dataset, a.data, a.out, a.view)
+    except InfraError as e:
+        sys.exit(f"vast: {e}")
 
 
 if __name__ == "__main__":

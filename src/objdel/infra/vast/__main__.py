@@ -23,12 +23,12 @@ Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H 
 teardown saves the raw charges and records what Vast billed beside that estimate (`billed`, BK4-18).
 
 Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; default:
-<repo>/experiments/phase2/vast), VAST_RUNS (pull target, default <repo>/runs), DRY_RUN=1 (ssh / rsync are printed,
-not run; `vastai` is still called, so tests put a fake one on PATH), VAST_POLL_S, VAST_LAUNCH_TIMEOUT_S. Secrets live
-in the macOS keychain and are read with `security`: objdel-vast-scoped (scoped API key, passed to vastai as
-VAST_API_KEY), objdel-ghcr-read (read-only GHCR PAT, Vast --login), objdel-riga-age (age identity: only ever the stdin
-of the ssh decrypt command; D16), objdel-hf-write (HF token: checked by objdel.infra.hf.token_problems, then only ever
-the stdin of the ssh upload command).
+<repo>/experiments/phase2/vast), VAST_RUNS (pull target, default <repo>/runs), DRY_RUN=1 (ssh, rsync and `vastai
+create` / `destroy` are printed, never run; `vastai` calls that only read still run, so tests put a fake one on
+PATH), VAST_POLL_S, VAST_LAUNCH_TIMEOUT_S. Secrets live in the macOS keychain and are read with `security`:
+objdel-vast-scoped (scoped API key, passed to vastai as VAST_API_KEY), objdel-ghcr-read (read-only GHCR PAT, Vast
+--login), objdel-riga-age (age identity: only ever the stdin of the ssh decrypt command; D16), objdel-hf-write (HF
+token: checked by objdel.infra.hf.token_problems, then only ever the stdin of the ssh upload command).
 """
 
 import argparse
@@ -75,7 +75,7 @@ from objdel.infra.vast.remote import (
     alert,
     code_files,
     destroy,
-    die,
+    dry_run,
     get_run,
     onstart_cmd,
     remote,
@@ -98,7 +98,7 @@ def cmd_offers(a) -> None:
         return
     o = ok[0] if a.pick == "top" and ok else next((o for o in ok if str(o["id"]) == a.pick), None)  # top: no race
     if o is None:
-        die(f"offer {a.pick} is not among the admissible offers")
+        raise InfraError(f"offer {a.pick} is not among the admissible offers")
     (home() / "offers").mkdir(exist_ok=True)
     (home() / "offers" / f"{o['id']}.json").write_text(json.dumps(dict(o, _gpu=a.gpu, _dataset=ds, _disk=a.disk)))
     ledger(event="offer", offer_id=o["id"], gpu=a.gpu, **offer_cols(o), detail=query(a.gpu, ds, a.disk))
@@ -126,35 +126,37 @@ def cmd_launch(a) -> None:
     """launch.sh: every refusal first (run id, preflight stamp, offer, spec caps, money, one instance), then create
     the instance, wait for ssh and record it; any failure destroys it."""
     if not RUN_ID_RE.fullmatch(a.run_id):
-        die(f"run_id must match {RUN_ID_RE.pattern}")
+        raise InfraError(f"run_id must match {RUN_ID_RE.pattern}")
     if a.run_id in active():
-        die(f"run {a.run_id} is still active (teardown.sh first)")
+        raise InfraError(f"run {a.run_id} is still active (teardown.sh first)")
     from objdel.infra import preflight
 
     if why := preflight.refusal(Path(a.config)):  # the mandatory Mac preflight (make preflight): no pass, no rental
-        die(f"preflight gate: {why}")
+        raise InfraError(f"preflight gate: {why}")
     if not (o := load(f"offers/{a.offer}.json")):
-        die(f"offer {a.offer} was not picked with offers.sh --pick")
+        raise InfraError(f"offer {a.offer} was not picked with offers.sh --pick")
     if why := reasons(o, o["_gpu"], o["_dataset"], o["_disk"]):
-        die("; ".join(why))
+        raise InfraError("; ".join(why))
     compute = load_spec(Path(a.config)).compute  # the spec bounds the flag: one cap source per launch (E6.8b)
     if a.cap_hours > compute.cap_hours:
-        die(f"--cap-hours {a.cap_hours} is above the spec's compute.cap_hours {compute.cap_hours}")
+        raise InfraError(f"--cap-hours {a.cap_hours} is above the spec's compute.cap_hours {compute.cap_hours}")
     if o["_gpu"] != compute.gpu:
-        die(f"offer {a.offer} is a {o['_gpu']}: {o['_gpu']} is not compute.gpu {compute.gpu}")
+        raise InfraError(f"offer {a.offer} is a {o['_gpu']}: {o['_gpu']} is not compute.gpu {compute.gpu}")
     if why := launch_refusal(o, a.cap_hours):
-        die(why)
+        raise InfraError(why)
     cap_s, now = int(a.cap_hours * 3600) + PULL_S, time.time()
     bw = {k: o[k] for k in ("inet_up_cost", "inet_down_cost")}
     run = {"instance": None, "offer": a.offer, "dph": o["dph_total"], **bw, "started": now, "deadline": now + cap_s}
     committed, worst = spend(committed=True), accrued(run, run["deadline"])
     if committed + worst >= ALARM and not a.owner_approved:
-        die(f"alarm: ${committed:.2f} committed + ${worst:.2f} worst case >= ${ALARM}; pass --owner-approved only "
-            "with the owner's written approval (G10, §4.6)")  # fmt: skip
+        raise InfraError(f"alarm: ${committed:.2f} committed + ${worst:.2f} worst case >= ${ALARM}; pass "
+                         "--owner-approved only with the owner's written approval (G10, §4.6)")
     if (live := vast("show", "instances", "--raw")) and not a.allow_parallel:
-        die(f"{len(live)} instance(s) already exist; one instance at a time unless --allow-parallel")
+        raise InfraError(f"{len(live)} instance(s) already exist; one instance at a time unless --allow-parallel")
     allow = load(".vast-allowlist")
-    image = allow.get("image") or die("no image in .vast-allowlist")
+    image = allow.get("image")
+    if not image:
+        raise InfraError("no image in .vast-allowlist")
     login = f"-u {allow.get('ghcr_user', '')} -p {secret('objdel-ghcr-read')} ghcr.io"
     flags = ["--ssh", "--direct", "--cancel-unavail", "--label", a.run_id, "--raw"]
     sigs = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -165,6 +167,8 @@ def cmd_launch(a) -> None:
     try:  # G8: any failure or interrupt from here on destroys the instance
         out = vast("create", "instance", str(a.offer), "--image", image, "--login", login, "--disk", str(o["_disk"]),
                    "--onstart-cmd", onstart, *flags)  # fmt: skip
+        if dry_run():  # printed, not rented: nothing to record, poll or destroy
+            return
         run["instance"] = iid = int(out["new_contract"])
         update_active(lambda runs: {**runs, a.run_id: run})
         ledger(event="launch", run_id=a.run_id, instance_id=iid, offer_id=a.offer, gpu=o["_gpu"], **offer_cols(o),
@@ -179,9 +183,10 @@ def cmd_launch(a) -> None:
                 print(f"running: ssh -p {run['port']} root@{run['ip']}")
                 return
             if status in BAD_STATUS or time.time() - t0 > timeout:
-                die(f"instance {iid} {status if status in BAD_STATUS else 'timeout'} before running; destroyed")
+                why = status if status in BAD_STATUS else "timeout"
+                raise InfraError(f"instance {iid} {why} before running; destroyed")
             time.sleep(float(os.environ.get("VAST_POLL_S", 10)))
-    except BaseException:
+    except (Exception, KeyboardInterrupt):  # an interrupt is a KeyboardInterrupt (signal handlers above)
         for s in sigs:
             signal.signal(s, signal.SIG_IGN)
         # create failed or its reply was lost: a box may exist all the same, found by its label
@@ -197,11 +202,11 @@ def cmd_sync_up(a) -> None:
     run = get_run(a.run_id)
     o, allow = read_json(home() / "offers" / f"{run['offer']}.json"), load(".vast-allowlist")
     if why := governance(a.bundle, o, allow):
-        die("H-GOV refuses: " + "; ".join(why))
+        raise InfraError("H-GOV refuses: " + "; ".join(why))
     name = "bundle-riga.tar.age" if a.bundle == "riga" else f"bundle-{a.bundle}.tar"
     files = [a.bundle_dir / name, a.bundle_dir / f"{name}.sha256"]
     if any(map(is_raw, [a.bundle_dir, *files])):
-        die("refusing to send anything under data/raw")
+        raise InfraError("refusing to send anything under data/raw")
     lst, sha = home() / "code_files.txt", git_sha(repo_root())
     lst.write_text("\n".join(code_files()) + "\n")
     host = f"root@{run['ip']}:"
@@ -238,7 +243,7 @@ def cmd_run(a) -> None:
     first."""
     run, guard = get_run(a.run_id), []
     if a.module.endswith(".yaml") and a.args:  # V1: a trailing --cap-hours was silently ignored
-        die(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
+        raise InfraError(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
     if a.module.endswith(".yaml"):
         stages, name = chain(repo_root() / a.module, a.run_id), Path(a.module).stem
         guard = [f"/opt/venv/bin/python -I -m objdel.infra.vast run_spec {shlex.quote(a.module)} "
@@ -249,10 +254,10 @@ def cmd_run(a) -> None:
     elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
         stages, name = [["-m", a.module, *a.args]], a.module.rsplit(".", 1)[1]
     else:
-        die("module must be experiments.phase2.<script> or a run spec specs/<name>.yaml")
+        raise InfraError("module must be experiments.phase2.<script> or a run spec specs/<name>.yaml")
     cap = int(min(a.cap_hours * 3600, run["deadline"] - time.time() - MARGIN_S))
     if cap <= 0:
-        die("no time left before the instance cap")
+        raise InfraError("no time left before the instance cap")
 
     def job(s: list[str]) -> str:  # "~": a failure is logged and the chain goes on
         soft = s[0] == "~"
@@ -288,7 +293,7 @@ def cmd_run_spec(a) -> None:
            **{p: version(p) for p in ("trl", "torch", "transformers")}, "reward_fingerprint": fingerprint()}
     out = Path(a.out)
     if out.is_file() and read_json(out)["spec"] != rec["spec"]:
-        die(f"{out} holds a different spec: use a new run id")
+        raise InfraError(f"{out} holds a different spec: use a new run id")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rec, indent=1, allow_nan=False))
 
@@ -314,9 +319,9 @@ def cmd_push_hf(a) -> None:
     kind = "--rl" if rl else "--run"
     token = secret("objdel-hf-write")
     if bad := hf.token_problems(hf.whoami(token), hf.REPO):
-        die(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: {'; '.join(bad)}. "
-            f"Recreate it at huggingface.co/settings/tokens as fine-grained with only {hf.REPO}: write "
-            "(no other boxes ticked)")
+        raise InfraError(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: "
+                         f"{'; '.join(bad)}. Recreate it at huggingface.co/settings/tokens as fine-grained with only "
+                         f"{hf.REPO}: write (no other boxes ticked)")
     cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push {kind} {path} "
            f"--repo {hf.REPO} --revision {out}")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
@@ -337,7 +342,8 @@ def rows_pin(revision: str) -> str:
     pins = {s.rows_manifest_sha256 for p in sorted((repo_root() / "specs").glob("*.yaml")) for s in load_spec(p).stages
              if s.kind == "rl" and s.rows_revision == revision}
     if len(pins) != 1:
-        die(f"--rows {revision}: the plans pin {len(pins)} manifest SHA-256 values for it (need exactly one)")
+        raise InfraError(f"--rows {revision}: the plans pin {len(pins)} manifest SHA-256 values for it "
+                         "(need exactly one)")
     return pins.pop()
 
 
@@ -347,10 +353,10 @@ def cmd_fetch_hf(a) -> None:
     the same ssh call unpacks hf.ROWS_TAR there (UNTAR) and checks the root (manifest.json with the SHA-256 the plans
     pin for REVISION, files_count files)."""
     if (a.revision is None) == (a.rows is None):
-        die("fetch_hf: give REVISION or --rows REVISION ROOT")
+        raise InfraError("fetch_hf: give REVISION or --rows REVISION ROOT")
     rev, name = a.rows or (a.revision, a.name)
     if "/" in name or ".." in name or name in ("", "."):
-        die(f"fetch_hf: folder name {name!r} may not hold / or ..")
+        raise InfraError(f"fetch_hf: folder name {name!r} may not hold / or ..")
     pull = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_pull --repo {hf.REPO} "
             f"--revision {shlex.quote(rev)}")
     if a.rows:
@@ -362,7 +368,7 @@ def cmd_fetch_hf(a) -> None:
         cmd = f"{pull} --out /workspace/runs/{a.run_id}/{name}"
     run, token = get_run(a.run_id), secret("objdel-hf-write")
     if bad := hf.token_problems(hf.whoami(token), hf.REPO):
-        die(f"secret objdel-hf-write is too broad for a rented box: {'; '.join(bad)}")
+        raise InfraError(f"secret objdel-hf-write is too broad for a rented box: {'; '.join(bad)}")
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
 
 
@@ -375,7 +381,7 @@ def cmd_teardown(a) -> None:
                 cmd_pull(a)
                 lost = None
                 break
-            except SystemExit as e:  # V1: ssh refused, so the pull failed; the box must still go (G8)
+            except InfraError as e:  # V1: ssh refused, so the pull failed; the box must still go (G8)
                 lost = e
     finally:  # Ctrl-C included
         destroy(run["instance"], a.run_id, "teardown")
@@ -387,7 +393,7 @@ def cmd_teardown(a) -> None:
     ledger(event="invoice", run_id=a.run_id, instance_id=run["instance"],
            detail=f"billed={usd} (Vast charges accrue late; invoices/{a.run_id}.json)")
     if lost:
-        die(f"final pull failed ({lost}); instance {run['instance']} destroyed")
+        raise InfraError(f"final pull failed ({lost}); instance {run['instance']} destroyed")
 
 
 def cmd_sweep_orphans(a) -> None:

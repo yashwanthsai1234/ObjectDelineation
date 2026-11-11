@@ -1,5 +1,6 @@
-"""The box: vastai, ssh and rsync calls (ssh and rsync printed under DRY_RUN=1), destroy, the onstart watchdog, the
-code snapshot that sync_up sends with its CODE_SHA, and the secrets those calls stream."""
+"""The box: vastai, ssh and rsync calls, destroy, the onstart watchdog, the code snapshot that sync_up sends with its
+CODE_SHA, and the secrets those calls stream. Under DRY_RUN=1 ssh, rsync and every vastai call that rents or destroys
+are printed, never run; vastai calls that only read still run."""
 
 import base64
 import gzip
@@ -13,6 +14,7 @@ import sys
 import time
 
 from objdel.core.provenance import repo_root
+from objdel.infra.errors import InfraError
 from objdel.infra.vast.ledger import accrued, active, home, ledger, locked, update_active
 
 
@@ -44,22 +46,25 @@ VAST_TIMEOUT_S = 120  # one `vastai` call: its API answers in seconds; a longer 
 SH_TIMEOUT_S = 3600
 SSH_OPTS = ("StrictHostKeyChecking=accept-new", "ConnectTimeout=30", "ServerAliveInterval=30", "ServerAliveCountMax=4")
 BACKOFF_CAP_S = 60
-
-
-def die(msg: str):
-    """Stop the CLI with a `vast: ` message (exit status 1)."""
-    sys.exit(f"vast: {msg}")
+SPENDING = ("create", "destroy")  # the vastai verbs that rent or destroy an instance
 
 
 def secret(service: str) -> str:
-    """objdel.infra.secrets: <repo>/.secrets, else the macOS keychain; dies when neither has it."""
+    """objdel.infra.secrets: <repo>/.secrets, else the macOS keychain; InfraError when neither has it."""
     from objdel.infra import secrets
 
     try:
         value = secrets.get(service)
     except PermissionError as e:
-        die(str(e))
-    return value or die(f"secret {service} missing: not in {secrets.path()}, not in the keychain")
+        raise InfraError(str(e)) from e
+    if not value:
+        raise InfraError(f"secret {service} missing: not in {secrets.path()}, not in the keychain")
+    return value
+
+
+def dry_run() -> bool:
+    """True under DRY_RUN=1."""
+    return os.environ.get("DRY_RUN") == "1"
 
 
 def backoff_s(i: int) -> float:
@@ -70,7 +75,12 @@ def backoff_s(i: int) -> float:
 
 def vast(*args: str, tries: int = 1):
     """Run `vastai ARGS` with the scoped API key, up to `tries` times (backoff_s between them); JSON for --raw, else
-    the text; dies on failure. A call over VAST_TIMEOUT_S is a failed try."""
+    the text; InfraError on failure. A call over VAST_TIMEOUT_S is a failed try. DRY_RUN=1 prints a spending call and
+    returns {} (--raw) or "" without running it."""
+    if dry_run() and args[0] in SPENDING:
+        shown = ["<login>" if j and args[j - 1] == "--login" else a for j, a in enumerate(args)]  # the GHCR token
+        print("DRY_RUN: vastai", shlex.join(shown))
+        return {} if "--raw" in args else ""
     env = dict(os.environ, VAST_API_KEY=os.environ.get("VAST_API_KEY") or secret("objdel-vast-scoped"))
     for i in range(tries):
         try:
@@ -85,22 +95,22 @@ def vast(*args: str, tries: int = 1):
             why = p.stderr.strip()[-300:]
         if i < tries - 1:
             time.sleep(backoff_s(i))
-    die(f"vastai {args[:2]} failed: {why}")
+    raise InfraError(f"vastai {args[:2]} failed: {why}")
 
 
 def sh(cmd: list[str], stdin: str | None = None, what: str = "") -> None:
     """ssh / rsync: printed under DRY_RUN=1 (stdin shown only as a label), otherwise run for at most SH_TIMEOUT_S; a
     failure or a timeout stops."""
-    if os.environ.get("DRY_RUN") == "1":
+    if dry_run():
         print("DRY_RUN:", shlex.join(cmd), f"<stdin: {what}>" if stdin is not None else "")
         return
     try:
         p = subprocess.run(cmd, input=stdin, text=True, stdin=None if stdin else subprocess.DEVNULL,
                            timeout=SH_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        die(f"{cmd[0]} timed out after {SH_TIMEOUT_S} s: {shlex.join(cmd[-2:])[:160]}")
+        raise InfraError(f"{cmd[0]} timed out after {SH_TIMEOUT_S} s: {shlex.join(cmd[-2:])[:160]}") from None
     if p.returncode:
-        die(f"{cmd[0]} failed: {shlex.join(cmd[-2:])[:160]}")
+        raise InfraError(f"{cmd[0]} failed: {shlex.join(cmd[-2:])[:160]}")
 
 
 def ssh(run: dict) -> list[str]:
@@ -129,12 +139,14 @@ def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None
     r = dict(run, **({"dph": inst.get("dph_total", 0), "started": inst["start_date"]} if "start_date" in inst else {}))
     cost = accrued(r, time.time()) if r else 0.0
     vast("destroy", "instance", str(iid), "-y", tries=6)
+    if dry_run():
+        return
     for _ in range(10):
         if all(i["id"] != iid for i in vast("show", "instances", "--raw", tries=3)):
             break
         time.sleep(float(os.environ.get("VAST_POLL_S", 10)))
     else:
-        die(f"instance {iid} still listed after destroy: destroy it in the console NOW")
+        raise InfraError(f"instance {iid} still listed after destroy: destroy it in the console NOW")
     with locked():
         update_active(lambda runs: {k: x for k, x in runs.items() if x["instance"] != iid})
         ledger(event=event, run_id=run_id, instance_id=iid, cost_usd=round(cost, 4))
@@ -155,13 +167,16 @@ def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: i
     cmd = tmux + fix + (f"printf %s {b64} | base64 -d | gunzip > /root/watchdog.sh && {env} "
                         "nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &")
     if len(cmd) > ONSTART_MAX:
-        die(f"onstart is {len(cmd)} characters, over Vast's {ONSTART_MAX} (shorten watchdog.sh or the run_id)")
+        raise InfraError(f"onstart is {len(cmd)} characters, over Vast's {ONSTART_MAX} "
+                         "(shorten watchdog.sh or the run_id)")
     return cmd
 
 
 def get_run(run_id: str) -> dict:
-    """The active run `run_id`; dies when there is none."""
-    return active().get(run_id) or die(f"no active run {run_id}")
+    """The active run `run_id`; InfraError when there is none."""
+    if (run := active().get(run_id)) is None:
+        raise InfraError(f"no active run {run_id}")
+    return run
 
 
 def code_files() -> list[str]:
@@ -173,16 +188,17 @@ def code_files() -> list[str]:
     git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole (V1)
     files = subprocess.run(git, cwd=repo_root(), capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
     riga = re.compile(r"riga[^/]*\.(csv|jsonl?)$", re.I)
-    drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/", re.I)
+    drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/|"
+                      r"^experiments/phase2/vast/\.lock$", re.I)
     files = [f for f in dict.fromkeys(files)
              if not riga.search(f) and not drop.search(f) and (repo_root() / f).is_file()]
     if "tests/verify/test_gpu_scoring.py" not in files:  # the chain runs it on the box before any scoring stage
-        die("tests/verify/test_gpu_scoring.py missing from the code snapshot")
+        raise InfraError("tests/verify/test_gpu_scoring.py missing from the code snapshot")
     return files
 
 
 def alert(msg: str) -> None:
     """Print an alert to stderr (and a macOS notification unless DRY_RUN=1)."""
     print(f"vast ALERT: {msg}", file=sys.stderr)
-    if sys.platform == "darwin" and os.environ.get("DRY_RUN") != "1":
+    if sys.platform == "darwin" and not dry_run():
         subprocess.run(["osascript", "-e", f'display notification {json.dumps(msg)} with title "objdel vast"'])

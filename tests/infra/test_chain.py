@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from objdel.core import spec as S
+from objdel.infra.errors import InfraError
 from objdel.infra.vast import __main__ as policy
 from objdel.infra.vast import chain as C
 from tests.experiments.test_move_invariance import later_edits
@@ -121,7 +122,7 @@ def test_push_target_takes_the_last_rl_or_sft_stage():
 
 def test_push_target_of_a_spec_without_a_training_stage_dies():
     spec = S.load_spec(SPECS / "a3_test.yaml")
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         C.push_target(spec, "x")
 
 

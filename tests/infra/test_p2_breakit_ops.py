@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 import pytest
 
+from objdel.infra.errors import InfraError
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
@@ -381,7 +382,7 @@ def test_bundle_refuses_a_symlinked_view_directory(tmp_path):
 
     d = V.data_tree(tmp_path)
     (d / "views" / "lidc-extra").symlink_to(d / "views" / "riga-train", target_is_directory=True)
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         B.build("lidc", d, tmp_path / "out")
 
 

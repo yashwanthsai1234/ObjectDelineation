@@ -27,11 +27,11 @@ Reference: https://huggingface.co/docs/huggingface_hub/guides/upload#upload-file
 
 import json
 import re
-import sys
 from importlib import resources
 from pathlib import Path
 
 from objdel.core.io import read_json
+from objdel.infra.errors import InfraError
 
 REPO = "svenk029/objdel-sft"  # the owner's private model repo (2026-11-02)
 TOKEN_OK = {"repo.content.read", "repo.write"}
@@ -135,9 +135,9 @@ def rl_ops(out: Path, hub, repo: str) -> list:
 
     for d in ("final", "final_adapter"):
         if not (out / d).is_dir():
-            sys.exit(f"hf_push: {out}/{d} missing (train_rl --merge-last writes both from the last checkpoint)")
+            raise InfraError(f"{out}/{d} missing (train_rl --merge-last writes both from the last checkpoint)")
     if not hub.repo_info(repo, repo_type="model").private:
-        sys.exit(f"hf_push: {repo} is not private")
+        raise InfraError(f"{repo} is not private")
     doc = read_json(out / "rl.json")
     base = models.MODELS[doc["model"]]
     lic, meta = base_card(base)
@@ -184,10 +184,10 @@ def card_only(repo: str, revision: str, headline: Path, token: str) -> int:
     from huggingface_hub import hf_hub_download
 
     if problems := token_problems(whoami(token), repo):
-        sys.exit(f"hf_push: the token may not be used here: {'; '.join(problems)}")
+        raise InfraError(f"the token may not be used here: {'; '.join(problems)}")
     hub = api(token)
     if not hub.repo_info(repo, repo_type="model").private:
-        sys.exit(f"hf_push: {repo} is not private")
+        raise InfraError(f"{repo} is not private")
     old = Path(hf_hub_download(repo, "README.md", revision=revision, token=token)).read_text()
     new = card_update(old, read_json(headline))
     hub.upload_file(path_or_fileobj=new.encode(), path_in_repo="README.md", repo_id=repo, revision=revision,
@@ -212,17 +212,17 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
         return 0
     sel = read_json(run / "select" / "selected.json")
     if not sel["selected"]:
-        sys.exit(f"hf_push: {run}: no branch selected (none passed D12); nothing to upload")
+        raise InfraError(f"{run}: no branch selected (none passed D12); nothing to upload")
     man = read_json(run / "manifest.json")
     vm = read_json((view or Path(man["config"]["view"])) / "manifest.json")
     if vm["view_hash"] != man["view"]["view_hash"]:
-        sys.exit(f"hf_push: {view}: view_hash {vm['view_hash']} is not the run's {man['view']['view_hash']}")
+        raise InfraError(f"{view}: view_hash {vm['view_hash']} is not the run's {man['view']['view_hash']}")
     if (ds := vm["dataset"]) != "lidc":
-        sys.exit(f"hf_push: {run} trained on {ds}: only LIDC runs are uploaded (RIGA's licence forbids "
+        raise InfraError(f"{run} trained on {ds}: only LIDC runs are uploaded (RIGA's licence forbids "
                  "redistribution, D16)")  # fmt: skip
     hub = api(token)
     if not hub.repo_info(repo, repo_type="model").private:
-        sys.exit(f"hf_push: {repo} is not private")
+        raise InfraError(f"{repo} is not private")
     from huggingface_hub import CommitOperationAdd
 
     base = models.MODELS[man["config"]["model"]]
@@ -268,12 +268,12 @@ def push_rows(root: Path, repo: str, revision: str, token: str) -> int:
 
     man = root / "manifest.json"
     if not man.is_file():
-        sys.exit(f"hf_push: {man} missing (build_rl_rows writes it only when every hard gate passes); nothing uploaded")
+        raise InfraError(f"{man} missing (build_rl_rows writes it only when every hard gate passes); nothing uploaded")
     if bad := [k for k in read_json(man)["sets"] if not k.startswith("lidc/")]:
-        sys.exit(f"hf_push: {root} holds {bad}: only LIDC rows are uploaded (RIGA's licence forbids redistribution)")
+        raise InfraError(f"{root} holds {bad}: only LIDC rows are uploaded (RIGA's licence forbids redistribution)")
     hub = api(token)
     if not hub.repo_info(repo, repo_type="model").private:
-        sys.exit(f"hf_push: {repo} is not private")
+        raise InfraError(f"{repo} is not private")
     prefix = f"rows/{root.name}"
     hub.create_branch(repo, branch=revision, repo_type="model", exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
