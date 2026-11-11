@@ -5,7 +5,7 @@ from pathlib import Path
 
 from objdel.core.provenance import repo_root
 from objdel.core.spec import RunSpec, fill, load_spec, to_argv
-from objdel.infra.vast.remote import die
+from objdel.infra.errors import InfraError
 
 DATA = "/workspace/data/lidc"  # {data} on the box
 
@@ -13,7 +13,7 @@ DATA = "/workspace/data/lidc"  # {data} on the box
 def chain(cfg: Path, run_id: str) -> list[list[str]]:
     """A run spec's stages on the box, as argv lists (`-m module ...` runs in /opt/venv, `bash script ...` as is; a
     leading "~" lets a stage fail without stopping the chain). Box paths: data /workspace/data/lidc, runs
-    /workspace/runs/<id>. Only a spec in specs/ (I29): an old `steps:` plan raises ValidationError (load_spec), a spec
+    /workspace/runs/<id>. Only a spec in specs/: an old `steps:` plan raises ValidationError (load_spec), a spec
     elsewhere raises ValueError, both before any remote call."""
     spec = load_spec(Path(cfg))
     if Path(cfg).resolve().parent != (repo_root() / "specs").resolve():
@@ -38,7 +38,7 @@ def push_target(spec: RunSpec, run_id: str) -> tuple[str, str, bool]:
     last part of its out folder; for sft the output_dir."""
     last = next((s for s in reversed(spec.stages) if s.kind in ("rl", "sft")), None)
     if last is None:
-        die("nothing to push: the spec has no rl or sft stage")
+        raise InfraError("nothing to push: the spec has no rl or sft stage")
     rd = f"/workspace/runs/{run_id}"
     if last.kind == "rl":
         path = fill(last.out, rd, DATA)

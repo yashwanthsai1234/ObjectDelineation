@@ -12,8 +12,8 @@ are experiments.phase2.hf_push and experiments.phase2.hf_pull (argument parsing,
 The token arrives on stdin (push_hf.sh streams it from the Mac keychain over ssh: never on argv, in the environment or
 on disk); push_hf.sh refuses it unless token_problems is empty: fine-grained, write access to this one repo only (the
 owner's free HF account has no card; storage only, never inference, endpoints or jobs). Refused here: a repo that is
-not private, a run trained on anything but LIDC (RIGA's licence forbids redistribution, D16), a run with no selected
-branch (select_ckpt: none passed D12). One commit on branch `revision` (created if missing): the files of
+not private, a run trained on anything but LIDC (RIGA's licence forbids redistribution), a run with no selected
+branch (select_ckpt: none passed its gates). One commit on branch `revision` (created if missing): the files of
 <run>/branches/<selected>, the base model's LICENSE (Apache-2.0 for Qwen) and a model card
 stating the change, the base model, the selection and the LIDC-IDRI attribution (CC BY 3.0).
 --card-only --headline reference/headline.json (no --run or --rl): the card's Evaluation and Limitations sections
@@ -27,13 +27,13 @@ Reference: https://huggingface.co/docs/huggingface_hub/guides/upload#upload-file
 
 import json
 import re
-import sys
 from importlib import resources
 from pathlib import Path
 
 from objdel.core.io import read_json
+from objdel.infra.errors import InfraError
 
-REPO = "svenk029/objdel-sft"  # the owner's private model repo (2026-11-02)
+REPO = "svenk029/objdel-sft"  # the owner's private model repo
 TOKEN_OK = {"repo.content.read", "repo.write"}
 ROWS_TAR = "root.tar"  # a rows root on the Hub: rows/<name>/root.tar + manifest.json (the repo holds <= 20,000 files)
 LIDC = ("Trained on views derived from LIDC-IDRI (CC BY 3.0). Data citation: Armato III SG et al., Data From "
@@ -75,9 +75,15 @@ def api(token: str):
 
 
 
+def require_private(hub, repo: str) -> None:
+    """InfraError unless `repo` is a private model repo."""
+    if not hub.repo_info(repo, repo_type="model").private:
+        raise InfraError(f"{repo} is not private")
+
+
 def base_card(base: str) -> tuple[bytes, dict]:
     """The base model's LICENSE and card metadata (public repos: no token). A repo with no LICENSE file whose card
-    declares apache-2.0 (Qwen/Qwen3-VL-2B-Instruct, 2026-11-05) gets the Apache-2.0 text (§4(a): give a copy)."""
+    declares apache-2.0 (Qwen/Qwen3-VL-2B-Instruct) gets the Apache-2.0 text (Apache-2.0 §4(a): give a copy)."""
     from huggingface_hub import ModelCard, hf_hub_download
     from huggingface_hub.errors import EntryNotFoundError
 
@@ -91,40 +97,40 @@ def base_card(base: str) -> tuple[bytes, dict]:
         return resources.files("objdel.infra").joinpath("licenses/Apache-2.0.txt").read_bytes(), meta
 
 
-def card(base: str, meta: dict, man: dict, sel: dict, run: Path) -> str:
-    """The model card of a train_sft run's selected branch."""
+def model_card(base: str, meta: dict, title: str, how: str, facts: str) -> str:
+    """A model card: the YAML header (the base model's licence fields), `title`, the modification notice (`how`), the
+    bullet lines `facts` and the LIDC attribution."""
     import yaml
 
-    c = man["config"]
     head = {k: meta[k] for k in ("license", "license_name", "license_link") if meta.get(k)}
     head |= {"base_model": base, "tags": ["medical-imaging", "segmentation", "lidc-idri"]}
+    return (f"---\n{yaml.safe_dump(head, sort_keys=False)}---\n\n# {title}\n\n"
+            f"Modified from [{base}](https://huggingface.co/{base}) by the objdel project ({how}): every weight file "
+            f"here differs from the base model's. The base licence is in LICENSE.\n\n{facts}\n\n"
+            f"## Data\n\n{LIDC}\n\nResearch use only; not a medical device.\n")
+
+
+def card(base: str, meta: dict, man: dict, sel: dict, run: Path) -> str:
+    """The model card of a train_sft run's selected branch."""
+    c = man["config"]
     failed = f" (failed: {', '.join(sel['gates_failed'])})" if sel["gates_failed"] else ""
-    return (f"---\n{yaml.safe_dump(head, sort_keys=False)}---\n\n# objdel SFT {run.name}, branch {sel['selected']}\n\n"
-            f"Modified from [{base}](https://huggingface.co/{base}) by the objdel project (LoRA, merged into the "
-            f"base weights; every model is LoRA, ADR-0008): every weight file "
-            f"here differs from the base model's. The base licence is in LICENSE.\n\n"
-            f"- Run {run.name}: seed {c['seed']}, WSD branches {c['branches']}; selected branch {sel['selected']} "
-            f"(sampler {sel['sampler']}, K = {sel['k']}, {sel['items'] or 'all'} items); gates pass: "
-            f"{sel['gates_pass']}{failed}\n"
-            f"- Code SHA-256 {man['code']['objdel_and_script_sha256']}; "
-            f"training view hash {man['view']['view_hash']}\n\n"
-            f"## Data\n\n{LIDC}\n\nResearch use only; not a medical device.\n")  # fmt: skip
+    facts = (f"- Run {run.name}: seed {c['seed']}, WSD branches {c['branches']}; selected branch {sel['selected']} "
+             f"(sampler {sel['sampler']}, K = {sel['k']}, {sel['items'] or 'all'} items); gates pass: "
+             f"{sel['gates_pass']}{failed}\n"
+             f"- Code SHA-256 {man['code']['objdel_and_script_sha256']}; "
+             f"training view hash {man['view']['view_hash']}")
+    return model_card(base, meta, f"objdel SFT {run.name}, branch {sel['selected']}",
+                      "LoRA, merged into the base weights; every model is LoRA", facts)
 
 
 def rl_card(base: str, meta: dict, doc: dict, out: Path) -> str:
     """The model card of a train_rl output."""
-    import yaml
-
-    head = {k: meta[k] for k in ("license", "license_name", "license_link") if meta.get(k)}
-    head |= {"base_model": base, "tags": ["medical-imaging", "segmentation", "lidc-idri"]}
     rows = doc.get("rows") or {}
-    return (f"---\n{yaml.safe_dump(head, sort_keys=False)}---\n\n# objdel RL {out.name}\n\n"
-            f"Modified from [{base}](https://huggingface.co/{base}) by the objdel project (GRPO on a LoRA adapter, "
-            f"merged into the base weights; the unmerged adapter is in final_adapter/): every weight file here "
-            f"differs from the base model's. The base licence is in LICENSE.\n\n"
-            f"- {doc['steps']} steps{' (partial: merged from the last checkpoint)' * bool(doc.get('partial'))} "
-            f"from {doc['ckpt']}; rows revision {rows.get('revision')}, ids SHA-256 {rows.get('ids_sha256')}\n\n"
-            f"## Data\n\n{LIDC}\n\nResearch use only; not a medical device.\n")  # fmt: skip
+    facts = (f"- {doc['steps']} steps{' (partial: merged from the last checkpoint)' * bool(doc.get('partial'))} "
+             f"from {doc['ckpt']}; rows revision {rows.get('revision')}, ids SHA-256 {rows.get('ids_sha256')}")
+    return model_card(base, meta, f"objdel RL {out.name}",
+                      "GRPO on a LoRA adapter, merged into the base weights; the unmerged adapter is in final_adapter/",
+                      facts)
 
 
 def rl_ops(out: Path, hub, repo: str) -> list:
@@ -135,9 +141,8 @@ def rl_ops(out: Path, hub, repo: str) -> list:
 
     for d in ("final", "final_adapter"):
         if not (out / d).is_dir():
-            sys.exit(f"hf_push: {out}/{d} missing (train_rl --merge-last writes both from the last checkpoint)")
-    if not hub.repo_info(repo, repo_type="model").private:
-        sys.exit(f"hf_push: {repo} is not private")
+            raise InfraError(f"{out}/{d} missing (train_rl --merge-last writes both from the last checkpoint)")
+    require_private(hub, repo)
     doc = read_json(out / "rl.json")
     base = models.MODELS[doc["model"]]
     lic, meta = base_card(base)
@@ -184,10 +189,9 @@ def card_only(repo: str, revision: str, headline: Path, token: str) -> int:
     from huggingface_hub import hf_hub_download
 
     if problems := token_problems(whoami(token), repo):
-        sys.exit(f"hf_push: the token may not be used here: {'; '.join(problems)}")
+        raise InfraError(f"the token may not be used here: {'; '.join(problems)}")
     hub = api(token)
-    if not hub.repo_info(repo, repo_type="model").private:
-        sys.exit(f"hf_push: {repo} is not private")
+    require_private(hub, repo)
     old = Path(hf_hub_download(repo, "README.md", revision=revision, token=token)).read_text()
     new = card_update(old, read_json(headline))
     hub.upload_file(path_or_fileobj=new.encode(), path_in_repo="README.md", repo_id=repo, revision=revision,
@@ -212,17 +216,16 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
         return 0
     sel = read_json(run / "select" / "selected.json")
     if not sel["selected"]:
-        sys.exit(f"hf_push: {run}: no branch selected (none passed D12); nothing to upload")
+        raise InfraError(f"{run}: no branch selected (none passed its gates); nothing to upload")
     man = read_json(run / "manifest.json")
     vm = read_json((view or Path(man["config"]["view"])) / "manifest.json")
     if vm["view_hash"] != man["view"]["view_hash"]:
-        sys.exit(f"hf_push: {view}: view_hash {vm['view_hash']} is not the run's {man['view']['view_hash']}")
+        raise InfraError(f"{view}: view_hash {vm['view_hash']} is not the run's {man['view']['view_hash']}")
     if (ds := vm["dataset"]) != "lidc":
-        sys.exit(f"hf_push: {run} trained on {ds}: only LIDC runs are uploaded (RIGA's licence forbids "
-                 "redistribution, D16)")  # fmt: skip
+        raise InfraError(f"{run} trained on {ds}: only LIDC runs are uploaded (RIGA's licence forbids "
+                 "redistribution)")  # fmt: skip
     hub = api(token)
-    if not hub.repo_info(repo, repo_type="model").private:
-        sys.exit(f"hf_push: {repo} is not private")
+    require_private(hub, repo)
     from huggingface_hub import CommitOperationAdd
 
     base = models.MODELS[man["config"]["model"]]
@@ -256,7 +259,7 @@ def rows_tar(root: Path, out) -> None:
 
 
 def push_rows(root: Path, repo: str, revision: str, token: str) -> int:
-    """--rows (B1.4 step 5): a build_rl_rows root to rows/<root name>/ on branch `revision` of `repo`. Refused without
+    """--rows: a build_rl_rows root to rows/<root name>/ on branch `revision` of `repo`. Refused without
     its manifest.json (written only when every hard data gate passed), for a set that is not LIDC, or to a public
     repo. Two files, two commits: ROWS_TAR (rows_tar: every file but the manifest; a root has ~2 files per window and
     the free repo holds at most 20,000), then the manifest alone, last; so the printed rows_revision, the last
@@ -268,12 +271,11 @@ def push_rows(root: Path, repo: str, revision: str, token: str) -> int:
 
     man = root / "manifest.json"
     if not man.is_file():
-        sys.exit(f"hf_push: {man} missing (build_rl_rows writes it only when every hard gate passes); nothing uploaded")
+        raise InfraError(f"{man} missing (build_rl_rows writes it only when every hard gate passes); nothing uploaded")
     if bad := [k for k in read_json(man)["sets"] if not k.startswith("lidc/")]:
-        sys.exit(f"hf_push: {root} holds {bad}: only LIDC rows are uploaded (RIGA's licence forbids redistribution)")
+        raise InfraError(f"{root} holds {bad}: only LIDC rows are uploaded (RIGA's licence forbids redistribution)")
     hub = api(token)
-    if not hub.repo_info(repo, repo_type="model").private:
-        sys.exit(f"hf_push: {repo} is not private")
+    require_private(hub, repo)
     prefix = f"rows/{root.name}"
     hub.create_branch(repo, branch=revision, repo_type="model", exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -293,7 +295,7 @@ def pull(repo: str, revision: str, out: str, allow: str | None, token: str) -> i
     """One revision of `repo` into `out` (only the repo paths matching `allow`, kept at their repo paths); the token is
     passed to huggingface_hub directly, so nothing is cached on the box. A full model pull (no `allow`) also writes
     <out>/hf_revision.json ({repo, revision}): the F check's comparator runs its output-level arms only on the --ckpt
-    that names rl-full-3ep (B2.2 F step 4b.1)."""
+    that names rl-full-3ep."""
     from huggingface_hub import snapshot_download
 
     print(snapshot_download(repo_id=repo, revision=revision, local_dir=out, token=token, allow_patterns=allow))

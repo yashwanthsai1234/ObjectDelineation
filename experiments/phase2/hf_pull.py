@@ -1,4 +1,4 @@
-"""One revision of the private HF model repo onto the box (RL starts from R1's selected branch, e.g. r1-qwen3vl2b).
+"""One revision of the private HF model repo onto the box (RL starts from an SFT run's selected branch, e.g. r1-qwen3vl2b).
 
     python -I -m experiments.phase2.hf_pull --repo svenk029/objdel-sft --revision r1-qwen3vl2b --out DIR < token
     python -I -m experiments.phase2.hf_pull --repo svenk029/objdel-sft --revision HEX40 --out /workspace/data/lidc \

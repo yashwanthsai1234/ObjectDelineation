@@ -3,7 +3,11 @@ PY := .venv/bin/python
 EXT_SRC := CMakeLists.txt cuda/gpucheck.h cuda/gpucheck.cpp cuda/gpucheck_py.cpp
 EXT_STAMP := build/.gpucheck-stamp
 
-.PHONY: setup build test test-all test-data test-order cov lint dead sweep fmt wheels cuda gpu-check preflight docs docs-serve headline
+.DEFAULT_GOAL := help
+.PHONY: help smoke setup build test test-all test-data test-order cov lint dead sweep fmt wheels cuda gpu-check preflight docs docs-serve headline
+
+help:             ## list the targets (the default: a bare `make` changes nothing)
+	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
 
 setup:            ## create .venv and install the package (editable, all extras); builds the C++ extension
 	uv venv --python 3.12
@@ -35,6 +39,9 @@ CONFIG ?= specs/b1_rows.yaml
 MODEL_REF ?= svenk029/objdel-sft@b1-rows
 preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=... [BUNDLE_DIR=...]); launch needs its stamp
 	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG) $(if $(BUNDLE_DIR),--bundle-dir $(BUNDLE_DIR))
+
+smoke:            ## the CPU smoke test: train -> select on a tiny model (preflight's last check)
+	$(PY) -m pytest -q -p no:cacheprovider tests/experiments/test_p2_scripts.py::test_cpu_smoke_train_then_select
 
 lint:             ## lint library, tests and experiments, then the import-layer contracts
 	$(PY) -m ruff check src tests experiments

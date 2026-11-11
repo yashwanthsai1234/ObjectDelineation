@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from objdel.infra import bundle as BU
-from objdel.infra import preflight as PF
 from objdel.infra.vast import remote as P
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,15 +64,6 @@ def test_nothing_from_docs_ships(code):
     """docs/ is local only (owner, 2026-11-11): the kernel drafts (shipped for R-D1 until then) stay on the Mac."""
     assert not [f for f in code if f.startswith("docs/")]
     assert {"reference/frozen_views.json", "reference/val_halves.json"} <= set(code)
-
-
-def test_runbooks_have_no_scratch_path_hand_copy_or_stale_torch(tmp_path):
-    assert PF.runbooks(None) == []
-    k = tmp_path / "docs/implementation2.0/kernels/K9"
-    k.mkdir(parents=True)
-    (k / "GPU_RUN.md").write_text("torch 2.14.1 in /opt/venv\nscp root@h:/x .\nrsync -a a b\n")
-    (k / "a.cpp").write_text("// /" + "private/tmp/x\n")
-    assert len(PF.runbooks(None, tmp_path)) == 4
 
 
 # ------------------------------------------------------------------ S14: the old-engine tar ships (D-G7, D8)

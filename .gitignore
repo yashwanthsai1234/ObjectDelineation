@@ -44,6 +44,8 @@ CLAUDE.md
 /experiments/phase2/vast/invoices/
 /experiments/phase2/vast/active_runs.json
 /experiments/phase2/vast/code_files.txt
+/experiments/phase2/vast/.lock
+/experiments/phase2/vast/.pull-*.lock
 
 # Local secrets (objdel.infra.secrets): never committed, never shipped
 /.secrets

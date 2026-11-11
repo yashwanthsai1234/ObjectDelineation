@@ -24,6 +24,7 @@ import pytest
 from objdel.core.io import git_sha
 from objdel.infra import bundle as B
 from objdel.infra import preflight as PF
+from objdel.infra.errors import InfraError
 from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import chain as CH
 from objdel.infra.vast import ledger as LG
@@ -38,6 +39,7 @@ IDENTITY = "AGE-SECRET-KEY-1FAKEIDENTITYFORTESTSQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
 API_KEY = "fakevastscopedkey0123456789abcdef"
 PAT = "ghp_fakeGHCRreadPAT0123456789"
 SECRETS = {"objdel-vast-scoped": API_KEY, "objdel-ghcr-read": PAT, "objdel-riga-age": IDENTITY}
+SPENDING_SCRIPTS = ("launch.sh", "teardown.sh", "sweep_orphans.sh")
 SCRIPTS = ["offers.sh", "launch.sh", "sync_up.sh", "run.sh", "pull.sh", "teardown.sh", "sweep_orphans.sh"]
 
 FAKE = r"""
@@ -129,8 +131,8 @@ class Env:
             (bin_ / t).symlink_to(src)
         self.state(offers=[offer(), offer(112, dph_total=0.70), offer(113, hosting_type=1, dph_total=0.9)])
         self.allow(image="ghcr.io/owner/objdel-vast:p2-abc@sha256:" + "0" * 64, ghcr_user="owner",
-                   riga_permission={"granted": False, "evidence": ""}, riga_recipient="age1publicrecipient")
-        for f in ("bundle-lidc.tar", "bundle-lidc.tar.sha256", "bundle-riga.tar.age", "bundle-riga.tar.age.sha256"):
+                   riga_permission={"granted": False, "evidence": ""})
+        for f in ("bundle-lidc.tar", "bundle-lidc.tar.sha256"):
             (self.bundles / f).write_text("x")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("VAST", "DRY_RUN"))}
         self.env = dict(env, PATH=f"{bin_}{os.pathsep}{env['PATH']}", PYTHON=sys.executable, FAKE_DIR=str(self.fake),
@@ -168,6 +170,8 @@ class Env:
     def sh(self, script, *args, ok=True, **env):
         if script == "launch.sh" and "--config" not in args:
             args = (*args, "--config", self.config)
+        if script in SPENDING_SCRIPTS:  # DRY_RUN=1 never rents or destroys: these run against the fake vastai
+            env = {"DRY_RUN": "0", **env}
         p = subprocess.run(["bash", str(VAST / script), *map(str, args)], env=dict(self.env, **env),
                            capture_output=True, text=True, timeout=60)  # fmt: skip
         assert ok is None or (p.returncode == 0) == ok, p.stdout + p.stderr
@@ -221,16 +225,16 @@ def all_text(E, *outs):
 
 
 def test_query_per_card():
-    q = OF.query("RTX_4090", "lidc")
+    q = OF.query("RTX_4090")
     terms = ("num_gpus=1 gpu_name=RTX_4090 gpu_ram<=26 cpu_cores_effective>=12 cpu_ram>=32 cuda_vers>=13.0"
              " verified=true reliability>0.98 direct_port_count>=2 dph<=1.0")  # fmt: skip
     assert set(terms.split()) <= set(q.split()) and "datacenter=True" not in q
-    assert {"datacenter=True", "cpu_ram>=48", "dph<=1.5"} <= set(OF.query("RTX_5090", "riga").split())
-    assert "gpu_ram>=79" in OF.query("A100_SXM4", "lidc").split()
-    assert "cpu_ram>=48" in OF.query("RTX_PRO_6000_WS", "lidc").split()
-    assert "disk_space>=150" in OF.query("RTX_PRO_6000_WS", "lidc", disk=150).split()
+    assert {"cpu_ram>=32", "dph<=1.5"} <= set(OF.query("RTX_5090").split())
+    assert "gpu_ram>=79" in OF.query("A100_SXM4").split()
+    assert "cpu_ram>=48" in OF.query("RTX_PRO_6000_WS").split()
+    assert "disk_space>=150" in OF.query("RTX_PRO_6000_WS", disk=150).split()
     with pytest.raises(ValueError):
-        OF.query("RTX_2080", "lidc")
+        OF.query("RTX_2080")
 
 
 def test_ceilings_are_1p5x_snapshot_median():
@@ -249,8 +253,8 @@ def test_ceilings_are_1p5x_snapshot_median():
     ({"verification": None}, "verified"),
 ])  # fmt: skip
 def test_admissible_rejects(bad, why):
-    assert OF.reasons(offer(), "RTX_4090", "lidc") == []
-    assert any(why in r for r in OF.reasons(offer(**bad), "RTX_4090", "lidc"))
+    assert OF.reasons(offer(), "RTX_4090") == []
+    assert any(why in r for r in OF.reasons(offer(**bad), "RTX_4090"))
 
 
 def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
@@ -259,8 +263,100 @@ def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
     err = '{"error": true, "status_code": 400, "msg": "offer no longer available"}\n'
     monkeypatch.setenv("VAST_API_KEY", "k")
     monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", err))
-    with pytest.raises(SystemExit, match="offer no longer available"):
+    with pytest.raises(InfraError, match="offer no longer available"):
         RM.vast("create", "instance", "1", "--raw")
+
+
+def test_vast_call_has_a_timeout_and_a_timeout_is_a_failed_try(monkeypatch):
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(kw["timeout"])
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setenv("VAST_API_KEY", "k")
+    monkeypatch.setenv("VAST_POLL_S", "0")
+    monkeypatch.setattr(RM.subprocess, "run", run)
+    with pytest.raises(InfraError, match="no answer in 120 s"):
+        RM.vast("show", "instances", "--raw", tries=3)
+    assert seen == [RM.VAST_TIMEOUT_S] * 3
+
+
+def test_vast_retries_back_off_exponentially_with_jitter_and_a_cap(monkeypatch):
+    monkeypatch.setenv("VAST_POLL_S", "10")
+    monkeypatch.setattr(RM.random, "uniform", lambda lo, hi: 1.0)
+    assert [RM.backoff_s(i) for i in range(5)] == [10, 20, 40, 60, 60]
+    monkeypatch.setattr(RM.random, "uniform", lambda lo, hi: hi)
+    assert RM.backoff_s(0) == 15 and RM.backoff_s(9) == 90
+    sleeps, tries = [], []
+    monkeypatch.setenv("VAST_API_KEY", "k")
+    monkeypatch.setattr(RM.time, "sleep", sleeps.append)
+    monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: tries.append(1) or subprocess.CompletedProcess(
+        cmd, 1, "", "429"))
+    with pytest.raises(InfraError, match="429"):
+        RM.vast("destroy", "instance", "1", tries=3)
+    assert len(tries) == 3 and sleeps == [15, 30]
+
+
+def test_destroy_tries_six_times(monkeypatch, tmp_path):
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(RM, "vast", lambda *a, **k: calls.append((a[:2], k.get("tries", 1))) or [])
+    monkeypatch.setattr(RM, "active", lambda *a: {})
+    monkeypatch.setattr(RM.time, "sleep", lambda s: None)
+    RM.destroy(5, "r", "destroy", {"id": 5})
+    assert (("destroy", "instance"), 6) in calls
+
+
+def test_ssh_and_rsync_carry_timeouts_and_sh_has_one(monkeypatch, tmp_path):
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    argv = RM.ssh({"port": 1})
+    assert {"ConnectTimeout=30", "ServerAliveInterval=30", "ServerAliveCountMax=4"} <= set(argv)
+    seen = []
+    monkeypatch.setattr(RM.subprocess, "run", lambda cmd, **kw: seen.append((cmd, kw["timeout"])) or SimpleNamespace(
+        returncode=0))
+    RM.rsync({"port": 1}, "a", "b")
+    assert {"--timeout=300", "--partial"} <= set(seen[0][0]) and seen[0][1] == RM.SH_TIMEOUT_S
+
+    def hang(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(RM.subprocess, "run", hang)
+    with pytest.raises(InfraError, match="rsync timed out"):
+        RM.rsync({"port": 1}, "a", "b")
+
+
+def test_watchdog_curl_has_a_max_time():
+    assert "curl -fsS --max-time 30" in (VAST / "watchdog.sh").read_text()
+
+
+def test_the_lock_is_reentrant_exclusive_and_waits_a_bounded_time(tmp_path, monkeypatch):
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    with LG.locked(), LG.locked():  # reentrant: destroy() holds it and calls ledger()
+        LG.ledger(event="x")
+        probe = subprocess.run([sys.executable, "-c", (
+            "import fcntl, sys; f = open(sys.argv[1], 'a')\n"
+            "try: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\nexcept BlockingIOError: sys.exit(7)"),
+            str(tmp_path / ".lock")])
+        assert probe.returncode == 7  # another process cannot take it meanwhile
+        monkeypatch.setattr(LG, "LOCK_WAIT_S", 0)
+    assert subprocess.run([sys.executable, "-c", (
+        "import fcntl, sys; f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)"),
+        str(tmp_path / ".lock")]).returncode == 0  # released after the block
+    holder = open(tmp_path / ".lock", "a")
+    import fcntl
+
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    with pytest.raises(InfraError, match="held by another"), LG.locked():
+        pass
+    holder.close()
+
+
+def test_active_runs_json_is_written_atomically(tmp_path, monkeypatch):
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    LG.update_active(lambda runs: {**runs, "r1": {"instance": 1}})
+    LG.update_active(lambda runs: {**runs, "r2": {"instance": 2}})
+    assert sorted(LG.active()) == ["r1", "r2"] and not list(tmp_path.glob("*.tmp"))
 
 
 def test_real_offer_from_v0_is_admissible():
@@ -268,46 +364,17 @@ def test_real_offer_from_v0_is_admissible():
     MB with 1 GB = 1000 MB (Vast returned cpu_ram 32160 for the query cpu_ram>=32). All offers failed before."""
     o = (json.loads((Path(__file__).parents[1] / "fixtures" / "vast_offer_3090.json").read_text())
          | {"geolocation": "Texas, US"})
-    assert OF.reasons(o, "RTX_3090", "lidc") == []
-    assert any("cpu_ram" in r for r in OF.reasons(dict(o, cpu_ram=31999), "RTX_3090", "lidc"))
+    assert OF.reasons(o, "RTX_3090") == []
+    assert any("cpu_ram" in r for r in OF.reasons(dict(o, cpu_ram=31999), "RTX_3090"))
 
 
 def test_policy_reads_only_offer_fields_the_pinned_cli_returns():
     """CT-86. Key names only, no offer data: the V0 offer recording (2026-11-01) plus `geolocation`, which the test
     above adds by hand. Re-record from `uvx vastai==1.11.0 search offers ... --raw` when a Vast key is at hand."""
     keys = set(json.loads((Path(__file__).parents[1] / "fixtures" / "vast_offer_keys_1_11_0.json").read_text()))
-    read = {t[2] for g in OF.CARDS for d in OF.CPU_RAM for t in OF.terms(g, d) if t[2]}
+    read = {t[2] for g in OF.CARDS for t in OF.terms(g) if t[2]}
     read |= {"id", "geolocation", *OF.offer_cols({})}
     assert len(read) > 12 and read <= keys, sorted(read - keys)
-
-
-# --- H-GOV on the recorded snapshot (D16) ---------------------------------------------------------------------------
-
-
-def snapshot_offers():
-    """One synthetic offer per recorded snapshot offer: `secure_cloud` buckets are hosting_type 1, the rest of each
-    `any` bucket hosting_type 0 (the snapshot keeps counts per bucket, not the offers themselves)."""
-    snap, out = json.loads(SNAP.read_text())["offers"], []
-    for key, v in snap.items():
-        gpu, typ, tier = key.split("|")
-        if tier == "any":
-            n1 = snap[f"{gpu}|{typ}|secure_cloud"]["n"]
-            out += [offer(gpu=gpu, hosting_type=0)] * (v["n"] - n1) + [offer(gpu=gpu, hosting_type=1)] * n1
-    return out
-
-
-def test_hgov_snapshot():
-    offers = snapshot_offers()
-    n0, n1 = ([o for o in offers if o["hosting_type"] == h] for h in (0, 1))
-    assert (len(n0), len(n1)) == (237, 34)  # recorded 2026-10-20 snapshot (on-demand + bid, 15 cards)
-    yes = {"riga_permission": {"granted": True, "evidence": "email 2026-11-01 from depositor"}}
-    assert all(OF.governance("riga", o, yes) for o in n0)  # every community offer refused, with a reason
-    assert not any(OF.governance("riga", o, yes) for o in n1)  # every datacenter offer allowed
-    assert all(OF.governance("riga", o, {"riga_permission": {"granted": False}}) for o in n1)
-    assert all(OF.governance("riga", o, {"riga_permission": {"granted": True, "evidence": ""}}) for o in n1)
-    assert all(OF.governance("riga", {k: v for k, v in o.items() if k != "hosting_type"}, yes) for o in n1[:3])
-    assert not any(OF.governance("lidc", o, {}) for o in n0 + n1)
-    assert OF.governance("other", n1[0], yes)
 
 
 # --- ledger and secrets (G9, D16) -----------------------------------------------------------------------------------
@@ -329,7 +396,7 @@ def test_onstart_length_is_checked_and_run_ids_are_short():
     """Vast refuses an onstart over 4048 characters; the run_id appears in it twice and had no length limit."""
     assert RM.RUN_ID_RE.fullmatch("a" * 40) and not RM.RUN_ID_RE.fullmatch("a" * 41)
     assert len(RM.onstart_cmd("a" * 40, 10**7, idle_s=10**6)) <= 4048
-    with pytest.raises(SystemExit, match="4048"):
+    with pytest.raises(InfraError, match="4048"):
         RM.onstart_cmd("a" * 1000, 7200)
 
 
@@ -350,6 +417,9 @@ def test_end_to_end_dry_run(E):
     (q,) = E.vast("search offers")
     assert "dph<=1.0" in q[2] and "--storage" in q
     E.pick()
+    dry = E.sh("launch.sh", "111", "r1", "--cap-hours", "2", DRY_RUN="1")  # printed, never rented
+    assert "DRY_RUN: vastai create instance 111" in dry.stdout and PAT not in dry.stdout + dry.stderr
+    assert not E.vast("create instance") and E.instances() == {} and not (E.home / "active_runs.json").exists()
     o2 = E.sh("launch.sh", "111", "r1", "--cap-hours", "2")
     (c,) = E.vast("create instance")
     assert {"--ssh", "--direct", "--cancel-unavail", "--onstart-cmd", "--disk", "--image", "--login"} <= set(c)
@@ -362,10 +432,10 @@ def test_end_to_end_dry_run(E):
     assert "timeout" in o4.stdout and "tmux new-session" in o4.stdout and "HEARTBEAT" in o4.stdout
     o5 = E.sh("pull.sh", "r1")
     assert "PULLED_OK" in o5.stdout
-    o6 = E.sh("teardown.sh", "r1")
+    assert not E.calls("ssh") and not E.calls("rsync")  # dry run: printed, never executed
+    o6 = E.sh("teardown.sh", "r1")  # a spending script: DRY_RUN=0 against the fake tools
     assert E.vast("destroy instance") == [["destroy", "instance", "4242", "-y"]]
     assert E.instances() == {} and E.vast("show instances")  # verified absent after destroy
-    assert not E.calls("ssh") and not E.calls("rsync")  # dry run: printed, never executed
     rsyncs = [ln for o in (o3, o5) for ln in o.stdout.splitlines() if ln.startswith("DRY_RUN: rsync")]
     assert len(rsyncs) >= 3 and all("--exclude=data/raw/" in ln for ln in rsyncs)
     assert [r["event"] for r in E.ledger()] == ["offer", "launch", "sync", "run", "teardown", "invoice"]
@@ -375,11 +445,31 @@ def test_end_to_end_dry_run(E):
     assert not [s for s in SECRETS.values() if s in text]
 
 
+def test_dry_run_never_destroys(E):
+    E.launched()
+    p = E.sh("teardown.sh", "r1", DRY_RUN="1")
+    assert "DRY_RUN: vastai destroy instance 4242 -y" in p.stdout
+    assert not E.vast("destroy instance") and list(E.instances()) == ["4242"]  # still rented
+    assert "r1" in E.active()  # and still recorded
+
+
+def test_the_cli_turns_an_infra_error_into_its_message_and_exit_status(E):
+    p = E.sh("pull.sh", "nope", ok=False)
+    assert p.returncode == 1 and p.stderr.strip() == "vast: no active run nope"
+
+
+def test_make_without_a_target_lists_the_targets_and_smoke_names_the_preflight_test():
+    out = subprocess.run(["make"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    assert all(t in out for t in ("preflight", "smoke", "lint", "test "))
+    dry = subprocess.run(["make", "-n", "smoke"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    assert PF.DRY_RUN in dry
+
+
 def test_launch_destroys_on_sigterm_while_polling(E):
     # BK4-3: an interrupt (Ctrl-C, SIGTERM, SIGHUP) after `create instance` destroys the instance
     E.state(statuses=["loading"])
     E.pick()
-    env = dict(E.env, VAST_LAUNCH_TIMEOUT_S="60", VAST_POLL_S="0.05")
+    env = dict(E.env, VAST_LAUNCH_TIMEOUT_S="60", VAST_POLL_S="0.05", DRY_RUN="0")
     argv = ["bash", str(VAST / "launch.sh"), "111", "r1", "--config", str(E.config)]
     p = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     t0 = time.time()
@@ -392,10 +482,10 @@ def test_launch_destroys_on_sigterm_while_polling(E):
 
 def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     # BK4-18: per-GB bandwidth is in the filter (ceiling), the G10 projection (estimate) and the ledger
-    q = OF.query("RTX_4090", "lidc").split()
+    q = OF.query("RTX_4090").split()
     assert f"inet_up_cost<={LG.INET_CEIL}" in q and f"inet_down_cost<={LG.INET_CEIL}" in q
-    assert OF.reasons(offer(inet_up_cost=LG.INET_CEIL * 2), "RTX_4090", "lidc") == ["bandwidth fails the §4.2 filter"]
-    assert OF.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090", "lidc")
+    assert OF.reasons(offer(inet_up_cost=LG.INET_CEIL * 2), "RTX_4090") == ["bandwidth fails the §4.2 filter"]
+    assert OF.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090")
     E.state(offers=[offer(inet_up_cost=LG.INET_CEIL, inet_down_cost=LG.INET_CEIL)])
     E.pick()
     spent(E, LG.HARD_STOP - 2.8)  # + 0.55 x 4 = HARD_STOP - 0.6 by price alone; the bandwidth estimate takes it past
@@ -442,18 +532,6 @@ def test_launch_cap_adds_the_image_pull(E):
     assert f"WATCHDOG_CAP_S={7200 + RM.PULL_S}" in after(c, "--onstart-cmd") and RM.PULL_S >= 360
     run = E.active()["r1"]
     assert run["deadline"] - run["started"] == pytest.approx(7200 + RM.PULL_S)
-
-
-def test_riga_decrypt_checks_shm_size(E):
-    # BK4-19: Docker's /dev/shm defaults to 64 MB; the step fails loudly before decrypting when it is too small
-    riga_ready(E)
-    (E.bundles / "bundle-riga.tar.age").write_bytes(b"x" * 300 * 1024)
-    o = E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles)
-    (line,) = [ln for ln in o.stdout.splitlines() if "age -d" in ln]
-    assert "df -Pk /dev/shm" in line and '-ge 330 ]' in line and line.index("df -Pk") < line.index("age -d")
-    assert ";" not in line.split("<stdin")[0].replace("'\"'\"'", "")  # one && chain: a failed check stops the decrypt
-    assert "shm=UNVERIFIED" in E.ledger()[-1]["detail"]
-    assert "/dev/shm" in (DOCKER / "image_check.sh").read_text()
 
 
 def test_launch_timeout_destroys(E):
@@ -504,13 +582,13 @@ def test_pick_id_takes_any_admissible_offer_not_only_the_five_shown(E):
 def test_only_north_american_hosts_are_admissible(geo, ok):
     """Owner (2026-11-02): US and CA hosts only. V1: a Thailand host had not pulled the 5.9 GB image in 15 min. A
     fixed rule of the filter, so launch's re-check refuses a saved offer from elsewhere; no location fails."""
-    assert (OF.reasons(offer(geolocation=geo), "RTX_4090", "lidc") == []) == ok
+    assert (OF.reasons(offer(geolocation=geo), "RTX_4090") == []) == ok
 
 
 def test_a_bad_machine_is_never_admissible():
     """2026-11-03 v2: machine 28360's 4090 was busy and power-capped (7.4 of 165 bf16 TFLOPS)."""
-    assert OF.reasons(offer(machine_id=70), "RTX_4090", "lidc") == []
-    assert any("machine 28360" in r for r in OF.reasons(offer(machine_id=28360), "RTX_4090", "lidc"))
+    assert OF.reasons(offer(machine_id=70), "RTX_4090") == []
+    assert any("machine 28360" in r for r in OF.reasons(offer(machine_id=28360), "RTX_4090"))
 
 
 def test_sync_up_checks_the_gpu_before_the_bundle(E):
@@ -541,7 +619,7 @@ def test_offers_search_and_launch_keep_to_north_america(E):
     (q,) = E.vast("search offers")
     assert "geolocation in [US,CA]" in q[q.index("offers") + 1]
     assert "--region" in E.pick("top", "--region", "TH", ok=False).stderr  # no flag widens the rule
-    saved = dict(offer(7, geolocation="Thailand, TH"), _gpu="RTX_4090", _dataset="lidc", _disk=80)
+    saved = dict(offer(7, geolocation="Thailand, TH"), _gpu="RTX_4090", _disk=80)
     (E.home / "offers" / "7.json").write_text(json.dumps(saved))  # saved before the rule, as offers/49545596.json
     p = E.sh("launch.sh", "7", "r1", ok=False)
     assert "region" in p.stderr and not E.vast("create instance")
@@ -554,7 +632,7 @@ def test_launch_needs_a_picked_admissible_offer(E):
     assert not E.vast("create instance")
 
 
-# --- H-GOV and transfer rules in the scripts -----------------------------------------------------------------------
+# --- transfer rules in the scripts -----------------------------------------------------------------------
 
 
 def test_code_snapshot_ships_the_gpu_scoring_test(E):
@@ -569,40 +647,6 @@ def test_code_snapshot_ships_the_gpu_scoring_test(E):
     (inst,) = [ln for ln in o.stdout.splitlines() if "uv pip install" in ln]
     assert "-I -c" in inst and RM.IMPORT_CHECK in inst
     assert "tests." not in RM.IMPORT_CHECK and "experiments." not in RM.IMPORT_CHECK
-
-
-def test_riga_refused_to_community_and_without_permission(E):
-    E.launched()
-    p = E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles, ok=False)
-    assert "H-GOV" in p.stderr and "DRY_RUN" not in p.stdout
-    assert all("objdel-riga-age" not in c["argv"] for c in E.calls("security"))
-
-
-def riga_ready(E):
-    E.allow(riga_permission={"granted": True, "evidence": "written permission, email 2026-11-01"})
-    E.pick("113", "--riga")
-    E.sh("launch.sh", "113", "r1")
-
-
-def test_riga_identity_only_on_ssh_stdin(E):
-    riga_ready(E)
-    E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles, DRY_RUN="0")
-    dec = [c for c in E.calls("ssh") if "age -d -i /dev/stdin" in " ".join(c["argv"])]
-    assert len(dec) == 1 and dec[0]["stdin"].strip() == IDENTITY and "/dev/shm/riga" in " ".join(dec[0]["argv"])
-    rest = [c for c in E.calls() if "age -d" not in " ".join(c["argv"]) and c["tool"] != "security"]
-    assert rest and all(c["stdin"] == "" for c in rest)
-    assert not any(c["env_has_identity"] for c in E.calls())
-    assert IDENTITY not in all_text(E).replace(json.dumps(dec[0]["stdin"]), "")
-    assert IDENTITY not in files_text(E.home)
-    assert "age1publicrecipient" in E.ledger()[-1]["detail"]  # recipient (public) only
-
-
-def test_riga_dry_run_commands_read_identity_from_stdin(E):
-    riga_ready(E)
-    o = E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles)
-    (line,) = [ln for ln in o.stdout.splitlines() if "age -d" in ln]
-    assert "age -d -i /dev/stdin" in line and "<stdin: age identity" in line and IDENTITY not in o.stdout
-    assert "AGE" not in line.split("<stdin")[0].replace("AGE-SECRET", "")
 
 
 def test_rsync_never_sends_data_raw(E):
@@ -714,6 +758,50 @@ def test_sweep_destroys_orphans_and_overdue(E):
     (E.home / "active_runs.json").write_text(json.dumps(act))
     E.sh("sweep_orphans.sh")
     assert E.instances() == {} and [r["event"] for r in E.ledger()][-2:] == ["orphan", "overdue"]
+
+
+def test_a_held_pull_lock_never_blocks_the_sweep(E):
+    import fcntl
+
+    E.launched()
+    now = time.time()
+    E.state(instances=E.instances() | {str(i): {"id": i, "label": "x", "dph_total": 0.3, "start_date": now - 7200}
+                                       for i in (8, 9)})
+    with (E.home / ".pull-r1.lock").open("a") as held:  # a long pull of r1
+        fcntl.flock(held, fcntl.LOCK_EX)
+        E.sh("sweep_orphans.sh")
+    assert sorted(E.instances()) == ["4242"] and [r["event"] for r in E.ledger()][-2:] == ["orphan", "orphan"]
+
+
+def test_two_pulls_of_the_same_run_serialize(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    order, started = [], threading.Event()
+
+    def pull(tag):
+        with LG.pull_lock("r1"):
+            order.append(f"{tag}+")
+            started.set()
+            time.sleep(0.3)
+            order.append(f"{tag}-")
+
+    def child():
+        import fcntl
+
+        with (tmp_path / ".pull-r1.lock").open("a") as fh:  # another process: the lock is per file, not per thread
+            started.wait()
+            t0 = time.monotonic()
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            order.append(f"waited {time.monotonic() - t0 > 0.1}")
+
+    th = threading.Thread(target=child)
+    th.start()
+    pull("a")
+    th.join()
+    assert order[:2] == ["a+", "a-"] and order[2] == "waited True"
+    with LG.pull_lock("r1"), LG.locked():  # other names do not interfere
+        pass
 
 
 def test_sweep_hard_stop_destroys_everything(E):
@@ -934,42 +1022,22 @@ def test_bundle_lidc_members_manifest_and_determinism(tmp_path):
 def test_bundle_refuses_raw_and_incomplete(tmp_path):
     d = data_tree(tmp_path)
     (d / "views/lidc-train/leak.dcm").symlink_to(d / "raw/LIDC/secret.dcm")
-    with pytest.raises(SystemExit, match="data/raw|symlink"):
+    with pytest.raises(InfraError, match="data/raw|symlink"):
         B.build("lidc", d, tmp_path / "out")
     (d / "views/lidc-train/leak.dcm").unlink()
-    with pytest.raises(SystemExit, match="data/raw"):
+    with pytest.raises(InfraError, match="data/raw"):
         B.build("lidc", d / "raw", tmp_path / "out")
     shutil.rmtree(d / "eval_views/probe-topology")
-    with pytest.raises(SystemExit, match="probe-topology"):
+    with pytest.raises(InfraError, match="probe-topology"):
         B.build("lidc", d, tmp_path / "out")
     assert not (tmp_path / "out" / "bundle-lidc.tar").exists()
-
-
-def test_bundle_riga_only_encrypted_to_recorded_recipient(E, monkeypatch):
-    d = data_tree(E.tmp)
-    age = E.tmp / "bin" / "age"  # fake: records argv, writes stdin to -o
-    age.write_text(f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\na = sys.argv[1:]\n"
-                   "Path(a[a.index('-o') + 1]).write_bytes(b'AGE' + sys.stdin.buffer.read())\n"
-                   "open(Path(os.environ['FAKE_DIR']) / 'age.json', 'w').write(json.dumps(a))\n")  # fmt: skip
-    age.chmod(0o755)
-    for k in ("PATH", "FAKE_DIR", "VAST_HOME"):
-        monkeypatch.setenv(k, E.env[k])
-    out = B.build("riga", d, E.tmp / "out")
-    assert sorted(p.name for p in (E.tmp / "out").iterdir()) == ["bundle-riga.tar.age", "bundle-riga.tar.age.sha256"]
-    argv = json.loads((E.fake / "age.json").read_text())
-    assert argv[:2] == ["-r", "age1publicrecipient"] and out.name == "bundle-riga.tar.age"
-    body = out.read_bytes()
-    assert b"prepared/images/riga/r.png" in body and b"lidc" not in body.replace(b"riga", b"")
-    E.allow(riga_recipient=None)
-    with pytest.raises(SystemExit, match="recipient"):
-        B.build("riga", d, E.tmp / "out3")
 
 
 def test_bundle_ships_only_the_named_view(tmp_path):
     d = data_tree(tmp_path)
     names = [n for n, _ in B.members("lidc", d, ["lidc-train"])]
     assert "views/lidc-train/rows.jsonl" in names and not [n for n in names if n.startswith("views/lidc-old/")]
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         B.members("lidc", d, ["lidc-nope"])
 
 
@@ -988,7 +1056,7 @@ def test_bundle_ships_rl_train_windows_only_when_named(tmp_path):
 def test_bundle_lidc_needs_the_checker_eval_set(tmp_path):
     d = data_tree(tmp_path)
     shutil.rmtree(d / "checker_eval")
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         B.members("lidc", d)
 
 
@@ -1128,7 +1196,7 @@ def test_sync_up_code_only_skips_the_bundle(E):
 def test_code_snapshot_ships_no_local_vast_state():
     """Audit: `git ls-files -co --exclude-standard` also lists untracked files, so the ledger, offers, invoices and run
     records would reach the rented host. They are ignored; the allowlist (image pin, no secret) stays tracked."""
-    state = ("ledger.csv", "offers/", "invoices/", "active_runs.json", "code_files.txt", "known_hosts")
+    state = ("ledger.csv", "offers/", "invoices/", "active_runs.json", "code_files.txt", "known_hosts", ".lock")
     assert not {f for f in RM.code_files() for s in state if f.startswith(f"experiments/phase2/vast/{s}")}
 
 
@@ -1168,11 +1236,11 @@ def test_teardown_destroys_even_when_the_final_pull_fails(monkeypatch, tmp_path)
     calls = []
     monkeypatch.setattr(P, "home", lambda: tmp_path)
     monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "port": 40022})
-    monkeypatch.setattr(P, "cmd_pull", lambda a: RM.die("rsync failed: ..."))
+    monkeypatch.setattr(P, "cmd_pull", lambda a: (_ for _ in ()).throw(InfraError("rsync failed: ...")))
     monkeypatch.setattr(P, "destroy", lambda iid, rid, ev: calls.append((iid, ev)))
     monkeypatch.setattr(P, "vast", lambda *a, **k: {"results": []})
     monkeypatch.setattr(P, "ledger", lambda **kw: calls.append(kw["event"]))
-    with pytest.raises(SystemExit, match="final pull failed.*destroyed"):
+    with pytest.raises(InfraError, match="final pull failed.*destroyed"):
         P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls[0] == (7, "teardown") and "invoice" in calls
 
@@ -1196,17 +1264,17 @@ def _teardown(monkeypatch, tmp_path, pulls):
 
 
 def test_teardown_retries_the_final_pull_twice(monkeypatch, tmp_path):
-    calls = _teardown(monkeypatch, tmp_path, [SystemExit("ssh"), SystemExit("ssh"), None])
+    calls = _teardown(monkeypatch, tmp_path, [InfraError("ssh"), InfraError("ssh"), None])
     P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls[:4] == ["pull", "pull", "pull", (7, "teardown")]
-    calls = _teardown(monkeypatch, tmp_path, [SystemExit("ssh")] * 3)
-    with pytest.raises(SystemExit, match="final pull failed"):
+    calls = _teardown(monkeypatch, tmp_path, [InfraError("ssh")] * 3)
+    with pytest.raises(InfraError, match="final pull failed"):
         P.cmd_teardown(SimpleNamespace(run_id="v1"))
     assert calls[:4] == ["pull", "pull", "pull", (7, "teardown")]
 
 
 def test_teardown_destroys_on_ctrl_c_during_the_final_pull(monkeypatch, tmp_path):
-    """Only SystemExit was caught: a Ctrl-C (KeyboardInterrupt) in a long final pull skipped the destroy (G8)."""
+    """Only InfraError was caught: a Ctrl-C (KeyboardInterrupt) in a long final pull skipped the destroy (G8)."""
     calls = _teardown(monkeypatch, tmp_path, [KeyboardInterrupt()])
     with pytest.raises(KeyboardInterrupt):
         P.cmd_teardown(SimpleNamespace(run_id="v1"))
@@ -1473,7 +1541,7 @@ def test_run_spec_json_holds_the_spec_code_and_versions_and_never_overwrites_ano
     P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))  # the same spec again: fine
     (tmp_path / "CODE_SHA").unlink()
     spec.write_text(spec.read_text().replace("cap_hours: 9.5", "cap_hours: 2.0"))
-    with pytest.raises(SystemExit, match="different spec"):
+    with pytest.raises(InfraError, match="different spec"):
         P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
     out.unlink()
     P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
@@ -1485,7 +1553,7 @@ def test_launch_without_an_image_in_the_allowlist_refuses(monkeypatch, tmp_path)
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     (tmp_path / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n")
     (tmp_path / "offers").mkdir()
-    offer = {"_gpu": "RTX_4090", "_dataset": "lidc", "_disk": 80, "dph_total": 0.5, "inet_up_cost": 0.0,
+    offer = {"_gpu": "RTX_4090", "_disk": 80, "dph_total": 0.5, "inet_up_cost": 0.0,
              "inet_down_cost": 0.0}
     (tmp_path / "offers/1.json").write_text(json.dumps(offer))
     compute = SimpleNamespace(cap_hours=4, gpu="RTX_4090")
@@ -1495,7 +1563,7 @@ def test_launch_without_an_image_in_the_allowlist_refuses(monkeypatch, tmp_path)
     monkeypatch.setattr("objdel.infra.preflight.refusal", lambda cfg: "")
     a = SimpleNamespace(run_id="r1", config="c.yaml", offer=1, cap_hours=2.0, owner_approved=False,
                         allow_parallel=False, idle_minutes=30)
-    with pytest.raises(SystemExit, match="no image in .vast-allowlist"):
+    with pytest.raises(InfraError, match="no image in .vast-allowlist"):
         P.cmd_launch(a)
 
 

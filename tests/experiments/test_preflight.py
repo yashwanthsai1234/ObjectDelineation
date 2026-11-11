@@ -134,13 +134,13 @@ def test_local_maps_data_templates_on_the_mac(monkeypatch):
     assert PF.local("{data}/rows/x") == Path("/d/views/x") and PF.local("{data}/prepared") == Path("/d/prepared")
 
 
-def test_local_rows_root_maps_only_the_literal_box_path():
-    assert PF.local_rows_root("{data}/rows/lidc-train-b1-780") == Path("data/views/lidc-train-b1-780")
-    assert PF.local_rows_root("{data}/rows/x", "/d") == Path("/d/views/x")
+def test_rows_name_maps_only_the_literal_box_path():
+    assert PF.rows_name("{data}/rows/lidc-train-b1-780") == "lidc-train-b1-780"
     for bad in ("{data}/rows/../x", "{data}/views/lidc-train-b1-780", "/workspace/data/rows/x", "{data}/rows/a/b",
-                "{data}/rows/.."):
-        with pytest.raises(ValueError):
-            PF.local_rows_root(bad)
+                "{data}/rows/..", "{data}/rows/."):
+        assert PF.rows_name(bad) is None
+    with pytest.raises(ValueError):
+        PF.local("{data}/rows/.")
 
 
 def b1_rows_copy(tmp_path, sha) -> Path:

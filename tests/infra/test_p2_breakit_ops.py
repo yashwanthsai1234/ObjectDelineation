@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 import pytest
 
+from objdel.infra.errors import InfraError
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
@@ -221,18 +222,7 @@ def test_watchdog_keeps_box_when_outputs_are_newer_than_the_pull(E):
     assert curls == [] and p.returncode == 3
 
 
-# --- H-GOV (D16), offers (§4.2) --------------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("granted", [True, False, "true"])
-@pytest.mark.parametrize("evidence", ["", "written permission 2026-11-01"])
-@pytest.mark.parametrize("hosting_type", [0, 1, None])
-def test_governance_matrix(granted, evidence, hosting_type):
-    o = V.offer(hosting_type=hosting_type)
-    allow = {"riga_permission": {"granted": granted, "evidence": evidence}}
-    ok = not OF.governance("riga", o, allow)
-    assert ok == (granted is True and bool(evidence) and hosting_type == 1)
-    assert OF.governance("lidc", o, {}) == [] and OF.governance("other", o, allow)
+# --- offers --------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("gpu", sorted(OF.CARDS))
@@ -240,45 +230,24 @@ def test_card_boundaries(gpu):
     c = OF.CARDS[gpu]
     lo, hi = c["ram"]
     base = V.offer(gpu=gpu.replace("_", " "), gpu_ram=hi * 1024, dph_total=c["ceiling"], hosting_type=1)
-    assert OF.reasons(base, gpu, "lidc") == [] and OF.reasons(base, gpu, "riga") == []
-    assert OF.reasons(dict(base, dph_total=c["ceiling"] + 0.001), gpu, "lidc") == ["price fails the §4.2 filter"]
-    assert OF.reasons(dict(base, gpu_ram=hi * 1024 + 1), gpu, "lidc") == ["gpu_ram fails the §4.2 filter"]
+    assert OF.reasons(base, gpu) == []
+    assert OF.reasons(dict(base, dph_total=c["ceiling"] + 0.001), gpu) == ["price fails the §4.2 filter"]
+    assert OF.reasons(dict(base, gpu_ram=hi * 1024 + 1), gpu) == ["gpu_ram fails the §4.2 filter"]
     if lo:
-        assert OF.reasons(dict(base, gpu_ram=lo * 1024 - 1), gpu, "lidc") == ["gpu_ram fails the §4.2 filter"]
+        assert OF.reasons(dict(base, gpu_ram=lo * 1024 - 1), gpu) == ["gpu_ram fails the §4.2 filter"]
     need = max(32, c.get("cpu_ram", 0))
-    assert OF.reasons(dict(base, cpu_ram=need * 1000 - 1), gpu, "lidc") == ["cpu_ram fails the §4.2 filter"]  # MB, V0
-    assert OF.reasons(dict(base, hosting_type=0), gpu, "riga") == ["datacenter fails the §4.2 filter"]
-    q = OF.query(gpu, "lidc")
+    assert OF.reasons(dict(base, cpu_ram=need * 1000 - 1), gpu) == ["cpu_ram fails the §4.2 filter"]  # MB, V0
+    q = OF.query(gpu)
     assert f"dph<={c['ceiling']}" in q and f"gpu_ram<={hi}" in q and "datacenter" not in q
-    assert "datacenter=True" in OF.query(gpu, "riga") and "cpu_ram>=48" in OF.query(gpu, "riga")
 
 
 @pytest.mark.parametrize("bad", [{"reliability2": 0.5}, {"rentable": False}, {"inet_down": 10},
                                  {"direct_port_count": 0}, {"disk_space": 10}])  # fmt: skip
 def test_offer_recheck_covers_the_whole_query(bad):
-    assert OF.reasons(V.offer(**bad), "RTX_4090", "lidc")
+    assert OF.reasons(V.offer(**bad), "RTX_4090")
 
 
 # --- secrets (D16, G9), destroy-never-stop (G4) ----------------------------------------------------------------------
-
-
-def test_riga_identity_only_on_the_decrypt_stdin_for_the_whole_session(E):
-    V.riga_ready(E)
-    outs = [
-        E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles, DRY_RUN="0"),
-        E.sh("run.sh", "r1", "experiments.phase2.final_eval", "--out", "/workspace/runs/r1/k3.json", DRY_RUN="0"),
-        E.sh("pull.sh", DRY_RUN="0"),
-        E.sh("teardown.sh", "r1", DRY_RUN="0"),
-        E.sh("sweep_orphans.sh", DRY_RUN="0"),
-    ]
-    carriers = [c for c in E.calls() if V.IDENTITY in json.dumps(c)]
-    (dec,) = carriers  # the fake `security` prints the identity but records only its argv
-    assert dec["tool"] == "ssh" and "age -d -i /dev/stdin" in dec["argv"][-1]
-    assert V.IDENTITY not in json.dumps(dec["argv"]) and dec["stdin"].strip() == V.IDENTITY
-    assert not any(c["env_has_identity"] for c in E.calls())
-    assert V.IDENTITY not in "".join(o.stdout + o.stderr for o in outs)
-    state = V.files_text(E.home, E.runs, E.bundles)  # not bin/ (the fakes)
-    assert state and V.IDENTITY not in state
 
 
 def test_destroy_never_stop(E):
@@ -381,7 +350,7 @@ def test_bundle_refuses_a_symlinked_view_directory(tmp_path):
 
     d = V.data_tree(tmp_path)
     (d / "views" / "lidc-extra").symlink_to(d / "views" / "riga-train", target_is_directory=True)
-    with pytest.raises(SystemExit):
+    with pytest.raises(InfraError):
         B.build("lidc", d, tmp_path / "out")
 
 

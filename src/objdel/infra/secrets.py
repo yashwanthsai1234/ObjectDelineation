@@ -1,4 +1,4 @@
-"""Local secrets for every phase: <repo>/.secrets first, then the macOS keychain (owner 2026-11-05).
+"""Local secrets for every phase: <repo>/.secrets first, then the macOS keychain.
 
 .secrets holds one `name=value` per line (# comments); the names are the keychain service names
 (objdel-hf-write, objdel-vast-scoped, ...). It is git-ignored, never sent to a rented box (sync_up ships tracked
