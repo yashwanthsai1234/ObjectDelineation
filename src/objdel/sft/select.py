@@ -49,8 +49,9 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.core.io import read_json
+from objdel.core.io import read_json, read_jsonl
 from objdel.policy import evaluate
+from objdel.policy.errors import Refusal
 
 TRIES = 2  # sampler child attempts that finish no new item
 
@@ -99,7 +100,7 @@ def sampler_cmd(kind: str, prompts: Path, model: Path, out: Path, extra=()) -> l
 def complete(comps: Path, want: Counter) -> bool:
     """Every prompt id has exactly its n completions (a cut or partial file is not complete)."""
     try:
-        return Counter(json.loads(x)["id"] for x in comps.read_text().splitlines()) == want
+        return Counter(r["id"] for r in read_jsonl(comps)) == want
     except (OSError, ValueError, KeyError):
         return False
 
@@ -145,7 +146,7 @@ def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: flo
     """The sampler child (extra: more flags, e.g. --logprobs), bounded: completions of the same prompts and child
     command (sampler, checkpoint, flags) are reused when complete and resumed otherwise; attempts of `timeout` s
     until TRIES of them finish no new item."""
-    want = Counter({p["id"]: p["n"] for p in map(json.loads, prompts.read_text().splitlines())})
+    want = Counter({p["id"]: p["n"] for p in read_jsonl(prompts)})
     cmd, meta = sampler_cmd(kind, prompts, model, comps, extra), comps.with_suffix(".meta.json")
     stamp = {"prompts_sha256": hashlib.sha256(prompts.read_bytes()).hexdigest(), "cmd": cmd}
     if not (meta.is_file() and read_json(meta) == stamp):
@@ -237,8 +238,7 @@ def hf_check(a, name: str, out: Path) -> dict:
     hf = argparse.Namespace(**vars(a) | {"sampler": "hf"})
     done = sample_view(hf, a.run / "branches" / name, rows, out / name / "hf-check", a.k)
     got = {"hf": {r["item_id"]: r["samples"] for r in evaluate.score_items(rows, done, a.shifted.resolve())[0]}}
-    lines = (out / name / "shifted" / "items.jsonl").read_text().splitlines()
-    got["vllm"] = {r["item_id"]: r["samples"] for r in map(json.loads, lines)}
+    got["vllm"] = {r["item_id"]: r["samples"] for r in read_jsonl(out / name / "shifted" / "items.jsonl")}
     ids = [i for i in got["hf"] if i in got["vllm"]]
     D = signal.point_or_draws(ids)
     diff = {k: signal.ci(np.array([np.mean(got["vllm"][i][k]) - np.mean(got["hf"][i][k]) for i in ids]), D)
@@ -297,7 +297,7 @@ def topology_only(a, out: Path) -> int:
     """--only topology (C2): the topology probe on the run's single branch -> <out>/report.json."""
     names = sorted(p.name for p in (a.run / "branches").iterdir())
     if a.probes is None or len(names) != 1:
-        raise SystemExit(f"select_ckpt --only topology: needs --probes and one branch, found {names}")
+        raise Refusal(f"select_ckpt --only topology: needs --probes and one branch, found {names}")
     from objdel.geom import engine as _gpucheck
 
     topo = score_probe(a, a.run / "branches" / names[0], "topology", out / names[0])
@@ -309,14 +309,14 @@ def topology_only(a, out: Path) -> int:
 
 
 def vision_config(a) -> dict | None:
-    """The G-vision config of the stage (None with --no-vision); SystemExit when prepared or reference is bad."""
+    """The G-vision config of the stage (None with --no-vision); Refusal when prepared or reference is bad."""
     if a.no_vision:
         return None
     cfg = a.vision
     ref = cfg.get("reference")
     ok = Path(ref).is_file() if isinstance(ref, str) else isinstance(ref, int | float) and ref > 0
     if not isinstance(cfg.get("prepared"), str) or not ok:
-        raise SystemExit(f"select_ckpt: --vision needs prepared (a path) and reference (> 0, or R0's JSON): {cfg}")
+        raise Refusal(f"select_ckpt: --vision needs prepared (a path) and reference (> 0, or R0's JSON): {cfg}")
     return cfg
 
 

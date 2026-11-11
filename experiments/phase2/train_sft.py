@@ -11,6 +11,7 @@ for True).
 
 import sys
 
+from objdel.policy.errors import Refusal
 from objdel.sft.train import train
 
 
@@ -18,7 +19,10 @@ def main(argv=None) -> int:
     """CLI: the SftStage of the flags (or of --spec/--stage) -> train."""
     from objdel.core.spec import SftStage, cli_stage
 
-    return train(cli_stage(SftStage, sys.argv[1:] if argv is None else argv))
+    try:
+        return train(cli_stage(SftStage, sys.argv[1:] if argv is None else argv))
+    except Refusal as e:
+        raise e.system_exit() from None
 
 
 if __name__ == "__main__":

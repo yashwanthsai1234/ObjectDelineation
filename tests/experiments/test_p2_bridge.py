@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.policy.errors import Refusal
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -151,7 +153,7 @@ def test_import_refuses_short_duplicate_or_missing_items(tmp_path):
 
 def test_refuses_to_start_on_a_busy_gpu(V):
     V.check_memory(lambda: (95, 100))
-    with pytest.raises(SystemExit, match="89"):
+    with pytest.raises(Refusal, match="89"):
         V.check_memory(lambda: (89, 100))
 
 

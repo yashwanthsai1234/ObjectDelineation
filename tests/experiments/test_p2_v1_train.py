@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from test_p2_scripts import stage
 
+from objdel.policy.errors import Refusal
+
 ROOT = Path(__file__).resolve().parents[2]
 SPECS = sorted((ROOT / "specs").glob("*.yaml"))  # the old train_sft configs (C2, rx8) left git in E6.6
 
@@ -233,7 +235,7 @@ def test_branches_from_reads_the_final_verdict_checkpoint(TS, tmp_path):
 def test_branches_from_refuses_without_a_verdict(TS, tmp_path, doc):
     rel = _probe(tmp_path, **doc) if doc else "r1-qwen3vl2b/g_probe/g_probe.json"
     a = stage("qwen3-vl-2b", _view(tmp_path, 3), "c2", run_dir=str(tmp_path), branches_from=rel, vision=False)
-    with pytest.raises(SystemExit, match="C2 must not start"):
+    with pytest.raises(Refusal, match="C2 must not start"):
         TS.train(a)
     assert not (tmp_path / "c2").exists()
 

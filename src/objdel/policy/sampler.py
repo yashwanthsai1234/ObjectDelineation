@@ -74,7 +74,9 @@ from typing import Any, Protocol
 import pandas as pd
 from trl.data_utils import prepare_multimodal_messages
 
+from objdel.core.io import read_jsonl
 from objdel.policy import models
+from objdel.policy.errors import Refusal
 from objdel.verify.reward.spec import REWARD_V4
 
 G = REWARD_V4.group
@@ -162,10 +164,9 @@ def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = N
     ValueError unless every id has exactly the exported n samples k = 0 .. n-1, each once, and (with ids, the
     exported keys) the ids are exactly those (BK2-3, BK3-7: a cut or doubled file would change K silently)."""
     by: dict[str, dict[int, dict]] = {}
-    with open(path) as f:
-        for c in map(json.loads, f):
-            if by.setdefault(c["id"], {}).setdefault(c["k"], c) is not c:
-                raise ValueError(f"{c['id']}: sample k = {c['k']} twice")
+    for c in read_jsonl(path):
+        if by.setdefault(c["id"], {}).setdefault(c["k"], c) is not c:
+            raise ValueError(f"{c['id']}: sample k = {c['k']} twice")
     if ids is not None and set(by) != set(ids):
         raise ValueError(f"{path}: missing: {sorted(set(ids) - set(by))[:5]}, not exported: "
                          f"{sorted(set(by) - set(ids))[:5]}")
@@ -242,11 +243,11 @@ ENV = {"VLLM_USE_FLASHINFER_SAMPLER": "0"}  # the PyTorch sampler: no JIT build 
 
 
 def check_memory(mem_get_info, need: float = FREE) -> None:
-    """Exit unless mem_get_info() reports at least `need` of the device free (D13: no other process on the GPU)."""
+    """Refusal unless mem_get_info() reports at least `need` of the device free (D13: no other process on the GPU)."""
     free, total = mem_get_info()
     if free < need * total:
-        raise SystemExit(f"sampler: {100 * free / total:.0f} % of GPU memory free, need {100 * need:.0f} % "
-                         "(another process holds the GPU)")
+        raise Refusal(f"sampler: {100 * free / total:.0f} % of GPU memory free, need {100 * need:.0f} % "
+                      "(another process holds the GPU)")
 
 
 def request_seed(seed: int, item_id: str) -> int:
@@ -334,7 +335,7 @@ def load(path, device: str):
     model.generation_config = GenerationConfig()
     proc = AutoProcessor.from_pretrained(path, padding_side="left")
     if proc.tokenizer.padding_side != "left":
-        raise SystemExit(f"sampler: {path}: the tokenizer pads on the {proc.tokenizer.padding_side}")
+        raise Refusal(f"sampler: {path}: the tokenizer pads on the {proc.tokenizer.padding_side}")
     return model, proc
 
 
@@ -367,9 +368,9 @@ def generate(model, proc, dev, batch: list[tuple[int, dict]]) -> list[dict]:
 
 
 def batches(lines: list[dict], batch_items: int) -> list[list[tuple[int, dict]]]:
-    """(line index, line) batches of batch_items lines; SystemExit unless all lines share sampling, n and kwargs."""
+    """(line index, line) batches of batch_items lines; Refusal unless all lines share sampling, n and kwargs."""
     if len({json.dumps([p["sampling"], p["n"], p["processor_kwargs"]], sort_keys=True) for p in lines}) > 1:
-        raise SystemExit("sampler: prompts differ in sampling, n or processor_kwargs; a batch needs one setting")
+        raise Refusal("sampler: prompts differ in sampling, n or processor_kwargs; a batch needs one setting")
     indexed = list(enumerate(lines))
     return [indexed[i : i + batch_items] for i in range(0, len(lines), batch_items)]
 
@@ -456,8 +457,10 @@ def main(argv=None) -> None:
     ap.add_argument("--batch_items", type=int, default=8, help="hf: prompts per generate call (x n samples each)")
     ap.add_argument("--timing", type=Path, help="hf: write generate seconds per item-sample here (R0 rate)")
     a = ap.parse_args(argv)
-    lines = [json.loads(x) for x in a.prompts.read_text().splitlines()]
-    (_main_vllm if a.kind == "vllm" else _main_hf)(a, lines)
+    try:
+        (_main_vllm if a.kind == "vllm" else _main_hf)(a, read_jsonl(a.prompts))
+    except Refusal as e:
+        raise e.system_exit() from None
 
 
 if __name__ == "__main__":

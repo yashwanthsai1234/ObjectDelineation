@@ -28,6 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core.io import read_jsonl
 from objdel.policy.prompt import PROMPTS
 
 RATIO, TV = 0.5, 0.002
@@ -47,7 +48,7 @@ def fixed_set(prepared_root, n: int = N_ITEMS) -> tuple[list[dict], str]:
     docstring); ValueError when an image is not the one recorded."""
     from PIL import Image
     root = Path(prepared_root)
-    recs = [r for r in map(json.loads, (root / "lidc" / "val.jsonl").read_text().splitlines()) if r["rl"]]
+    recs = [r for r in read_jsonl(root / "lidc" / "val.jsonl") if r["rl"]]
     idx = np.random.default_rng(SEED).permutation(len(recs))[:POOL]
     out = []
     for r in sorted((recs[i] for i in idx), key=lambda r: r["item_id"])[:n]:
@@ -66,16 +67,11 @@ def black(image):
     return Image.new("RGB", image.size)
 
 
-def _prompt(prompt):
-    if prompt is None:
-        prompt = PROMPTS["lidc"]
-    return prompt
-
-
 def _batch(model, processor, image, prompt):
-    msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": _prompt(prompt)}]}]
-    text = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-    b = processor(text=[text], images=[[image]], return_tensors="pt")
+    text = PROMPTS["lidc"] if prompt is None else prompt
+    msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]}]
+    chat = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+    b = processor(text=[chat], images=[[image]], return_tensors="pt")
     return {k: v.to(model.device, model.dtype) if v.is_floating_point() else v.to(model.device) for k, v in b.items()}
 
 

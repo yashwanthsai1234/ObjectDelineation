@@ -15,6 +15,7 @@ work, the sampler child and the outputs: objdel.sft.select.
 import sys
 
 from experiments.phase2 import baselines, prereg
+from objdel.policy.errors import Refusal
 
 
 def main(argv=None) -> int:
@@ -22,7 +23,10 @@ def main(argv=None) -> int:
     from objdel.core.spec import SelectStage, cli_stage
     from objdel.sft.select import run
 
-    return run(cli_stage(SelectStage, sys.argv[1:] if argv is None else argv), prereg, baselines)
+    try:
+        return run(cli_stage(SelectStage, sys.argv[1:] if argv is None else argv), prereg, baselines)
+    except Refusal as e:
+        raise e.system_exit() from None
 
 
 if __name__ == "__main__":

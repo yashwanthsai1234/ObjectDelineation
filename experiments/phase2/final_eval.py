@@ -24,6 +24,7 @@ from pathlib import Path
 
 from experiments.phase2.freeze_views import render_files
 from objdel.policy import final_eval as E
+from objdel.policy.errors import Refusal
 
 
 def no_model(argv: list[str]) -> None:
@@ -47,9 +48,12 @@ def main(argv=None) -> None:
     from objdel.core.spec import EvalStage, cli_stage
 
     argv = sys.argv[1:] if argv is None else list(argv)
-    if {"--hash-view", "--resummarize"} & set(argv):
-        return no_model(argv)
-    return E.run(cli_stage(EvalStage, argv))
+    try:
+        if {"--hash-view", "--resummarize"} & set(argv):
+            return no_model(argv)
+        return E.run(cli_stage(EvalStage, argv))
+    except Refusal as e:
+        raise e.system_exit() from None
 
 
 if __name__ == "__main__":

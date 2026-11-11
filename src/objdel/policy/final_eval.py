@@ -59,6 +59,7 @@ from objdel.core.io import write_atomic as _write
 from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
 from objdel.geom import engine as _gpucheck
+from objdel.policy.errors import Refusal
 from objdel.policy.evaluate import METRICS, evaluate, per_item, score_items, summarize
 from objdel.verify import device
 from objdel.verify import stats as signal
@@ -117,18 +118,20 @@ def frozen_entry(view_name: str) -> dict | None:
 
 
 def check_view(view: Path, split: str) -> None:
-    """Exit unless `split` is a set of the view and a frozen view's hashes equal its frozen_views.json entry."""
+    """Refusal unless `split` is a set of the view and a frozen view's hashes equal its frozen_views.json entry."""
     sets = read_json(view / "manifest.json")["sets"]
     if f"lidc/{split}" not in sets:
-        sys.exit(f"final_eval: {view} holds {sorted(sets)}, not lidc/{split} (the test view needs --split test)")
+        raise Refusal(f"final_eval: {view} holds {sorted(sets)}, not lidc/{split} (the test view needs --split test)")
     name = view.resolve().name  # an alias (symlink) of a frozen view is that view
     if name not in Q.FROZEN:
         return
     if (e := frozen_entry(name)) is None:
-        sys.exit(f"final_eval: {view.name} is a frozen view with no frozen_views.json entry (looked in {FROZEN_VIEWS})")
+        raise Refusal(f"final_eval: {view.name} is a frozen view with no frozen_views.json entry "
+                      f"(looked in {FROZEN_VIEWS})")
     for key, got in (("content_sha256", Q.view_content_sha256(view)), ("target_set_sha256", Q.target_set_sha256(view))):
         if got != e[key]:
-            sys.exit(f"final_eval: {view.name} {key} {got} differs from frozen_views.json {e[key]}: refusing to score")
+            raise Refusal(f"final_eval: {view.name} {key} {got} differs from frozen_views.json {e[key]}: "
+                          "refusing to score")
 
 
 def hash_view(view: Path, out: Path, commits: dict[str, str]) -> None:
@@ -159,8 +162,7 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
     found = {i: g for i, g in zip(*table.to_pydict().values(), strict=True) if g}
     lost = [it["item_id"] for it in items if it["item_id"] not in found]
     if lost:
-        print(f"resummarize: {len(lost)} items have no group_id in {store}, first {lost[0]}", file=sys.stderr)
-        sys.exit(2)
+        raise Refusal(f"resummarize: {len(lost)} items have no group_id in {store}, first {lost[0]}", 2)
     s = summarize(items, found)
     res = {k: doc[k] for k in RUN_KEYS} | s | {"metrics_absent": [m for m in METRICS if m not in s],
                                                "resummarized_from": str(run)}
@@ -222,10 +224,9 @@ def rescore(src: Path, view: Path, split: str, out: Path) -> None:
     f = src / "final_eval.json"
     old = read_json(f) if f.exists() else {}
     if "view_manifest_sha256" not in old:
-        sys.exit(f"rescore: {f} is missing or has no view_manifest_sha256")
+        raise Refusal(f"rescore: {f} is missing or has no view_manifest_sha256")
     if old["view_manifest_sha256"] != view_manifest_sha256(view):
-        print(f"rescore: {view}/manifest.json is not the manifest {src} was sampled on", file=sys.stderr)
-        sys.exit(2)
+        raise Refusal(f"rescore: {view}/manifest.json is not the manifest {src} was sampled on", 2)
     t0 = time.time()
     answers = read_jsonl(src / "answers.jsonl")
     by_key = {r["key"]: r for r in dataset.prompts(view, "lidc", split)}
@@ -242,8 +243,7 @@ def rescore(src: Path, view: Path, split: str, out: Path) -> None:
 def run(a) -> None:
     """--rescore, or sample and score every view of the EvalStage `a` (module docstring); exit 2 on a bad flag."""
     def error(msg: str):
-        print(f"final_eval: error: {msg}", file=sys.stderr)
-        sys.exit(2)
+        raise Refusal(f"final_eval: error: {msg}", 2)
 
     for name in ("adapter_config.json", "adapter_model.safetensors") if a.adapter else ():
         if not (Path(a.adapter) / name).is_file():

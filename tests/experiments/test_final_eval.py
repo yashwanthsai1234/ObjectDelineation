@@ -989,7 +989,7 @@ def test_frozen_entry_is_a_content_hash_not_the_manifest_sha(frozen):
     d, f = frozen
     f.write_text(json.dumps({d.name: {"content_sha256": hashlib.sha256((d / "manifest.json").read_bytes()).hexdigest(),
                                       "target_set_sha256": "t" * 64}}))
-    with pytest.raises(SystemExit, match="content_sha256"):
+    with pytest.raises(FE.Refusal, match="content_sha256"):
         FE.check_view(d, "test")
 
 
@@ -998,7 +998,7 @@ def test_frozen_view_without_its_record_is_refused(frozen, tmp_path, monkeypatch
     d, _ = frozen
     monkeypatch.setattr(FE, "FROZEN_VIEWS", tmp_path / "missing.json")
     assert FE.frozen_entry(d.name) is None
-    with pytest.raises(SystemExit, match="frozen_views.json"):
+    with pytest.raises(FE.Refusal, match="frozen_views.json"):
         FE.check_view(d, "test")
 
 

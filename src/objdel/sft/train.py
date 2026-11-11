@@ -65,6 +65,7 @@ from pathlib import Path
 from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json, write_json
 from objdel.core.provenance import code_hashes
+from objdel.policy.errors import Refusal
 
 ABORTED = 3  # exit code of a G-vision abort
 
@@ -114,7 +115,7 @@ def probed_depth(path: Path) -> float:
     if doc.get("verdict") and (m := re.fullmatch(r"e(\d+(\.\d+)?)", Path(doc.get("ckpt") or "").name)):
         return float(m[1])
     why = doc.get("skipped") or "missing or unfinished R2"
-    raise SystemExit(f"branches_from {path}: no G-probe verdict on a branch checkpoint ({why}): C2 must not start")
+    raise Refusal(f"branches_from {path}: no G-probe verdict on a branch checkpoint ({why}): C2 must not start")
 
 
 def resolve(args):

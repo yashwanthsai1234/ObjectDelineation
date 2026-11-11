@@ -15,6 +15,7 @@ import pytest
 from objdel.policy import models as configs
 from objdel.policy import models as rewards
 from objdel.policy import sampler as S
+from objdel.policy.errors import Refusal
 
 ROOT = Path(__file__).resolve().parents[2]
 VIEW = ROOT / "data/eval_views/lidc-val-shifted"
@@ -73,7 +74,7 @@ def test_outputs_echo_prompt_ids_only_with_logprobs(tmp_path):
 
 
 def test_refuses_to_start_on_a_busy_gpu():
-    with pytest.raises(SystemExit, match="89 %"):
+    with pytest.raises(Refusal, match="89 %"):
         S.check_memory(lambda: (89, 100))
     S.check_memory(lambda: (90, 100))
 
