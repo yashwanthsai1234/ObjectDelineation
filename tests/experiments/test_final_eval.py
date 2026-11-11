@@ -256,12 +256,6 @@ def test_resummarize_is_repeatable_across_processes(tmp_path):
     assert outs[0] == outs[1]
 
 
-def sel_items(ids, mean, medoid, vote=None):
-    return [{"item_id": i, "iou_tc": a, "sel_mean_of_k": a, "sel_medoid": b,
-             **({} if vote is None else {"sel_vote": vote[j]})}
-            for j, (i, a, b) in enumerate(zip(ids, mean, medoid, strict=True))]
-
-
 def test_selection_key_invariants():
     """P08: 200 random items, K = 8."""
     rng = np.random.default_rng(8)
@@ -781,16 +775,6 @@ def test_noise_floor(tmp_path):
     nf = FE.noise_floor(res, groups)
     assert nf["item_sd"] == np.std(d, ddof=1) / np.sqrt(2)
     assert nf["mean_sd"] == np.std([d[x].mean() for x in D], ddof=1) / np.sqrt(2)
-
-
-def identity_fixture(seed=0):
-    """40 items in 8 patients, K = 8 answers around a per-item level."""
-    rng = np.random.default_rng(seed)
-    ids = [f"lidc/p{i % 8}/n{i:03d}/z1" for i in range(40)]
-    level = rng.uniform(.1, .9, 40)
-    res = [{"item_id": i, "samples": {"iou_tc": np.clip(x + rng.normal(0, .08, 8), 0, 1).tolist()}}
-           for i, x in zip(ids, level, strict=True)]
-    return ids, {i: i.split("/")[1] for i in ids}, res
 
 
 def test_code_sha_writer_marks_a_dirty_tree(tmp_path):

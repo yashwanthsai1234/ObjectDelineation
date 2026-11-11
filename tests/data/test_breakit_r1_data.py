@@ -14,17 +14,6 @@ from objdel.verify import stats as S
 from tests.experiments.test_data_windows import lidc_item
 
 
-def _gate_items(n_patients):
-    items = []
-    for i in range(4):
-        m = (0.5, 0.6, 0.4, 0.7)[i]
-        d = {k: 0.5 for k in FE().METRICS}
-        d.update(item_id=f"lidc/p{i % n_patients}/n00{i}/z1", iou_tc=m, sel_mean_of_k=m,
-                 sel_medoid=m + 0.05 + 0.03 * (i % 2))
-        items.append(d)
-    return items, {it["item_id"]: it["item_id"].split("/")[1] for it in items}
-
-
 def FE():
     from objdel.policy import final_eval
     return final_eval

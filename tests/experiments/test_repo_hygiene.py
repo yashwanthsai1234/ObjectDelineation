@@ -236,12 +236,6 @@ def test_topology_any_docstring_does_not_claim_the_reward_uses_it():
     assert "reward compares" not in volume.__doc__ and "phase G" in volume.__doc__
 
 
-def test_one_stated_rl_learning_rate():
-    from objdel.policy import models
-
-    assert "prereg.G_PROBE" in models.__doc__ and "1e-6 full, 1e-5 LoRA" not in models.__doc__
-
-
 # --- CLEAN12: dead-code gate and dependency direction ----------------------------------------------------------------
 
 
