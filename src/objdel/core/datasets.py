@@ -41,6 +41,9 @@ class Dataset:
     ops: tuple[str, ...] = ("id",)  # the training views' dihedral ops (objdel.data.targets.augment.OPS)
     rotated_op: str | None = None  # the op of the rotated eval view; None: no rotated view
     min_raters: int = 2  # raters per RL item; RL refuses an entry below the reward's 2 (no single-rater reward)
+    exams: tuple[str, ...] = ()  # the eval views (data/eval_views/<name>) a bundle carries and preflight checks
+    checker_eval: bool = False  # data/checker_eval (the CUDA checker's archived references) rides in its bundle
+    restricted: bool = False  # its licence forbids uploads (no rows, no model trained on it, on the Hub)
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -61,6 +64,8 @@ LIDC = Dataset(
     frame=FrameConfig(image_side=512),
     ops=("id", "r90", "r180", "r270", "fh", "fv", "tr", "at"),
     rotated_op="r90",
+    exams=("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-precision", "probe-topology"),
+    checker_eval=True,
 )
 
 DATASETS: dict[str, Dataset] = {d.name: d for d in (LIDC,)}

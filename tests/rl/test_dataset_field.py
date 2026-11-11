@@ -47,3 +47,15 @@ def test_rl_refuses_unknown_and_single_rater_datasets(monkeypatch, capsys):
         with pytest.raises(SystemExit) as e:
             parse([*BASE, "--dataset", name])
         assert e.value.code == 2 and why in capsys.readouterr().err
+
+
+def test_a_spec_reads_one_dataset_and_its_box_folder():
+    from objdel.core.provenance import repo_root
+    from objdel.infra.vast import chain
+
+    run = spec.load_spec(repo_root() / "specs/b1_rows.yaml")
+    assert spec.spec_dataset(run) == "lidc" and chain.box_data(run) == "/workspace/data/lidc"
+    rl = next(s for s in run.stages if s.kind == "rl")
+    two = run.model_copy(update={"stages": (rl, rl.model_copy(update={"dataset": "x", "name": "b"}))})
+    with pytest.raises(ValueError, match="a run reads one dataset"):
+        spec.spec_dataset(two)

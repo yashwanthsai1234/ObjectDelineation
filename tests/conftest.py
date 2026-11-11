@@ -48,6 +48,7 @@ RIGA = datasets.Dataset(
            'integers 0-1000 relative to the crop, outer rings clockwise.',
     pixels=("uint8", 3),
     ops=("id", "fh"),  # fundus orientation is physiological
+    restricted=True,  # its licence forbids redistribution
 )
 
 

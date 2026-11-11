@@ -25,6 +25,9 @@ def test_lidc_entry_equals_the_tables_it_replaced():
     assert d.ops == augment.OPS == ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")  # DATASET_OPS
     assert d.rotated_op == "r90"  # build_eval_views ROTATION
     assert d.min_raters == 2  # verify.reward.cache.rl_eligible's two raters
+    assert d.exams == ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "probe-precision",
+                       "probe-topology")  # preflight EXAMS (bundle LIDC_EVAL plus the rotated view)
+    assert d.checker_eval and not d.restricted  # bundle's ds == "lidc" checker set; hf's LIDC-only upload rule
 
 
 def test_the_library_registers_lidc_only():

@@ -116,7 +116,7 @@ def test_push_uploads_the_selected_branch_with_licence_and_card_in_one_commit(tm
 
 
 @pytest.mark.parametrize("case, want", [
-    ({"dataset": "riga"}, "RIGA"),
+    ({"dataset": "riga"}, "licence forbids redistribution"),
     ({"selected": None}, "no branch selected"),
 ])  # fmt: skip
 def test_push_refuses_riga_and_an_unselected_run(tmp_path, monkeypatch, fake, case, want):

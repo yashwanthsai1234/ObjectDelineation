@@ -4,32 +4,37 @@ folder `push_hf` uploads (`push_target`)."""
 from pathlib import Path
 
 from objdel.core.provenance import repo_root
-from objdel.core.spec import RunSpec, fill, load_spec, to_argv
+from objdel.core.spec import RunSpec, fill, load_spec, spec_dataset, to_argv
 from objdel.infra.errors import InfraError
 
-DATA = "/workspace/data/lidc"  # {data} on the box
+BOX_DATA = "/workspace/data/{dataset}"  # {data} on the box: the folder sync_up unpacks the dataset's bundle into
+
+
+def box_data(spec: RunSpec) -> str:
+    """{data} on the box for the spec's dataset."""
+    return BOX_DATA.format(dataset=spec_dataset(spec))
 
 
 def chain(cfg: Path, run_id: str) -> list[list[str]]:
     """A run spec's stages on the box, as argv lists (`-m module ...` runs in /opt/venv, `bash script ...` as is; a
-    leading "~" lets a stage fail without stopping the chain). Box paths: data /workspace/data/lidc, runs
+    leading "~" lets a stage fail without stopping the chain). Box paths: data /workspace/data/<dataset>, runs
     /workspace/runs/<id>. Only a spec in specs/: an old `steps:` plan raises ValidationError (load_spec), a spec
     elsewhere raises ValueError, both before any remote call."""
     spec = load_spec(Path(cfg))
     if Path(cfg).resolve().parent != (repo_root() / "specs").resolve():
         raise ValueError(f"{cfg}: the box chain runs only a run spec in specs/")
-    return [to_argv(s, f"/workspace/runs/{run_id}", DATA) for s in spec.stages]
+    return [to_argv(s, f"/workspace/runs/{run_id}", box_data(spec)) for s in spec.stages]
 
 
 def vision_refs(cfg: Path, run_id: str) -> list[str]:
     """The G-vision reference JSON a run spec reads on the box: the reference of each sft and select stage, in stage
     order, once ([] for a number or no vision)."""
-    rd, refs = f"/workspace/runs/{run_id}", []
-    for s in load_spec(Path(cfg)).stages:
+    rd, refs, spec = f"/workspace/runs/{run_id}", [], load_spec(Path(cfg))
+    for s in spec.stages:
         if s.kind == "sft" and s.vision and isinstance(s.vision["reference"], str):
             refs.append(f"{rd}/{s.vision['reference']}")
         elif s.kind == "select" and s.vision and isinstance(s.vision.reference, str):
-            refs.append(fill(s.vision.reference, rd, DATA))
+            refs.append(fill(s.vision.reference, rd, box_data(spec)))
     return list(dict.fromkeys(refs))
 
 
@@ -41,6 +46,6 @@ def push_target(spec: RunSpec, run_id: str) -> tuple[str, str, bool]:
         raise InfraError("nothing to push: the spec has no rl or sft stage")
     rd = f"/workspace/runs/{run_id}"
     if last.kind == "rl":
-        path = fill(last.out, rd, DATA)
+        path = fill(last.out, rd, box_data(spec))
         return path, path.rsplit("/", 1)[1], True
     return f"{rd}/{last.output_dir}", last.output_dir, False

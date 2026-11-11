@@ -21,6 +21,7 @@ from unittest import mock
 
 import pytest
 
+from objdel.core import datasets
 from objdel.core.io import git_sha
 from objdel.infra import bundle as B
 from objdel.infra import preflight as PF
@@ -108,7 +109,7 @@ def PF_config(tmp: Path) -> Path:
     """A run spec over a tiny data root (tmp/data: a bundle view manifest and the exam views' manifests): enough to
     hash."""
     data = tmp / "data"
-    for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in PF.EXAMS)):
+    for d in ("views/v", "checker_eval", *(f"eval_views/{v}" for v in datasets.LIDC.exams)):
         (data / d).mkdir(parents=True)
         (data / d / "manifest.json").write_text(json.dumps({"view_hash": "h", "dir": d}))
     cfg = tmp / "pf_run.yaml"
@@ -975,7 +976,7 @@ def test_dockerfile_phase2():
 
 # --- bundle builder (§4.4) ------------------------------------------------------------------------------------------
 
-LIDC_EVAL = ("lidc-val-shifted", "lidc-val-rescaled", "probe-precision", "probe-topology")
+LIDC_EVAL = datasets.LIDC.exams  # the bundle requires every exam view of the entry
 
 
 def data_tree(root: Path) -> Path:
@@ -1181,7 +1182,7 @@ def test_chain_passes_a_numeric_g_vision_reference_as_is():
     stage = S.SelectStage(name="select", run="{rd}/o", prepared="{data}/prepared", probes="{data}/eval_views",
                           shifted="{data}/eval_views/lidc-val-shifted",
                           vision=S.VisionRef(prepared="{data}/prepared", reference=0.25))
-    select = S.to_argv(stage, "/workspace/runs/v1", CH.DATA)
+    select = S.to_argv(stage, "/workspace/runs/v1", CH.BOX_DATA.format(dataset="lidc"))
     assert json.loads(after(select, "--vision")) == {"prepared": "/workspace/data/lidc/prepared", "reference": 0.25}
 
 

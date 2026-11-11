@@ -307,6 +307,14 @@ FLAG_ORDER = {
 }
 
 
+def spec_dataset(spec: "RunSpec") -> str:
+    """The one dataset the spec's stages name (the stages with a dataset field; default lidc when none has one)."""
+    found = {s.dataset for s in spec.stages if "dataset" in type(s).model_fields}
+    if len(found) > 1:
+        raise ValueError(f"{spec.name}: stages name {sorted(found)}; a run reads one dataset")
+    return found.pop() if found else RlStage.model_fields["dataset"].default
+
+
 class ComputeSpec(Base):
     """The rented GPU and the hour cap of a run."""
 
