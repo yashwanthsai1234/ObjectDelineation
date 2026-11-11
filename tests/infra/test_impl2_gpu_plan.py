@@ -21,7 +21,7 @@ SPLIT = {"impl2_gpu_test_a.yaml": (0, 1, 2, 3), "impl2_gpu_test_b.yaml": (0, 1, 
 RD, DATA = "/workspace/runs/r", "/workspace/data/lidc"
 HARD = {0, 1, 6}  # build, env_check, the lost-run simulation; every other step is soft ("~")
 SOFT_TAIL_USD = 0.35  # front 6.4 rule 5: BudgetStop = approved - the tail after the RL steps
-HARD_STOP_ROOM_USD = 7.60  # ledger closed at $16.90; HARD_STOP 19.90, 21.40, then 24.50 (owner, 2026-11-10)
+HARD_STOP_ROOM_USD = 14.55  # ledger closed at $16.90; HARD_STOP 19.90, 21.40, 24.50, then 31.45 (owner, 2026-11-10)
 
 
 # The money block of the old plan file (front 6 rules and planning inputs); the spec holds only compute.cap_hours and
@@ -189,7 +189,7 @@ def test_rl_smoke_is_one_block_with_one_lost_run_recovery():
     assert a.shared_prefix and r.shared_prefix and a.lr == r.lr == b1.lr and not a.resume and r.resume
     assert m.merge_last and not a.merge_last and not r.merge_last
     assert a.out == m.out == r.out and a.ckpt == m.ckpt == r.ckpt == f"{RD}/ckpt"
-    assert a.train == r.train == b1.train == f"{DATA}/rows/lidc-train-b1"
+    assert a.train == r.train == b1.train == f"{DATA}/rows/lidc-train-b1-780"
     assert (a.rows_revision, a.rows_manifest_sha256) == (r.rows_revision, r.rows_manifest_sha256) \
         == (b1.rows_revision, b1.rows_manifest_sha256)
     assert a.budget_usd == r.budget_usd == pytest.approx(raw()["budget"]["budget_stop_usd"])
@@ -285,7 +285,7 @@ def test_budget_block_gives_a_cap_inside_the_three_dollars(tmp_path, monkeypatch
         w.writerow({"ts": "2026-11-08T17:11:15Z", "event": "teardown", "run_id": "r5",
                     "cost_usd": b["ledger_closed_usd"]})
     assert policy.launch_refusal(offer, b["cap_hours"]) == ""
-    assert "hard stop" in policy.launch_refusal(offer, b["cap_hours"] + 10)  # past the $7.60 room
+    assert "hard stop" in policy.launch_refusal(offer, b["cap_hours"] + HARD_STOP_ROOM_USD / rate)  # past the room
 
 
 def test_minutes_fit_the_cap_with_room_and_the_expected_spend_is_under_the_approved_amount():

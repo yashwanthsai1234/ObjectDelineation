@@ -323,6 +323,10 @@ ROWS_CHECK = ("import hashlib, json, pathlib, sys; d, want = pathlib.Path(sys.ar
               "sys.exit(0 if ok else f'rows root {d}: no manifest.json, not SHA-256 {want}, or not files_count files')")
 
 
+UNTAR = ("import os, sys, tarfile; t, d = sys.argv[1:]; f = tarfile.open(t); f.extractall(d, filter='data'); "
+         "f.close(); os.remove(t)")  # hf.ROWS_TAR into the root, then gone (ROWS_CHECK counts the root's files)
+
+
 def rows_pin(revision: str) -> str:
     """The rows_manifest_sha256 that the rl stages of specs/ pin beside REVISION."""
     pins = {s.rows_manifest_sha256 for p in sorted((repo_root() / "specs").glob("*.yaml")) for s in load_spec(p).stages
@@ -335,7 +339,8 @@ def rows_pin(revision: str) -> str:
 def cmd_fetch_hf(a) -> None:
     """hf_pull on the box: REVISION of the private HF repo to /workspace/runs/RUN_ID/NAME (--as; default ckpt, RL's
     start checkpoint); or --rows REVISION ROOT: the repo folder rows/ROOT/ to /workspace/data/lidc/rows/ROOT, then
-    the same ssh call checks it there (manifest.json with the SHA-256 the plans pin for REVISION, files_count files)."""
+    the same ssh call unpacks hf.ROWS_TAR there (UNTAR) and checks the root (manifest.json with the SHA-256 the plans
+    pin for REVISION, files_count files)."""
     if (a.revision is None) == (a.rows is None):
         die("fetch_hf: give REVISION or --rows REVISION ROOT")
     rev, name = a.rows or (a.revision, a.name)
@@ -346,7 +351,8 @@ def cmd_fetch_hf(a) -> None:
     if a.rows:
         d = f"/workspace/data/lidc/rows/{name}"
         cmd = (f"{pull} --out /workspace/data/lidc --allow {shlex.quote(f'rows/{name}/**')} && /opt/venv/bin/python "
-               f"-I -c {shlex.quote(ROWS_CHECK)} {shlex.quote(d)} {rows_pin(rev)}")
+               f"-I -c {shlex.quote(UNTAR)} {shlex.quote(f'{d}/{hf.ROWS_TAR}')} {shlex.quote(d)} && "
+               f"/opt/venv/bin/python -I -c {shlex.quote(ROWS_CHECK)} {shlex.quote(d)} {rows_pin(rev)}")
     else:
         cmd = f"{pull} --out /workspace/runs/{a.run_id}/{name}"
     run, token = get_run(a.run_id), secret("objdel-hf-write")

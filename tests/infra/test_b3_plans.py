@@ -37,7 +37,8 @@ def test_b3_train_step_differs_from_b1_only_where_the_plan_says():
     assert after(b3, "--reward") == "v5" and "--numerics" not in b3 and "--runaway-cap" not in b3
     grpo = json.loads(after(b3, "--grpo"))
     assert grpo["mask_truncated_completions"] is False and grpo["beta"] * 1e-5 == pytest.approx(grpo["adam_epsilon"])
-    drop = {"--reward", "--grpo", "--out", "--budget-usd"}
+    assert (after(b1, "--steps"), after(b3, "--steps")) == ("780", "260")  # the full RL run; B3 reads its first 260
+    drop = {"--reward", "--grpo", "--out", "--budget-usd", "--steps"}
     strip = lambda s: [w for i, w in enumerate(s) if w not in drop and (i == 0 or s[i - 1] not in drop)]  # noqa: E731
     assert strip(b1) == strip(b3)
 

@@ -245,6 +245,12 @@ def golden(name: str = "invariance.json") -> dict:
     return json.loads((GOLDENS / name).read_text())
 
 
+# (old pin, new pin) of the rows root swap in later_edits: HF revision, then manifest SHA-256 (owner, 2026-11-10)
+ROWS_780 = (("34213dceb068128f1a1abf9c67aa65dd59bc1220", "d2c8edb8e15534363ebbced8f839cecace49c495"),
+            ("472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4",
+             "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9"))
+
+
 def later_edits(argvs: list[list[str]]) -> list[list[str]]:
     """Golden 5's argv lists with the edits of later commits, applied like a module rename: the test files a later
     commit moved get their new path (golden()["renamed_paths"]: {old: new}; E5 splits test_train_fast.py), and the
@@ -265,6 +271,15 @@ def later_edits(argvs: list[list[str]]) -> list[list[str]]:
         a = [re.sub(r"--steps (\d+)(\s+)--save-steps 1000", r"--steps \1\2--save-steps \1", x) for x in a]
         a = [re.sub(r"^(bash experiments/phase2/docker/nsys_capture\.sh \S+ c0_base )", r"NSYS_TIMEOUT=1800 \1", x)
              for x in a]
+        # the 780-step rows root (owner, 2026-11-10): every rl stage pins rows/lidc-train-b1-780 at its HF revision and
+        # manifest SHA-256 (the 260-step root is no longer run); the full RL run (b1-rows) trains 780 steps with
+        # BudgetStop $8.00 of the owner's $10
+        for was, now in ROWS_780:
+            a = [x.replace(was, now) for x in a]
+        a = [re.sub(r"lidc-train-b1(?![-\w])", "lidc-train-b1-780", x) for x in a]
+        if "/workspace/runs/x/b1-rows" in a and "--steps" in a and "--budget-usd" in a:
+            a[a.index("--steps") + 1] = "780"
+            a[a.index("--budget-usd") + 1] = "8.0"
         out.append(a)
     return out
 

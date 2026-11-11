@@ -548,7 +548,7 @@
    "mask_truncated_completions": true,
    "max_completion_length": 1536,
    "max_grad_norm": 1.0,
-   "max_steps": 260,
+   "max_steps": 780,
    "max_tool_calling_iterations": null,
    "metric_for_best_model": null,
    "min_p": 0.0,

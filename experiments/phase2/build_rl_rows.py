@@ -2,7 +2,7 @@
 order, and a manifest written only when every hard B data gate passes.
 
     .venv/bin/python -I -m experiments.phase2.build_rl_rows --store data/store --target-law train-shifted
-        --out data/views/lidc-train-b1 --steps 260 --per-step 32 [--draws N] --shares 0.15 0.75 0.10 --seed 0
+        --out data/views/lidc-train-b1-780 --steps 780 --per-step 32 [--draws N] --shares 0.15 0.75 0.10 --seed 0
         --procs 6 --exclude docs/reference/train_exclusions.json
 
 1. `pool(train items, draws, seed, exclude)` with the `--exclude` file's keys (required; an empty list is `{}`). The

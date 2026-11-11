@@ -135,9 +135,9 @@ def test_local_maps_data_templates_on_the_mac(monkeypatch):
 
 
 def test_local_rows_root_maps_only_the_literal_box_path():
-    assert PF.local_rows_root("{data}/rows/lidc-train-b1") == Path("data/views/lidc-train-b1")
+    assert PF.local_rows_root("{data}/rows/lidc-train-b1-780") == Path("data/views/lidc-train-b1-780")
     assert PF.local_rows_root("{data}/rows/x", "/d") == Path("/d/views/x")
-    for bad in ("{data}/rows/../x", "{data}/views/lidc-train-b1", "/workspace/data/rows/x", "{data}/rows/a/b",
+    for bad in ("{data}/rows/../x", "{data}/views/lidc-train-b1-780", "/workspace/data/rows/x", "{data}/rows/a/b",
                 "{data}/rows/.."):
         with pytest.raises(ValueError):
             PF.local_rows_root(bad)
@@ -154,12 +154,12 @@ def b1_rows_copy(tmp_path, sha) -> Path:
 
 @pytest.fixture
 def rows_cfg(tmp_path, monkeypatch):
-    """specs/b1_rows.yaml over fixture data: its train_rl stage names {data}/rows/lidc-train-b1, built locally at
-    <data root>/views/lidc-train-b1 (one image and the manifest); bundle_view views/lidc-bundle-v3."""
+    """specs/b1_rows.yaml over fixture data: its train_rl stage names {data}/rows/lidc-train-b1-780, built locally at
+    <data root>/views/lidc-train-b1-780 (one image and the manifest); bundle_view views/lidc-bundle-v3."""
     data = tiny_data(tmp_path)
     monkeypatch.setenv("OBJDEL_RUN_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("OBJDEL_DATA_ROOT", str(data))
-    root = data / "views" / "lidc-train-b1"
+    root = data / "views" / "lidc-train-b1-780"
     (root / "images").mkdir(parents=True)
     (root / "images" / "a.png").write_bytes(b"png")
     (root / "manifest.json").write_bytes(MANIFEST)
@@ -175,7 +175,7 @@ def test_b1_rows_reads_the_bundle_view_and_one_rows_root(rows_cfg):
     assert s.views == (rows_cfg.data / "views/lidc-bundle-v3",)
     assert [(st.name, PF.local(st.train)) for st in s.rows] == [("train", rows_cfg.root)]
     assert PF.given_inputs(s) == []
-    assert PF.spec_inputs(s.spec) == ["{data}/rows/lidc-train-b1", "{data}/eval_views/lidc-val-shifted",
+    assert PF.spec_inputs(s.spec) == ["{data}/rows/lidc-train-b1-780", "{data}/eval_views/lidc-val-shifted",
                                       "{data}/eval_views/lidc-val-edge"]
 
 
@@ -185,7 +185,7 @@ def test_specs_b1_rows_passes_on_fixture_data_and_refuses_an_edit(rows_cfg, monk
     data_checks = [c for c in PF.CHECKS if c[0] in ("DATA spec inputs", "DATA ROWS root")]
     code, stamp = run(rows_cfg.cfg, monkeypatch, data_checks)
     assert code == 0 and PF.refusal(rows_cfg.cfg) is None
-    rows_cfg.cfg.write_text(rows_cfg.cfg.read_text().replace("steps: 260", "steps: 261"))
+    rows_cfg.cfg.write_text(rows_cfg.cfg.read_text().replace("steps: 780", "steps: 781"))
     assert "stale (config" in PF.refusal(rows_cfg.cfg)
 
 
@@ -331,11 +331,13 @@ def test_an_edited_rows_manifest_changes_the_data_hash(rows_cfg):
 
 
 class FakeHub:
-    def __init__(self, files, manifest):
-        self.files, self.manifest, self.calls = files, manifest, []
+    def __init__(self, files, manifest, tar_sha):
+        self.files, self.manifest, self.tar_sha, self.calls = files, manifest, tar_sha, []
 
     def api(self, token=None):
-        return types.SimpleNamespace(list_repo_files=lambda repo, revision: self.calls.append(revision) or self.files)
+        info = [types.SimpleNamespace(lfs=types.SimpleNamespace(sha256=self.tar_sha))]
+        return types.SimpleNamespace(list_repo_files=lambda repo, revision: self.calls.append(revision) or self.files,
+                                     get_paths_info=lambda repo, paths, revision: info)
 
     def download(self, tmp):
         def get(repo, filename, revision, token=None):
@@ -346,17 +348,28 @@ class FakeHub:
         return get
 
 
-@pytest.mark.parametrize("files,manifest,ok", [
-    (["rows/lidc-train-b1/images/a.png", "rows/lidc-train-b1/manifest.json", "README.md"], MANIFEST, True),
-    (["rows/lidc-train-b1/manifest.json"], MANIFEST, False),  # an interrupted upload: an image missing
-    (["rows/lidc-train-b1/images/a.png", "rows/lidc-train-b1/manifest.json"], b"{}", False)])
-def test_rows_revision_compares_the_pinned_hf_revision(rows_cfg, monkeypatch, tmp_path, files, manifest, ok):
+TAR, MAN = "rows/lidc-train-b1-780/root.tar", "rows/lidc-train-b1-780/manifest.json"
+
+
+@pytest.mark.parametrize("files,manifest,tar,ok", [
+    ([TAR, MAN, "README.md"], MANIFEST, "local", True),
+    ([MAN], MANIFEST, "local", False),  # an interrupted upload: the tar missing
+    ([TAR, MAN, "rows/lidc-train-b1-780/images/a.png"], MANIFEST, "local", False),  # a loose file beside them
+    ([TAR, MAN], MANIFEST, "0" * 64, False),  # the tar is not the local root
+    ([TAR, MAN], b"{}", "local", False)])
+def test_rows_revision_compares_the_pinned_hf_revision(rows_cfg, monkeypatch, tmp_path, files, manifest, tar, ok):
+    import io
+
     import huggingface_hub
-    hub = FakeHub(files, manifest)
+
+    from objdel.infra import hf
+    buf = io.BytesIO()
+    hf.rows_tar(rows_cfg.root, buf)
+    hub = FakeHub(files, manifest, hashlib.sha256(buf.getvalue()).hexdigest() if tar == "local" else tar)
     monkeypatch.setattr(huggingface_hub, "HfApi", hub.api)
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", hub.download(tmp_path))
     assert (PF.rows_revision(PF.inputs(rows_cfg.cfg)) == []) is ok
-    assert hub.calls[0] == "34213dceb068128f1a1abf9c67aa65dd59bc1220"  # the revision specs/b1_rows.yaml pins
+    assert hub.calls[0] == "d2c8edb8e15534363ebbced8f839cecace49c495"  # the revision specs/b1_rows.yaml pins
 
 
 def test_the_trl_contract_is_the_first_code_check(monkeypatch):
@@ -407,7 +420,7 @@ def test_vastai_version_check_fails_without_the_binary(tmp_path, monkeypatch):
 
 C_PLANS = ("c_speed.yaml", "c_speed_b.yaml", "c_speed_c6.yaml")
 SPECS = ROOT / "specs"
-BOX_ROWS = "/workspace/data/lidc/rows/lidc-train-b1"
+BOX_ROWS = "/workspace/data/lidc/rows/lidc-train-b1-780"
 G_GR1 = "tests/rl/test_c_gpu.py::test_g_gr1_requests_independent"
 G_RC0 = "tests/rl/test_c_gpu.py::test_g_rc0_per_row_caps"
 
@@ -469,7 +482,7 @@ def test_the_rows_check_reads_the_pins_of_the_nsys_wrapped_arms(monkeypatch, tmp
     s = PF.inputs(SPECS / "c_speed.yaml")
     assert [st.name for st in s.rows] == ["c0_base", "c_fast"]
     assert {(st.rows_revision, st.rows_manifest_sha256) for st in s.rows} == {b1_pins()}
-    assert {PF.local(st.train) for st in s.rows} == {tmp_path / "views/lidc-train-b1"}
+    assert {PF.local(st.train) for st in s.rows} == {tmp_path / "views/lidc-train-b1-780"}
     fast = s.rows[1]
     assert (fast.checks_from_step, fast.expect_step1, fast.record_batches) == (
         18, "{rd}/c0_base/rl.json", "{rd}/c_check/arm_batches")
@@ -512,7 +525,7 @@ def test_u_cf4_a_planted_train_rl_step_fails_each_rule():
     with pytest.raises(SystemExit) as e:
         check_train_rl([*good, "--train-views", "x"], ref)
     assert e.value.code == 2
-    bad_root = [BOX_ROWS.replace("rows/lidc-train-b1", "prepared") if w == BOX_ROWS else w for w in good]
+    bad_root = [BOX_ROWS.replace("rows/lidc-train-b1-780", "prepared") if w == BOX_ROWS else w for w in good]
     with pytest.raises(AssertionError):
         check_train_rl(bad_root, ref)
     with pytest.raises(AssertionError):

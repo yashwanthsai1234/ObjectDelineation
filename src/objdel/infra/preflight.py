@@ -39,6 +39,7 @@ import shlex
 import subprocess
 import sys
 import time
+import types
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -382,25 +383,31 @@ def rows_root(s: Inputs) -> list[str]:
 
 
 def rows_revision(s: Inputs) -> list[str]:
-    """B1.3 2b: each pinned HF revision holds exactly the local root's files under rows/<name>/ and its manifest.json
-    has the pinned SHA-256 ($0: two Hub API reads per root, no box)."""
+    """B1.3 2b: each pinned HF revision holds rows/<name>/ = hf.ROWS_TAR and manifest.json only, the tar's LFS SHA-256
+    is that of hf.rows_tar over the local root (hashed as a stream, no copy on disk), and the manifest has the pinned
+    SHA-256 ($0: three Hub API reads per root, no box)."""
     if not s.rows:
         return []
     import huggingface_hub as hub
 
     from objdel.infra import secrets
-    from objdel.infra.hf import REPO
+    from objdel.infra.hf import REPO, ROWS_TAR, rows_tar
 
     bad, token = [], secrets.get("objdel-hf-write")
     for st in s.rows:
         root, want, rev = local(st.train), st.rows_manifest_sha256, st.rows_revision
-        prefix = f"rows/{root.name}/"
-        remote = sorted(f[len(prefix):] for f in hub.HfApi(token=token).list_repo_files(REPO, revision=rev)
-                        if f.startswith(prefix))
-        here = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
-        if remote != here:
-            bad.append(f"{REPO}@{rev} {prefix}: {len(remote)} files, local root {len(here)}; "
-                       f"differ in {sorted(set(here) ^ set(remote))[:3]}")
+        prefix, api = f"rows/{root.name}/", hub.HfApi(token=token)
+        remote = sorted(f[len(prefix):] for f in api.list_repo_files(REPO, revision=rev) if f.startswith(prefix))
+        if remote != sorted([ROWS_TAR, "manifest.json"]):
+            bad.append(f"{REPO}@{rev} {prefix}: holds {remote[:3]} ({len(remote)} files), not {ROWS_TAR} and "
+                       "manifest.json")
+            continue
+        lfs = api.get_paths_info(REPO, [prefix + ROWS_TAR], revision=rev)[0].lfs
+        h = hashlib.sha256()
+        rows_tar(root, types.SimpleNamespace(write=lambda b, h=h: h.update(b) or len(b)))
+        if lfs is None or lfs.sha256 != h.hexdigest():
+            bad.append(f"{REPO}@{rev} {prefix}{ROWS_TAR}: SHA-256 {getattr(lfs, 'sha256', None)} is not the local "
+                       f"root's {h.hexdigest()}")
         got = file_sha256(hub.hf_hub_download(REPO, prefix + "manifest.json", revision=rev, token=token))
         bad += [] if got == want else [f"{REPO}@{rev} {prefix}manifest.json SHA-256 {got} is not {want}"]
     return bad

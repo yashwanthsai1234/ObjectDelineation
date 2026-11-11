@@ -692,9 +692,9 @@ def test_cost_guard_allows_the_owners_extra_7_dollars(E):
 
 
 def test_cost_guard_projection_and_alarm(E):
-    spent(E, 12.0)
+    spent(E, LG.HARD_STOP - 12.0)
     E.pick()
-    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "23", ok=False)  # 12 + 0.55 * 23 > HARD_STOP (spec cap 24)
+    p = E.sh("launch.sh", "111", "r1", "--cap-hours", "23", ok=False)  # (HARD_STOP - 12) + 0.55 * 23 > HARD_STOP
     assert "hard stop" in p.stderr
     spent(E, 1.5)
     p = E.sh("launch.sh", "111", "r1", "--cap-hours", "1", ok=False)  # 13.5 >= alarm
@@ -1409,10 +1409,10 @@ def test_launch_refusal_lets_the_v1_offer_through_and_stops_at_the_hard_stop(tmp
     """6.1 step 0: with $16.90 closed spend, a $0.90/h offer and a 2.4 h cap (plus PULL_S) is within HARD_STOP."""
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     (tmp_path / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n" + "," * 13 + "16.90,\n")
-    assert LG.HARD_STOP == 24.5 and LG.ALARM == 10.0
+    assert LG.HARD_STOP == 31.45 and LG.ALARM == 10.0
     offer = {"dph_total": 0.90, "inet_up_cost": 0.01, "inet_down_cost": 0.01}
     assert P.launch_refusal(offer, 2.4) == ""
-    assert "hard stop" in P.launch_refusal(dict(offer, dph_total=3.5), 2.4)
+    assert "hard stop" in P.launch_refusal(dict(offer, dph_total=7.0), 2.4)
 
 
 def test_launch_refuses_without_a_ledger(E):
@@ -1473,7 +1473,7 @@ def test_run_spec_json_holds_the_spec_code_and_versions_and_never_overwrites_ano
     assert {k: rec[k] for k in libs} == {k: version(k) for k in libs}
     P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))  # the same spec again: fine
     (tmp_path / "CODE_SHA").unlink()
-    spec.write_text(spec.read_text().replace("cap_hours: 3.0", "cap_hours: 2.0"))
+    spec.write_text(spec.read_text().replace("cap_hours: 9.5", "cap_hours: 2.0"))
     with pytest.raises(SystemExit, match="different spec"):
         P.cmd_run_spec(SimpleNamespace(spec="specs/b1_rows.yaml", out=str(out)))
     out.unlink()

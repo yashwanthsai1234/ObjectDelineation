@@ -2,7 +2,7 @@
 
     python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
     python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
-    python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1 --repo svenk029/objdel-sft --revision main
+    python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1-780 --repo svenk029/objdel-sft --revision main
         < token     # B1.4 step 5 on the Mac: prints rows_revision and rows_manifest_sha256 for specs/b1_rows.yaml
     python -I -m experiments.phase2.hf_push --card-only --headline docs/results/headline.json --repo ... --revision ...
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must

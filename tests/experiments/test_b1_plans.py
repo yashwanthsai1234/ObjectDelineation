@@ -13,8 +13,8 @@ yaml = pytest.importorskip("yaml")
 ROOT = Path(__file__).resolve().parents[2]
 NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
 CONFIGS = ROOT / "specs"  # E6.2: the run specs replaced the plan files
-V1_APPROVED_USD = 2.40  # front 6.4 rule 5: the owner's V1 amount ...
-TAIL_USD = 0.35  # ... minus the tail after train_rl (evals, pull, push, teardown); no later V1 item
+V1_APPROVED_USD = 10.00  # the owner's amount for the full RL run (2026-11-10; it was $2.40 for 260 steps) ...
+TAIL_USD = 2.00  # ... minus the tail after train_rl (merge, evals, pull, push, teardown) and price margin
 V1_PLANS = ("b1_rows.yaml", "a3_measure.yaml")
 
 
@@ -38,8 +38,8 @@ def test_b1_rows_spec_holds_what_b1_launch_held():
     assert spec.bundle_view == next(s.view for s in r1.stages if s.kind == "sft")
     assert C.push_target(spec, "x")[1:] == ("b1-rows", True)
     train = next(s for s in spec.stages if s.kind == "rl" and not s.merge_last)
-    assert (train.rows_revision, train.rows_manifest_sha256) == ("34213dceb068128f1a1abf9c67aa65dd59bc1220",
-                                                                 "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4")
+    assert (train.rows_revision, train.rows_manifest_sha256) == ("d2c8edb8e15534363ebbced8f839cecace49c495",
+                                                                 "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9")
 
 
 def test_b1_rows_holds_the_b1_5_steps_in_order():
@@ -51,8 +51,8 @@ def test_b1_rows_holds_the_b1_5_steps_in_order():
     assert train[:3] == ["~", "-m", "experiments.phase2.train_rl"]  # soft: a crash goes on to --merge-last
     t = dict(zip(train[3::2], train[4::2], strict=False))
     assert t["--model"] == "qwen3-vl-2b" and t["--ckpt"] == "/workspace/runs/r/ckpt"
-    assert after(train, "--train") == "/workspace/data/lidc/rows/lidc-train-b1"
-    assert after(train, "--out") == "/workspace/runs/r/b1-rows" and after(train, "--steps") == "260"
+    assert after(train, "--train") == "/workspace/data/lidc/rows/lidc-train-b1-780"
+    assert after(train, "--out") == "/workspace/runs/r/b1-rows" and after(train, "--steps") == "780"
     assert after(train, "--save-steps") == "50" and float(after(train, "--lr")) == 5e-5
     assert "--shared-prefix" in train and "--numerics" not in train and "--grpo" not in train
     assert len(after(train, "--rows-revision")) == 40 and len(after(train, "--rows-manifest-sha256")) == 64
@@ -128,7 +128,7 @@ def test_every_plan_step_parses_with_its_module(plan):
 def test_a_missing_required_flag_fails_the_parse():
     pytest.importorskip("trl")
     train, merge, ev = (module_steps("b1_rows.yaml")[i] for i in (0, 1, 2))
-    assert parse_step(merge).merge_last and parse_step(train).steps == 260
+    assert parse_step(merge).merge_last and parse_step(train).steps == 780
     no_model = train[:train.index("--model")] + train[train.index("--model") + 2:]
     no_ckpt = ev[:ev.index("--ckpt")] + ev[ev.index("--ckpt") + 2:]
     with pytest.raises(SystemExit) as e:

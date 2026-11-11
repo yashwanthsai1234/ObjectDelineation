@@ -4,7 +4,8 @@ are experiments.phase2.hf_push and experiments.phase2.hf_pull (argument parsing,
 
     python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
     python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
-    python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1 --repo svenk029/objdel-sft --revision main
+    python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1-780 --repo svenk029/objdel-sft \
+        --revision main
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
     be the run's)
 
@@ -34,6 +35,7 @@ from objdel.core.io import read_json
 
 REPO = "svenk029/objdel-sft"  # the owner's private model repo (2026-11-02)
 TOKEN_OK = {"repo.content.read", "repo.write"}
+ROWS_TAR = "root.tar"  # a rows root on the Hub: rows/<name>/root.tar + manifest.json (the repo holds <= 20,000 files)
 LIDC = ("Trained on views derived from LIDC-IDRI (CC BY 3.0). Data citation: Armato III SG et al., Data From "
         "LIDC-IDRI, The Cancer Imaging Archive, DOI 10.7937/K9/TCIA.2015.LO9QL9SX. We acknowledge the National Cancer "
         "Institute and the Foundation for the National Institutes of Health, and their critical role in the creation "
@@ -236,12 +238,32 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
     return 0
 
 
+def rows_tar(root: Path, out) -> None:
+    """ROOT's files except manifest.json as an uncompressed tar streamed to the binary file OUT, the same bytes for the
+    same files (sorted paths; mtime 0, owner 0, mode 0644, no names), so preflight can hash it without a copy on disk
+    and compare it with the Hub's LFS SHA-256 of ROWS_TAR. Directories are implied by the paths."""
+    import tarfile
+
+    files = sorted((p.relative_to(root).as_posix(), p) for p in root.rglob("*") if p.is_file())
+    with tarfile.open(fileobj=out, mode="w|", format=tarfile.GNU_FORMAT) as tf:
+        for rel, p in files:
+            if rel == "manifest.json":
+                continue
+            ti = tarfile.TarInfo(rel)  # TarInfo's defaults: mode 0644, mtime 0, uid/gid 0, no user or group name
+            ti.size = p.stat().st_size
+            with p.open("rb") as fh:
+                tf.addfile(ti, fh)
+
+
 def push_rows(root: Path, repo: str, revision: str, token: str) -> int:
     """--rows (B1.4 step 5): a build_rl_rows root to rows/<root name>/ on branch `revision` of `repo`. Refused without
     its manifest.json (written only when every hard data gate passed), for a set that is not LIDC, or to a public
-    repo. One upload_folder call holds every file but the manifest (it may commit in parts), then the manifest alone,
-    last; so the printed rows_revision, the last commit, holds every file. It and rows_manifest_sha256 are the rl
-    stage's pins (specs/b1_rows.yaml)."""
+    repo. Two files, two commits: ROWS_TAR (rows_tar: every file but the manifest; a root has ~2 files per window and
+    the free repo holds at most 20,000), then the manifest alone, last; so the printed rows_revision, the last
+    commit, holds the whole root. It and rows_manifest_sha256 are the rl stage's pins (specs/b1_rows.yaml);
+    fetch_hf.sh unpacks the tar on the box and checks the root there."""
+    import tempfile
+
     from objdel.core.hashing import file_sha256
 
     man = root / "manifest.json"
@@ -254,8 +276,12 @@ def push_rows(root: Path, repo: str, revision: str, token: str) -> int:
         sys.exit(f"hf_push: {repo} is not private")
     prefix = f"rows/{root.name}"
     hub.create_branch(repo, branch=revision, repo_type="model", exist_ok=True)
-    hub.upload_folder(repo_id=repo, folder_path=root, path_in_repo=prefix, revision=revision, repo_type="model",
-                      ignore_patterns=["manifest.json"], commit_message=f"{prefix}: rows root")
+    with tempfile.TemporaryDirectory() as tmp:
+        tar = Path(tmp) / ROWS_TAR
+        with tar.open("wb") as fh:
+            rows_tar(root, fh)
+        hub.upload_file(path_or_fileobj=str(tar), path_in_repo=f"{prefix}/{ROWS_TAR}", repo_id=repo,
+                        revision=revision, repo_type="model", commit_message=f"{prefix}: rows root ({ROWS_TAR})")
     info = hub.upload_file(path_or_fileobj=str(man), path_in_repo=f"{prefix}/manifest.json", repo_id=repo,
                            revision=revision, repo_type="model", commit_message=f"{prefix}: manifest")
     print(f"hf_push: {root} -> {repo}@{revision} {prefix}/\nrows_revision: {info.oid}\n"

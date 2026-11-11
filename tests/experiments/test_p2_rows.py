@@ -8,6 +8,7 @@ import shutil
 import sys
 import types
 from dataclasses import replace
+from pathlib import Path
 
 import cv2
 import pytest
@@ -167,7 +168,7 @@ class Hub:
     """The HfApi calls hf.push_rows makes, recorded; nothing leaves the machine."""
 
     def __init__(self, private=True):
-        self.private, self.calls, self.remote = private, [], []
+        self.private, self.calls, self.remote, self.blobs = private, [], [], {}
 
     def repo_info(self, repo, repo_type):
         return types.SimpleNamespace(private=self.private)
@@ -175,18 +176,11 @@ class Hub:
     def create_branch(self, repo, branch, repo_type, exist_ok):
         self.calls.append(("create_branch", repo, branch))
 
-    def upload_folder(self, *, repo_id, folder_path, path_in_repo, revision, repo_type, ignore_patterns,
-                      commit_message):
-        self.calls.append(("upload_folder", repo_id, path_in_repo, revision))
-        root = folder_path
-        self.remote += [f"{path_in_repo}/{f.relative_to(root).as_posix()}" for f in sorted(root.rglob("*"))
-                        if f.is_file() and f.relative_to(root).as_posix() not in ignore_patterns]
-        return types.SimpleNamespace(oid="a" * 40)  # a part commit: never the recorded revision
-
     def upload_file(self, *, path_or_fileobj, path_in_repo, repo_id, revision, repo_type, commit_message):
         self.calls.append(("upload_file", repo_id, path_in_repo, revision))
         self.remote.append(path_in_repo)
-        return types.SimpleNamespace(oid="b" * 40)
+        self.blobs[path_in_repo] = Path(path_or_fileobj).read_bytes()  # the temp tar is gone after push_rows
+        return types.SimpleNamespace(oid=("b" if path_in_repo.endswith("manifest.json") else "a") * 40)
 
 
 TOKEN = "hf_secretTokenValue123"
@@ -201,18 +195,27 @@ def push(monkeypatch, root, hub):
 
 
 def test_i21_rows_upload_goes_to_the_one_place_with_the_manifest_last(built, tmp_path, monkeypatch, capsys):
-    """I21, B1.4 step 5: one upload_folder call for the root without its manifest, then the manifest; the printed
-    rows_revision is the last commit (it holds every file) and rows_manifest_sha256 the manifest's SHA-256."""
+    """I21, B1.4 step 5: the root without its manifest as one tar (hf.rows_tar: the free repo holds <= 20,000 files),
+    then the manifest; the printed rows_revision is the last commit (it holds both) and rows_manifest_sha256 the
+    manifest's SHA-256. The tar holds every other file of the root, byte for byte, and is the same bytes again."""
+    import tarfile
+
     from objdel.core.hashing import file_sha256
     from objdel.infra import hf
     root = shutil.copytree(built.out, tmp_path / "lidc-train-b1")
     hub = Hub()
     assert push(monkeypatch, root, hub) == 0
-    assert [c[0] for c in hub.calls] == ["create_branch", "upload_folder", "upload_file"]
-    assert hub.calls[1][1:] == (hf.REPO, "rows/lidc-train-b1", "main")
-    assert hub.remote[-1] == "rows/lidc-train-b1/manifest.json"
-    local = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
-    assert sorted(hub.remote) == [f"rows/lidc-train-b1/{r}" for r in local]
+    assert [c[0] for c in hub.calls] == ["create_branch", "upload_file", "upload_file"]
+    assert hub.remote == ["rows/lidc-train-b1/root.tar", "rows/lidc-train-b1/manifest.json"]
+    assert all(c[1] == hf.REPO and c[-1] == "main" for c in hub.calls)
+    blob = hub.blobs["rows/lidc-train-b1/root.tar"]
+    with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
+        packed = {m.name: tf.extractfile(m).read() for m in tf.getmembers()}
+    local = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert packed == {k: v for k, v in local.items() if k != "manifest.json"} and len(packed) > 1
+    again = io.BytesIO()
+    hf.rows_tar(root, again)
+    assert again.getvalue() == blob
     out, err = capsys.readouterr()
     assert f"rows_revision: {'b' * 40}" in out and f"rows_manifest_sha256: {file_sha256(root / 'manifest.json')}" in out
     assert TOKEN not in out + err

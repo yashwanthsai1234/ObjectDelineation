@@ -1,7 +1,7 @@
 """The B data gates DG1-DG18 (21 gates, objdel.data.quality) of a rows root: prints the gate table, exit 1 on a hard
 failure (report gates DG9b, DG14, DG14b, DG16 never change the exit code). Implementation.md B1.3.
 
-    .venv/bin/python -I -m experiments.phase2.audit_data --rows data/views/lidc-train-b1 [--store data/store]
+    .venv/bin/python -I -m experiments.phase2.audit_data --rows data/views/lidc-train-b1-780 [--store data/store]
         [--val-view data/eval_views/lidc-val-shifted] [--json out.json]
 
 The rows root's manifest.schedule gives the pool (draws, seed, excluded_ids) and the schedule arguments; the target

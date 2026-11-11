@@ -69,8 +69,8 @@ def test_fetch_hf_has_its_shim():
 
 # --- B1.5: rows root and checkpoint folder names (I40, I40b) ------------------------------------------------------
 
-ROWS_REV = "34213dceb068128f1a1abf9c67aa65dd59bc1220"  # B1.4 step 5 upload (rows/lidc-train-b1) and its manifest pin
-ROWS_SHA = "472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4"
+ROWS_REV = "d2c8edb8e15534363ebbced8f839cecace49c495"  # B1.4 step 5 upload (rows/lidc-train-b1) and its manifest pin
+ROWS_SHA = "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9"
 
 
 def test_hf_pull_allow_keeps_repo_paths_under_local_dir(tmp_path, monkeypatch):
@@ -99,7 +99,9 @@ def test_fetch_rows_downloads_the_root_and_checks_it_on_the_box(monkeypatch):
     assert "hf_secret" not in cmd and stdin == "hf_secret\n"
     assert (f"-m experiments.phase2.hf_pull --repo {REPO} --revision {ROWS_REV} --out /workspace/data/lidc "
             "--allow 'rows/lidc-train-b1/**' && ") in cmd
-    check = shlex.split(cmd.split(" && ")[-1])
+    untar, check = (shlex.split(c) for c in cmd.split(" && ")[-2:])
+    assert untar[:4] == ["/opt/venv/bin/python", "-I", "-c", P.UNTAR]
+    assert untar[4:] == ["/workspace/data/lidc/rows/lidc-train-b1/root.tar", "/workspace/data/lidc/rows/lidc-train-b1"]
     assert check[:3] == ["/opt/venv/bin/python", "-I", "-c"] and check[3] == P.ROWS_CHECK
     assert check[4:] == ["/workspace/data/lidc/rows/lidc-train-b1", ROWS_SHA]  # the SHA the plan pins for that revision
 
@@ -121,6 +123,21 @@ def test_box_check_exits_non_zero_on_a_wrong_root(tmp_path, case):
     r = subprocess.run([sys.executable, "-I", "-c", P.ROWS_CHECK, str(d), "0" * 64 if case == "sha" else sha],
                        capture_output=True, text=True)
     assert (r.returncode == 0) == (case == "ok"), r.stderr
+
+
+def test_box_unpacks_the_pushed_tar_and_the_check_passes(tmp_path):
+    """hf.rows_tar on the Mac, UNTAR then ROWS_CHECK on the box: the same files, the tar removed, exit 0."""
+    d, sha = rows_root(tmp_path)
+    box = tmp_path / "box"
+    box.mkdir()
+    with (box / H.ROWS_TAR).open("wb") as fh:
+        H.rows_tar(d, fh)
+    (box / "manifest.json").write_bytes((d / "manifest.json").read_bytes())
+    for code, args in ((P.UNTAR, [str(box / H.ROWS_TAR), str(box)]), (P.ROWS_CHECK, [str(box), sha])):
+        r = subprocess.run([sys.executable, "-I", "-c", code, *args], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+    files = lambda root: sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())  # noqa: E731
+    assert files(box) == files(d)
 
 
 def test_fetch_rows_refuses_a_revision_no_plan_pins(monkeypatch):
