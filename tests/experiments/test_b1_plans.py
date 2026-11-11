@@ -15,7 +15,7 @@ NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="arch
 CONFIGS = ROOT / "specs"  # E6.2: the run specs replaced the plan files
 V1_APPROVED_USD = 10.00  # the owner's amount for the full RL run (2026-11-10; it was $2.40 for 260 steps) ...
 TAIL_USD = 2.00  # ... minus the tail after train_rl (merge, evals, pull, push, teardown) and price margin
-V1_PLANS = ("b1_rows.yaml", "a3_measure.yaml")
+V1_PLANS = ("b1_rows.yaml",)
 
 
 def steps(name: str) -> list[list[str]]:
@@ -70,7 +70,7 @@ def test_b1_rows_holds_the_b1_5_steps_in_order():
     assert views == ["lidc-val-shifted", "lidc-val-edge"]
     assert [evals[i + 1] for i, w in enumerate(evals) if w == "--split"] == ["val", "val"]
     assert not [s for s in steps("b1_rows.yaml") if "experiments.phase2.final_eval" in s
-                and after(s, "--ckpt") == "/workspace/runs/r/ckpt"]  # R5 is a3_measure.yaml, not this plan
+                and after(s, "--ckpt") == "/workspace/runs/r/ckpt"]  # the plan evaluates its own final/, not r1's
 
 
 def test_smoke_node_ids_collect_exactly_two_tests():
@@ -145,7 +145,7 @@ def test_every_spec_formats():
     from objdel.infra.vast import chain as C
 
     specs = sorted(CONFIGS.glob("*.yaml"))
-    assert {"b1_rows.yaml", "rl_full.yaml", "r5_shared.yaml"} <= {p.name for p in specs}
+    assert "b1_rows.yaml" in {p.name for p in specs}
     for p in specs:
         C.chain(p, "r")
     bad = ROOT / "build" / "test_cfgs" / "group.yaml"

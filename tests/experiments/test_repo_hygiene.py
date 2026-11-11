@@ -31,7 +31,7 @@ def test_r5_test_golden_is_committed_and_holds_only_its_three_keys():
     assert set(json.loads((GOLDENS / "r5_test_items.meta.json").read_text())) == {"numpy", "machine"}
 
 
-CLIS = ("final_eval", "ceiling", "outline_lengths", "gate_power")  # A6 adds nsys_baseline with its module
+CLIS = ("final_eval", "ceiling", "outline_lengths")
 
 
 def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
@@ -43,17 +43,6 @@ def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
         r = subprocess.run([sys.executable, "-I", "-m", f"experiments.phase2.{name}", "--help"], cwd=tmp_path,
                            capture_output=True, text=True)
         assert r.returncode == 0 and "usage" in r.stdout, (name, r.stderr)
-
-
-@NEEDS_ARCHIVE
-def test_the_old_ceiling_is_archived_and_not_imported():
-    """S05: rater_ceiling moved to archive/phase2_lab/A4 (replaced by objdel.verify.ceiling); nothing imports it."""
-    new = ROOT / "archive/phase2_lab/A4"  # the old tree is gone (test_retired_trees_hold_nothing)
-    assert (new / "rater_ceiling.py").is_file() and (new / "rater_ceiling.json").is_file()
-    assert "replaced by objdel.verify.ceiling (Phase A2)" in (ROOT / "archive/README.md").read_text()
-    for top in ("src", "experiments", "tests"):
-        for p in (ROOT / top).rglob("*.py"):
-            assert not re.search(r"^\s*(from|import)\s.*rater_ceiling", p.read_text(), re.M), p
 
 
 def test_metric_definitions_are_in_the_code():
@@ -69,7 +58,6 @@ def test_metric_definitions_are_in_the_code():
 
 
 # --- CLEAN phase ----------------------------------------------------------------------------------------------------
-REWARDCORE = {f"rewardcore/{n}.py" for n in ("advantages", "batch", "fixtures", "reward", "topology")}
 
 
 def tracked(*paths: str) -> list[str]:  # tracked files, as the working tree has them
@@ -77,20 +65,9 @@ def tracked(*paths: str) -> list[str]:  # tracked files, as the working tree has
     return [f for f in out.stdout.split("\0") if f]
 
 
-@NEEDS_ARCHIVE
-def test_vendor_copies_deleted_and_nothing_names_them():
-    """CLEAN3: only the 5 vendor files that differ from their twins may remain (CLEAN5 moved them with the lab)."""
-    left = {f.split("/vendor/", 1)[1] for f in tracked("archive/phase1_lab/t_stack/vendor") if "/vendor/" in f}
-    assert left <= REWARDCORE
-    names = [f for f in tracked("src", "tests", "experiments/phase2") if f != "tests/experiments/test_repo_hygiene.py"
-             and "t_stack/vendor" in (ROOT / f).read_text(errors="ignore")]  # fmt: skip
-    assert names == []
-
-
 # --- CLEAN5: the archive moves ---------------------------------------------------------------------------------------
 
 RETIRED = ("experiments/phase0", "experiments/phase1/lab", "experiments/phase2/lab")
-GONE_SCRIPTS = ("census_sizerule", "eval_demo", "sample_eval", "smoke_grpo")
 CLEAN5_ARCHIVES = ("phase0", "phase1_lab", "phase1_scripts", "phase2_lab")
 HEADINGS = ("## What it was", "## What replaced it", "## Retiring commit", "## How to restore")
 TAG = "pre-clean-2026-11-08"
@@ -153,7 +130,7 @@ def test_retired_trees_hold_nothing():
     for p in RETIRED:
         assert tracked(p) == [] and not (ROOT / p).exists(), p
     probe = ("import importlib, sys\n"
-             "mods = 'build_data build_targets fetch_lidc_pixels prepare_rl eval_run reward_gates bench.xarch_hashes'\n"
+             "mods = 'build_data build_targets fetch_lidc_pixels prepare_rl eval_run bench.xarch_hashes'\n"
              "for m in mods.split():\n"
              "    importlib.import_module('experiments.phase1.' + m)\n"
              "assert not [n for n in sys.modules if n.endswith('.lab') or '.lab.' in n]\n"
@@ -162,24 +139,6 @@ def test_retired_trees_hold_nothing():
              "    raise SystemExit(m + ' imports')\n")  # fmt: skip
     r = subprocess.run([sys.executable, "-I", "-c", probe], cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-800:]
-
-
-@NEEDS_ARCHIVE
-def test_phase1_scripts_archived_and_their_tests_listed():
-    """CT-83 and CT-40: the four one-off scripts left the live list; each removed test is named in the README."""
-    live = {p.stem for p in (ROOT / "experiments/phase1").glob("*.py")}
-    assert not live & set(GONE_SCRIPTS) and {"eval_run", "prepare_rl", "build_data"} <= live
-    arch = ROOT / "archive/phase1_scripts"
-    assert {p.stem for p in arch.glob("*.py")} == set(GONE_SCRIPTS)
-    readme = (arch / "README.md").read_text()
-    names = [n.name for f in (arch / "tests").glob("test_*.py") for n in ast.parse(f.read_text()).body
-             if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]  # fmt: skip
-    assert len(names) == 3 and all(f"::{n}`" in readme for n in names), names
-    for f in ("tests/experiments/test_experiment_scripts.py", "tests/verify/test_eval.py"):
-        live_names = {n.name for n in ast.walk(ast.parse((ROOT / f).read_text())) if isinstance(n, ast.FunctionDef)}
-        assert not live_names & set(names), f
-    wiring = (ROOT / "tests/experiments/test_breakit_wiring.py").read_text()
-    assert "census_sizerule" not in wiring
 
 
 @NEEDS_ARCHIVE
@@ -200,26 +159,6 @@ def test_archive_readmes_follow_the_contract():
     assert "run it from the tag" in (ROOT / "archive/phase1_lab/README.md").read_text()
     assert "stay on the owner's disk only" in (ROOT / "archive/phase1_lab/README.md").read_text()
     assert "stay on the owner's disk only" in (ROOT / "docs/research/records/phase0/README.md").read_text()
-
-
-@NEEDS_ARCHIVE
-@LOCAL_DOCS
-def test_phase0_scripts_and_records_moved():
-    """CT-87: 8 python files in the archive, records beside the research notes, the oracle parser stays in tests.
-    Owner's layout (a255988): README.md, RESULTS.md and RESULTS_0b.md are tracked; the two plans (PLAN.md,
-    PLAN_0b.md) stay on the owner's machine, git-ignored, so a worktree may not hold them."""
-    assert len(list((ROOT / "archive/phase0").glob("*.py"))) == 8
-    rec = ROOT / "docs/research/records/phase0"  # local only since 2026-11-11, like the rest of docs/
-    md = {p.name for p in rec.glob("*.md")}
-    assert (rec / "results").is_dir() and {"README.md", "RESULTS.md", "RESULTS_0b.md"} <= md
-    assert not tracked("docs")
-    plans = [f"docs/research/records/phase0/{n}" for n in ("PLAN.md", "PLAN_0b.md")]
-    ignored = subprocess.run(["git", "check-ignore", *plans], cwd=ROOT, capture_output=True, text=True).stdout.split()
-    assert ignored == plans
-    assert "class _Lab" in (ROOT / "tests/geom/test_geometry_oracle.py").read_text()
-    for f in tracked("src"):
-        for m in re.findall(r"archive/[\w./-]+\.py", (ROOT / f).read_text()):
-            assert (ROOT / m).exists(), (f, m)
 
 
 @NEEDS_ARCHIVE

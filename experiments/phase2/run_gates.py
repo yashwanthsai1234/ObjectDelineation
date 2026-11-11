@@ -7,8 +7,8 @@
     .venv/bin/python -I -m experiments.phase2.run_gates b3 --b3 DIR --b3-edge DIR --b1 DIR --b1-edge DIR \
         --view ... --edge-view ... --select val_select.json --out runs/b3/gate_b3.json
 
-Each run folder is a final_eval output (items.jsonl + final_eval.json). --pre is val_rebuild's stamp record: with no
-A3 baseline, Gate B1 uses R5's items only when its hash chain holds (rungates.hash_chain_ok); without --pre the chain
+Each run folder is a final_eval output (items.jsonl + final_eval.json). --pre is the hash record of the view before its
+rebuild: with no A3 baseline, Gate B1 uses R5's items only when its hash chain holds (rungates.hash_chain_ok); without --pre the chain
 counts as broken. --select is a JSON list of val-select patient ids. Prints the result line, writes the full verdict.
 Reads untrusted data: run with python -I.
 """
@@ -49,7 +49,7 @@ def main(argv=None) -> int:
     b1.add_argument("--a3", type=Path)
     b1.add_argument("--a3-edge", type=Path)
     b1.add_argument("--identity", choices=("holds", "fails"), help="final_eval view_identity of A3 vs R5")
-    b1.add_argument("--pre", type=Path, help="val_rebuild stamp record (the R5 hash chain)")
+    b1.add_argument("--pre", type=Path, help="pre-rebuild view hash record (the R5 hash chain)")
     b1.add_argument("--partial-steps", type=int)
     b3.add_argument("--b3", type=Path, required=True)
     b3.add_argument("--b3-edge", type=Path, required=True)

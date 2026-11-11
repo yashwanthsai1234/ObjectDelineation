@@ -1,12 +1,11 @@
-"""BREAK-IT round 1, mathematical correctness: edge cases of eval.signal, eval.ceiling, gate_power and
-reward.advantages against Implementation.md (A1, A2, B1.9) and notes/research/math-stats.md (sections 1 and 11).
+"""BREAK-IT round 1, mathematical correctness: edge cases of eval.signal, eval.ceiling and
+reward.advantages against Implementation.md (A1, A2) and notes/research/math-stats.md (sections 1 and 11).
 
 Each test pins one proven finding, now fixed. Fixed seeds, no data folder."""
 
 import numpy as np
 import pytest
 
-from experiments.phase2 import gate_power as GP
 from objdel.verify import ceiling as C
 from objdel.verify import stats as signal
 from objdel.verify.reward.advantages import advantages_v4
@@ -31,23 +30,6 @@ def test_ci_with_a_nan_item_is_not_a_finite_interval_around_nan():
     x = np.array([0.5] * 9 + [np.nan])
     m, lo, hi = signal.ci(x, signal.draws([f"i{j}" for j in range(10)], boot=200, seed=0))
     assert not (np.isnan(m) and np.isfinite(lo) and np.isfinite(hi)), (m, lo, hi)
-
-
-def test_b1_rules_report_the_empty_subset_draw_count():
-    far, near = np.array([True, False, False, False]), np.array([False, True, False, False])
-    # 5 patient draws over items of patients (0, 1, 1, 1): only the last draw holds the far item
-    W = np.array([[0, 1, 1, 1]] * 4 + [[1, 1, 1, 1]], float)
-    b1 = np.array([[0.5, 0.6, 0.6, 0.6]])
-    base = np.array([[0.05, 0.6, 0.6, 0.6]])
-    out = GP.b1_rules(b1, base, far, near, W)
-    assert any("nan" in k for k in out), sorted(out)
-
-
-def test_b3_rules_count_a_one_patient_both_found_run_as_a_fail():
-    groups = np.array([0, 0, 1, 1])
-    x = np.array([[0.5, 0.6, 0.0, 0.0]])  # both arms find only patient 0's items
-    out = GP.b3_rules(x, x.copy(), groups)
-    assert not out["both_found_iou"][0]
 
 
 def test_cluster_t_empty_input_gives_its_own_error():

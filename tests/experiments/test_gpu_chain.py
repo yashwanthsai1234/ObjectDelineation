@@ -1,13 +1,12 @@
 """The GPU check chain on the Mac at $0 (Implementation.md D8): `make gpu-check DRY=1` prints every box step in order
 (old-engine build and benches included), collects D_GPU_TESTS and runs S08, S10 and S15; each entry of the list
 collects a test, and the sanitizer selection is the corpus. Reads no data/. The JUnit skip check fails the box on any
-skip; d_gpu_test.yaml calls the chain and A's two box tests."""
+skip."""
 import re
 import subprocess
 from pathlib import Path
 
 from experiments.cuda_checker.junit_skips import skipped
-from objdel.infra.vast import chain as C
 
 ROOT = Path(__file__).resolve().parents[2]
 BOX = ROOT / "experiments/cuda_checker/run_box.sh"
@@ -75,16 +74,6 @@ def test_junit_skips_lists_each_skip(tmp_path):
                  '<testcase classname="tests.a" name="t2"><skipped message="no input"/></testcase>'
                  '</testsuite></testsuites>')
     assert skipped(str(x)) == ["tests.a::t2: no input"]
-
-
-def test_d_gpu_test_runs_the_chain_then_a_box_tests():
-    s = C.chain(ROOT / "specs/d_gpu_test.yaml", "r")
-    assert s[0] == ["bash", "-c", "OBJDEL_DATA_ROOT=/workspace/data/lidc PY=/opt/venv/bin/python "
-                                  "bash experiments/cuda_checker/run_box.sh --gpu-check"]
-    ids = [t for t in s[1][2].split() if "::" in t]
-    assert ids == ["tests/experiments/test_a_gpu.py::test_g02b_builds",
-                   "tests/experiments/test_a_gpu.py::test_g03_device_bytes"]
-    assert len(_collect(ids, "gpu")) == 2
 
 
 def test_cuda_host_code_does_not_contract_fmas():

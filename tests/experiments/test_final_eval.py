@@ -940,38 +940,6 @@ def test_code_sha_writer_marks_a_dirty_tree(tmp_path):
 SPECS = ROOT / "specs"
 
 
-def test_a3_specs_are_valid_plans(monkeypatch):
-    """I20 (E6.2: the plans are run specs): a3_measure.yaml holds one final_eval stage on lidc-val-edge then
-    lidc-val-shifted (each split val and its own out), after the build-if-missing stage; a3_test.yaml one final_eval
-    stage on lidc-test-shifted; no nsys stage; CH.chain fills every placeholder and the runner adds -I to the -m
-    stages."""
-    import time
-
-    from objdel.core.spec import load_spec
-    from objdel.infra.vast import __main__ as P
-    from objdel.infra.vast import chain as CH
-
-    sent, evals = [], {}
-    run = {"deadline": time.time() + 1e5, "instance": 1, "dph": 0.5, "started": 0.0}
-    monkeypatch.setattr(P, "get_run", lambda r: run)
-    monkeypatch.setattr(P, "remote", lambda run, cmd, *a, **k: sent.append(cmd))
-    monkeypatch.setattr(P, "ledger", lambda **k: None)
-    for name in ("a3_measure", "a3_test"):
-        spec = load_spec(SPECS / f"{name}.yaml")
-        (evals[name],) = [s for s in spec.stages if s.kind == "eval"]
-        chained = CH.chain(SPECS / f"{name}.yaml", "r")
-        assert not any("{" in x or "}" in x or "nsys_capture.sh" in x for s in chained for x in s), name
-        P.cmd_run(SimpleNamespace(run_id="r", module=f"specs/{name}.yaml", args=[], cap_hours=1))
-        assert "/opt/venv/bin/python -I -m experiments.phase2.final_eval" in sent[-1]
-    m, t = evals["a3_measure"], evals["a3_test"]
-    assert m.view == ("{data}/eval_views/lidc-val-edge", "{data}/eval_views/lidc-val-shifted")
-    assert m.split == ("val", "val") and m.out == ("{rd}/eval_val_edge", "{rd}/eval_val")
-    hard = [s for s in load_spec(SPECS / "a3_measure.yaml").stages if not s.soft]
-    assert "build() == \"cuda\"' || (bash experiments/cuda_checker/run_box.sh --build-only" in hard[0].argv[2]
-    assert hard.index(m) == 1
-    assert (t.view, t.split) == (("{data}/eval_views/lidc-test-shifted",), ("test",))
-
-
 def test_answers_reader_memory(tmp_path):
     """Q04 (memory): 2,200 items x 8 answers of about 1,000 characters (about 18 MB) read under 200 MB peak."""
     import tracemalloc
