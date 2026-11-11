@@ -387,7 +387,7 @@ def _functions(path: Path) -> set[str]:
 @pytest.mark.skipif(WAVE < 2, reason="D3 not landed")
 def test_polygonizer_seam_is_device_only():
     """CLEAN11 steps 1-4: the numpy tracers live only as oracles; the rings module runs on check_masks; certify
-    and RIGA reach it through `trace` and `certify_many`."""
+    reaches it through `trace`."""
     oracles = ROOT / "tests" / "oracles"
     names = set()
     for o in ("polygonize_oracle", "bitquad_oracle"):
@@ -408,7 +408,6 @@ def test_polygonizer_seam_is_device_only():
     cert = ast.parse((SRC / "geom" / "certify.py").read_text())
     assert any(isinstance(n, ast.ImportFrom) and any(a.name == "trace" for a in n.names) for n in ast.walk(cert))
     assert any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "trace" for n in ast.walk(cert))
-    assert "certify_many(" in (SRC / "data" / "riga.py").read_text()
 
 
 def test_retired_models_absent():

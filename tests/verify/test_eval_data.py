@@ -45,7 +45,7 @@ def models(frames):
     for item_id, ds, masks, S in frames:
         names = SCHEMAS[ds]
         caches = {n: ExpertCache.build(masks[n]) for n in names}
-        ma = min_areas({n: masks[n] for n in names})  # with the rim's rule for RIGA
+        ma = min_areas({n: masks[n] for n in names})
         k = caches[names[0]].k
         texts = [build_target({n: masks[n][r] for n in names}, names, min_area=ma).text for r in range(k)]
         out["raters"].append({"item_id": item_id, "dataset": ds, **metrics(texts, masks, S, S, names, caches=caches)})

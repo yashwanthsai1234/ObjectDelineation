@@ -174,7 +174,7 @@ def test_certify_reports_equal_the_oracles():
 
 
 def test_certify_many_is_certify_of_each():
-    """U10: one engine call for the list, the same Reports as certify one by one; min_size per mask (RIGA's rim)."""
+    """U10: one engine call for the list, the same Reports as certify one by one; min_size per mask."""
     from objdel.geom import engine as _gpucheck
     masks = _certify_masks(seed=12, n=30)
     calls, real = [], _gpucheck.check_masks
