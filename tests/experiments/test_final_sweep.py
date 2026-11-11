@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from experiments.phase2.tools import final_sweep as fs
+from tools import sweep as fs
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -33,17 +33,17 @@ def test_retired_trees_flags_live_files_and_ignores_frozen_ones(tmp_path):
 
 def test_retired_models_are_split_by_wave(tmp_path):
     ctx = make(tmp_path, {"src/objdel/m.py": "K = 'smol" + "vlm-256m'\n", "tests/test_x.py": "M = 'lfm2.5-vl-450m'\n",
-                          "docs/a.md": "Smol" + "VLM is retired\n", "experiments/phase2/g.py": "# LiquidAI card\n",
+                          "docs/a.md": "Smol" + "VLM is retired\n", "tools/g.py": "# LiquidAI card\n",
                           "experiments/phase2/" + "lab/z.py": "smol" + "vlm\n"})
     assert [f.split(":")[0] for f in fs.retired_256m(ctx)] == ["src/objdel/m.py"]  # docs/ is out of scope
-    assert sorted(f.split(":")[0] for f in fs.retired_lfm(ctx)) == ["experiments/phase2/g.py", "tests/test_x.py"]
+    assert sorted(f.split(":")[0] for f in fs.retired_lfm(ctx)) == ["tests/test_x.py", "tools/g.py"]
     assert fs.retired_lfm(make(tmp_path / "clean", {"src/objdel/m.py": "x = 1\n"})) == []
 
 
-def test_controller_check_reads_src_and_phase2_only(tmp_path):
-    ctx = make(tmp_path, {"src/objdel/c.py": "class Controller: ...\n", "experiments/phase2/r.py": "alarms_for(x)\n",
+def test_controller_check_reads_src_and_tools_only(tmp_path):
+    ctx = make(tmp_path, {"src/objdel/c.py": "class Controller: ...\n", "tools/r.py": "alarms_for(x)\n",
                           "tests/t.py": "Controller\n", "docs/x.md": "Controller\n"})
-    assert sorted(f.split(":")[0] for f in fs.controller(ctx)) == ["experiments/phase2/r.py", "src/objdel/c.py"]
+    assert sorted(f.split(":")[0] for f in fs.controller(ctx)) == ["src/objdel/c.py", "tools/r.py"]
 
 
 def test_pool_check_finds_names_flags_and_stage_fields(tmp_path):
@@ -88,7 +88,7 @@ def test_unimported_distinguishes_unused_test_only_and_used(tmp_path):
         "src/objdel/surface.py": "x = 1\n", "src/objdel/main.py": "from objdel import used\nfrom . import named\n",
         "src/objdel/named.py": "x = 1\n", "src/objdel/kept.py": '"""Test surface: kept."""\n',
         "tests/test_s.py": "from objdel.surface import x\nfrom objdel import kept\n",
-        "Makefile": "run:\n\tpython -m experiments.phase2.job\n", "experiments/phase2/job.py": "x = 1\n"})
+        "Makefile": "run:\n\tpython -m tools.job\n", "tools/job.py": "x = 1\n"})
     found = fs.unimported(ctx)
     text = "\n".join(found)
     assert "src/objdel/orphan.py: nothing imports or names it" in text
@@ -162,7 +162,7 @@ def test_every_check_is_registered_once_with_a_docstring():
 
 def test_cli_runs_isolated_on_the_real_tree_for_the_cheap_checks():
     """`python -I -m` works from a foreign cwd; the cheap checks run and print their verdict lines."""
-    r = subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.tools.final_sweep", "--only",
+    r = subprocess.run([sys.executable, "-I", "-m", "tools.sweep", "--only",
                         "retired_trees,controller,doc_links", "--limit", "2"], cwd=ROOT, capture_output=True, text=True)
     assert r.returncode in (0, 1), r.stderr
     for name in ("retired_trees", "controller", "doc_links"):

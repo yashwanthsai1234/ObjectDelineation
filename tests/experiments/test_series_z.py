@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from experiments.phase2 import check_series_z
 from objdel.data import lidc, quality, store
+from tools.data import check_series_z
 
 A, B, C, T, V = (f"1.2.840.{i}00001" for i in range(1, 6))  # suffix (last 6 digits) "100001", ...
 SPLIT = {A: "train", B: "train", C: "train", T: "test", V: "val"}

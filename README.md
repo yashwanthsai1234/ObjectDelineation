@@ -85,6 +85,7 @@ print(score["legal"], score["iou_tc"], score["topo_any"])  # 1.0 1.0 1.0
 ```text
 cuda/            the geometry engine: one C++ source for the CPU build and the nvcc build
 src/objdel/      the library, in layers; each imports only the layers below it
+  cli/           the `objdel <group> <command>` commands: data, train, eval, hub, box
   infra/         rented GPU boxes, preflight, the data bundle, the private model repo, secrets
   rl/  sft/      reinforcement learning (GRPO) | supervised fine-tuning and checkpoint selection
   policy/        models, prompts, rows, caches, the sampler, evaluation
@@ -93,6 +94,7 @@ src/objdel/      the library, in layers; each imports only the layers below it
   geom/          output grammar, canonical form, rings, topology, the engine wrapper (no PyTorch)
   core/          the typed run spec and provenance
 specs/           run specs: what a GPU run does, checked before any rental
+tools/           off the train path: checker bench and eval, profiling, data and model checks, studies
 experiments/     thin command-line scripts, by phase
 tests/           the test suite, oracles and goldens
 reference/       records the code reads: frozen view hashes, validation halves, training exclusions, headline numbers

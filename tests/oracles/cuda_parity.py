@@ -4,7 +4,7 @@ before the archive; for masks, the numpy polygonizer (tests/oracles/polygonize_o
 test), the bit-quad oracle (tests/oracles/bitquad_oracle.py) and cv2's 8-connected labels (ring parts), run here.
 
 Shared by tests/geom/test_cuda_checker*.py, tests/geom/test_checker_host.py, tests/verify/test_gpu_scoring.py and
-experiments/cuda_checker/eval.py. The packed formats are those of data/checker_eval
+tools/checker/eval.py. The packed formats are those of data/checker_eval
 (archive/cpu_checker/experiments/prepare_data.py): polygons as (xy, ring_start, shape_start, roles, W, H), masks as
 (bits, hw, start). The case generators are the repo's existing ones (tests/oracles, tests/geom/test_topology.py),
 imported, not copied; the rollout, int32-extreme and at-the-caps families are defined here.

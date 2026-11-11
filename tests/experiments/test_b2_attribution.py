@@ -13,8 +13,8 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("peft")
 from peft import LoraConfig, get_peft_model  # noqa: E402
 
-from experiments.phase2 import b2_attribution as B  # noqa: E402
 from tests.experiments.test_trl_adapter_equivalence import GRPOTrainer, group_batch, tiny_model  # noqa: E402
+from tools.studies import b2_attribution as B  # noqa: E402
 
 WAYS = ("a", "b", "c", "d")
 

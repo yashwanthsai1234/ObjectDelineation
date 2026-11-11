@@ -7,7 +7,7 @@
 #    lacks its TreeLauncher executables: K1, 2026-11-06) and pytest/hypothesis to $PY's venv;
 # 3. make cuda: objdel._gpucheck rebuilt with nvcc (CUDA_ARCHS, default the box's GPU);
 # 4. the GPU test group (with the arena-reuse and two-stream tests), the equivalence suite, the packed-mask and
-#    one-checker-call-per-reward tests, then experiments/cuda_checker/eval.py even when a test failed (it shows where
+#    one-checker-call-per-reward tests, then tools/checker/eval.py even when a test failed (it shows where
 #    the GPU build goes wrong); writes results/cuda.json and the GPU section of RESULTS.md: copy both back.
 #    Exit status: the tests' (1 if any failed), else the eval's.
 # --build-only stops after 3 (cuda/docker_check.sh runs it on the Mac, without a GPU).
@@ -101,12 +101,12 @@ if [ "${1:-}" = "--gpu-check" ]; then
     step 'uv pip install --python /opt/old/bin/python "${CONSTRAINTS[@]}" numpy'
     step 'make -C /opt/old_src cuda PY=/opt/old/bin/python ${CUDA_ARCHS:+CUDA_ARCHS="$CUDA_ARCHS"}'
     # step 6 (D-G7, D-G8): the replay inputs (main venv: cv2, scipy), each engine's bench and replay, the gate table
-    step '"$PY" -I -m experiments.phase2.perf.bench_checker --dump-replay "$OUT/replay_inputs.npz"'
+    step '"$PY" -I -m tools.checker.bench --dump-replay "$OUT/replay_inputs.npz"'
     for e in old current; do
-        step '"$PY" -I -m experiments.phase2.perf.bench_checker --engine '"$e"' --out "$OUT/bench_'"$e"'.json"'
-        step '"$PY" -I -m experiments.phase2.perf.bench_checker --engine '"$e"' --replay "$OUT/replay_inputs.npz" --out "$OUT/replay_'"$e"'.json"'
+        step '"$PY" -I -m tools.checker.bench --engine '"$e"' --out "$OUT/bench_'"$e"'.json"'
+        step '"$PY" -I -m tools.checker.bench --engine '"$e"' --replay "$OUT/replay_inputs.npz" --out "$OUT/replay_'"$e"'.json"'
     done
-    step '"$PY" -I -m experiments.phase2.perf.bench_checker --compare "$OUT" || rc=1'
+    step '"$PY" -I -m tools.checker.bench --compare "$OUT" || rc=1'
     if [ -n "$DRY" ]; then
         "$PY" -I -m pytest --collect-only -q -p no:cacheprovider $D_GPU_TESTS -m "$SEL"
         "$PY" -I -m pytest -q -p no:cacheprovider $DRY_TESTS
@@ -118,5 +118,5 @@ nvidia-smi -L
 tests=0
 "$PY" -m pytest -q -p no:cacheprovider tests/geom/test_cuda_checker_gpu.py tests/geom/test_cuda_checker.py \
     tests/geom/test_checker_host.py tests/rl/test_reward_one_checker_call.py || tests=1
-"$PY" -I -m experiments.cuda_checker.eval ${DATA:+--data "$DATA"}
+"$PY" -I -m tools.checker.eval ${DATA:+--data "$DATA"}
 exit $tests

@@ -13,18 +13,18 @@ stages:
   argv: [bash, experiments/phase2/docker/env_check.sh, '{rd}/ckpt', '{rd}/env_check.json']
 - kind: cmd
   name: c_check
-  argv: [-m, experiments.phase2.c_speed_check, --pixels, --sync, --model, qwen3-vl-2b, --ckpt, '{rd}/ckpt', --train, '{data}/rows/lidc-train-b1-780',
+  argv: [-m, tools.studies.c_speed_check, --pixels, --sync, --model, qwen3-vl-2b, --ckpt, '{rd}/ckpt', --train, '{data}/rows/lidc-train-b1-780',
     --out, '{rd}', --steps, '20', --shared-prefix, --rows-revision, d2c8edb8e15534363ebbced8f839cecace49c495, --rows-manifest-sha256,
     a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9]
 - kind: cmd
   name: c0_base
-  argv: [bash, -c, 'NSYS_TIMEOUT=1800 bash experiments/phase2/docker/nsys_capture.sh {rd} c0_base 16 17 -- /opt/venv/bin/python -I -m objdel.cli.train.rl
+  argv: [bash, -c, 'NSYS_TIMEOUT=1800 bash tools/profiling/nsys_capture.sh {rd} c0_base 16 17 -- /opt/venv/bin/python -I -m objdel.cli.train.rl
       --model qwen3-vl-2b --ckpt {rd}/ckpt --train {data}/rows/lidc-train-b1-780 --rows-revision d2c8edb8e15534363ebbced8f839cecace49c495
       --rows-manifest-sha256 a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9 --out {rd}/c0_base --steps
       20 --save-steps 20 --shared-prefix']
 - kind: cmd
   name: c_fast
-  argv: [bash, -c, 'NSYS_TIMEOUT=1800 bash experiments/phase2/docker/nsys_capture.sh {rd} c_fast 16 17 -- /opt/venv/bin/python
+  argv: [bash, -c, 'NSYS_TIMEOUT=1800 bash tools/profiling/nsys_capture.sh {rd} c_fast 16 17 -- /opt/venv/bin/python
       -I -m objdel.cli.train.rl --model qwen3-vl-2b --ckpt {rd}/ckpt --train {data}/rows/lidc-train-b1-780 --rows-revision
       d2c8edb8e15534363ebbced8f839cecace49c495 --rows-manifest-sha256 a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9
       --out {rd}/c_fast --steps 40 --save-steps 40 --shared-prefix --gpu-pixels auto --prompt-memo --host-meta --fast-sync

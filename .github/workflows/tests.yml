@@ -28,7 +28,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
       - run: uv venv --python 3.12
       - run: uv pip install -e ".[dev]"  # builds objdel._gpucheck (CPU build) with scikit-build-core + nanobind
-      - run: .venv/bin/python -m ruff check src tests experiments
+      - run: .venv/bin/python -m ruff check src tests tools
       - run: .venv/bin/lint-imports --no-logo
       - run: .venv/bin/python -m pytest -q -m "not slow"
       - run: .venv/bin/python -I -m tests.variants  # the body of `make test-order`

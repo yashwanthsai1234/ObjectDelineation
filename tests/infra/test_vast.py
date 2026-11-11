@@ -1124,7 +1124,7 @@ def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
     assert "tmux new-session -d -s r1-eval_run" in out and "/workspace/runs/r1/eval_run.log" in out
     out = E.sh("run.sh", "r1", "specs/r1_qwen3vl2b.yaml").stdout
     assert "-s r1-r1_qwen3vl2b" in out and "/workspace/runs/r1/r1_qwen3vl2b.log" in out
-    E.sh("run.sh", "r1", "experiments.phase1.bench.xarch_hashes", "--out", "x.json")
+    E.sh("run.sh", "r1", "tools.xarch.xarch_hashes", "--out", "x.json")
     E.sh("run.sh", "r1", "objdel.cli.data.store", "--help")  # every command module runs
     E.sh("run.sh", "r1", "objdel.infra.bundle", ok=False)  # a library module is no command
 

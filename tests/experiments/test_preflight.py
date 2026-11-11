@@ -545,7 +545,7 @@ def test_u_cf4_the_arms_carry_the_check_flags_of_c0_step_3():
     (base_step, base), (fast_step, fast) = train_rl_steps("c_speed.yaml")
     (b_step, mode_b), = train_rl_steps("c_speed_b.yaml")
     assert flag(base, "--out") == f"{rd}/c0_base" and flag(base, "--steps") == "20" and "--expect-step1" not in base
-    assert "bash experiments/phase2/docker/nsys_capture.sh " + f"{rd} c0_base 16 17 -- " in base_step[2]
+    assert "bash tools/profiling/nsys_capture.sh " + f"{rd} c0_base 16 17 -- " in base_step[2]
     assert "NSYS_TIMEOUT=1800" in fast_step[2] and f"{rd} c_fast 16 17 -- " in fast_step[2]
     for arm, folder in ((fast, "arm_batches"), (mode_b, "arm_batches_b")):
         assert flag(arm, "--expect-step1") == f"{rd}/c0_base/rl.json"
@@ -571,7 +571,7 @@ def test_u_cf4_the_c6_plan_runs_g_gr1_first_then_the_group_requests_arm():
 def test_u_cf4_c_speed_starts_with_the_cuda_build_and_checks_the_box_first():
     steps = plan_steps("c_speed.yaml")
     assert steps[0] == plan_steps("b1_rows.yaml")[0]  # step 0 is b1_rows.yaml's CUDA build (front 6.1 step 4d)
-    check = next(s for s in steps if "experiments.phase2.c_speed_check" in s)
+    check = next(s for s in steps if "tools.studies.c_speed_check" in s)
     assert {"--pixels", "--sync"} <= set(check) and flag(check, "--out") == "/workspace/runs/r"
     assert steps.index(check) < min(steps.index(s) for s, _ in train_rl_steps("c_speed.yaml"))  # item 2 before 3
     assert not [s for s in plan_steps("c_speed_b.yaml") + plan_steps("c_speed_c6.yaml")[1:]

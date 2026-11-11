@@ -1,4 +1,4 @@
-"""experiments.phase2.gpu_active (plan C0 step 4): the GPU-active share of a step from an nsys SQLite export."""
+"""tools.profiling.gpu_active (plan C0 step 4): the GPU-active share of a step from an nsys SQLite export."""
 
 import json
 import sqlite3
@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pytest
 
-from experiments.phase2 import gpu_active
+from tools.profiling import gpu_active
 
 
 def test_share_is_the_union_of_busy_intervals_over_the_range():

@@ -15,7 +15,7 @@ yaml = pytest.importorskip("yaml")
 ROOT = Path(__file__).resolve().parents[2]
 NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
 CONFIGS = ROOT / "specs"  # E6.2: the run specs replaced the plan files
-C_SPEED_CHECK = "experiments.phase2.c_speed_check"  # the C speed arm's own CLI (specs/c_speed.yaml)
+C_SPEED_CHECK = "tools.studies.c_speed_check"  # the C speed arm's own CLI (specs/c_speed.yaml)
 V1_APPROVED_USD = 10.00  # the owner's amount for the full RL run (2026-11-10; it was $2.40 for 260 steps) ...
 TAIL_USD = 2.00  # ... minus the tail after train_rl (merge, evals, pull, push, teardown) and price margin
 V1_PLANS = ("b1_rows.yaml",)
@@ -108,7 +108,7 @@ def parse_step(step: list[str]):
     words = step[1:] if step[0] == "~" else step
     assert words[0] == "-m"
     if words[1] == C_SPEED_CHECK:  # its own --pixels/--sync, then a train_rl stage
-        from experiments.phase2 import c_speed_check
+        from tools.studies import c_speed_check
 
         return c_speed_check.parse(words[2:])[1]
     kind = next(k for k, m in MODULE.items() if words[1] == m)

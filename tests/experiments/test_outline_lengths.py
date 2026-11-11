@@ -1,4 +1,4 @@
-"""experiments.phase2.outline_lengths (A8): doctor outline lengths per root and the model answers above each limit."""
+"""tools.model.outline_lengths (A8): doctor outline lengths per root and the model answers above each limit."""
 
 import hashlib
 import json
@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from experiments.phase2 import outline_lengths as OL
 from objdel.policy import rows as policy_rows
 from objdel.verify import store as verify_store
+from tools.model import outline_lengths as OL
 
 ROOT = Path(__file__).resolve().parents[2]
 

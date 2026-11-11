@@ -2,7 +2,7 @@
 
 `score_polygons` and `score_masks` return per object `sum_x` (sum of the column indices of the mask's pixels) and
 `sum_y` (sum of the row indices), int64, exact: they equal the np.nonzero sums. Every field returned before B3.1 is
-unchanged: tests/goldens/b_g01.json was written by experiments/phase2/perf/make_b_goldens.py on the Mac CPU build
+unchanged: tests/goldens/b_g01.json was written by tests/goldens/make_b_goldens.py on the Mac CPU build
 before the sums were added. Every object is scored against its own `b_tables` (the G01 tables rule).
 """
 import hashlib
@@ -13,9 +13,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from experiments.phase2.perf.make_b_goldens import b_sets, b_tables, random_masks, score_masks_of
 from objdel.geom import engine as G
 from objdel.geom.shape import unpack_rows
+from tests.goldens.make_b_goldens import b_sets, b_tables, random_masks, score_masks_of
 
 ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = ROOT / "tests" / "goldens" / "b_g01.json"
@@ -98,7 +98,7 @@ def test_g01_polygon_inputs_do_not_depend_on_the_platform_libm(monkeypatch):
     (mpmath; glibc's result on every case the box met) as under this platform's."""
     import math
 
-    from experiments.phase2.perf.make_b_goldens import polygon_cases
+    from tests.goldens.make_b_goldens import polygon_cases
     from tests.oracles import cuda_parity as C
 
     mpmath = pytest.importorskip("mpmath")

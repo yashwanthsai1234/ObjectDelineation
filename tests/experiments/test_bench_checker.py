@@ -1,4 +1,4 @@
-"""experiments/phase2/perf/bench_checker.py (Phase D, D1): the checker benchmark (I16), its replay arm without cv2 or
+"""tools/checker/bench.py (Phase D, D1): the checker benchmark (I16), its replay arm without cv2 or
 scipy (S10), and its inputs read only under OBJDEL_DATA_ROOT (S15). CPU build; reads no data/."""
 import builtins
 import hashlib
@@ -13,14 +13,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from experiments.phase2.perf import bench_checker as B
 from objdel import _gpucheck
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_many
+from tools.checker import bench as B
 
 REPO = Path(__file__).resolve().parents[2]
-SCRIPT = REPO / "experiments/phase2/perf/bench_checker.py"
-MODULE = "experiments.phase2.perf.bench_checker"
+SCRIPT = REPO / "tools/checker/bench.py"
+MODULE = "tools.checker.bench"
 
 
 def _disc(n, r, cy, cx):

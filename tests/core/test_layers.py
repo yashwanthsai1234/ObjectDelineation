@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC, TESTS, EXPERIMENTS = ROOT / "src/objdel", ROOT / "tests", ROOT / "experiments"
+SRC, TESTS, TOOLS = ROOT / "src/objdel", ROOT / "tests", ROOT / "tools"
 GOLDENS = TESTS / "goldens/phase_e"
 
 PRIVATE = {"_get_per_token_logps_and_entropies", "_generate_and_score_completions", "_prepare_inputs", "_compute_loss",
@@ -170,7 +170,7 @@ def string_tokens(path: Path):
 
 
 def unresolved_module_strings() -> list[str]:
-    files = [*py_files(SRC), *py_files(EXPERIMENTS), *py_files(TESTS)]
+    files = [*py_files(SRC), *py_files(TOOLS), *py_files(TESTS)]
     live = [p for p in files if "lab" not in p.relative_to(ROOT).parts]
     return sorted({f"{p.relative_to(ROOT).as_posix()}: {t}" for p in live for t in string_tokens(p) if not resolves(t)})
 
@@ -182,7 +182,7 @@ def test_module_string_through_an_imported_module_resolves():
 
 
 def test_module_strings_resolve():
-    """Every dotted objdel name in a string or docstring of src/, live experiments/ and tests/ names a module or a
+    """Every dotted objdel name in a string or docstring of src/, tools/ and tests/ names a module or a
     definition. The recorded stale tokens (docstrings of retired names) only shrink."""
     stale = set(json.loads((GOLDENS / "module_strings_stale.json").read_text()))
     assert set(unresolved_module_strings()) <= stale
@@ -197,7 +197,7 @@ def test_old_packages_gone():
 def test_g_probe_lr_not_read():
     """The pre-registered record `prereg.G_PROBE` is read for no learning rate; `configs.rl_lr` is the one source."""
     bad = []
-    for p in [*py_files(SRC), *py_files(EXPERIMENTS)]:
+    for p in [*py_files(SRC), *py_files(TOOLS)]:
         if p.name == "prereg.py":
             continue
         for node in ast.walk(parse(p)):

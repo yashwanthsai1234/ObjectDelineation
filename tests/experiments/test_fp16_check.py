@@ -2,7 +2,7 @@
 import torch
 from torch import nn
 
-from experiments.phase2 import fp16_check
+from tools.studies import fp16_check
 
 
 class Block(nn.Module):

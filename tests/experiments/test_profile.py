@@ -7,8 +7,8 @@ import json
 import numpy as np
 import pytest
 
-from experiments.phase2 import profile as PS
 from objdel.sft import train as sft_train
+from tools.profiling import profile as PS
 
 
 def test_rl_arms_are_short_g_probe_runs_of_256_answers(tmp_path):

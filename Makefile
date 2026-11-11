@@ -43,18 +43,18 @@ preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before rentin
 smoke:            ## the CPU smoke test: train -> select on a tiny model (preflight's last check)
 	$(PY) -m pytest -q -p no:cacheprovider tests/experiments/test_p2_scripts.py::test_cpu_smoke_train_then_select
 
-lint:             ## lint library, tests and experiments, then the import-layer contracts
-	$(PY) -m ruff check src tests experiments
+lint:             ## lint library, tests and tools, then the import-layer contracts
+	$(PY) -m ruff check src tests tools
 	.venv/bin/lint-imports --no-logo
 
 dead:             ## list unused code (vulture, [tool.vulture] in pyproject.toml)
 	$(PY) -m vulture
 
 sweep:            ## final sweep: stale names, orphans, doc links, docstrings, dead code (exit 1 on a hard finding)
-	$(PY) -I -m experiments.phase2.tools.final_sweep
+	$(PY) -I -m tools.sweep
 
 fmt:              ## auto-fix lint issues
-	$(PY) -m ruff check src tests experiments --fix
+	$(PY) -m ruff check src tests tools --fix
 
 wheels:           ## build manylinux x86-64 + aarch64 wheels in Docker with cibuildwheel (build/wheelhouse)
 	uvx cibuildwheel==4.3.1 --platform linux --output-dir build/wheelhouse

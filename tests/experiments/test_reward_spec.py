@@ -163,9 +163,9 @@ def test_val_half_independent_of_hashseed():
 
 
 def test_val_halves_script_writes_the_table(tmp_path, val_records):
-    """experiments.phase2.val_halves: the table plus the sorted held-out ids that chose R5; an id outside the view
+    """tools.data.val_halves: the table plus the sorted held-out ids that chose R5; an id outside the view
     is refused."""
-    from experiments.phase2 import val_halves as VH
+    from tools.data import val_halves as VH
     recs = [r | {"item_id": f"lidc/{r['group_id']}/z{i:03d}"} for i, r in enumerate(val_records)]
     view = tmp_path / "view.jsonl"
     view.write_text("".join(json.dumps(r) + "\n" for r in recs))

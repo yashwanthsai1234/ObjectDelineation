@@ -1,4 +1,4 @@
-"""Phase D goldens written on the Mac CPU build by experiments/phase2/perf/make_d_goldens.py.
+"""Phase D goldens written on the Mac CPU build by tests/goldens/make_d_goldens.py.
 
 GPU02 (gpu, the box half of D-G3 and D-G10): every engine entry on the shape corpora, the replay set and 1,000 caches
 of the R-D2 payload; the inputs' SHA-256 first ("input differs"), then dtype, shape and SHA-256 of every output equal
@@ -14,11 +14,11 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
-from experiments.phase2.perf import bench_checker as B
-from experiments.phase2.perf import make_d_goldens as M
 from objdel.data.targets.build import build_target
 from objdel.geom.shape import to_mask
 from objdel.geom.topology import filtered
+from tests.goldens import make_d_goldens as M
+from tools.checker import bench as B
 
 GOLDENS = Path(__file__).resolve().parents[1] / "goldens"
 BOX_INPUTS = ("checker_eval/masks.npz", "checker_eval/polygons.npz", "prepared/lidc/val.jsonl", "prepared/caches/lidc",

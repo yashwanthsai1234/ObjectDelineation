@@ -347,7 +347,7 @@ class ExpertCache:
 
     def table_args(self) -> tuple:
         """The 13 arguments of objdel.geom.engine.add_tables for this cache (the checker benchmark's replay dumps them,
-        experiments/phase2/perf/bench_checker.py)."""
+        tools/checker/bench.py)."""
         sigs = self.rater_sigs
         return (self.raters.view(np.uint8), self.union.view(np.uint8), self.core.view(np.uint8),
                 self.vote.view(np.uint8), np.where(self.union, self.dist_in_core, self.dist_out_union),

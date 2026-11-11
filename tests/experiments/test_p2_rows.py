@@ -125,7 +125,7 @@ def test_choose_prefers_no_reuse_then_smallest_passing():
 
 def test_hash_gate_rebuilds_a_rows_root(built, world):  # noqa: F811
     """verify_target_hashes follows source_item_id: a rows root keys records by window id, several per store item."""
-    from experiments.phase2 import verify_target_hashes as V
+    from tools.data import verify_target_hashes as V
     assert V.main([str(built.out / "manifest.json"), "--store", str(world.store), "--procs", "1"]) == 0
     m = json.loads((built.out / "manifest.json").read_text())
     m["sets"]["lidc/train"]["target_set_sha256"] = "0" * 64

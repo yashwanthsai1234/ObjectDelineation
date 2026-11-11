@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from experiments.phase2 import b2_summary as b2
+from tools.studies import b2_summary as b2
 
 
 # the records the decision reads

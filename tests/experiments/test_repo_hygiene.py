@@ -31,7 +31,7 @@ def test_r5_test_golden_is_committed_and_holds_only_its_three_keys():
     assert set(json.loads((GOLDENS / "r5_test_items.meta.json").read_text())) == {"numpy", "machine"}
 
 
-CLIS = ("objdel.cli.eval.run", "objdel.cli.eval.ceiling", "experiments.phase2.outline_lengths")
+CLIS = ("objdel.cli.eval.run", "objdel.cli.eval.ceiling", "tools.model.outline_lengths")
 
 
 def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
@@ -135,7 +135,7 @@ def test_retired_trees_hold_nothing():
              "mods = 'data.store data.targets data.fetch_lidc data.prepare eval.score'\n"
              "for m in mods.split():\n"
              "    importlib.import_module('objdel.cli.' + m)\n"
-             "importlib.import_module('experiments.phase1.bench.xarch_hashes')\n"
+             "importlib.import_module('tools.xarch.xarch_hashes')\n"
              "assert not [n for n in sys.modules if n.endswith('.lab') or '.lab.' in n]\n"
              "for m in ('experiments.phase0', 'experiments.phase1.lab', 'experiments.phase2.lab'):\n"
              "    try:\n        importlib.import_module(m)\n    except ModuleNotFoundError:\n        continue\n"
@@ -204,7 +204,7 @@ def test_import_scanner_reports_each_kind(tmp_path):
 def test_no_live_file_names_a_retired_tree(tmp_path):
     """CT-15. The files that implement this rule name the trees on purpose: this test and the final sweep with its
     test (the sweep's own SELF set; importing it would make this test import experiments)."""
-    checkers = {"tests/experiments/test_repo_hygiene.py", "experiments/phase2/tools/final_sweep.py",
+    checkers = {"tests/experiments/test_repo_hygiene.py", "tools/sweep.py",
                 "tests/experiments/test_final_sweep.py"}
     live = [f for f in tracked() if f.endswith((".py", ".md", ".yaml", ".yml", ".toml", ".txt", "Makefile", ".sh"))
             and not f.startswith("archive/") and f not in checkers]  # fmt: skip
@@ -255,7 +255,7 @@ def test_no_dead_code():
 def test_vulture_is_pinned_and_configured():
     cfg = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert "vulture==2.16" in cfg["project"]["optional-dependencies"]["dev"]
-    assert cfg["tool"]["vulture"]["paths"] == ["src", "experiments", "tests"]
+    assert cfg["tool"]["vulture"]["paths"] == ["src", "tools", "tests"]
     assert not (ROOT / "tests" / "vulture_whitelist.py").exists()
     assert re.search(r"^dead:.*\n\t\$\(PY\) -m vulture$", (ROOT / "Makefile").read_text(), re.M)
 

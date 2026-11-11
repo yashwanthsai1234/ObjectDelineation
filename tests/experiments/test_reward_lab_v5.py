@@ -5,7 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from experiments.phase2.reward_lab_v5 import (
+from objdel.verify.reward.spec import REWARD_V5
+from tools.studies.reward_lab_v5 import (
     allmiss_grad_share,
     b3_grpo,
     lab_gate,
@@ -15,7 +16,6 @@ from experiments.phase2.reward_lab_v5 import (
     variance_share,
     write_grpo,
 )
-from objdel.verify.reward.spec import REWARD_V5
 
 ROOT = Path(__file__).resolve().parents[2]
 

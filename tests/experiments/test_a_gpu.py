@@ -15,11 +15,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from experiments.phase2.perf import make_a_goldens as GOLD
 from objdel.geom import engine as _gpucheck
 from objdel.verify import ceiling
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
+from tests.goldens import make_a_goldens as GOLD
 
 ROOT = Path(__file__).resolve().parents[2]
 PREPARED = Path(os.environ.get("OBJDEL_PREPARED", ROOT / "data" / "prepared"))  # the box's prepared root
@@ -147,7 +147,7 @@ def test_g05_outline_lengths(tmp_path):
     for p in (prep, *views):
         _need(p / "manifest.json")
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.outline_lengths", "--train", prep, "--views",
+    subprocess.run([sys.executable, "-I", "-m", "tools.model.outline_lengths", "--train", prep, "--views",
                     *views, "--model", "qwen3-vl-2b", "--datasets", "lidc", "--splits", "train", "--out", tmp_path],
                    cwd=ROOT, check=True, capture_output=True)
     after = resource.getrusage(resource.RUSAGE_CHILDREN)

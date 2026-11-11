@@ -225,9 +225,8 @@ def cmd_sync_up(a) -> None:
     ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], bundle=name)
 
 
-# The modules run.sh runs by name: a command-line module, or a script not yet moved out of experiments/
-RUNNABLE = re.compile(rf"{re.escape(CLI_PACKAGE)}\.\w+\.\w+|experiments\.phase2\.\w+|"
-                      r"experiments\.phase1\.bench\.xarch_hashes")
+# The modules run.sh runs by name: a command module (objdel.cli.<group>.<command>) or a tool script (tools.*)
+RUNNABLE = re.compile(rf"{re.escape(CLI_PACKAGE)}\.\w+\.\w+|tools(\.\w+)+")
 
 
 def cmd_run(a) -> None:

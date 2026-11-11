@@ -1,5 +1,5 @@
-"""A6: experiments/phase2/docker/nsys_capture.sh (S04: pins, one capture flag, a stub nsys run) and
-experiments.phase2.nsys_baseline on the hand-made export in tests/goldens/nsys_small (I12-I15; the SQLite file is
+"""A6: tools/profiling/nsys_capture.sh (S04: pins, one capture flag, a stub nsys run) and
+tools.profiling.nsys_baseline on the hand-made export in tests/goldens/nsys_small (I12-I15; the SQLite file is
 built here from gpu_rows.json, so no binary is committed). G06 (the pulled V2 capture) is in
 tests/experiments/test_a_gpu.py."""
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "experiments/phase2/docker/nsys_capture.sh"
+SCRIPT = ROOT / "tools/profiling/nsys_capture.sh"
 
 
 # S04 -------------------------------------------------------------------------------------------------------------
@@ -103,7 +103,7 @@ def log(times):
 
 
 def run(tmp_path, csv=None, rows=None, drop=(), window=(16, 17)):
-    from experiments.phase2 import nsys_baseline as NB
+    from tools.profiling import nsys_baseline as NB
 
     stats, db = export(tmp_path, csv, rows, drop)
     return NB.baseline(stats, db, log([10.0] * 17), window)
@@ -176,7 +176,7 @@ def test_empty_gpu_tables_mean_idle(tmp_path):
 
 
 def test_clear_errors(tmp_path):
-    from experiments.phase2 import nsys_baseline as NB
+    from tools.profiling import nsys_baseline as NB
 
     (tmp_path / "a").mkdir()
     with pytest.raises(ValueError, match="CUPTI_ACTIVITY_KIND_KERNEL"):
@@ -194,7 +194,7 @@ def test_clear_errors(tmp_path):
 
 
 def test_no_step_ranges_writes_an_empty_list_and_fails(tmp_path, capsys):
-    from experiments.phase2 import nsys_baseline as NB
+    from tools.profiling import nsys_baseline as NB
 
     stats, db = export(tmp_path, csv={"nvtx_pushpop_trace": ranges((0, 10, "micro", 1))})
     (tmp_path / "rl.json").write_text(json.dumps({"log": log([10.0] * 17)}))
@@ -205,7 +205,7 @@ def test_no_step_ranges_writes_an_empty_list_and_fails(tmp_path, capsys):
 
 
 def test_main_writes_the_baseline(tmp_path):
-    from experiments.phase2 import nsys_baseline as NB
+    from tools.profiling import nsys_baseline as NB
 
     stats, db = export(tmp_path)
     (tmp_path / "rl.json").write_text(json.dumps({"log": log([10.0] * 15 + [12.0, 12.0])}))
@@ -218,7 +218,7 @@ def test_main_writes_the_baseline(tmp_path):
 
 @pytest.mark.parametrize("win,want", [(12.0, True), (10.9, False), (11.0, False)])
 def test_overhead_compares_the_window_with_the_three_steps_before(win, want):
-    from experiments.phase2 import nsys_baseline as NB
+    from tools.profiling import nsys_baseline as NB
 
     o = NB.overhead(log([10.0] * 15 + [win, win]), (16, 17))
     assert o["overhead_affected"] is want  # 11.0 > 11.000000000000002 is False: `win > 1.1 * base` in floats
@@ -226,14 +226,14 @@ def test_overhead_compares_the_window_with_the_three_steps_before(win, want):
 
 
 def test_overhead_needs_the_step_times():
-    from experiments.phase2 import nsys_baseline as NB
+    from tools.profiling import nsys_baseline as NB
 
     with pytest.raises(ValueError, match="time/step_s"):
         NB.overhead([{"step": i} for i in range(1, 18)], (16, 17))
 
 
 def test_api_names_lose_only_a_trailing_version_suffix():
-    from experiments.phase2 import nsys_baseline as NB
+    from tools.profiling import nsys_baseline as NB
 
     assert [NB.api_name(n) for n in ("cudaMemcpy_v3020", "cuStreamSynchronize_v2", "cudaMemcpy_v2_foo")] == [
         "cudaMemcpy", "cuStreamSynchronize", "cudaMemcpy_v2_foo"]  # fmt: skip
@@ -242,6 +242,6 @@ def test_api_names_lose_only_a_trailing_version_suffix():
 def test_cli_runs_isolated(tmp_path):
     """S02: `python -I -m` ignores a planted json.py in the working directory."""
     (tmp_path / "json.py").write_text("raise SystemExit('planted json.py ran')\n")
-    out = subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.nsys_baseline", "--help"], cwd=tmp_path,
+    out = subprocess.run([sys.executable, "-I", "-m", "tools.profiling.nsys_baseline", "--help"], cwd=tmp_path,
                          capture_output=True, text=True, env=os.environ | {"PYTHONPATH": str(ROOT)})  # fmt: skip
     assert out.returncode == 0 and "--stats" in out.stdout, out.stderr

@@ -6,7 +6,7 @@ bundle_view: views/lidc-bundle-v3
 stages:
 - kind: cmd
   name: c_fast_b
-  argv: [bash, -c, 'NSYS_TIMEOUT=1800 bash experiments/phase2/docker/nsys_capture.sh {rd} c_fast_b 16 17 -- /opt/venv/bin/python
+  argv: [bash, -c, 'NSYS_TIMEOUT=1800 bash tools/profiling/nsys_capture.sh {rd} c_fast_b 16 17 -- /opt/venv/bin/python
       -I -m objdel.cli.train.rl --model qwen3-vl-2b --ckpt {rd}/ckpt --train {data}/rows/lidc-train-b1-780 --rows-revision
       d2c8edb8e15534363ebbced8f839cecace49c495 --rows-manifest-sha256 a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9
       --out {rd}/c_fast_b --steps 40 --save-steps 40 --shared-prefix --gpu-pixels auto --prompt-memo --host-meta --fast-sync

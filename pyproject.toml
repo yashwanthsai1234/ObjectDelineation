@@ -49,7 +49,7 @@ build-backend = "scikit_build_core.build"
 # https://scikit-build-core.readthedocs.io/en/latest/configuration/index.html
 # Editable installs (make setup) use the default redirect mode: Python files are read from src/objdel, new
 # modules need no reinstall, the extension is rebuilt by `make build` (also run by `make test` when cpp/ changed).
-# CMakeLists.txt adds the repo root to sys.path in editable installs, for `python -I -m experiments.<phase>.<script>`.
+# CMakeLists.txt adds the repo root to sys.path in editable installs, for `python -I -m tools.<folder>.<script>`.
 minimum-version = "build-system.requires"
 build-dir = "build/{wheel_tag}"   # persistent, so rebuilds are incremental
 cmake.build-type = "Release"
@@ -63,7 +63,7 @@ build = "cp312-*"
 skip = "*-musllinux_*"
 build-verbosity = 1
 test-requires = ["pytest", "hypothesis"]
-test-sources = ["tests", "experiments", "pyproject.toml", "CMakeLists.txt"]
+test-sources = ["tests", "tools", "pyproject.toml", "CMakeLists.txt"]
 test-command = "python -m pytest -q -m 'not slow' -p no:cacheprovider tests/geom/test_checker_oracle.py tests/geom/test_cuda_checker.py tests/geom/test_checker_host.py"
 
 [tool.cibuildwheel.linux]
@@ -90,7 +90,7 @@ markers = [
 concurrency = ["multiprocessing", "thread"]
 parallel = true
 # Forked workers (prepare's pool) start coverage from this file, not from --cov: without a source
-# they also trace tests/ and experiments/ and the report counts those files against objdel.
+# they also trace tests/ and tools/ and the report counts those files against objdel.
 source_pkgs = ["objdel"]
 
 [tool.ruff]
@@ -107,8 +107,9 @@ ignore = ["E731", "E741"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-# Phase scripts are frozen records of what produced the published numbers: lint lightly.
-"experiments/**" = ["E501", "B023", "B905", "D"]
+# Tool scripts (several are frozen records of what produced the published numbers): lint lightly.
+"tools/**" = ["E501", "B023", "B905", "D"]
+"tests/goldens/make_*.py" = ["E501", "B023", "B905"]  # the golden writers moved from experiments/
 "tests/**" = ["D"]
 "src/objdel/cli/*/*.py" = ["E501", "D103"]  # the command modules moved from experiments/ keep their light lint
 "src/objdel/rl/trl_adapter.py" = ["TID251"]   # the one TRL adapter (E5)
@@ -119,7 +120,7 @@ convention = "google"
 "tests/rl/test_vllm_sync.py" = ["TID251"]
 "tests/experiments/test_breakit_r1_rl.py" = ["TID251"]
 "tests/experiments/test_c_flags.py" = ["TID251"]
-"experiments/phase2/perf/bench_checker.py" = ["TID251"]  # --engine old runs in the pre-E venv (D-G7): no objdel.geom
+"tools/checker/bench.py" = ["TID251"]  # --engine old runs in the pre-E venv (D-G7): no objdel.geom
 "tests/experiments/test_bench_checker.py" = ["TID251"]
 "tests/geom/test_geom_engine.py" = ["TID251"]  # compares geom.engine with the extension itself
 "tests/variants.py" = ["TID251"]  # checks which built extension a variant venv loads            # C5 --lora-sync test patches vllm_generation.LLM
@@ -131,11 +132,11 @@ convention = "google"
 "objdel._gpucheck".msg = "the CUDA extension: import objdel.geom.engine (E3a)"
 
 [tool.ruff.lint.isort]
-known-first-party = ["objdel", "experiments"]
+known-first-party = ["objdel", "tools", "tests"]
 
 [tool.vulture]
 # Dead-code gate (`make dead`, tests/experiments/test_repo_hygiene.py). Each group below is used by name from outside the code.
-paths = ["src", "experiments", "tests"]
+paths = ["src", "tools", "tests"]
 min_confidence = 60
 ignore_decorators = ["@pytest.fixture", "@model_validator", "@app.*"]  # autouse fixtures; pydantic validators (core.spec); FastAPI routes (verify/http.py)
 ignore_names = [

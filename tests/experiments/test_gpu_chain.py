@@ -39,7 +39,7 @@ def test_dry_chain_prints_the_box_steps_in_order_and_collects_the_list():
             '--engine old --replay "$OUT/replay_inputs.npz" --out "$OUT/replay_old.json"',
             '--engine current --out "$OUT/bench_current.json"',
             '--engine current --replay "$OUT/replay_inputs.npz" --out "$OUT/replay_current.json"',
-            'bench_checker --compare "$OUT"']
+            'tools.checker.bench --compare "$OUT"']
     assert len(steps) == len(want) and all(w in s for w, s in zip(want, steps, strict=True)), steps
     assert not any("--leak-check" in s for s in steps)
     assert steps.index("export CUDACXX=$CUDA_HOME/bin/nvcc") < min(i for i, s in enumerate(steps) if "make " in s)

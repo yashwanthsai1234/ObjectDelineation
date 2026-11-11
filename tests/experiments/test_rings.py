@@ -279,7 +279,7 @@ def built(tmp_path_factory, synthetic_items):
 
 
 def _verify(root, manifests):
-    from experiments.phase2 import verify_target_hashes as V
+    from tools.data import verify_target_hashes as V
     return V.main([*map(str, manifests), "--store", str(root / "store"), "--procs", "2"])
 
 

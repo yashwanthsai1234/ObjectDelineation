@@ -1,12 +1,12 @@
-"""experiments.phase2.c0_summary (plan C0 steps 5 and 6): U-MS4 (the decode-tail formula) and U-MS5 (the
+"""tools.profiling.c0_summary (plan C0 steps 5 and 6): U-MS4 (the decode-tail formula) and U-MS5 (the
 c0_summary.json schema), on nsys_baseline's hand-made export (tests/goldens/nsys_small)."""
 
 import json
 
 import pytest
 
-from experiments.phase2 import c0_summary as C0
 from tests.experiments.test_nsys_baseline import export, log, ranges
+from tools.profiling import c0_summary as C0
 
 LENGTHS = {"16": [1536, 1200, 130, 120, 110, 100, 90, 80, 70], "17": [100] * 8}
 
