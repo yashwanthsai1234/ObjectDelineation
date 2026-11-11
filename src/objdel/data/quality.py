@@ -50,7 +50,7 @@ import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
 from objdel.core.hashing import file_sha256, pixels_sha256
-from objdel.core.io import read_json
+from objdel.core.io import read_json, read_jsonl
 from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store, windows
 from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
@@ -168,7 +168,7 @@ class Gate:
 
 def records(rows_root) -> list[dict]:
     """The rows root's records (lidc/train.jsonl), in schedule order."""
-    return [json.loads(x) for x in Path(rows_root, "lidc", "train.jsonl").read_text().splitlines()]
+    return read_jsonl(Path(rows_root, "lidc", "train.jsonl"))
 
 
 def crop32(image: np.ndarray, ub) -> np.ndarray:
@@ -257,8 +257,8 @@ def leakage(store_root, review: Mapping[str, str], exclusions: Mapping, out) -> 
 
 def view_image_hashes(eval_views_root) -> set[str]:
     """image_sha256 of every record of every val and test view under `eval_views_root` (DG1b)."""
-    return {json.loads(x)["image_sha256"] for p in sorted(Path(eval_views_root).glob("*/lidc/*.jsonl"))
-            if p.stem in ("val", "test") for x in p.read_text().splitlines()}
+    return {r["image_sha256"] for p in sorted(Path(eval_views_root).glob("*/lidc/*.jsonl"))
+            if p.stem in ("val", "test") for r in read_jsonl(p)}
 
 
 def rows_leakage(rows_root, store_root, view_hashes: set[str], excluded: frozenset[str]) -> dict:
@@ -332,7 +332,7 @@ def view_windows(view_dir, store_root) -> list[Window]:
     """The windows of a shifted eval view as Window objects (geometry only; DG16): kind "shifted", draw 0."""
     view_dir = Path(view_dir)
     split = read_json(view_dir / "manifest.json")["view"].split("-")[1]
-    recs = {r["item_id"]: r for r in map(json.loads, (view_dir / "lidc" / f"{split}.jsonl").read_text().splitlines())}
+    recs = {r["item_id"]: r for r in read_jsonl(view_dir / "lidc" / f"{split}.jsonl")}
     out = []
     for it in store.load("lidc", split, store_root):
         if r := recs.get(it.item_id):
@@ -459,7 +459,7 @@ def view_content_sha256(view_dir) -> str:
     """B1.6 content hash: SHA-256 of the newline-joined JSON tuples [item_id, view.offset, view.side, image_sha256]
     of the view's LIDC records in file order (a prepared root without windows has null offset and side). Manifest
     versions and the reward fingerprint do not enter it."""
-    recs = [json.loads(x) for f in sorted(Path(view_dir, "lidc").glob("*.jsonl")) for x in f.read_text().splitlines()]
+    recs = [r for f in sorted(Path(view_dir, "lidc").glob("*.jsonl")) for r in read_jsonl(f)]
     lines = [json.dumps([r["item_id"], (r.get("view") or {}).get("offset"), (r.get("view") or {}).get("side"),
                          r["image_sha256"]]) for r in recs]
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
@@ -552,7 +552,7 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
     objdel.infra.preflight). `tokenizer` and `limit` are DG12's; the caller builds them
     (objdel.policy.models.tokenizer).
     The target is the train shifted law of the manifest's pool; the val view (default <eval_views>/lidc-val-shifted)
-    feeds only DG16. Defaults under the repo: docs/reference/{train_exclusions,neardup_review,frozen_views}.json,
+    feeds only DG16. Defaults under the repo: reference/{train_exclusions,neardup_review,frozen_views}.json,
     runs/b1/series_z.json and runs/b1/audit (DG3 PNGs). `plan`: the schedule dict (build_rl_rows passes it before the
     manifest exists); default the manifest's `schedule`."""
     root = repo_root()

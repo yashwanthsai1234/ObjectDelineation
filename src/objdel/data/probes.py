@@ -35,8 +35,6 @@ seeds pool) of "has a hole", per bin, pooled = train-share-weighted bins with a 
 gate (a) = simple controls answered (1, 0) >= 95 %; hole recall is reported against 0.30.
 """
 
-import hashlib
-import json
 import time
 from pathlib import Path
 
@@ -46,7 +44,7 @@ from PIL import Image
 from scipy import ndimage, stats
 
 from objdel.core.hashing import pixels_sha256
-from objdel.core.io import read_json, read_jsonl, write_json
+from objdel.core.io import read_json, read_jsonl, write_json, write_jsonl
 from objdel.data.targets.build import build_target
 from objdel.data.targets.frame import DIVISORS, LUNG_WINDOW
 from objdel.geom.shape import canonicalize, to_mask
@@ -407,11 +405,10 @@ def _write(out, name, split, items, patch_list, seed, meta):
         )
     (out / "caches").mkdir(exist_ok=True)
     (out / "lidc").mkdir(exist_ok=True)
-    text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in recs)
-    (out / "lidc" / f"{split}.jsonl").write_text(text)
+    sha = write_jsonl(out / "lidc" / f"{split}.jsonl", recs)
     mpath = out / "manifest.json"
     man = read_json(mpath) if mpath.is_file() else {"files": {}, "sets": {}}
-    man["files"][f"lidc/{split}.jsonl"] = {"sha256": hashlib.sha256(text.encode()).hexdigest()}
+    man["files"][f"lidc/{split}.jsonl"] = {"sha256": sha}
     fam = {f: sum(r["probe"]["family"] == f for r in recs) for f in sorted({r["probe"]["family"] for r in recs})}
     man["sets"][f"lidc/{split}"] = {
         "items": len(recs),

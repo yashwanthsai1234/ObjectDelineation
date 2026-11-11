@@ -94,7 +94,7 @@ def encode_masks(stack: np.ndarray) -> bytes:
 
 def decode_masks(bits: bytes, width: int) -> np.ndarray:
     """Unpack `encode_masks` bytes into a bool stack whose last axis has `width` entries."""
-    return np.unpackbits(_from_npy(bits), axis=-1, count=width).astype(bool)
+    return np.unpackbits(_from_npy(bits), axis=-1, count=width).view(bool)
 
 
 def _check(it: Item) -> tuple[int, int]:
@@ -112,13 +112,13 @@ def _check(it: Item) -> tuple[int, int]:
                 ndim == 3 and it.image.shape[2] != 3):
             raise ValueError(f"{it.item_id}: image {it.image.dtype} {it.image.shape}, expected {dtype} "
                              f"{'(H, W, 3)' if ndim == 3 else '(H, W)'} on the mask frame {shape[1:]}")
-    if json.loads(json.dumps(it.meta)) != it.meta:
-        raise ValueError(f"{it.item_id}: meta must be JSON-native")
     return shape[1:]
 
 
 def _row(it: Item) -> dict:
     h, w = _check(it)
+    if json.loads(json.dumps(it.meta)) != it.meta:
+        raise ValueError(f"{it.item_id}: meta must be JSON-native")
     return {"item_id": it.item_id, "dataset": it.dataset, "group_id": it.group_id, "split": it.split,
             "raters": list(it.raters), "height": h, "width": w,
             "image": None if it.image is None else _npy(np.ascontiguousarray(it.image)),

@@ -22,7 +22,7 @@ from objdel.verify.reward.spec import REWARD_V4, TERMS, fingerprint
 
 API_VERSION = "1.0"
 REWARDS = {"reward_v4": REWARD_V4}
-CODES = ("unknown_key", "spec_mismatch", "batch_too_large", "device_error")
+STATUS = {"unknown_key": 404, "spec_mismatch": 409, "batch_too_large": 413, "device_error": 503}  # code -> HTTP
 
 
 @dataclasses.dataclass(frozen=True)
@@ -58,10 +58,11 @@ class Stamp:
 
 
 class VerifyError(Exception):
-    """A batch the service cannot score; `code` is one of CODES."""
+    """A batch the service cannot score; `code` is a key of STATUS."""
 
     def __init__(self, code: str, message: str = ""):
-        assert code in CODES, code
+        if code not in STATUS:
+            raise ValueError(f"unknown VerifyError code {code!r}")
         super().__init__(message or code)
         self.code = code
 

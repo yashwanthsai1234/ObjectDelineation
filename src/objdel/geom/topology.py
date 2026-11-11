@@ -85,13 +85,18 @@ def bbox(m: np.ndarray) -> tuple[int, int, int, int]:
     return cv2.boundingRect(m.view(np.uint8))  # box of the non-zero pixels
 
 
-def _engine(masks: Sequence, min_area, want_masks: bool = False) -> tuple[list[np.ndarray], dict]:
-    """One gc.topology call: the as_mask masks and the engine's result (min_area: one value or one per mask)."""
-    ms = [as_mask(m) for m in masks]
+def pack_masks(ms: Sequence[np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The engine's input layout of as_mask masks: (bytes concatenated, int32 (n, 2) shapes, int64 starts)."""
     start = np.zeros(len(ms) + 1, np.int64)
     start[1:] = np.cumsum([m.size for m in ms])
     bits = np.concatenate([m.view(np.uint8).ravel() for m in ms]) if ms else np.zeros(0, np.uint8)
-    hw = np.array([m.shape for m in ms], np.int32).reshape(-1, 2)
+    return bits, np.array([m.shape for m in ms], np.int32).reshape(-1, 2), start
+
+
+def _engine(masks: Sequence, min_area, want_masks: bool = False) -> tuple[list[np.ndarray], dict]:
+    """One gc.topology call: the as_mask masks and the engine's result (min_area: one value or one per mask)."""
+    ms = [as_mask(m) for m in masks]
+    bits, hw, start = pack_masks(ms)
     rules = np.array(np.broadcast_to(np.asarray(min_area, np.int64), (len(ms),)))
     return ms, _gpucheck.topology(bits, hw, start, rules, want_masks)
 

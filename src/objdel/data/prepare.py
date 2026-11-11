@@ -21,7 +21,6 @@ References:
 """
 
 import hashlib
-import json
 import platform
 from collections.abc import Iterable, Mapping
 from importlib.metadata import version
@@ -32,7 +31,7 @@ from pathlib import Path
 import cv2
 
 from objdel.core.hashing import pixels_sha256
-from objdel.core.io import read_json, write_json
+from objdel.core.io import read_json, write_json, write_jsonl
 from objdel.data import store
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
@@ -125,11 +124,10 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
                     recs += pool.map(_prepare, jobs)
                 rel = f"{dataset}/{split}.jsonl"
                 (out / dataset).mkdir(exist_ok=True)
-                text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in recs)
-                (out / rel).write_text(text)
+                sha = write_jsonl(out / rel, recs)
                 triples = [(r["item_id"], rater, t) for r in recs
                            for rater, t in zip(r["raters"], r["targets"], strict=True) if t]
-                manifest["files"][rel] = {"sha256": hashlib.sha256(text.encode()).hexdigest()}
+                manifest["files"][rel] = {"sha256": sha}
                 manifest["sets"][f"{dataset}/{split}"] = {
                     "items": len(recs), "skipped_no_image": len(skipped), "targets": len(triples),
                     "target_set_sha256": target_set_hash(triples),
