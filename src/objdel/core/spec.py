@@ -62,7 +62,7 @@ class TrainerFlags(BaseModel, frozen=True, extra="forbid"):
     log_by_prompt: bool = False
     fast_sync: bool = False
     group_requests: bool = False
-    no_ckpt_layers: int = Field(0, ge=0, le=28)  # C9 arm (a): of Qwen3-VL-2B's 28 text decoder layers; no clamp
+    no_ckpt_layers: int = Field(0, ge=0)  # C9 arm (a): <= the model's text decoder layers (rl.run.checked); no clamp
     runaway_cap: float = Field(0, ge=0)
     profile_window: tuple[int, int] | None = None  # S,E: NvtxSteps; 1,steps traces every step; S >= 2 with trace
     count_syncs: bool = False

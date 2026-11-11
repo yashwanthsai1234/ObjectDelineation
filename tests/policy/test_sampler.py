@@ -128,6 +128,7 @@ def test_vllm_sampler_serves_an_adapter_unmerged(monkeypatch, tmp_path):
     _fake_vllm(monkeypatch, seen)
     s = S.VllmSampler(Path("ckpt"), "qwen3-vl-2b", adapter=tmp_path)
     assert seen["llm"]["enable_lora"] is True and seen["llm"]["max_lora_rank"] == 16
+    assert (seen["llm"]["gpu_memory_utilization"], seen["llm"]["max_model_len"]) == (0.85, 2048)  # the entry's
     assert s.lora == ("lora", "adapter", 1, str(tmp_path))
 
 

@@ -66,18 +66,18 @@ def grpo_config(model: str, output_dir: str, reward=REWARD_V4, numerics: str = D
             raise ValueError(f"{k}={overrides[k]}: {reward.name} scores groups of exactly {g} (its group)")
     from trl import GRPOConfig  # here, as in sft_config
 
+    m = policy_models.get(model)
     cfg = GRPOConfig(**{
         "output_dir": output_dir, "bf16": _bf16(overrides), "num_generations": g,
-        # P1, RTX 5090 (2026-11-06, perf/p1_results.md): 16 x 16 44.3 s/step; 32 x 8 59.1; no checkpointing: OOM
-        "per_device_train_batch_size": 2 * g, "gradient_accumulation_steps": 16, "per_device_eval_batch_size": 2 * g,
-        "gradient_checkpointing": True,
-        "max_completion_length": policy_models.get(model).max_completion, "temperature": 1.0,
+        "per_device_train_batch_size": m.groups_per_device * g, "gradient_accumulation_steps": m.grad_accum,
+        "per_device_eval_batch_size": m.groups_per_device * g, "gradient_checkpointing": m.grad_ckpt,
+        "max_completion_length": m.max_completion, "temperature": 1.0,
         "loss_type": "dr_grpo", "epsilon": 0.2, "epsilon_high": 0.28, "beta": 1e-3, "mask_truncated_completions": True,
         "learning_rate": rl_lr(model), "lr_scheduler_type": "constant", "warmup_steps": 0,
         "multi_objective_aggregation": "sum_then_normalize", "scale_rewards": "none",
         "reward_weights": [0.0] * len(LOGGED) + [1.0],  # TRLReward.funcs() order: loggers, then AGGREGATOR
-        "use_vllm": True, "vllm_mode": "colocate", "vllm_gpu_memory_utilization": 0.35,
-        "vllm_enable_sleep_mode": True, "vllm_max_model_length": 4096, **NO_SYNC,
+        "use_vllm": True, "vllm_mode": "colocate", "vllm_gpu_memory_utilization": m.vllm_train[0],
+        "vllm_enable_sleep_mode": True, "vllm_max_model_length": m.vllm_train[1], **NO_SYNC,
         "remove_unused_columns": False,  # key, W, H, names reach the reward functions
         "log_completions": True, "report_to": "none", "seed": 0} | overrides)
     train, spg = cfg.per_device_train_batch_size, cfg.steps_per_generation

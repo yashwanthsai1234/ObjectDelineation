@@ -253,11 +253,12 @@ def _rgb(path):
 class VllmSampler(Sampler):
     """vllm.LLM offline, in this process (module docstring). `model` (a models.MODELS key) is needed by sample() and
     with an adapter (its LoRA rank); records() samples prompt lines as they are. `sampling_params` collects repr of
-    every SamplingParams built."""
+    every SamplingParams built. The engine's memory share and length default to the model's vllm_eval (the CLI
+    passes both and no model)."""
 
-    def __init__(self, ckpt: Path, model: str | None = None, gpu_memory_utilization: float = 0.85,
-                 max_model_len: int = 2048, *, adapter: Path | None = None, dtype: str = "bfloat16", seed: int = 0,
-                 logprobs: bool = False):
+    def __init__(self, ckpt: Path, model: str | None = None, gpu_memory_utilization: float | None = None,
+                 max_model_len: int | None = None, *, adapter: Path | None = None, dtype: str = "bfloat16",
+                 seed: int = 0, logprobs: bool = False):
         import torch
 
         check_memory(torch.cuda.mem_get_info)
@@ -265,9 +266,10 @@ class VllmSampler(Sampler):
         import vllm
 
         self.vllm, self.ckpt, self.model, self.logprobs, self.sampling_params = vllm, ckpt, model, logprobs, set()
+        mem, length = models.get(model).vllm_eval if model else (None, None)  # explicit values win
         self.lora = None if adapter is None else vllm.lora.request.LoRARequest("adapter", 1, str(adapter))
-        self.llm = vllm.LLM(model=str(ckpt), dtype=dtype, gpu_memory_utilization=gpu_memory_utilization,
-                            max_model_len=max_model_len, enable_prefix_caching=True, seed=seed,
+        self.llm = vllm.LLM(model=str(ckpt), dtype=dtype, gpu_memory_utilization=gpu_memory_utilization or mem,
+                            max_model_len=max_model_len or length, enable_prefix_caching=True, seed=seed,
                             limit_mm_per_prompt={"image": {"count": 1, "width": 512, "height": 512}},
                             **({"logprobs_mode": "processed_logprobs"} if logprobs else {}),
                             **({"enable_lora": True, "max_lora_rank": models.get(model).lora_r}

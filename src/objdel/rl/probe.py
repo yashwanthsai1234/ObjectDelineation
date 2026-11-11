@@ -100,8 +100,11 @@ def probe(a, ckpt: Path, train, rows, prereg) -> dict:
 def run(a, prereg) -> int:
     """The ProbeStage `a` -> one probe per candidate checkpoint (at most two) -> <out>/g_probe.json. prereg is the
     pre-registered record (G_PROBE, g_probe), passed in by the CLI."""
+    from objdel.policy import models as policy_models
     from objdel.verify import store as serve
 
+    if a.no_ckpt_layers and a.no_ckpt_layers > (n := policy_models.get(a.model).text_layers):  # as rl.run.checked
+        raise ValueError(f"--no-ckpt-layers {a.no_ckpt_layers}: {a.model} has {n} text decoder layers")
     out = Path(a.out)
     ckpts = [Path(a.ckpt)] if a.ckpt else []
     if a.select:

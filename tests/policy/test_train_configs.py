@@ -41,6 +41,8 @@ def test_model_entry_holds_the_values_it_replaced():
     assert (m.hf_id, m.max_completion, m.grad_ckpt) == ("Qwen/Qwen3-VL-2B-Instruct", 1536, True)
     assert (m.lora_r, m.lora_alpha, m.lora_exclude) == (16, 32, policy_models.VISION)
     assert (m.sft_lr, m.rl_lr, dict(m.processor)) == (5e-4, 5e-5, {"padding_side": "left"})
+    assert (m.text_layers, m.groups_per_device, m.grad_accum) == (28, 2, 16)  # spec le=28; grpo_config 2 * g, 16
+    assert (m.vllm_train, m.vllm_eval) == ((0.35, 4096), (0.85, 2048))  # grpo_config; VllmSampler's defaults
     lc = policy_models.lora("qwen3-vl-2b")
     assert (lc.r, lc.lora_alpha, lc.exclude_modules, lc.target_modules) == (16, 32, policy_models.VISION, "all-linear")
     with pytest.raises(KeyError, match="unknown model 'qwen3-vl-7b'; registered"):
