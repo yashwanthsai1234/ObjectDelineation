@@ -2,8 +2,8 @@
 
 OPS: the dihedral group D4 on the last two axes (y, x) of an array: "id"; "r90", "r180", "r270" (np.rot90 with
 k = 1, 2, 3, counter-clockwise as displayed); "fh" (x mirrored), "fv" (y mirrored), "tr" (transpose), "at"
-(anti-transpose). LIDC uses all eight, RIGA ("id", "fh"): fundus orientation is physiological. The ops map the
-pixel lattice onto itself, so masks are transformed exactly and targets are rebuilt from them (build_target: the
+(anti-transpose). Each dataset entry names the ops its views use (objdel.core.datasets; LIDC: all eight). The ops
+map the pixel lattice onto itself, so masks are transformed exactly and targets are rebuilt from them (build_target: the
 top-left tie rule is not mirror-symmetric, an old rule); vertices are never transformed.
 
 draw(item, rng, side=None): one window: side S uniform over `sides(item)`, the policy side and its LADDER
@@ -17,7 +17,7 @@ every union under 23 px at S = 50 (min_side), so 27 % of the rescaled val's nodu
 
 Context crops (C-VIEW): per item the image region every admissible window of every side the scale draw can give
 (and the policy window) can show, clipped to the image: int16 Hounsfield units for LIDC (window
-jitter and noise act on raw HU), uint8 RGB for RIGA. render(spec, context) = frame(item, offset, side, window)
+jitter and noise act on raw HU), uint8 RGB for an RGB dataset. render(spec, context) = frame(item, offset, side, window)
 on the context with the spec's HU noise added, the op applied at frame resolution, then the Pillow upscale; with
 op "id", sigma 0 and the policy window and side it is the prepared PNG byte for byte
 (tests/experiments/test_p2_views.py).
@@ -31,11 +31,12 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core import datasets
+from objdel.core.datasets import Dataset
 from objdel.data.store import Item
 from objdel.data.targets.frame import (
     CLEARANCE,
     DIVISORS,
-    FRAMES,
     LUNG_WINDOW,
     centred,
     crowded,
@@ -46,10 +47,7 @@ from objdel.data.targets.frame import (
 )
 
 OPS = ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")
-DATASET_OPS = {"lidc": OPS, "riga": ("id", "fh")}
 LADDER = tuple(d for d in DIVISORS if 50 <= d <= 500)  # 50, 100, 125, 200, 250, 500
-WINDOW_JITTER = ((-300, 60), (1400, 80))  # CT level and width, centre and half-range in HU
-NOISE_MAX = 10.0  # HU, Gaussian sigma upper bound
 
 
 _OP = {"id": lambda a: a, "r90": lambda a: np.rot90(a, 1, (-2, -1)), "r180": lambda a: np.rot90(a, 2, (-2, -1)),
@@ -112,7 +110,7 @@ def _neighbours(side: int) -> list[int]:
 
 def sides(item: Item, box=None) -> list[int]:
     """The sides of the scale draw: the policy side and its LADDER neighbours up to max_side, ascending."""
-    cfg = FRAMES[item.dataset]
+    cfg = datasets.get(item.dataset).frame
     S0 = policy_side(box or union_box(item), cfg)[1]
     return sorted(s for s in (S0, *_neighbours(S0)) if s <= cfg.max_side)
 
@@ -135,17 +133,17 @@ def neighbour_side(item: Item, side: int, rng, box=None) -> tuple[tuple[int, int
     `box`: the item's union_box, when the caller has it."""
     box = box or union_box(item)
     for s in rng.permutation(_neighbours(side)).tolist():
-        if s <= FRAMES[item.dataset].max_side and (off := shift(item, s, rng, box=box)) is not None:
+        if s <= datasets.get(item.dataset).frame.max_side and (off := shift(item, s, rng, box=box)) is not None:
             return off, s
     return None
 
 
-def jitter(rng) -> dict:
-    """CT window and noise of one LIDC row."""
-    (lc, lr), (wc, wr) = WINDOW_JITTER
+def jitter(rng, ds: Dataset) -> dict:
+    """Intensity window and noise of one row of a dataset with a window jitter (LIDC: CT level and width, HU)."""
+    (lc, lr), (wc, wr) = ds.window_jitter
     level, width = lc + int(rng.integers(-lr, lr + 1)), wc + int(rng.integers(-wr, wr + 1))
     lo = level - width // 2
-    return {"window": [lo, lo + width], "noise_sigma": round(float(rng.uniform(0, NOISE_MAX)), 3),
+    return {"window": [lo, lo + width], "noise_sigma": round(float(rng.uniform(0, ds.noise_max)), 3),
             "noise_seed": int(rng.integers(2 ** 31))}
 
 
@@ -190,4 +188,4 @@ def render(spec: dict, context: dict) -> np.ndarray:
     sigma = spec.get("noise_sigma")
     noise = np.rint(row_rng("noise", spec["noise_seed"]).normal(0, sigma, (S, S))).astype(np.int64) if sigma else None
     chw = pixels(px, x0 - cx, y0 - cy, S, tuple(spec.get("window") or LUNG_WINDOW), noise)
-    return rgb(apply(chw, spec.get("op", "id")), FRAMES[spec["dataset"]].image_side)
+    return rgb(apply(chw, spec.get("op", "id")), datasets.get(spec["dataset"]).frame.image_side)

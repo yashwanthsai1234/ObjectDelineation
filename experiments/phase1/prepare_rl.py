@@ -16,7 +16,9 @@ References:
 import argparse
 import json
 import time
+from pathlib import Path
 
+from objdel.core.io import read_json
 from objdel.data import prepare as data_prepare
 from objdel.policy import prompt as policy_prompt
 from objdel.policy import rows as policy_rows
@@ -30,7 +32,7 @@ def token_budget(out):
     res = {}
     for m, mid in MODELS.items():
         tok = AutoTokenizer.from_pretrained(mid)
-        for ds in ("riga", "lidc"):
+        for ds in sorted({k.split("/")[0] for k in read_json(Path(out, "manifest.json"))["sets"]}):
             n = [len(tok(t, add_special_tokens=False)["input_ids"]) + 1
                  for r in policy_rows.records(out, ds, "train") for t in r["targets"] if t]
             over = sorted(x for x in n if x > MAX_COMPLETION[m])

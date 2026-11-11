@@ -8,7 +8,7 @@ answers are the truncated ones. The limit choice stays with the owner.
 
 .venv/bin/python -I -m experiments.phase2.outline_lengths --train data/prepared \
     --views data/views/lidc-train-shifted data/views/lidc-train-rescaled --model qwen3-vl-2b \
-    --datasets lidc riga --splits train val [--answers runs/a3/eval_val/answers.jsonl] --out runs/a8
+    --datasets lidc --splits train val [--answers runs/a3/eval_val/answers.jsonl] --out runs/a8
 
 Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """
@@ -136,7 +136,7 @@ def main():
     ap.add_argument("--train", type=Path, required=True)
     ap.add_argument("--views", type=Path, nargs="*", default=[])
     ap.add_argument("--model", required=True, choices=sorted(configs.MODELS))
-    ap.add_argument("--datasets", nargs="+", default=["lidc", "riga"])
+    ap.add_argument("--datasets", nargs="+", default=["lidc"])
     ap.add_argument("--splits", nargs="+", default=["train", "val"])
     ap.add_argument("--answers", type=Path, nargs="*", default=[])
     ap.add_argument("--out", type=Path, required=True)

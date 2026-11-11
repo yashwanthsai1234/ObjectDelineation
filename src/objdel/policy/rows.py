@@ -2,7 +2,7 @@
 
 Rows are Hugging Face datasets in conversational form with one {"type": "image"} placeholder that TRL fills from the
 "image" column (decoded lazily from the PNG path):
-- sft_rows: messages = [user: image + PROMPTS[dataset], assistant: target text], one row per voting rater with a
+- sft_rows: messages = [user: image + the dataset's prompt, assistant: target text], one row per voting rater with a
   target. A rater whose whole mask is below the reward's size filter abstains from the topology vote, so SFT does not
   teach its answer (RL keeps the item). Every voting rater is a row: an epoch shows each item's whole rater
   distribution, the topology histogram the RL reward matches, and needs no custom sampler. With tokenizer and
@@ -29,9 +29,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from objdel.core import datasets
 from objdel.core.hashing import pixels_sha256
 from objdel.core.io import read_jsonl
-from objdel.geom.text import SCHEMAS
 from objdel.policy.prompt import _user
 
 DISAGREEMENT_OVERSAMPLE = 4  # decided in experiments/phase1/impl/M7_train.md
@@ -75,6 +75,6 @@ def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: in
         n, seed = subset
         recs = [recs[i] for i in sorted(np.random.default_rng(seed).choice(len(recs), n, replace=False))]
     return [{"prompt": [_user(dataset)], "image": _image(root, r["item_id"]), "key": r["item_id"], "W": r["W"],
-             "H": r["H"], "names": list(SCHEMAS[dataset]),
+             "H": r["H"], "names": list(datasets.get(dataset).names),
              **({"kind": r["view"]["kind"], "cell": r["cell"]} if "cell" in r else {})}
             for r in _verified(root, recs) for _ in range(oversample if r["disagreement"] else 1)]

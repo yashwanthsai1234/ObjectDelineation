@@ -14,11 +14,12 @@ import pytest
 pytest.importorskip("datasets")
 pytest.importorskip("trl")
 
+from objdel.core import datasets  # noqa: E402
 from objdel.data import prepare as data_prepare  # noqa: E402
 from objdel.data import store  # noqa: E402
 from objdel.data.targets.build import build_target, min_areas  # noqa: E402
 from objdel.geom.shape import canonicalize, to_mask  # noqa: E402
-from objdel.geom.text import SCHEMAS, parse, serialize  # noqa: E402
+from objdel.geom.text import parse, serialize  # noqa: E402
 from objdel.policy import models as policy_models  # noqa: E402
 from objdel.policy import prompt as policy_prompt  # noqa: E402
 from objdel.policy import rows as policy_rows  # noqa: E402
@@ -32,7 +33,7 @@ from objdel.verify import store as verify_store  # noqa: E402
 
 
 def _target(disc, dataset, *discs):
-    names = SCHEMAS[dataset]
+    names = datasets.get(dataset).names
     stacks = {n: np.stack([disc(50, 50, *d) for d in ds]) for n, ds in zip(names, discs, strict=True)}
     ma = min_areas(stacks)
     return [build_target({n: stacks[n][r] for n in names}, names, None, ma).text for r in range(len(discs[0]))]
@@ -110,7 +111,7 @@ def test_view_rows_schema_and_lazy_render(view_dir, fake_augment):
                                                                len(rows[1]["target"]))
     assert r["image"].mode == "RGB" and r["image"].size == (512, 512) and r["image"].getpixel((0, 0))[0] == 40
     assert fake_augment.calls == [{k: v for k, v in rows[1].items() if k != "target"}]  # the row is the spec
-    assert ds[3]["messages"][0]["content"][1]["text"] == policy_prompt.PROMPTS["riga"]
+    assert ds[3]["messages"][0]["content"][1]["text"] == datasets.get("riga").prompt
 
 
 def test_length_column_and_the_sampler_render_nothing(view_dir, fake_augment):
@@ -146,7 +147,7 @@ def test_a0_empties_holes_and_keeps_parts(view_dir, fake_augment):
     root, rows = view_dir
     a0 = sft_rows.view_rows(root, chars, a0=True)
     for r, row in zip(rows, a0, strict=True):
-        names = SCHEMAS[r["dataset"]]
+        names = datasets.get(r["dataset"]).names
         text = row["messages"][1]["content"][0]["text"]
         before, after = parse(r["target"], names).objs, parse(text, names).objs
         assert serialize(canonicalize(after), names) == text  # canonical
@@ -172,9 +173,9 @@ def test_a0_drops_a_part_inside_another_parts_hole(disc_mask):
     from scipy.ndimage import binary_fill_holes
     ring = disc_mask(50, 50, 25, 25, 14, 9) | disc_mask(50, 50, 25, 25, 3)
     blob = disc_mask(50, 50, 6, 44, 3)
-    text = build_target({"nodule": ring | blob}, SCHEMAS["lidc"], None, {"nodule": 5}).text
-    assert len(parse(text, SCHEMAS["lidc"]).objs["nodule"]) == 3
-    parts = parse(sft_rows._no_holes(text, SCHEMAS["lidc"]), SCHEMAS["lidc"]).objs["nodule"]
+    text = build_target({"nodule": ring | blob}, datasets.get("lidc").names, None, {"nodule": 5}).text
+    assert len(parse(text, datasets.get("lidc").names).objs["nodule"]) == 3
+    parts = parse(sft_rows._no_holes(text, datasets.get("lidc").names), datasets.get("lidc").names).objs["nodule"]
     g = to_mask(parts, 50, 50)
     assert g.legal and len(parts) == 2 and np.array_equal(g.mask, binary_fill_holes(ring | blob))
 
@@ -379,7 +380,8 @@ def test_prepare_refuses_a_failed_image_write(tmp_path, synthetic_items, monkeyp
     it = next(i for i in synthetic_items() if i.dataset == "lidc" and i.image is not None)
     monkeypatch.setattr(data_prepare.cv2, "imwrite", lambda *a, **k: False)
     with pytest.raises(OSError, match="imwrite"):
-        data_prepare._prepare((str(tmp_path), it.item_id, it.dataset, it.group_id, it.raters, frame(it)))
+        data_prepare._prepare((str(tmp_path), it.item_id, datasets.get(it.dataset).names, it.group_id, it.raters,
+                               frame(it)))
 
 
 def test_cache_loader_reads_only_the_manifests_files(prepared, tmp_path):

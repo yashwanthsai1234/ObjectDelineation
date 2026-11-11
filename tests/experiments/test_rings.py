@@ -252,7 +252,8 @@ def test_the_reference_does_not_come_from_the_seam(monkeypatch):
 @pytest.fixture(scope="module")
 def built(tmp_path_factory, synthetic_items):
     """A synthetic store, its prepared root and val views, and a phase1-layout target manifest whose hashes come from
-    the prepared records (every synthetic LIDC item but z002 has pixels; RIGA has one per split)."""
+    the prepared records (every synthetic LIDC item but z002 has pixels). LIDC only: the builders' worker processes
+    see the library's datasets, not the tests' second one."""
     pytest.importorskip("datasets")
     from experiments.phase2 import build_eval_views as BE
     from objdel.data import prepare as data_prepare
@@ -261,10 +262,10 @@ def built(tmp_path_factory, synthetic_items):
     from objdel.policy import prompt as policy_prompt
     from objdel.policy import rows as policy_rows
     root = tmp_path_factory.mktemp("hashes")
-    items = [it for it in synthetic_items(("train", "val")) if it.image is not None]
+    items = [it for it in synthetic_items(("train", "val")) if it.image is not None and it.dataset == "lidc"]
     store.write(items, root / "store")
     data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
-    BE.build(root / "store", root / "views", ("lidc", "riga"), "val", seed=0, procs=1)
+    BE.build(root / "store", root / "views", ("lidc",), "val", seed=0, procs=1)
     prep = json.loads((root / "prepared" / "manifest.json").read_text())
     every = [(r["item_id"], k, t) for ds, split in (s.split("/") for s in prep["sets"])
              for r in policy_rows.records(root / "prepared", ds, split) for k, t in zip(r["raters"], r["targets"],
@@ -285,9 +286,9 @@ def _verify(root, manifests):
 def test_hash_gate_passes_on_every_recorded_set(built, capsys):
     ms = [built / "prepared" / "manifest.json", built / "targets" / "manifest.json",
           *sorted((built / "views").glob("*/manifest.json"))]
-    assert len(ms) == 7 and _verify(built, ms) == 0
+    assert len(ms) == 5 and _verify(built, ms) == 0
     out = capsys.readouterr().out
-    assert sum(line.startswith("ok ") for line in out.splitlines()) == 4 + 5 + 5 and "MISMATCH" not in out
+    assert sum(line.startswith("ok ") for line in out.splitlines()) == 2 + 3 + 3 and "MISMATCH" not in out
 
 
 @pytest.mark.parametrize("edit", ["hash", "store"])

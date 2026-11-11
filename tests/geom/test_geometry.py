@@ -8,10 +8,11 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from objdel.core import datasets
 from objdel.geom.shape import canonicalize
-from objdel.geom.text import GRID, MAX_CHARS, MAX_RINGS, MAX_VERTICES, SCHEMAS, parse, pattern, serialize
+from objdel.geom.text import GRID, MAX_CHARS, MAX_RINGS, MAX_VERTICES, parse, pattern, serialize
 
-RIGA, LIDC = SCHEMAS["riga"], SCHEMAS["lidc"]
+RIGA, LIDC = ("disc", "cup"), datasets.LIDC.names  # a two-structure schema and LIDC's
 
 # Canonical texts produced by the lab target builder (archive/phase1_lab/t_targets, BuildConfig() and the
 # lossless mode give the same text here) for hand-made masks of 25 x 20 px, serialized in the lab grammar.

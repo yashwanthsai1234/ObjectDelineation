@@ -1,6 +1,7 @@
 """Prepare frames, SFT targets and expert caches once, with hashes (the prepared set the row builders read).
 
-prepare(store, out, prompts=...) reads the item store (objdel.data.store) and writes, per item that has pixels:
+prepare(store, out, prompts=...) reads the item store (objdel.data.store) and writes, per item that has pixels (every
+registered dataset the store holds, objdel.core.datasets):
 - images/<item_id>.png: the model input of objdel.data.targets.frame (uint8 RGB; PNG is lossless);
 - caches/<item_id>/<object>.npz: objdel.verify.reward.cache.ExpertCache.save of the frame's rater stack (items with >= 2
   raters, rl_eligible); loaded lazily by objdel.verify.store.cache_loader, never serialized into a dataset;
@@ -12,14 +13,15 @@ prepare(store, out, prompts=...) reads the item store (objdel.data.store) and wr
   disagreement items, items skipped for lack of pixels, target errors), the store manifest's SHA-256, the reward
   fingerprint, the prompt table the caller passes (the policy's prompts; data names no policy module) and library
   versions. Re-running gives the same manifest (rows sorted by item_id, content hashes).
-Items without a model image (Item.image None: RIGA BinRushed1 reconstructions; LIDC series without CT)
-are skipped and counted. window_record builds the same record for one window of an item (RL rows, eval views).
+Items without a model image (Item.image None: LIDC series without CT) are skipped and counted. window_record
+builds the same record for one window of an item (RL rows, eval views).
 
 References:
 - Python multiprocessing Pool: https://docs.python.org/3/library/multiprocessing.html
 """
 
 import hashlib
+import json
 import platform
 from collections.abc import Iterable, Mapping
 from importlib.metadata import version
@@ -29,12 +31,12 @@ from pathlib import Path
 
 import cv2
 
+from objdel.core import datasets
 from objdel.core.hashing import pixels_sha256
 from objdel.core.io import read_json, write_json, write_jsonl
 from objdel.data import store
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
-from objdel.geom.text import SCHEMAS
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
 from objdel.verify.reward.score import rater_answers
 from objdel.verify.reward.spec import fingerprint
@@ -53,10 +55,10 @@ def _check_id(out, item_id: str) -> None:
 
 
 def _prepare(job) -> dict:
-    """One framed item -> its record; writes its image and caches under out."""
-    out, item_id, dataset, group_id, raters, f = job
+    """One framed item -> its record; writes its image and caches under out. The job carries the structure names, so a
+    worker never reads the dataset registry."""
+    out, item_id, names, group_id, raters, f = job
     _check_id(out, item_id)
-    names = SCHEMAS[dataset]
     ma = min_areas(f.masks)  # the reward's size rule
     targets, errors = [], []
     for r, rater in enumerate(raters):
@@ -88,10 +90,11 @@ def window_record(out, item, window=None, *, f=None) -> dict:
     two windows of one item never share an image or a cache folder), plus `source_item_id`, `cell` and
     `view = {kind, draw, offset, side, fallback: false, kept_side: false, op: "id"}`.
     window None (eval views): the given frame `f`, keyed by the item's own id; the caller adds its `view`."""
+    names = datasets.get(item.dataset).names
     if window is None:
-        return _prepare((str(out), item.item_id, item.dataset, item.group_id, item.raters, f))
+        return _prepare((str(out), item.item_id, names, item.group_id, item.raters, f))
     f = frame(item, offset=(window.dx, window.dy), side=window.side)
-    rec = _prepare((str(out), window.window_id, item.dataset, item.group_id, item.raters, f))
+    rec = _prepare((str(out), window.window_id, names, item.group_id, item.raters, f))
     return rec | {"source_item_id": item.item_id, "cell": f"{window.cell[0]}{window.cell[1]}",
                   "view": {"kind": window.kind, "draw": window.draw, "offset": [window.dx, window.dy],
                            "side": window.side, "fallback": False, "kept_side": False, "op": "id"}}
@@ -102,7 +105,7 @@ def _jobs(store_root, out, dataset, split, skipped):
         if it.image is None:
             skipped.append(it.item_id)
             continue
-        yield str(out), it.item_id, dataset, it.group_id, it.raters, frame(it)
+        yield str(out), it.item_id, datasets.get(dataset).names, it.group_id, it.raters, frame(it)
 
 
 def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), procs: int = 3, *,
@@ -111,12 +114,14 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
     `prompts` (the caller's prompt table: data names no prompt module)."""
     out = Path(out_root)
     out.mkdir(parents=True, exist_ok=True)
-    manifest = {"store_manifest_sha256": hashlib.sha256(Path(store_root, "manifest.json").read_bytes()).hexdigest(),
+    store_manifest = Path(store_root, "manifest.json").read_bytes()
+    held = {rel.split("/")[0] for rel in json.loads(store_manifest)["files"]}
+    manifest = {"store_manifest_sha256": hashlib.sha256(store_manifest).hexdigest(),
                 "reward_fingerprint": fingerprint(), "prompts": dict(prompts),
                 "versions": {"python": platform.python_version(), **{p: version(p) for p in _PINS}},
                 "files": {}, "sets": {}}
     with get_context("spawn").Pool(procs) as pool:  # a fork of a parent that used CUDA fails in the engine
-        for dataset in SCHEMAS:
+        for dataset in (d for d in datasets.DATASETS if d in held):
             for split in splits:
                 skipped, recs = [], []
                 for jobs in batched(_jobs(store_root, out, dataset, split, skipped), _BATCH):

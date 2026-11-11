@@ -45,32 +45,20 @@ References:
     OpenCV INTER_CUBIC (A = -0.75, same half-pixel centres), replaced:
         https://github.com/opencv/opencv/blob/4.x/modules/imgproc/src/resize.cpp
 """
-from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
 from PIL import Image
 
+from objdel.core import datasets
+from objdel.core.datasets import FrameConfig
 from objdel.data.store import Item
 from objdel.geom.box import boxes_meet
 from objdel.geom.topology import as_mask
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
-LUNG_WINDOW = (-1000, 400)
+LUNG_WINDOW = datasets.LIDC.window
 CLEARANCE = 2  # px between the rater union and the edge of a moved or resized window
-
-
-@dataclass(frozen=True)
-class FrameConfig:
-    """Frame policy: largest and smallest side and margins (pixels, percent) and the model image side."""
-    max_side: int = 500  # a divisor of 1000
-    min_side: int = 50
-    margin_px: int = 8
-    margin_pct: int = 25
-    image_side: int | None = None  # upscale the model image to this side (LIDC), else the frame side
-
-
-FRAMES = {"riga": FrameConfig(), "lidc": FrameConfig(image_side=512)}
 
 
 class Frame(NamedTuple):
@@ -176,7 +164,7 @@ def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: in
     Raises ValueError for a `side` that is not a divisor of 1000 in range, or when a moved window leaves the union
     without clearance or meets another outlined nodule.
     """
-    cfg = cfg or FRAMES[item.dataset]
+    cfg = cfg or datasets.get(item.dataset).frame
     stacks = {n: as_mask(s, 3) for n, s in item.masks.items()}
     ux0, uy0, ux1, uy1 = ub = union_box(item)
     f, S = policy_side(ub, cfg)

@@ -10,11 +10,11 @@ import numpy as np
 import pytest
 from oracles import reward_harness as H
 
+from objdel.core import datasets
 from objdel.data import store
 from objdel.data.audit import hack_audit
 from objdel.data.targets.build import build_target, min_areas
 from objdel.data.targets.frame import frame
-from objdel.geom.text import SCHEMAS
 from objdel.geom.topology import signature
 from objdel.verify.metrics import metrics
 from objdel.verify.reward.cache import ExpertCache
@@ -43,7 +43,7 @@ def models(frames):
     """{model: [metrics item]} for the raters' own targets and each pure adversary (64 copies)."""
     out = {"raters": []} | {a: [] for a in EXPECTED}
     for item_id, ds, masks, S in frames:
-        names = SCHEMAS[ds]
+        names = datasets.get(ds).names
         caches = {n: ExpertCache.build(masks[n]) for n in names}
         ma = min_areas({n: masks[n] for n in names})
         k = caches[names[0]].k
@@ -86,10 +86,10 @@ def test_audit_flags_each_r3_adversary_on_real_items(models, name):
 
 def test_eval_run_cli_end_to_end(frames, store_dir, tmp_path):
     """experiments.phase1.eval_run in a fresh -I interpreter: JSONL of the raters' own targets -> report files."""
-    picked = [f for f in frames if f[1] == "lidc"][:3] + [f for f in frames if f[1] == "riga"][:1]
+    picked = [f for f in frames if f[1] == "lidc"][:3]
     rows = []
     for item_id, ds, masks, _ in picked:
-        names = SCHEMAS[ds]
+        names = datasets.get(ds).names
         ma = min_areas({n: masks[n] for n in names})
         k = len(masks[names[0]])
         texts = [build_target({n: masks[n][r] for n in names}, names, min_area=ma).text for r in range(k)]
@@ -99,7 +99,7 @@ def test_eval_run_cli_end_to_end(frames, store_dir, tmp_path):
     subprocess.run([sys.executable, "-I", "-m", "experiments.phase1.eval_run", *map(str, args)],
                    cwd=Path(__file__).resolve().parents[2], check=True, capture_output=True)
     report = json.loads((tmp_path / "out" / "report.json").read_text())
-    assert report["audit"]["fired"] == [] and set(report["summary"]["datasets"]) == {"riga", "lidc"}
+    assert report["audit"]["fired"] == [] and set(report["summary"]["datasets"]) == {"lidc"}
     for d in report["summary"]["datasets"].values():
         assert d["format"] == d["legal"] == d["pass_rate"] == 1.0
     assert (tmp_path / "out" / "report.md").read_text().startswith("# Evaluation of c.jsonl")

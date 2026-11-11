@@ -26,11 +26,11 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from experiments.phase2.build_eval_views import _rotated
+from objdel.core import datasets
 from objdel.core.io import read_json
 from objdel.data import store
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
-from objdel.geom.text import SCHEMAS
 
 MANIFESTS = ("data/prepared/manifest.json", "data/targets/manifest.json",
              *(f"data/eval_views/lidc-val-{k}/manifest.json" for k in ("shifted", "rescaled", "rotated")),
@@ -45,7 +45,7 @@ def _triples(job) -> list[tuple[str, str, str]]:
         f = _rotated(it, tuple(view["offset"]), view["side"], view["op"])
     else:
         f = frame(it, offset=tuple(view["offset"]), side=view["side"])
-    names, ma, out = SCHEMAS[it.dataset], min_areas(f.masks), []
+    names, ma, out = datasets.get(it.dataset).names, min_areas(f.masks), []
     for r, rater in enumerate(it.raters):
         try:
             out.append((out_id, rater, build_target({n: f.masks[n][r] for n in names}, names, None, ma).text))

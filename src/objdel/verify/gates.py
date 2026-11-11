@@ -47,10 +47,10 @@ References:
 """
 from collections.abc import Sequence
 
+from objdel.core import datasets
 from objdel.verify.reward.spec import REWARD_V4
 
 FORMAT, LEGAL = 0.98, 0.90
-MEDIAN_IOU_TC = {("riga", "disc"): 0.85, ("riga", "cup"): 0.75, ("lidc", "nodule"): 0.60}
 IOU_TC_PASS, DUPLICATES, SIGNAL = 0.70, 0.10, 0.50
 GEOMETRY_VIEWS = ("shifted", "rescaled")  # G-geometry and G-prior (b)
 PROBE_DATASET = "lidc"  # the precision and topology probes are LIDC patches
@@ -85,7 +85,9 @@ def _ge(v, t) -> bool:
 def _checks(report: dict, ds: str, prior_a: float | None = None) -> list[tuple[str, str, object, bool]]:
     """(gate, value name, value, passed) of one dataset; G-prior-a rows only when its threshold is set."""
     summ = lambda view, *p: _dig(report, "views", view, "summary", "datasets", ds, *p)  # noqa: E731
-    names = [n for x, n in MEDIAN_IOU_TC if x == ds]
+    entry = datasets.DATASETS.get(ds)
+    median = {s.name: s.gate_median_iou for s in entry.structures if s.gate_median_iou is not None} if entry else {}
+    names = list(median)
     rows = [("G-format", f"format/shifted/{ds}", summ("shifted", "format"), FORMAT),
             ("G-format", f"legal/shifted/{ds}", summ("shifted", "legal"), LEGAL)]
     out = [(g, k, v, _ge(v, t)) for g, k, v, t in rows]
@@ -93,7 +95,7 @@ def _checks(report: dict, ds: str, prior_a: float | None = None) -> list[tuple[s
         out.append(("G-geometry", f"structures/{ds}", None, False))
     for view in GEOMETRY_VIEWS:
         out += [("G-geometry", f"median/{view}/{ds}/{n}", v := summ(view, "objects", n, "iou_tc_median"),
-                 _ge(v, MEDIAN_IOU_TC[ds, n])) for n in names]
+                 _ge(v, median[n])) for n in names]
         out.append(("G-geometry", f"pass_share/{view}/{ds}", v := summ(view, "iou_tc_pass"), _ge(v, IOU_TC_PASS)))
         for n in names:
             lo = (_dig(report, "prior", view, ds, n, "ci") or [None])[0]

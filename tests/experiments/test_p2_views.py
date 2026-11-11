@@ -10,13 +10,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.core import datasets
 from objdel.core.hashing import pixels_sha256
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
-from objdel.data.targets.frame import CLEARANCE, DIVISORS, FRAMES, LUNG_WINDOW, FrameConfig, frame, union_box, upscale
+from objdel.data.targets.frame import CLEARANCE, DIVISORS, LUNG_WINDOW, FrameConfig, frame, union_box, upscale
 from objdel.geom.shape import to_mask
-from objdel.geom.text import SCHEMAS, parse
+from objdel.geom.text import parse
 from objdel.geom.topology import signature
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
@@ -58,11 +59,11 @@ def _reference(it, offset, side, window, op, sigma=0.0, seed=0):
         H, W = img.shape
         ys, xs = slice(max(y0, 0), min(y0 + S, H)), slice(max(x0, 0), min(x0 + S, W))
         img[ys, xs] += noise[ys.start - y0:ys.stop - y0, xs.start - x0:xs.stop - x0]
-    cfg = FrameConfig(**{**FRAMES[it.dataset].__dict__, "image_side": None})
+    cfg = FrameConfig(**{**datasets.get(it.dataset).frame.__dict__, "image_side": None})
     f = frame(replace(it, image=img), cfg, offset=offset, side=side, window=window)
     out = np.moveaxis(augment.apply(np.moveaxis(f.image, -1, 0), op), 0, -1)
     from objdel.data.targets.frame import upscale
-    return upscale(np.ascontiguousarray(out), FRAMES[it.dataset].image_side)
+    return upscale(np.ascontiguousarray(out), datasets.get(it.dataset).frame.image_side)
 
 
 # ------------------------------------------------------------------------------------------------- frame(offset, side)
@@ -123,7 +124,6 @@ def test_ops_are_the_dihedral_group():
     for op, o in out.items():
         assert np.array_equal(augment.apply(o, INVERSE[op]), a) and o.flags.c_contiguous
     assert np.array_equal(out["fh"], a[..., ::-1]) and np.array_equal(out["tr"], a.swapaxes(1, 2))
-    assert augment.DATASET_OPS["riga"] == ("id", "fh")
 
 
 @pytest.mark.parametrize("seed", range(40))
@@ -169,8 +169,9 @@ def test_render_equals_the_offline_reference(items):
         for s in range(6):
             rng = np.random.default_rng(s)
             (dx, dy), S = augment.draw(it, rng)
-            op = augment.DATASET_OPS[it.dataset][s % len(augment.DATASET_OPS[it.dataset])]
-            j = augment.jitter(rng) if it.dataset == "lidc" else {"window": None, "noise_sigma": 0, "noise_seed": 0}
+            ds = datasets.get(it.dataset)
+            op = ds.ops[s % len(ds.ops)]
+            j = augment.jitter(rng, ds) if ds.window_jitter else {"window": None, "noise_sigma": 0, "noise_seed": 0}
             f = frame(replace(it, image=None), offset=(dx, dy), side=S)
             spec = {"dataset": it.dataset, "side": S, "box": list(f.box), "op": op, **j}
             ctx = _context(it)
@@ -343,7 +344,7 @@ def eval_views(tmp_path_factory, synthetic_items):
     from experiments.phase2 import build_eval_views as BE
     root = tmp_path_factory.mktemp("eval_views")
     store.write(synthetic_items(("train", "val")), root / "store")
-    return root, BE.build(root / "store", root / "out", ("lidc", "riga"), "val", seed=0, procs=1)
+    return root, BE.build(root / "store", root / "out", ("lidc",), "val", seed=0, procs=1)
 
 
 def test_eval_views_read_through_the_prepared_layout(eval_views):
@@ -352,8 +353,7 @@ def test_eval_views_read_through_the_prepared_layout(eval_views):
     from objdel.sft import rows as sft_rows
     from objdel.verify import store as verify_store
     root, manifests = eval_views
-    assert not (root / "out" / "riga-val-rotated").exists()  # fundus orientation is physiological (D10)
-    for name in ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated", "riga-val-shifted", "riga-val-rescaled"):
+    for name in ("lidc-val-shifted", "lidc-val-rescaled", "lidc-val-rotated"):
         d = root / "out" / name
         ds = name.split("-")[0]
         m = json.loads((d / "manifest.json").read_text())
@@ -365,7 +365,7 @@ def test_eval_views_read_through_the_prepared_layout(eval_views):
             S = r["view"]["side"]
             assert r["W"] == S and r["scale"] == 1
             if r["rl"]:
-                assert set(load(r["item_id"])) == set(SCHEMAS[ds])
+                assert set(load(r["item_id"])) == set(datasets.get(ds).names)
         if ds == "lidc":
             assert len(rl_rows.grpo_rows(d, ds, "val")) == sum(r["rl"] for r in recs)  # images match image_sha256
             sft_rows.sft_rows(d, ds, "val")
@@ -375,7 +375,7 @@ def test_eval_views_shift_and_rescale(eval_views, synthetic_items):
     from objdel.policy import rows as policy_rows
     root, _ = eval_views
     its = {i.item_id: i for i in synthetic_items(("train", "val"))}
-    for ds in ("lidc", "riga"):
+    for ds in ("lidc",):
         sh, rs = (policy_rows.records(root / "out" / f"{ds}-val-{k}", ds, "val") for k in ("shifted", "rescaled"))
         for a, b in zip(sh, rs, strict=True):
             it = its[a["item_id"]]
@@ -409,10 +409,10 @@ def test_rotated_eval_view_is_the_shifted_view_turned_r90(eval_views, synthetic_
         assert (a["view"]["offset"], a["view"]["side"], b["view"]["op"]) == (b["view"]["offset"], b["view"]["side"],
                                                                              "r90")
         it, S = its[a["item_id"]], b["view"]["side"]
-        cfg = FrameConfig(**{**FRAMES["lidc"].__dict__, "image_side": None})
+        cfg = FrameConfig(**{**datasets.get("lidc").frame.__dict__, "image_side": None})
         f = frame(it, cfg, offset=tuple(b["view"]["offset"]), side=S)
         img = np.moveaxis(augment.apply(np.moveaxis(f.image, -1, 0), "r90"), 0, -1)
-        assert b["image_sha256"] == pixels_sha256(upscale(np.ascontiguousarray(img), FRAMES["lidc"].image_side))
+        assert b["image_sha256"] == pixels_sha256(upscale(np.ascontiguousarray(img), datasets.LIDC.frame.image_side))
         for r, t in enumerate(b["targets"]):
             g = to_mask(parse(t, ("nodule",)).objs["nodule"], S, S).mask
             assert np.array_equal(g, augment.apply(f.masks["nodule"][r], "r90"))
@@ -440,7 +440,7 @@ def test_kinds_builds_only_the_named_views_with_the_default_records(eval_views, 
         assert _jsonl(d / "lidc-val-shifted") == _jsonl(root / "out" / "lidc-val-shifted")
     assert json.loads((tmp_path / "a" / "lidc-val-shifted" / "manifest.json").read_text())["kinds"] == ["shifted"]
     assert sorted(p.name for p in (root / "out").iterdir()) == [  # the default: three kinds, no edge
-        "lidc-val-rescaled", "lidc-val-rotated", "lidc-val-shifted", "riga-val-rescaled", "riga-val-shifted"]
+        "lidc-val-rescaled", "lidc-val-rotated", "lidc-val-shifted"]
 
 
 @pytest.mark.parametrize("kinds", ["shifted,uniform", "", "edge,,shifted"])
@@ -564,8 +564,8 @@ def test_crop_before_trace_keeps_the_prepared_target_hash(ds):
         ma = min_areas(f.masks)
         for r, rater in enumerate(it.raters):
             try:
-                rows.append((it.item_id, rater, build_target({n: f.masks[n][r] for n in SCHEMAS[ds]}, SCHEMAS[ds],
-                                                             None, ma).text))
+                names = datasets.get(ds).names
+                rows.append((it.item_id, rater, build_target({n: f.masks[n][r] for n in names}, names, None, ma).text))
             except ValueError:
                 pass
     assert target_set_hash(rows) == m["sets"][f"{ds}/val"]["target_set_sha256"]

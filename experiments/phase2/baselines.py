@@ -27,9 +27,10 @@ from pathlib import Path
 import numpy as np
 from scipy.stats import binomtest
 
+from objdel.core import datasets
 from objdel.core.io import read_jsonl
 from objdel.geom.shape import to_mask
-from objdel.geom.text import SCHEMAS, parse
+from objdel.geom.text import parse
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_mask
 
@@ -50,7 +51,7 @@ def fit_prior(root, dataset, split="train"):
     by = {}
     for r in _records(root, dataset, split):
         for t in r["targets"]:
-            p = parse(t, SCHEMAS[dataset]) if t else None
+            p = parse(t, datasets.get(dataset).names) if t else None
             for n, parts in p.objs.items() if p and p.ok else ():
                 m = to_mask(parts, r["W"], r["H"]).mask
                 if m.sum() >= 5:
@@ -205,7 +206,7 @@ def main():
             res[ds]["views"][view] = {"summary": {k: summary(v) for k, v in rows.items()}, "rows": rows}
             if view == "centred" and "prior" in rows:
                 res[ds]["centred_win_share_vs_prior"] = {
-                    k: {n: win_share(rows[k], rows["prior"], n) for n in SCHEMAS[ds]} for k in sams if k in rows
+                    k: {n: win_share(rows[k], rows["prior"], n) for n in datasets.get(ds).names} for k in sams if k in rows
                 }
             print(ds, view, json.dumps(res[ds]["views"][view]["summary"]), f"{time.time() - t0:.0f} s", flush=True)
     res["wall_s"] = time.time() - t0

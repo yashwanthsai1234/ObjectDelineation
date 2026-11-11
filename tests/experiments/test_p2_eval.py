@@ -12,9 +12,10 @@ from oracles.eval_oracle import nsd
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment, linprog
 
+from objdel.core.datasets import structure
 from objdel.data.targets.build import build_target, min_areas
 from objdel.verify import gates
-from objdel.verify.metrics import NSD_TAU, hm_iou, metrics, min_mode_retention, summarize, tv_js
+from objdel.verify.metrics import hm_iou, metrics, min_mode_retention, summarize, tv_js
 from objdel.verify.reward.cache import ExpertCache
 
 S = 50
@@ -187,7 +188,7 @@ def test_nsd_in_metrics_is_one_on_the_raters_own_targets():
     t = [build_target({n: riga[n][r] for n in names}, names, min_area=ma).text for r in range(2)]
     m = metrics(t, riga, 100, 100, names)
     assert all(m["objects"][n]["nsd"] == [1.0, 1.0] for n in names)
-    assert NSD_TAU == {"nodule": 2.0, "disc": 9.0, "cup": 16.0}
+    assert {n: structure(n).nsd_tau for n in ("nodule", "disc", "cup")} == {"nodule": 2.0, "disc": 9.0, "cup": 16.0}
 
 
 # ---------------------------------------------------------------- summarize: truncation and tokens, new metrics

@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.core import datasets
 from objdel.geom import engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,28 @@ def _no_real_secrets(tmp_path_factory, monkeypatch):
     secrets.get.cache_clear()
     yield
     secrets.get.cache_clear()
+
+
+# The retired RIGA set's facts (two nested structures, uint8 RGB photographs, no window), kept as the tests'
+# second dataset: every test sees it registered (`_two_structure_dataset`); the library registers LIDC only.
+# A worker process the code spawns does not see it.
+RIGA = datasets.Dataset(
+    name="riga",
+    structures=(datasets.Structure("disc", nsd_tau=9.0, biou_d=9, gate_median_iou=0.85),
+                datasets.Structure("cup", nsd_tau=16.0, biou_d=16, gate_median_iou=0.75)),
+    prompt='Outline the optic disc and the optic cup in this fundus crop. Answer with JSON only: '
+           '{"disc":[{"outer":[[x,y],...],"holes":[]}],"cup":[{"outer":[[x,y],...],"holes":[]}]}, '
+           'integers 0-1000 relative to the crop, outer rings clockwise.',
+    pixels=("uint8", 3),
+    ops=("id", "fh"),  # fundus orientation is physiological
+)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _two_structure_dataset():
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(datasets.DATASETS, RIGA.name, RIGA)
+        yield
 
 
 @pytest.fixture(scope="session")

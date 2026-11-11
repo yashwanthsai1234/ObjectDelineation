@@ -335,7 +335,8 @@ def _view(tmp_path, synthetic_items):
                   [str(j + 1) for j in range(len(st))], {}) for i, st in enumerate(stacks)]
     riga = [it for it in synthetic_items(("val",)) if it.dataset == "riga"]
     store.write(riga + items, tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=1, prompts=policy_prompt.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=1,
+                         prompts=policy_prompt.PROMPTS)
     return tmp_path / "view"
 
 

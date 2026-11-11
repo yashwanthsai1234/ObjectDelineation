@@ -70,10 +70,10 @@ def val_items(root, ds: str, n: int = 20) -> list[tuple]:
     import json
     from pathlib import Path
 
-    from objdel.geom.text import SCHEMAS
+    from objdel.core import datasets
     from objdel.verify.reward.cache import ExpertCache
 
-    root, names = Path(root), SCHEMAS[ds]
+    root, names = Path(root), datasets.get(ds).names
     out = []
     for line in (root / ds / "val.jsonl").read_text().splitlines():
         r = json.loads(line)

@@ -35,9 +35,9 @@ from operator import attrgetter
 
 import numpy as np
 
+from objdel.core import datasets
 from objdel.data.targets import augment
 from objdel.data.targets.frame import CLEARANCE, centred, crowded, frame, union_box
-from objdel.geom.text import SCHEMAS
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
 from objdel.verify.reward.score import rater_answers
 
@@ -114,7 +114,7 @@ class WindowPool:
 
 def _disagreement(masks, dataset: str) -> bool:
     """prepare._prepare's rule; tau and T5 do not enter the doctors' topology answers, so they are not computed."""
-    names = SCHEMAS[dataset]
+    names = datasets.get(dataset).names
     return len(rater_answers({n: ExpertCache(masks[n], 1.0, 1.0) for n in names}, names)) > 1
 
 

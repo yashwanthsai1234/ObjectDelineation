@@ -268,7 +268,7 @@ def test_disagreement_is_per_slice(items30, tmp_path):  # U11: the prepare._prep
     for it in [*items30, agree, split]:
         flags = {w.disagreement for w in p.windows if w.item_id == it.item_id}
         if flags:
-            rec = D._prepare((str(tmp_path), it.item_id, "lidc", it.group_id, it.raters, frame(it)))
+            rec = D._prepare((str(tmp_path), it.item_id, ("nodule",), it.group_id, it.raters, frame(it)))
             assert flags == {rec["disagreement"]}, it.item_id
     assert {w.disagreement for w in p.windows if w.item_id == split.item_id} == {True}
     assert {w.disagreement for w in p.windows if w.item_id == agree.item_id} == {False}

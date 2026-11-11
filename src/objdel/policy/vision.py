@@ -20,8 +20,8 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core import datasets
 from objdel.core.io import read_jsonl
-from objdel.policy.prompt import PROMPTS
 
 RATIO, TV = 0.5, 0.002
 N_IMAGES, N_ITEMS, T = 4, 8, 24
@@ -60,7 +60,7 @@ def black(image):
 
 
 def _batch(model, processor, image, prompt):
-    text = PROMPTS["lidc"] if prompt is None else prompt
+    text = datasets.get("lidc").prompt if prompt is None else prompt
     msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]}]
     chat = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     b = processor(text=[chat], images=[[image]], return_tensors="pt")

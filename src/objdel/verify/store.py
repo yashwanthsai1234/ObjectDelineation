@@ -25,8 +25,8 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache, partial
 from pathlib import Path
 
+from objdel.core import datasets
 from objdel.core.io import read_json
-from objdel.geom.text import SCHEMAS
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import rater_answers
 
@@ -110,8 +110,8 @@ def voting(root, rec: dict, dataset: str) -> set[int]:
     without caches, which has one rater)."""
     if not rec["caches"]:
         return set(range(len(rec["raters"])))
-    return {i for rs in rater_answers(_caches(root, rec["item_id"], rec["caches"]), SCHEMAS[dataset]).values()
-            for i in rs}
+    answers = rater_answers(_caches(root, rec["item_id"], rec["caches"]), datasets.get(dataset).names)
+    return {i for rs in answers.values() for i in rs}
 
 
 def cache_loader(root, maxsize: int = 64) -> Callable[[str], dict[str, ExpertCache]]:

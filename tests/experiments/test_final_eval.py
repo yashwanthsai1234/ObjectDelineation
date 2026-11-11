@@ -848,7 +848,8 @@ def test_rescore_of_300_items_is_fast(tmp_path, clean_store, monkeypatch, synthe
                   ["1", "2"], {}) for i in range(300)]
     riga = [it for it in synthetic_items(("val",)) if it.dataset == "riga"]  # prepare builds every dataset
     store.write(riga + sorted(items, key=lambda it: it.item_id), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4, prompts=policy_prompt.PROMPTS)
+    data_prepare.prepare(tmp_path / "store", tmp_path / "view", splits=("val",), procs=4,
+                         prompts=policy_prompt.PROMPTS)
     view = tmp_path / "view"
     run_fe(view, tmp_path / "src", monkeypatch)
     t = time.time()

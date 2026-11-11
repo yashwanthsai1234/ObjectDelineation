@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from harness.k3_harness import make_jobs
 
-from objdel.geom.text import SCHEMAS
+from objdel.core import datasets
 from objdel.rl.reward import TRLReward
 from objdel.sft import select as sft_select
 from objdel.verify import store as serve
@@ -61,7 +61,7 @@ pytestmark = pytest.mark.usefixtures("clean_store")  # conftest: an empty serve.
 
 def _prompts(root, ds):
     keys = sorted(k for k in serve.STORE[str(Path(root).resolve())] if k.startswith(ds))
-    return [(SCHEMAS[ds], serve.loader(root)(k)) for k in keys]
+    return [(datasets.get(ds).names, serve.loader(root)(k)) for k in keys]
 
 
 def _workloads(root) -> dict[str, list]:

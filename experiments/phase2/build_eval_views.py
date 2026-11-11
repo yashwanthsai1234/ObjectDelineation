@@ -38,20 +38,21 @@ from itertools import batched
 from multiprocessing import get_context
 from pathlib import Path
 
+from objdel.core import datasets as registry
 from objdel.core.io import write_json
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import target_set_hash
-from objdel.data.targets.frame import FRAMES, frame, rgb, union_box
+from objdel.data.targets.frame import frame, rgb, union_box
 
 KINDS = ("shifted", "rescaled", "rotated", "edge")  # --kinds default: the first three
-ROTATION = {"lidc": "r90"}  # the rotated view's op per dataset; no rotated RIGA view
 
 
 def _rotated(it, offset, side, op):
     """frame(it, offset, side) with `op` applied to masks and image at frame resolution, then the upscale."""
-    f = frame(it, replace(FRAMES[it.dataset], image_side=None), offset=offset, side=side)
-    image = rgb(augment.apply(f.image.transpose(2, 0, 1), op), FRAMES[it.dataset].image_side)
+    cfg = registry.get(it.dataset).frame
+    f = frame(it, replace(cfg, image_side=None), offset=offset, side=side)
+    image = rgb(augment.apply(f.image.transpose(2, 0, 1), op), cfg.image_side)
     return f._replace(image=image, masks={n: augment.apply(m, op) for n, m in f.masks.items()})
 
 
@@ -59,6 +60,7 @@ def _record(job):
     from objdel.data import prepare as data_prepare
     from objdel.data.windows import offset_of  # lazy: objdel.verify.reward -> scipy fails in the [dev]-only job
     out, it, kind, seed = job
+    op = registry.get(it.dataset).rotated_op
     bare = replace(it, image=None)
     S0 = frame(bare).W
     rng = augment.row_rng(seed, "shifted" if kind == "rotated" else kind, it.item_id)  # rotated: shifted's windows
@@ -69,12 +71,12 @@ def _record(job):
     else:
         got = got or augment.draw(bare, rng, side=S0)
     (dx, dy), S = got or ((0, 0), S0)
-    f = _rotated(it, (dx, dy), S, ROTATION[it.dataset]) if kind == "rotated" else frame(it, offset=(dx, dy), side=S)
+    f = _rotated(it, (dx, dy), S, op) if kind == "rotated" else frame(it, offset=(dx, dy), side=S)
     rec = data_prepare.window_record(out, it, f=f)
     H, W = next(iter(it.masks.values())).shape[-2:]
     x0, y0, x1, y1 = f.box
     rec["view"] = {"offset": [dx, dy], "side": S, "kept_side": kept and kind == "rescaled", "fallback": got is None,
-                   "op": ROTATION[it.dataset] if kind == "rotated" else "id",
+                   "op": op if kind == "rotated" else "id",
                    "offset_frac": offset_of(union_box(bare), f.box), "padded": x0 < 0 or y0 < 0 or x1 > W or y1 > H}
     return rec
 
@@ -87,7 +89,7 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
     manifests = {}
     with get_context("spawn").Pool(procs) as pool:
         for ds in datasets:
-            for kind in (k for k in kinds if k != "rotated" or ds in ROTATION):
+            for kind in (k for k in kinds if k != "rotated" or registry.get(ds).rotated_op):
                 name = f"{ds}-{split}-{kind}"
                 out = Path(out_root, name)
                 (out / ds).mkdir(parents=True, exist_ok=True)

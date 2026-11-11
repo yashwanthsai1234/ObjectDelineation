@@ -11,8 +11,8 @@ makes on the device (objdel.verify.device): no mask reaches the host. Per item (
 - per object and sample: IoU_tc, F5, g_area, IoU and Dice vs the strict-majority vote, D_max (best IoU to any single
   rater), area A, A / A_max, A / A_min, |M| / |E| (A over the raters' union, the egg of the egg-yolk band),
   size-filtered components and their excess over the most fragmented rater;
-- per object and sample: NSD@tau (surface Dice) against the best rater, tau = NSD_TAU per structure; boundary IoU
-  against the best rater and against the strict-majority vote, d = BIOU_D per structure;
+- per object and sample: NSD@tau (surface Dice) against the best rater, tau = the structure's nsd_tau; boundary IoU
+  against the best rater and against the strict-majority vote, d = the structure's biou_d (objdel.core.datasets);
 - per object: soft Dice (MRNet protocol), the squared generalized energy distance (GED), HM-IoU, the K x K IoU of the
   answers (`sample_iou`, illegal answers as empty masks; objdel.verify.select reads it), the IoU_tc of the answers'
   pixel vote (`pixel_vote_iou_tc`, analysis only) and the doctors' vote area (`vote_area`, px);
@@ -57,7 +57,7 @@ Definitions and choices:
 - Boundary IoU (Cheng et al. 2021), as the official boundary-iou-api `mask_to_boundary`: the band of a mask is the
   mask minus its erosion (1 px zero border, 3 x 3 ones, d iterations of cv2.erode, border cropped);
   boundary IoU = |band(a) & band(b)| / |band(a) | band(b)|; two empty bands: 1, one empty band: 0 (the official code
-  has no empty rule). d = BIOU_D px at frame resolution (as NSD_TAU). On the device the erosion is one (2d + 1)
+  has no empty rule). d = biou_d px at frame resolution (as nsd_tau). On the device the erosion is one (2d + 1)
   square with the outside of the frame as background, the same band. d = 2 on a nodule about 8 px wide covers most
   of it, so there boundary IoU adds little over IoU.
 - NSD@tau (Nikolov et al. 2018; Metrics Reloaded's default boundary metric), as google-deepmind/surface-distance
@@ -101,6 +101,7 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from objdel.core.datasets import structure
 from objdel.geom.text import parse
 from objdel.verify.device import ItemCounts, duplicate_keys, item_counts
 from objdel.verify.reward.advantages import advantages_v4, legal_gate, topology_valid
@@ -114,8 +115,6 @@ FAIL = -1.0  # topology answer of unparseable or illegal samples (sig_ids are CR
 # scores of failed and illegal samples
 _ZEROED = ("iou_tc", "f5", "g_area", "iou_vote", "dice_vote", "d_max", "precision_vote", "recall_vote",
            "boundary_iou", "boundary_iou_vote")
-NSD_TAU = {"nodule": 2.0, "disc": 9.0, "cup": 16.0}  # px at frame resolution
-BIOU_D = {"nodule": 2, "disc": 9, "cup": 16}  # boundary IoU band width, px at frame resolution
 _D = 0.5 * np.sqrt(2.0)  # surfel lengths of the 2 x 2 codes (surface-distance lookup table, 1 px spacing): _D, 1, 2 _D
 _GEOMETRIC = [(t, f) for t, f in zip(TERMS, REWARD_V4.floors, strict=True) if t != "legal"]  # (term, sigma floor)
 
@@ -249,7 +248,8 @@ def metrics(samples: Sequence[str], raters: Mapping[str, np.ndarray], W: int, H:
     gated = {t: np.where(legal, T[t], 0.0) for t, _ in _GEOMETRIC}  # illegal: 0, as advantages_v4 sees the terms
     passed = topology_valid(T)
     counts = item_counts([r["parsed"] for r in rows], names, caches, W, H, legal, thresholds=THRESHOLDS,
-                         nsd_tau=NSD_TAU, band_d=BIOU_D)
+                         nsd_tau={n: structure(n).nsd_tau for n in names},
+                         band_d={n: structure(n).biou_d for n in names})
     objects = {}
     for n in names:
         c, ot, cn = caches[n], [r["objects"][n] for r in rows], counts[n]

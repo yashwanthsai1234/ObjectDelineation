@@ -52,7 +52,7 @@ def write_rows(root, items, scheduled, plan=PLAN, excluded=()):
     for w in scheduled:
         it = by_id[w.item_id]
         f = frame(it, offset=(w.dx, w.dy), side=w.side)
-        r = D._prepare((str(root), w.window_id, "lidc", it.group_id, it.raters, f))
+        r = D._prepare((str(root), w.window_id, ("nodule",), it.group_id, it.raters, f))
         recs.append(r | {"source_item_id": w.item_id, "cell": f"{w.cell[0]}{w.cell[1]}",
                          "view": {"kind": w.kind, "draw": w.draw, "offset": [w.dx, w.dy], "side": w.side,
                                   "fallback": False, "kept_side": False, "op": "id"}})
