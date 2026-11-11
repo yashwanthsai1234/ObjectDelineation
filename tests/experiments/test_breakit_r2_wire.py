@@ -99,7 +99,7 @@ def test_an_empty_schedule_is_not_an_unscheduled_root(stub):
 
 
 def test_resume_past_the_requested_steps_is_refused(stub):
-    (stub.root / "manifest.json").write_text("{}")
+    (stub.root / "manifest.json").write_text('{"sets": {"lidc/train": {}}}')  # the train set check_root looks for
     (stub.out / "trainer" / "checkpoint-100").mkdir(parents=True)
     argv = [a if a != "20" else "60" for a in stub.argv]
     try:

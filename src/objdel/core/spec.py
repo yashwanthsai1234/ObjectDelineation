@@ -120,6 +120,7 @@ class RlStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # train_rl
     record_batches: str | None = None  # C0: each generation batch from checks_from_step on, to DIR/step<N>.pt
     expect_step1: str | None = None  # C0 (E-EQ6): another arm's rl.json; needs encode_check
     encode_check: str | None = None  # C0: c_speed_check --encoder's encoder.json
+    dataset: str = "lidc"  # a key of objdel.core.datasets; its data folders must hold it (policy.rows.check_root)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -208,6 +209,7 @@ class SelectStage(StageBase, frozen=True, extra="forbid"):  # select_ckpt
     timeout_s: float | None = None
     max_tokens: int | None = Field(None, ge=1)  # sampled completion cap (CPU smoke); None: the model's max_completion
     out: str | None = None
+    dataset: str = "lidc"  # a key of objdel.core.datasets; its data folders must hold it (policy.rows.check_root)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -231,6 +233,7 @@ class ProbeStage(StageBase, TrainerFlags, frozen=True, extra="forbid"):  # g_pro
     probe: str
     out: str
     items: int | None = None
+    dataset: str = "lidc"  # a key of objdel.core.datasets; its data folders must hold it (policy.rows.check_root)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -253,6 +256,7 @@ class EvalStage(StageBase, frozen=True, extra="forbid"):  # final_eval
     seed: int = 11
     rescore: str | None = None
     limit: int | None = Field(None, ge=1)  # smoke runs: at most N items per view
+    dataset: str = "lidc"  # a key of objdel.core.datasets; its data folders must hold it (policy.rows.check_root)
 
     @model_validator(mode="after")
     def _rules(self):
@@ -290,16 +294,16 @@ FLAG_ORDER = {
            "lr", "resume", "reward", "numerics", "f_check", "no_f_check", "b1_adapter", "opsm_start_delta", "grpo",
            "rows_revision", "rows_manifest_sha256", "budget_usd", "session_start", "rate_usd_per_h", "fixed_usd",
            "heldout", "heldout_items", "heldout_every", *TRAINER_ORDER, "record_batches", "expect_step1",
-           "encode_check"),
+           "encode_check", "dataset"),
     "sft": ("model", "view", "output_dir", "data_root", "run_dir", "model_path", "branches", "a0", "seed",
             "rolling_minutes", "vision", "vision_reference_only", "resume", "steps_per_epoch", "sft",
             "deterministic", "branches_from", "profile"),
     "select": ("run", "prepared", "probes", "sampler", "shifted", "rescaled", "rotated", "items", "vision",
-               "no_vision", "only", "model", "k", "seed", "timeout_s", "max_tokens", "out"),
+               "no_vision", "only", "model", "k", "seed", "timeout_s", "max_tokens", "out", "dataset"),
     "probe": ("model", "ckpt", "select", "train", "probe", "out", "items", "grpo", "compile", "shared_prefix", "plain",
               "trace", "lr", "log_by_prompt", *(f for f in TRAINER_ORDER if f not in ("compile", "plain",
-                                                                                               "trace"))),
-    "eval": ("ckpt", "views", "model", "adapter", "k", "seed", "rescore", "limit"),
+                                                                                               "trace")), "dataset"),
+    "eval": ("ckpt", "views", "model", "adapter", "k", "seed", "rescore", "limit", "dataset"),
 }
 
 

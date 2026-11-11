@@ -691,7 +691,7 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
     fe = ("import json; from objdel.policy import final_eval as FE; "  # OBJDEL_REPO=box: the box's repo_root()
           f"assert str(FE.FROZEN_VIEWS).startswith({str(box)!r}), FE.FROZEN_VIEWS; "
           "print(json.dumps(FE.frozen_entry('lidc-val-edge')), flush=True); "
-          f"FE.check_view(FE.Path({str(view)!r}), 'val')")
+          f"FE.check_view(FE.Path({str(view)!r}), 'lidc', 'val')")
     p = _child(box, fe)
     assert p.returncode != 0 and "content_sha256" in json.loads(p.stdout.splitlines()[0])  # the entry, then E05
     assert "content_sha256" in p.stderr

@@ -241,7 +241,7 @@ def stub(tmp_path, monkeypatch):
     monkeypatch.setattr(serve, "preload", lambda root, ds: calls.append("preload"))
     monkeypatch.setattr(gc, "freeze", lambda: calls.append("freeze"))
     monkeypatch.setattr(rl_rows, "grpo_rows", lambda *a, **k: ["k1", "k2"])
-    monkeypatch.setattr(rl_run, "heldout_rows", lambda view, n: ["h1"])  # val_half lands with L2 (B1.3)
+    monkeypatch.setattr(rl_run, "heldout_rows", lambda view, n, dataset: ["h1"])  # val_half lands with L2 (B1.3)
     saver = SimpleNamespace(save_pretrained=lambda p: None)
     trainer = SimpleNamespace(train=lambda resume_from_checkpoint=None: calls.append("train"), model=saver,
                               accelerator=SimpleNamespace(unwrap_model=lambda m: m),
@@ -250,7 +250,7 @@ def stub(tmp_path, monkeypatch):
                                                 off_policy_mask_threshold=None, max_completion_length=1536))
     monkeypatch.setattr(build, "build_trainer", lambda *a, **k: (trainer, saver, 5e-5))
     (tmp_path / "root").mkdir()
-    (tmp_path / "root/manifest.json").write_text("{}")
+    (tmp_path / "root/manifest.json").write_text('{"sets": {"lidc/train": {}}}')  # the train set check_root looks for
     base = ["--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "c"), "--out", str(tmp_path / "out")]
     train = ["--train", str(tmp_path / "root"), "--steps", "2"]
     return SimpleNamespace(run=lambda *extra: train_rl.main([*base, *extra]), calls=calls, base=base, train=train,

@@ -380,11 +380,11 @@ def test_heldout_holds_val_shape_items_only(prepared, tmp_path, monkeypatch):
     (view / "lidc/val.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
     halves = {"LIDC-IDRI-0002": "shape", "LIDC-IDRI-9999": "select"}
     monkeypatch.setattr("objdel.data.splits.val_half", halves.__getitem__, raising=False)
-    rows = rl_run.heldout_rows(view, 64)
+    rows = rl_run.heldout_rows(view, 64, "lidc")
     assert rows["key"] == ["lidc/1.2.2/n000/z001"] and planted["item_id"] not in rows["key"]
     halves["LIDC-IDRI-0002"] = "select"
     with pytest.raises(ValueError, match="val-shape"):
-        rl_run.heldout_rows(view, 64)
+        rl_run.heldout_rows(view, 64, "lidc")
 
 
 def test_run_sh_exports_the_session_clock_and_budget_stop_agrees_with_policy(tmp_path, monkeypatch):

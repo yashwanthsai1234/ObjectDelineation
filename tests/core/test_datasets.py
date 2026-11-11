@@ -24,6 +24,7 @@ def test_lidc_entry_equals_the_tables_it_replaced():
     assert d.frame == FrameConfig(max_side=500, min_side=50, margin_px=8, margin_pct=25, image_side=512)  # FRAMES
     assert d.ops == augment.OPS == ("id", "r90", "r180", "r270", "fh", "fv", "tr", "at")  # DATASET_OPS
     assert d.rotated_op == "r90"  # build_eval_views ROTATION
+    assert d.min_raters == 2  # verify.reward.cache.rl_eligible's two raters
 
 
 def test_the_library_registers_lidc_only():

@@ -10,7 +10,7 @@
 Thresholds: ratio >= 0.5 and both TVs >= 0.002 (collapsed checkpoints measured 0.001-0.064 and <= 0.0007, intact ones
 0.68-1.0 and >= 0.004; the thresholds hold only under this exact protocol). `decide` is the rule of select_ckpt
 (eligibility needs both) and of train_sft at each rolling checkpoint: both below threshold is "abort", one is "warn",
-none is "ok". The fixed sets (`fixed_set`) are a seed-0 permutation of the RL-eligible LIDC val records, its first
+none is "ok". The fixed sets (`fixed_set`) are a seed-0 permutation of the dataset's RL-eligible val records, its first
 POOL in item-id order, the first n of those; every image is checked against its prepared image_sha256 and the set's
 SHA-256 (ids, image hashes, targets) is returned for the run manifest. torch is imported lazily.
 """
@@ -20,7 +20,6 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.core import datasets
 from objdel.core.io import read_jsonl
 
 RATIO, TV = 0.5, 0.002
@@ -35,12 +34,12 @@ def decide(ratio: float, tv_black: float, tv_other: float) -> dict:
     return {"pass_ratio": bool(ok_ratio), "pass_tv": bool(ok_tv), "pass": action == "ok", "action": action}
 
 
-def fixed_set(prepared_root, n: int = N_ITEMS) -> tuple[list[dict], str]:
-    """([{"item_id", "image": PIL RGB, "target"}], SHA-256 of the set) of the fixed LIDC val items (module
+def fixed_set(prepared_root, dataset: str, n: int = N_ITEMS) -> tuple[list[dict], str]:
+    """([{"item_id", "image": PIL RGB, "target"}], SHA-256 of the set) of the fixed val items of `dataset` (module
     docstring); ValueError when an image is not the one recorded."""
     from PIL import Image
     root = Path(prepared_root)
-    recs = [r for r in read_jsonl(root / "lidc" / "val.jsonl") if r["rl"]]
+    recs = [r for r in read_jsonl(root / dataset / "val.jsonl") if r["rl"]]
     idx = np.random.default_rng(SEED).permutation(len(recs))[:POOL]
     out = []
     for r in sorted((recs[i] for i in idx), key=lambda r: r["item_id"])[:n]:
@@ -60,8 +59,7 @@ def black(image):
 
 
 def _batch(model, processor, image, prompt):
-    text = datasets.get("lidc").prompt if prompt is None else prompt
-    msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]}]
+    msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
     chat = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     b = processor(text=[chat], images=[[image]], return_tensors="pt")
     return {k: v.to(model.device, model.dtype) if v.is_floating_point() else v.to(model.device) for k, v in b.items()}
@@ -80,7 +78,7 @@ def _features(model, processor, image, prompt):
     return f.double()
 
 
-def projector_distance(model, processor, images, prompt=None) -> float:
+def projector_distance(model, processor, images, prompt: str) -> float:
     """Mean pairwise cosine distance of the projector outputs of images + a black image."""
     import torch
     F = [_features(model, processor, im, prompt) for im in [*images, black(images[0])]]
@@ -89,7 +87,7 @@ def projector_distance(model, processor, images, prompt=None) -> float:
     return float(np.mean(d))
 
 
-def next_token_probs(model, processor, image, target: str, prompt=None, T: int = T) -> np.ndarray:
+def next_token_probs(model, processor, image, target: str, prompt: str, T: int = T) -> np.ndarray:
     """(positions, vocab) float64 next-token distributions over the first T teacher-forced target tokens."""
     import torch
     b = _batch(model, processor, image, prompt)
@@ -105,7 +103,7 @@ def next_token_probs(model, processor, image, target: str, prompt=None, T: int =
     return torch.softmax(logits.double(), -1).cpu().numpy()
 
 
-def image_use(model, processor, items, prompt=None, T: int = T) -> dict:
+def image_use(model, processor, items, prompt: str, T: int = T) -> dict:
     """{"black", "other"}: mean TV between the real crop and a black image / the next item's crop."""
     tv = {"black": [], "other": []}
     for i, it in enumerate(items):
@@ -116,11 +114,11 @@ def image_use(model, processor, items, prompt=None, T: int = T) -> dict:
     return {k: float(np.mean(v)) for k, v in tv.items()}
 
 
-def check(model, processor, images, items, *, reference: float, prompt=None, T: int = T) -> dict:
+def check(model, processor, images, items, *, reference: float, prompt: str, T: int = T) -> dict:
     """G-vision of one checkpoint: images = the fixed crops (a black image is added), items = [{"image", "target"}],
-    reference = projector_distance of the base model. -> {"ratio", "distance", "reference", "tv" (the smaller TV),
-    "tv_black", "tv_other", "pass_ratio", "pass_tv", "pass", "action"}. Runs in eval mode, then gives every module back
-    the mode it had (S1-9: train_sft calls it mid-training)."""
+    reference = projector_distance of the base model, prompt = the dataset's prompt. -> {"ratio", "distance",
+    "reference", "tv" (the smaller TV), "tv_black", "tv_other", "pass_ratio", "pass_tv", "pass", "action"}. Runs in eval
+    mode, then gives every module back the mode it had (S1-9: train_sft calls it mid-training)."""
     modes = {m: m.training for m in model.modules()}
     model.eval()
     try:

@@ -40,6 +40,7 @@ class Dataset:
     frame: FrameConfig = FrameConfig()
     ops: tuple[str, ...] = ("id",)  # the training views' dihedral ops (objdel.data.targets.augment.OPS)
     rotated_op: str | None = None  # the op of the rotated eval view; None: no rotated view
+    min_raters: int = 2  # raters per RL item; RL refuses an entry below the reward's 2 (no single-rater reward)
 
     @property
     def names(self) -> tuple[str, ...]:

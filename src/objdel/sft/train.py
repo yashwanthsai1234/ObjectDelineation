@@ -125,12 +125,15 @@ def reference(ref, model: str | None, set_sha256: str) -> float:
     return doc["reference"]
 
 
-def load_items(cfg: dict, model: str | None) -> dict:
-    """{"prepared", "reference"} -> the fixed set and its checked reference {"items", "set_sha256", "reference"}."""
+def load_items(cfg: dict, model: str | None, dataset: str) -> dict:
+    """{"prepared", "reference"} and the dataset -> the fixed set, its checked reference and the dataset's prompt
+    {"items", "set_sha256", "reference", "prompt"}."""
+    from objdel.core import datasets
     from objdel.policy import vision
 
-    items, sha = vision.fixed_set(cfg["prepared"])
-    return {"items": items, "set_sha256": sha, "reference": reference(cfg["reference"], model, sha)}
+    items, sha = vision.fixed_set(cfg["prepared"], dataset)
+    return {"items": items, "set_sha256": sha, "reference": reference(cfg["reference"], model, sha),
+            "prompt": datasets.get(dataset).prompt}
 
 
 def vision_reference(args) -> int:
@@ -138,6 +141,7 @@ def vision_reference(args) -> int:
     import torch
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
+    from objdel.core import datasets
     from objdel.policy import models as policy_models
     from objdel.policy import vision
 
@@ -146,8 +150,10 @@ def vision_reference(args) -> int:
     src = args.model_path or policy_models.get(args.model).hf_id
     proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model))
     model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.float32).eval()
-    items, sha = vision.fixed_set(args.vision["prepared"])
-    d = vision.projector_distance(model, proc, [it["image"] for it in items[: vision.N_IMAGES]])  # inference_mode
+    dataset = read_json(Path(args.view, "manifest.json"))["dataset"]  # the training view's
+    items, sha = vision.fixed_set(args.vision["prepared"], dataset)
+    d = vision.projector_distance(model, proc, [it["image"] for it in items[: vision.N_IMAGES]],
+                                  datasets.get(dataset).prompt)  # inference_mode
     dest = Path(args.vision["reference"])
     dest.parent.mkdir(parents=True, exist_ok=True)
     write_json(dest, {"model": args.model, "source": src, "reference": d, "set_sha256": sha, "device": "cpu",
@@ -157,12 +163,12 @@ def vision_reference(args) -> int:
 
 def vision_check(model, processor, cfg: dict) -> dict:
     """objdel.policy.vision.check (inference mode, module modes restored) on the fixed set: cfg = load_items' output, or
-    {"prepared", "reference", "model"?} (select_ckpt)."""
+    {"prepared", "reference", "model"?, "dataset"} (select_ckpt)."""
     from objdel.policy import vision
 
-    cfg = cfg if "items" in cfg else load_items(cfg, cfg.get("model"))
+    cfg = cfg if "items" in cfg else load_items(cfg, cfg.get("model"), cfg["dataset"])
     images = [it["image"] for it in cfg["items"][: vision.N_IMAGES]]
-    res = vision.check(model, processor, images, cfg["items"], reference=cfg["reference"])
+    res = vision.check(model, processor, images, cfg["items"], reference=cfg["reference"], prompt=cfg["prompt"])
     return res | {"set_sha256": cfg["set_sha256"]}
 
 
@@ -346,7 +352,7 @@ def train(args) -> int:
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         torch.use_deterministic_algorithms(True, warn_only=True)
     view, out = validate(args), Path(args.output_dir)
-    vis = args.vision and load_items(args.vision, args.model)
+    vis = args.vision and load_items(args.vision, args.model, view["dataset"])
     out.mkdir(parents=True, exist_ok=True)
     man = resume_manifest(args, out, view)
     write_json(out / "manifest.json", man)

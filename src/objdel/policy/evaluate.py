@@ -1,7 +1,8 @@
 """Evaluation without a trainer shared by checkpoint selection, the G-probe and the final exam:
 rows of an eval view, one item's checker metrics, and the per-item and summary statistics of final_eval.
 
-- eval_rows(view, items, rl_only): the prompt rows of a view's lidc/val records (a seeded subset with `items`).
+- eval_rows(view, dataset, items, rl_only): the prompt rows of a view's <dataset>/val records (a seeded subset with
+  `items`).
 - score_items(rows, done, root): per-item metrics (objdel.verify.metrics on the preloaded caches, in this process: one
   CUDA context) and the signal groups.
 - per_item(result) and summarize(items, groups): final_eval's K-sample means, answer choices (A4) and the schema-2
@@ -48,12 +49,12 @@ def _score(job) -> dict:
     return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
 
 
-def eval_rows(view: Path, items: int | None = None, rl_only: bool = True) -> list[dict]:
-    """Prompt rows of an eval view's lidc/val records (images checked against their records): the scored items (rl,
-    with caches) or, with rl_only=False, every record (probe records are rl: false); `items` = a seeded subset."""
+def eval_rows(view: Path, dataset: str, items: int | None = None, rl_only: bool = True) -> list[dict]:
+    """Prompt rows of an eval view's <dataset>/val records (images checked against their records): the scored items
+    (rl, with caches) or, with rl_only=False, every record (probe records are rl: false); `items` = a seeded subset."""
     from objdel.policy import rows as D
 
-    return D.prompts(view, "lidc", "val", rl_only, subset=items and (items, SUBSET_SEED))
+    return D.prompts(view, dataset, "val", rl_only, subset=items and (items, SUBSET_SEED))
 
 
 def score_items(rows: list[dict], done: dict, root: Path) -> tuple[list[dict], list[dict]]:

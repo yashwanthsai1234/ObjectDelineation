@@ -271,7 +271,7 @@ def test_topology_probe_on_select_ckpt_items_subset_can_pass(monkeypatch, tmp_pa
     topo = probes.score_topology
     monkeypatch.setattr(probes, "score_topology", lambda rows, root: topo(rows, root, B=200))
     a = SimpleNamespace(run=tmp_path, items=256, k=8, shifted=VIEWS / "lidc-val-shifted", rescaled=None,
-                        rotated=None, prepared=None, probes=VIEWS)  # --items 256 (the HF path)
+                        rotated=None, prepared=None, probes=VIEWS, dataset="lidc")  # --items 256 (the HF path)
     rep = sft_select.judge(a, {"name": "e1", "vision": {}, "panel": {}}, tmp_path, baselines)
     assert seen["probe-topology"] == 680 and rep["probes"]["topology"]["pass"]  # every probe record, a perfect model
 
@@ -282,7 +282,7 @@ def test_select_ckpt_probe_rows_are_the_probe_items():
     root = VIEWS / "probe-topology"
     if not (root / "lidc" / "val.jsonl").is_file():
         pytest.skip("no probe-topology view")
-    rows = evaluate.eval_rows(root, rl_only=False)  # select_ckpt.judge's probe rows (probe records are rl: false)
+    rows = evaluate.eval_rows(root, "lidc", rl_only=False)  # select_ckpt.judge's probe rows (probe records: rl false)
     assert len(rows) == len(probes.records(root)) == 680
 
 

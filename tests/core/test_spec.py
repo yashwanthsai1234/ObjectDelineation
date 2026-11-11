@@ -173,8 +173,11 @@ def test_same_stage_ignores_only_name_and_soft():
 CLI_STAGES = {"train_rl": S.RlStage, "g_probe": S.ProbeStage, "final_eval": S.EvalStage, "select_ckpt": S.SelectStage,
               "train_sft": S.SftStage}
 # CLEAN8 (full fine-tuning retired): train_sft drops freeze_vision (its D7 repair); select_ckpt gains max_tokens (the
-# CPU smoke's completion cap on a random Qwen3-VL). The golden is recorded once, so the changes are listed here.
-CLEAN8_DROPPED, CLEAN8_ADDED = {"train_sft": {"freeze_vision"}}, {"select_ckpt": {"max_tokens"}}
+# CPU smoke's completion cap on a random Qwen3-VL). The four stages that read a dataset gain dataset (default lidc).
+# The golden is recorded once, so the changes are listed here.
+CLEAN8_DROPPED = {"train_sft": {"freeze_vision"}}
+CLEAN8_ADDED = {"select_ckpt": {"max_tokens", "dataset"}, "train_rl": {"dataset"}, "g_probe": {"dataset"},
+                "final_eval": {"dataset"}}
 
 
 @pytest.mark.parametrize("cli", CLI_STAGES)

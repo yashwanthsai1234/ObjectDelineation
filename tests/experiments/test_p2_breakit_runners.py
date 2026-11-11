@@ -399,7 +399,7 @@ def tiny_run(tmp_path, synthetic_items, monkeypatch):
 
     from objdel.policy import vision
 
-    monkeypatch.setattr(vision, "fixed_set", lambda prepared: ([], "set-sha"))  # vision_check is mocked where used
+    monkeypatch.setattr(vision, "fixed_set", lambda prepared, dataset: ([], "set-sha"))  # vision_check is mocked
     return TS, args, tmp_path
 
 
@@ -527,8 +527,8 @@ def test_vision_reference_only_writes_the_r0_reference(tiny_run, monkeypatch):
     from PIL import Image
 
     imgs = [Image.new("RGB", (64, 64), (40 * i, 80, 120)) for i in range(4)]
-    monkeypatch.setattr(vision, "fixed_set", lambda prepared: ([{"image": im} for im in imgs], "set-sha"))
-    monkeypatch.setattr(vision, "projector_distance", lambda m, p, images: 0.25)
+    monkeypatch.setattr(vision, "fixed_set", lambda prepared, dataset: ([{"image": im} for im in imgs], "set-sha"))
+    monkeypatch.setattr(vision, "projector_distance", lambda m, p, images, prompt: 0.25)
     a = args("unused", run_dir=str(tmp / "box"), vision={"prepared": "p", "reference": "vision_ref/qwen.json"})
     assert TS.train(a.model_copy(update={"vision_reference_only": True})) == 0
     doc = json.loads((tmp / "box/vision_ref/qwen.json").read_text())

@@ -183,7 +183,7 @@ def test_group_id_stays_out_of_the_prompt_rows(tmp_path, synthetic_items):
     rows = policy_rows.prompts(tmp_path / "out", "lidc", "train", rl_only=False)
     assert rows and all("group_id" not in r for r in rows)
     recs = policy_rows.records(tmp_path / "out", "lidc", "train")
-    assert FE.view_groups(tmp_path / "out", "train") == {r["item_id"]: r["group_id"] for r in recs}
+    assert FE.view_groups(tmp_path / "out", "lidc", "train") == {r["item_id"]: r["group_id"] for r in recs}
     assert all(r["group_id"] for r in recs)
 
 
@@ -934,7 +934,7 @@ def test_final_eval_refuses_a_changed_frozen_view(frozen, mutate, key, tmp_path)
 def test_frozen_check_ignores_manifest_versions_and_reward_fingerprint(frozen):
     d, _ = frozen
     _edit(d / "manifest.json", lambda t: t.replace("3.12.0", "3.13.1").replace('"f0"', '"f1"'))
-    assert FE.check_view(d, "test") is None
+    assert FE.check_view(d, "lidc", "test") is None
 
 
 def test_frozen_entry_is_a_content_hash_not_the_manifest_sha(frozen):
@@ -943,7 +943,7 @@ def test_frozen_entry_is_a_content_hash_not_the_manifest_sha(frozen):
     f.write_text(json.dumps({d.name: {"content_sha256": hashlib.sha256((d / "manifest.json").read_bytes()).hexdigest(),
                                       "target_set_sha256": "t" * 64}}))
     with pytest.raises(FE.Refusal, match="content_sha256"):
-        FE.check_view(d, "test")
+        FE.check_view(d, "lidc", "test")
 
 
 def test_frozen_view_without_its_record_is_refused(frozen, tmp_path, monkeypatch):
@@ -952,12 +952,12 @@ def test_frozen_view_without_its_record_is_refused(frozen, tmp_path, monkeypatch
     monkeypatch.setattr(FE, "FROZEN_VIEWS", tmp_path / "missing.json")
     assert FE.frozen_entry(d.name) is None
     with pytest.raises(FE.Refusal, match="frozen_views.json"):
-        FE.check_view(d, "test")
+        FE.check_view(d, "lidc", "test")
 
 
 def test_a_view_outside_the_frozen_list_is_not_hash_checked(tmp_path, monkeypatch):
     monkeypatch.setattr(FE, "FROZEN_VIEWS", tmp_path / "missing.json")
-    assert FE.check_view(_view(tmp_path, "lidc-val-rescaled", "val"), "val") is None
+    assert FE.check_view(_view(tmp_path, "lidc-val-rescaled", "val"), "lidc", "val") is None
 
 
 def test_the_test_view_needs_the_explicit_split_flag(frozen, tmp_path):

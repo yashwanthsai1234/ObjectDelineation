@@ -90,11 +90,11 @@ def test_check_view_frozen_check_survives_an_alias(ev, tmp_path, monkeypatch):  
     bad = {"content_sha256": "bad", "target_set_sha256": "bad"}
     (tmp_path / "frozen.json").write_text(json.dumps({frozen.name: bad}))
     with pytest.raises(Refusal):
-        FE.check_view(frozen, "val")  # control: the real name is refused
+        FE.check_view(frozen, "lidc", "val")  # control: the real name is refused
     alias = tmp_path / "alias"
     alias.symlink_to(frozen)
     with pytest.raises(Refusal):
-        FE.check_view(alias, "val")
+        FE.check_view(alias, "lidc", "val")
 
 
 def test_multi_view_one_out_does_not_collide(ev, tmp_path, monkeypatch):  # noqa: F811

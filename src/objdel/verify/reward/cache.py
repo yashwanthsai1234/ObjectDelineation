@@ -105,9 +105,12 @@ S_M = {m: float.fromhex(h) for m, h in enumerate((
     "0x1.c92c7ee05f565p-3", "0x1.64f6947907d49p-3", "0x1.21ded7fbee6b0p-3", "0x1.e4791addcadb8p-4"), start=1)}
 
 
+MIN_RATERS = 2  # the reward's band and topology vote need two raters
+
+
 def rl_eligible(stack) -> bool:
     """Single-rater items are excluded from RL (lab ITERATION3, R5)."""
-    return len(stack) >= 2
+    return len(stack) >= MIN_RATERS
 
 
 def voters(sigs) -> tuple[int, ...]:

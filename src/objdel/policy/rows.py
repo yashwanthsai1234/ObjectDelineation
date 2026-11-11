@@ -31,10 +31,18 @@ import numpy as np
 
 from objdel.core import datasets
 from objdel.core.hashing import pixels_sha256
-from objdel.core.io import read_jsonl
+from objdel.core.io import read_json, read_jsonl
 from objdel.policy.prompt import _user
 
 DISAGREEMENT_OVERSAMPLE = 4  # decided in experiments/phase1/impl/M7_train.md
+
+
+def check_root(root, dataset: str, split: str) -> None:
+    """ValueError unless the folder's manifest lists the set `<dataset>/<split>` (a stage's dataset against its data
+    folder)."""
+    sets = read_json(Path(root, "manifest.json"))["sets"]
+    if f"{dataset}/{split}" not in sets:
+        raise ValueError(f"{root}: holds {sorted(sets)}, not {dataset}/{split} (the stage's dataset and split)")
 
 
 def records(root, dataset: str, split: str) -> list[dict]:
