@@ -23,8 +23,8 @@ FIELDS = tuple(
     "ts event run_id instance_id offer_id gpu dph_total inet_up_cost inet_down_cost hosting_type host_id machine_id "
     "bundle cost_usd detail".split()
 )
-LOCK_WAIT_S = 900  # a pull holds the lock for its rsync; a sweep or launch waits this long, then stops
-_lock = {"fh": None, "depth": 0}
+LOCK_WAIT_S = 60  # a read-modify-write takes milliseconds
+_held: dict[str, list] = {}  # lock name -> [open file, depth]
 SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 
 
@@ -36,12 +36,13 @@ def home() -> Path:
 
 
 @contextlib.contextmanager
-def locked():
-    """The one lock (fcntl.flock on <home>/.lock) of every read-modify-write of active_runs.json and ledger.csv, and of
-    a pull (so a pull and a teardown never share PULLED_OK). Reentrant in one process; waits at most LOCK_WAIT_S."""
-    if _lock["depth"] == 0:
-        fh = (home() / ".lock").open("a")
-        deadline = time.monotonic() + LOCK_WAIT_S
+def locked(name: str = ".lock", wait_s: float | None = None):
+    """fcntl.flock on <home>/<name>, reentrant per name in one process; InfraError after `wait_s`. The default lock
+    guards the quick read-modify-writes of active_runs.json and ledger.csv; `pull_lock` is the per-run one."""
+    held, wait_s = _held.setdefault(name, [None, 0]), LOCK_WAIT_S if wait_s is None else wait_s
+    if held[1] == 0:
+        fh = (home() / name).open("a")
+        deadline = time.monotonic() + wait_s
         while True:
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -49,17 +50,23 @@ def locked():
             except BlockingIOError:
                 if time.monotonic() > deadline:
                     fh.close()
-                    raise InfraError(f"{fh.name} is held by another vast command for over {LOCK_WAIT_S} s") from None
+                    raise InfraError(f"{fh.name} is held by another vast command for over {wait_s:g} s") from None
                 time.sleep(0.2)
-        _lock["fh"] = fh
-    _lock["depth"] += 1
+        held[0] = fh
+    held[1] += 1
     try:
         yield
     finally:
-        _lock["depth"] -= 1
-        if _lock["depth"] == 0:
-            _lock["fh"].close()  # closing releases the flock
-            _lock["fh"] = None
+        held[1] -= 1
+        if held[1] == 0:
+            held[0].close()  # closing releases the flock
+            held[0] = None
+
+
+def pull_lock(run_id: str):
+    """The lock of one run's pulls (a pull and a teardown's final pull never share PULLED_OK); waits up to 1 h, the
+    longest a pull may run."""
+    return locked(f".pull-{run_id}.lock", 3600)
 
 
 def ledger(**row) -> None:

@@ -760,6 +760,50 @@ def test_sweep_destroys_orphans_and_overdue(E):
     assert E.instances() == {} and [r["event"] for r in E.ledger()][-2:] == ["orphan", "overdue"]
 
 
+def test_a_held_pull_lock_never_blocks_the_sweep(E):
+    import fcntl
+
+    E.launched()
+    now = time.time()
+    E.state(instances=E.instances() | {str(i): {"id": i, "label": "x", "dph_total": 0.3, "start_date": now - 7200}
+                                       for i in (8, 9)})
+    with (E.home / ".pull-r1.lock").open("a") as held:  # a long pull of r1
+        fcntl.flock(held, fcntl.LOCK_EX)
+        E.sh("sweep_orphans.sh")
+    assert sorted(E.instances()) == ["4242"] and [r["event"] for r in E.ledger()][-2:] == ["orphan", "orphan"]
+
+
+def test_two_pulls_of_the_same_run_serialize(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setenv("VAST_HOME", str(tmp_path))
+    order, started = [], threading.Event()
+
+    def pull(tag):
+        with LG.pull_lock("r1"):
+            order.append(f"{tag}+")
+            started.set()
+            time.sleep(0.3)
+            order.append(f"{tag}-")
+
+    def child():
+        import fcntl
+
+        with (tmp_path / ".pull-r1.lock").open("a") as fh:  # another process: the lock is per file, not per thread
+            started.wait()
+            t0 = time.monotonic()
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            order.append(f"waited {time.monotonic() - t0 > 0.1}")
+
+    th = threading.Thread(target=child)
+    th.start()
+    pull("a")
+    th.join()
+    assert order[:2] == ["a+", "a-"] and order[2] == "waited True"
+    with LG.pull_lock("r1"), LG.locked():  # other names do not interfere
+        pass
+
+
 def test_sweep_hard_stop_destroys_everything(E):
     E.launched()
     spent(E, LG.HARD_STOP)

@@ -60,6 +60,7 @@ from objdel.infra.vast.ledger import (
     ledger,
     load,
     locked,
+    pull_lock,
     spend,
     update_active,
 )
@@ -287,7 +288,7 @@ def cmd_pull(a) -> None:
     """rsync verifies every transferred file with a whole-file checksum; only then does PULLED_OK appear, carrying
     the pull's start time (PULLED_OK.next, touched before rsync), so a file written during the pull is newer."""
     for run_id in [a.run_id] if a.run_id else list(active()):
-        with locked():  # a teardown's pull or a second pull would race on PULLED_OK.next
+        with pull_lock(run_id):  # a teardown's pull or a second pull would race on PULLED_OK.next
             run, dst = get_run(run_id), Path(os.environ.get("VAST_RUNS", repo_root() / "runs")) / run_id
             dst.mkdir(parents=True, exist_ok=True)
             rd = f"/workspace/runs/{run_id}"
