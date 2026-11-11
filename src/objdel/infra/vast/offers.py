@@ -1,5 +1,5 @@
-"""The §4.2 offer filter as data: `query` sends it to `vastai search offers`, `reasons` re-checks it on the returned
-JSON; `governance` is H-GOV (D16); `offer_cols` are the offer fields a launch records."""
+"""The offer filter as data: `query` sends it to `vastai search offers`, `reasons` re-checks it on the returned JSON;
+`offer_cols` are the offer fields a launch records."""
 
 import operator
 from pathlib import Path
@@ -15,11 +15,11 @@ CARDS = {
     "RTX_PRO_6000_S": {"ram": (None, 98), "ceiling": 2.40, "cpu_ram": 48},
     "A100_SXM4": {"ram": (79, 82), "ceiling": 1.80},
 }
-CPU_RAM = {"lidc": 32, "riga": 48}  # GB; RIGA caches ~4.5 GB RSS per scoring process (B4 §1)
+CPU_RAM = 32  # GB, the least host RAM of any card (a card's own "cpu_ram" raises it)
 OPS = {"=": operator.eq, ">": operator.gt, ">=": operator.ge, "<=": operator.le}
-REGION = ("US", "CA")  # owner (2026-11-02): North American hosts only; V1: a Thailand host could not pull the image
+REGION = ("US", "CA")  # North American hosts only: a Thailand host could not pull the image
 # Machines that failed the GPU check on a paid box; never offered again
-BAD_MACHINES = {28360: "2026-11-03 v2: GPU busy before our job, power limit 150 W, 7.4 of 165 bf16 TFLOPS"}
+BAD_MACHINES = {28360: "GPU busy before our job, power limit 150 W, 7.4 of 165 bf16 TFLOPS"}
 
 
 def is_raw(p: Path) -> bool:
@@ -27,15 +27,15 @@ def is_raw(p: Path) -> bool:
     return "/data/raw/" in f"{Path(p).resolve().as_posix()}/"
 
 
-def terms(gpu: str, dataset: str, disk: int = 80) -> list[tuple]:
+def terms(gpu: str, disk: int = 80) -> list[tuple]:
     """(reason, query term, offer JSON key, op, limit, scale) per term. Vast reports gpu_ram (MiB) and cpu_ram (MB) and
-    the query takes GB; V0 showed cpu_ram>=32 returns 32160, so cpu_ram counts 1 GB = 1000 MB. `verification` is the
+    the query takes GB; cpu_ram>=32 returns 32160, so cpu_ram counts 1 GB = 1000 MB. `verification` is the
     string "verified" in the JSON (the query term is `verified=true`). `duration` is query-only: its unit is
     UNVERIFIED."""
     if gpu not in CARDS:
         raise ValueError(f"unknown card {gpu}; one of {sorted(CARDS)}")
     c, mb = CARDS[gpu], 1 / 1024
-    (lo, hi), cpu = c["ram"], max(CPU_RAM[dataset], c.get("cpu_ram", 0))
+    (lo, hi), cpu = c["ram"], max(CPU_RAM, c.get("cpu_ram", 0))
     rows = [
         ("num_gpus", "num_gpus=1", "num_gpus", "=", 1, 1),
         ("gpu_name", f"gpu_name={gpu}", "gpu_name", "=", gpu, 1),
@@ -54,21 +54,20 @@ def terms(gpu: str, dataset: str, disk: int = 80) -> list[tuple]:
         ("price", f"dph<={c['ceiling']}", "dph_total", "<=", c["ceiling"], 1),
         ("bandwidth", f"inet_up_cost<={INET_CEIL}", "inet_up_cost", "<=", INET_CEIL, 1),
         ("bandwidth", f"inet_down_cost<={INET_CEIL}", "inet_down_cost", "<=", INET_CEIL, 1),
-        ("datacenter", "datacenter=True", "hosting_type", "=", 1, 1) if dataset == "riga" else None,
         ("region", f"geolocation in [{','.join(REGION)}]", None, None, None, None),  # checked in reasons()
     ]
     return [r for r in rows if r]
 
 
-def query(gpu: str, dataset: str, disk: int = 80) -> str:
-    """The `vastai search offers` query string of the §4.2 filter."""
-    return " ".join(t[1] for t in terms(gpu, dataset, disk))
+def query(gpu: str, disk: int = 80) -> str:
+    """The `vastai search offers` query string of the filter."""
+    return " ".join(t[1] for t in terms(gpu, disk))
 
 
-def reasons(o: dict, gpu: str, dataset: str, disk: int = 80) -> list[str]:
-    """Why an offer JSON fails the §4.2 filter ([] = admissible); a missing or mistyped field fails."""
+def reasons(o: dict, gpu: str, disk: int = 80) -> list[str]:
+    """Why an offer JSON fails the filter ([] = admissible); a missing or mistyped field fails."""
     bad = []
-    for why, _, key, op, limit, scale in terms(gpu, dataset, disk):
+    for why, _, key, op, limit, scale in terms(gpu, disk):
         v = o.get(key)
         if key and (v is None or isinstance(v, str) != isinstance(limit, str) or not OPS[op](
                 v.replace(" ", "_") if isinstance(v, str) else v * scale, limit)):  # fmt: skip
@@ -78,17 +77,6 @@ def reasons(o: dict, gpu: str, dataset: str, disk: int = 80) -> list[str]:
     if o.get("machine_id") in BAD_MACHINES:
         bad.append(f"machine {o['machine_id']} ({BAD_MACHINES[o['machine_id']]})")
     return [f"{r} fails the §4.2 filter" for r in dict.fromkeys(bad)]
-
-
-def governance(dataset: str, o: dict, allow: dict) -> list[str]:
-    """H-GOV (D16): LIDC anywhere verified; RIGA only with recorded written permission AND a datacenter offer."""
-    if dataset != "riga":
-        return [] if dataset == "lidc" else [f"unknown bundle {dataset}"]
-    perm = allow.get("riga_permission") or {}
-    why = [] if perm.get("granted") is True and perm.get("evidence") else ["no recorded RIGA permission"]
-    if o.get("hosting_type") != 1 or o.get("datacenter", True) is not True:
-        why.append(f"offer {o.get('id')} is not Secure Cloud (hosting_type={o.get('hosting_type')})")
-    return why
 
 
 def offer_cols(o: dict) -> dict:

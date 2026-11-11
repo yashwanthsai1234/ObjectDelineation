@@ -22,22 +22,22 @@ def watchdog_script():
     """The onstart watchdog, from the code tree being launched (never from VAST_HOME, which holds state)."""
     return repo_root() / "experiments/phase2/vast/watchdog.sh"
 
-RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path (BK4-16); onstart size
-BAD_STATUS = ("exited", "unknown", "offline")  # never reach running (V19)
+RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path; onstart size
+BAD_STATUS = ("exited", "unknown", "offline")  # never reach running
 # sync_up runs it on the box after the install: library modules and the box stack only, no tests.* or experiments.*
 IMPORT_CHECK = ("import objdel.geom.engine, objdel.verify, objdel.rl.trl_adapter, objdel.policy.sampler, pydantic, "
-                "vllm")  # vllm and the sampler: the vllm_native image, one venv (ADR 0023)
-# The one list of live CLI modules (E8 step 2); the CLI smoke and import tests and the module-string gate read it
+                "vllm")  # vllm and the sampler: the vllm_native image, one venv 
+# The one list of live CLI modules; the CLI smoke and import tests and the module-string gate read it
 LIVE_CLIS = tuple(f"experiments.phase1.{m}" for m in ("build_data", "build_targets", "fetch_lidc_pixels",
                                                       "prepare_rl")) + tuple(
     f"experiments.phase2.{m}" for m in ("build_views", "build_eval_views", "train_sft", "select_ckpt", "train_rl",
                                         "g_probe", "final_eval", "preflight", "hf_push", "hf_pull"))
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
 # never closes a run younger than this as vanished (it may not be listed yet). PULL_S: added to --cap-hours, as the
-# watchdog counts from launch; V0's 5.88 GB image pull took 5.7 min.
+# watchdog counts from launch; a measured 5.88 GB image pull took 5.7 min.
 MARGIN_S = GRACE_S = PULL_S = 600
 # Not pulled, and ignored by the watchdog's "nothing newer than PULLED_OK" (it gets this list in the onstart env):
-# full checkpoints with optimizer state (R1: 29 GB; branches/ is model-only and is pulled) and the pull's own markers.
+# full checkpoints with optimizer state (29 GB; branches/ is model-only and is pulled) and the pull's own markers.
 PULL_EXCLUDE = ("rolling/", "decay/", "stable/", "PULLED_OK", "PULLED_OK.next")
 ONSTART_MAX = 4048  # Vast API spec
 VAST_TIMEOUT_S = 120  # one `vastai` call: its API answers in seconds; a longer wait is a hang
@@ -89,7 +89,7 @@ def vast(*args: str, tries: int = 1):
         except subprocess.TimeoutExpired:
             why = f"no answer in {VAST_TIMEOUT_S} s"
         else:
-            # an API error exits 0 with empty stdout (V0)
+            # an API error exits 0 with empty stdout
             if not p.returncode and (p.stdout.strip() or "--raw" not in args):
                 return json.loads(p.stdout) if "--raw" in args else p.stdout
             why = p.stderr.strip()[-300:]
@@ -125,13 +125,13 @@ def remote(run: dict, command: str, stdin: str | None = None, what: str = "") ->
 
 
 def rsync(run: dict, *paths: str, opts: tuple = ()) -> None:
-    """paths: sources, then the destination (V1: two sources once made the .sha256 the destination). Stops after 300 s
+    """paths: sources, then the destination (two sources once made the .sha256 the destination). Stops after 300 s
     without data; a partly sent file is kept for the next try."""
     sh(["rsync", "-az", "--timeout=300", "--partial", "--exclude=data/raw/", *opts, "-e", shlex.join(ssh(run)), *paths])
 
 
 def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None:
-    """Destroy (never stop, G4), verify the instance is no longer listed, record the session's cost (Vast's dph and
+    """Destroy (never stop), verify the instance is no longer listed, record the session's cost (Vast's dph and
     start when it lists the instance, else the run record's). Six tries for the destroy itself: a box left running
     bills until the watchdog or the next sweep."""
     inst = inst or next((i for i in vast("show", "instances", "--raw", tries=3) if i["id"] == iid), {})
@@ -160,10 +160,10 @@ def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: i
     created = int(created or time.time())
     env = (f"RUN_ID={run_id} WATCHDOG_CAP_S={cap_s} WATCHDOG_IDLE_S={idle_s} WATCHDOG_CREATED={created} "
            f"WATCHDOG_PULLED_OK=/workspace/runs/{run_id}/PULLED_OK WATCHDOG_SKIP={','.join(PULL_EXCLUDE)}")  # fmt: skip
-    k = "/root/.ssh/authorized_keys"  # V1: some hosts write it with a foreign owner and sshd refuses it (vast-cli #336)
+    k = "/root/.ssh/authorized_keys"  # some hosts write it with a foreign owner and sshd refuses it (vast-cli #336)
     fix = (f"(for i in $(seq 60); do [ -f {k} ] && chown root:root {k} && chmod 600 {k} && chmod 700 /root/.ssh "
            f"&& chmod go-w /root; sleep 2; done) & ")
-    tmux = "touch /root/.no_auto_tmux; "  # V1: Vast's login tmux broke every `ssh host CMD` ("not a terminal")
+    tmux = "touch /root/.no_auto_tmux; "  # Vast's login tmux broke every `ssh host CMD` ("not a terminal")
     cmd = tmux + fix + (f"printf %s {b64} | base64 -d | gunzip > /root/watchdog.sh && {env} "
                         "nohup bash /root/watchdog.sh >> /root/watchdog.log 2>&1 &")
     if len(cmd) > ONSTART_MAX:
@@ -181,11 +181,11 @@ def get_run(run_id: str) -> dict:
 
 def code_files() -> list[str]:
     """The code snapshot (tracked and new files), without the roots data/, docs/, archive/ and .claude/, lab or results
-    dirs, or RIGA-derived tables (D16, BK4-13); only files on disk (rsync --files-from aborts on a missing one).
+    dirs, or RIGA-derived tables; only files on disk (rsync --files-from aborts on a missing one).
     tests/ ships: the chain runs tests/verify/test_gpu_scoring.py on the box. The records the box reads (final_eval's
-    frozen view hashes, val_half's table; LIDC ids, counts and hashes, no pixels, no RIGA; B1.6) are in reference/.
-    docs/ is local only (owner, 2026-11-11): nothing in it ships."""
-    git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole (V1)
+    frozen view hashes, val_half's table; LIDC ids, counts and hashes, no pixels, no RIGA) are in reference/.
+    docs/ is local only: nothing in it ships."""
+    git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole
     files = subprocess.run(git, cwd=repo_root(), capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
     riga = re.compile(r"riga[^/]*\.(csv|jsonl?)$", re.I)
     drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/|"

@@ -3,7 +3,7 @@
     python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
     python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
     python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1-780 --repo svenk029/objdel-sft --revision main
-        < token     # B1.4 step 5 on the Mac: prints rows_revision and rows_manifest_sha256 for specs/b1_rows.yaml
+        < token     # on the Mac: prints rows_revision and rows_manifest_sha256 for specs/b1_rows.yaml
     python -I -m experiments.phase2.hf_push --card-only --headline reference/headline.json --repo ... --revision ...
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
     be the run's)
@@ -28,7 +28,7 @@ def main(argv=None) -> int:
     ap.add_argument("--headline", type=Path, help="with --card-only: reference/headline.json")
     src.add_argument("--run", type=Path, help="train_sft output dir (select/ inside)")
     src.add_argument("--rl", type=Path, help="train_rl output dir (final/ and final_adapter/ inside)")
-    src.add_argument("--rows", type=Path, help="build_rl_rows root, to rows/<its name>/ (B1.4 step 5)")
+    src.add_argument("--rows", type=Path, help="build_rl_rows root, to rows/<its name>/")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--revision", required=True, help="the repo branch, e.g. r1-qwen3vl2b")
     ap.add_argument("--view", type=Path, help="local copy of the training view (default: the manifest's path)")

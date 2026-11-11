@@ -15,7 +15,7 @@ later stages are not run:
            patients shared between T and any exam (or probe) view,
            coverage of every exam view by T (objdel.data.coverage), prompt text identical, T's CT window consistent,
            every T target parses and is legal for the reference checker; per rl stage trained on {data}/rows/<name>
-           (B1.3; a train_rl run inside a cmd stage's `bash -c` string, the nsys-wrapped arms of the C specs, counts
+           (a train_rl run inside a cmd stage's `bash -c` string, the nsys-wrapped arms of the C specs, counts
            as the rl stage its words parse to, rl_stages): the root built locally passes the B data gates
            (objdel.data.quality.audit) with the manifest
            SHA-256 the stage pins, and the pinned HF revision holds exactly the local root's files
@@ -56,7 +56,7 @@ QUICK_TESTS = ["tests/data/test_data_coverage.py", "tests/experiments/test_prefl
                "tests/experiments/test_p2_scripts.py", "tests/policy/test_train_configs.py", "tests/infra/test_vast.py",
                "tests/experiments/test_p2_v1_select.py"]  # fmt: skip
 DRY_RUN = "tests/experiments/test_p2_scripts.py::test_cpu_smoke_train_then_select"  # train -> select, tiny model, CPU
-VASTAI_VERSION = "1.11.0"  # the CLI pin (CLEAN13): an isolated `uv tool`, never in pyproject.toml
+VASTAI_VERSION = "1.11.0"  # the CLI pin: an isolated `uv tool`, never in pyproject.toml
 BUNDLE_DIR = repo_root() / "build" / "bundles"  # sync_up's --bundle-dir default (objdel.infra.vast CLI); --bundle-dir
 CACHE_SAMPLE = 16  # expert caches whose fingerprint the bundle check reads (of ~12.7k in the LIDC bundle)
 
@@ -73,6 +73,12 @@ class Inputs:
     bundle: Path
 
 
+def rows_name(template: str) -> str | None:
+    """<name> of a `{data}/rows/<name>` box path, else None."""
+    m = re.fullmatch(r"\{data\}/rows/([^/]+)", template)
+    return m[1] if m and m[1] not in (".", "..") else None
+
+
 def data_root() -> Path:
     """The Mac value of {data}: $OBJDEL_DATA_ROOT, else data."""
     return Path(os.environ.get("OBJDEL_DATA_ROOT") or "data")
@@ -84,10 +90,10 @@ def local(template: str) -> Path | None:
     if template.startswith("{rd}/"):
         return None
     rest = template.removeprefix("{data}/")
-    if rest == template or ".." in rest.split("/") or any(c in rest for c in "{}"):
+    if rest == template or {".", ".."} & set(rest.split("/")) or any(c in rest for c in "{}"):
         raise ValueError(f"{template!r}: not {{data}}/<path> or {{rd}}/<path>")
-    if re.fullmatch(r"rows/[^/]+", rest):
-        return local_rows_root(template, data_root())
+    if name := rows_name(template):
+        return data_root() / "views" / name
     return data_root() / rest
 
 
@@ -98,7 +104,7 @@ def inputs(cfg: Path, bundle_dir: Path = BUNDLE_DIR) -> Inputs:
     spec, root = load_spec(cfg), data_root()
     views = [Path(s.data_root) / s.view if s.data_root else root / s.view for s in spec.stages if s.kind == "sft"]
     views = views or ([root / spec.bundle_view] if spec.bundle_view else [])
-    rows = [s for s in rl_stages(spec) if s.train and re.fullmatch(r"\{data\}/rows/[^/]+", s.train)]
+    rows = [s for s in rl_stages(spec) if s.train and rows_name(s.train)]
     return Inputs(spec, root, tuple(views), tuple(rows), Path(bundle_dir) / "bundle-lidc.tar")
 
 
@@ -186,8 +192,8 @@ def sampled(names: list[str]) -> list[str]:
 def bundle(s: Inputs) -> list[str]:
     """The LIDC bundle sync_up uploads holds every {data} input of the spec (but rows/<name>, which fetch_hf.sh
     brings), and a sample of its expert caches (caches/**.npz) has the current reward fingerprint. Reads the tar
-    headers and the sampled members only. Box C, 2026-11-10: a Nov 5 bundle held b1eb9f51 caches and no
-    lidc-val-edge, and final_eval died with StaleCacheError after training."""
+    headers and the sampled members only. A stale bundle (old reward fingerprint, a missing eval view) fails here,
+    not after training."""
     import tarfile
 
     import numpy as np
@@ -199,7 +205,7 @@ def bundle(s: Inputs) -> list[str]:
     with tarfile.open(s.bundle, "r:") as tar:
         members = {m.name: m for m in tar.getmembers()}
         bad = [f"{s.bundle}: no {rest}/ (a {{data}} input of the spec)" for t in dict.fromkeys(spec_inputs(s.spec))
-               if not re.fullmatch(r"\{data\}/rows/[^/]+", t) and not any(n.startswith(
+               if not rows_name(t) and not any(n.startswith(
                    (rest := t.removeprefix("{data}/")) + "/") for n in members)]  # fmt: skip
         want = fingerprint()
         for name in sampled([n for n in members if "caches/" in n and n.endswith(".npz")]):
@@ -326,15 +332,6 @@ def targets(s: Inputs) -> list[str]:
     return [f"{len(bad)} training targets rejected by the reference checker, e.g. {bad[:3]}"] if bad else []
 
 
-def local_rows_root(train_arg: str, data_root="data") -> Path:
-    """The local folder B1.4 built for the box path `{data}/rows/<name>` (fetch_hf.sh --rows): <data_root>/views/<name>;
-    ValueError for any other form."""
-    m = re.fullmatch(r"\{data\}/rows/([^/]+)", train_arg)
-    if not m or m[1] in (".", ".."):
-        raise ValueError(f"--train {train_arg!r}: a rows plan names {{data}}/rows/<name>")
-    return Path(data_root) / "views" / m[1]
-
-
 def train_rl_argv(step) -> list[str] | None:
     """The words after `-m experiments.phase2.train_rl` of an argv: a stage of its own, or one inside a `bash -c`
     string (the nsys-wrapped arms of specs/c_speed.yaml); None for any other argv."""
@@ -363,7 +360,7 @@ def rl_stages(spec) -> list:
 
 
 def rows_root(s: Inputs) -> list[str]:
-    """B1.3: each rl stage's local rows root has the manifest the stage pins and passes every hard B data gate."""
+    """Each rl stage's local rows root has the manifest the stage pins and passes every hard B data gate."""
     from objdel.data import quality as Q
     from objdel.policy import models
 
@@ -383,7 +380,7 @@ def rows_root(s: Inputs) -> list[str]:
 
 
 def rows_revision(s: Inputs) -> list[str]:
-    """B1.3 2b: each pinned HF revision holds rows/<name>/ = hf.ROWS_TAR and manifest.json only, the tar's LFS SHA-256
+    """Each pinned HF revision holds rows/<name>/ = hf.ROWS_TAR and manifest.json only, the tar's LFS SHA-256
     is that of hf.rows_tar over the local root (hashed as a stream, no copy on disk), and the manifest has the pinned
     SHA-256 ($0: three Hub API reads per root, no box)."""
     if not s.rows:
@@ -424,7 +421,7 @@ def pytest(*args: str) -> list[str]:
 
 
 def trl_problems() -> list[str]:
-    """The private TRL names fast.py relies on (objdel.rl.trl_adapter): [] or the contract error's message."""
+    """The private TRL names the adapter relies on (objdel.rl.trl_adapter): [] or the contract error's message."""
     from objdel.rl import trl_adapter
 
     try:
@@ -455,21 +452,6 @@ def checker_tests(s: Inputs) -> list[str]:
     return pytest("-m", "not slow", *cuda, "tests/verify/test_gpu_scoring.py", *CHECKER_TESTS)  # CUDA equivalence first
 
 
-def runbooks(s: Inputs, root: Path | None = None) -> list[str]:
-    """The kernel drafts run from the synced code (Implementation.md D1 step 0): no scratch path in any of their files,
-    and no hand copy or stale box torch in their runbooks. `root`: default the repo. docs/ is local only (owner,
-    2026-11-11): a clone has no drafts and nothing to check."""
-    root = root or repo_root()
-    k = root / "docs/implementation2.0/kernels"
-    if not k.is_dir():
-        return []
-    files = [p for p in k.rglob("*") if p.is_file() and "build" not in p.relative_to(k).parts]
-    bad = [f"{p.relative_to(root)}: scratch path" for p in files if re.search(r"/[p]rivate/tmp",
-        p.read_text("latin-1"))]
-    return bad + [f"{p.relative_to(root)}: {s.strip()!r}" for p in sorted(k.glob("*/GPU_RUN.md"))
-                  for s in ("torch 2.14.1", "scp ", "rsync ") if s in p.read_text()]
-
-
 CHECKS = [
     ("DATA spec inputs", given_inputs), ("DATA upload bundle", bundle),
     ("DATA bundle integrity", view_integrity), ("DATA patient disjointness", patients),
@@ -478,7 +460,7 @@ CHECKS = [
     ("CHECKER CPU exactness (+ CUDA equivalence)", checker_tests),
     ("CODE TRL private names", lambda s: trl_problems()),
     ("CODE vastai version", lambda s: vastai_problems()),
-    ("CODE kernel runbooks", runbooks), ("CODE quick tests", lambda s: pytest("-m", "not slow", *QUICK_TESTS)),
+    ("CODE quick tests", lambda s: pytest("-m", "not slow", *QUICK_TESTS)),
     ("CODE CPU dry run train -> select", lambda s: pytest(DRY_RUN)),
 ]  # fmt: skip
 

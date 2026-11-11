@@ -131,8 +131,8 @@ class Env:
             (bin_ / t).symlink_to(src)
         self.state(offers=[offer(), offer(112, dph_total=0.70), offer(113, hosting_type=1, dph_total=0.9)])
         self.allow(image="ghcr.io/owner/objdel-vast:p2-abc@sha256:" + "0" * 64, ghcr_user="owner",
-                   riga_permission={"granted": False, "evidence": ""}, riga_recipient="age1publicrecipient")
-        for f in ("bundle-lidc.tar", "bundle-lidc.tar.sha256", "bundle-riga.tar.age", "bundle-riga.tar.age.sha256"):
+                   riga_permission={"granted": False, "evidence": ""})
+        for f in ("bundle-lidc.tar", "bundle-lidc.tar.sha256"):
             (self.bundles / f).write_text("x")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("VAST", "DRY_RUN"))}
         self.env = dict(env, PATH=f"{bin_}{os.pathsep}{env['PATH']}", PYTHON=sys.executable, FAKE_DIR=str(self.fake),
@@ -225,16 +225,16 @@ def all_text(E, *outs):
 
 
 def test_query_per_card():
-    q = OF.query("RTX_4090", "lidc")
+    q = OF.query("RTX_4090")
     terms = ("num_gpus=1 gpu_name=RTX_4090 gpu_ram<=26 cpu_cores_effective>=12 cpu_ram>=32 cuda_vers>=13.0"
              " verified=true reliability>0.98 direct_port_count>=2 dph<=1.0")  # fmt: skip
     assert set(terms.split()) <= set(q.split()) and "datacenter=True" not in q
-    assert {"datacenter=True", "cpu_ram>=48", "dph<=1.5"} <= set(OF.query("RTX_5090", "riga").split())
-    assert "gpu_ram>=79" in OF.query("A100_SXM4", "lidc").split()
-    assert "cpu_ram>=48" in OF.query("RTX_PRO_6000_WS", "lidc").split()
-    assert "disk_space>=150" in OF.query("RTX_PRO_6000_WS", "lidc", disk=150).split()
+    assert {"cpu_ram>=32", "dph<=1.5"} <= set(OF.query("RTX_5090").split())
+    assert "gpu_ram>=79" in OF.query("A100_SXM4").split()
+    assert "cpu_ram>=48" in OF.query("RTX_PRO_6000_WS").split()
+    assert "disk_space>=150" in OF.query("RTX_PRO_6000_WS", disk=150).split()
     with pytest.raises(ValueError):
-        OF.query("RTX_2080", "lidc")
+        OF.query("RTX_2080")
 
 
 def test_ceilings_are_1p5x_snapshot_median():
@@ -253,8 +253,8 @@ def test_ceilings_are_1p5x_snapshot_median():
     ({"verification": None}, "verified"),
 ])  # fmt: skip
 def test_admissible_rejects(bad, why):
-    assert OF.reasons(offer(), "RTX_4090", "lidc") == []
-    assert any(why in r for r in OF.reasons(offer(**bad), "RTX_4090", "lidc"))
+    assert OF.reasons(offer(), "RTX_4090") == []
+    assert any(why in r for r in OF.reasons(offer(**bad), "RTX_4090"))
 
 
 def test_vast_raw_error_with_exit_0_stops_with_the_message(monkeypatch):
@@ -364,46 +364,17 @@ def test_real_offer_from_v0_is_admissible():
     MB with 1 GB = 1000 MB (Vast returned cpu_ram 32160 for the query cpu_ram>=32). All offers failed before."""
     o = (json.loads((Path(__file__).parents[1] / "fixtures" / "vast_offer_3090.json").read_text())
          | {"geolocation": "Texas, US"})
-    assert OF.reasons(o, "RTX_3090", "lidc") == []
-    assert any("cpu_ram" in r for r in OF.reasons(dict(o, cpu_ram=31999), "RTX_3090", "lidc"))
+    assert OF.reasons(o, "RTX_3090") == []
+    assert any("cpu_ram" in r for r in OF.reasons(dict(o, cpu_ram=31999), "RTX_3090"))
 
 
 def test_policy_reads_only_offer_fields_the_pinned_cli_returns():
     """CT-86. Key names only, no offer data: the V0 offer recording (2026-11-01) plus `geolocation`, which the test
     above adds by hand. Re-record from `uvx vastai==1.11.0 search offers ... --raw` when a Vast key is at hand."""
     keys = set(json.loads((Path(__file__).parents[1] / "fixtures" / "vast_offer_keys_1_11_0.json").read_text()))
-    read = {t[2] for g in OF.CARDS for d in OF.CPU_RAM for t in OF.terms(g, d) if t[2]}
+    read = {t[2] for g in OF.CARDS for t in OF.terms(g) if t[2]}
     read |= {"id", "geolocation", *OF.offer_cols({})}
     assert len(read) > 12 and read <= keys, sorted(read - keys)
-
-
-# --- H-GOV on the recorded snapshot (D16) ---------------------------------------------------------------------------
-
-
-def snapshot_offers():
-    """One synthetic offer per recorded snapshot offer: `secure_cloud` buckets are hosting_type 1, the rest of each
-    `any` bucket hosting_type 0 (the snapshot keeps counts per bucket, not the offers themselves)."""
-    snap, out = json.loads(SNAP.read_text())["offers"], []
-    for key, v in snap.items():
-        gpu, typ, tier = key.split("|")
-        if tier == "any":
-            n1 = snap[f"{gpu}|{typ}|secure_cloud"]["n"]
-            out += [offer(gpu=gpu, hosting_type=0)] * (v["n"] - n1) + [offer(gpu=gpu, hosting_type=1)] * n1
-    return out
-
-
-def test_hgov_snapshot():
-    offers = snapshot_offers()
-    n0, n1 = ([o for o in offers if o["hosting_type"] == h] for h in (0, 1))
-    assert (len(n0), len(n1)) == (237, 34)  # recorded 2026-10-20 snapshot (on-demand + bid, 15 cards)
-    yes = {"riga_permission": {"granted": True, "evidence": "email 2026-11-01 from depositor"}}
-    assert all(OF.governance("riga", o, yes) for o in n0)  # every community offer refused, with a reason
-    assert not any(OF.governance("riga", o, yes) for o in n1)  # every datacenter offer allowed
-    assert all(OF.governance("riga", o, {"riga_permission": {"granted": False}}) for o in n1)
-    assert all(OF.governance("riga", o, {"riga_permission": {"granted": True, "evidence": ""}}) for o in n1)
-    assert all(OF.governance("riga", {k: v for k, v in o.items() if k != "hosting_type"}, yes) for o in n1[:3])
-    assert not any(OF.governance("lidc", o, {}) for o in n0 + n1)
-    assert OF.governance("other", n1[0], yes)
 
 
 # --- ledger and secrets (G9, D16) -----------------------------------------------------------------------------------
@@ -511,10 +482,10 @@ def test_launch_destroys_on_sigterm_while_polling(E):
 
 def test_bandwidth_in_filter_cost_guard_and_ledger(E):
     # BK4-18: per-GB bandwidth is in the filter (ceiling), the G10 projection (estimate) and the ledger
-    q = OF.query("RTX_4090", "lidc").split()
+    q = OF.query("RTX_4090").split()
     assert f"inet_up_cost<={LG.INET_CEIL}" in q and f"inet_down_cost<={LG.INET_CEIL}" in q
-    assert OF.reasons(offer(inet_up_cost=LG.INET_CEIL * 2), "RTX_4090", "lidc") == ["bandwidth fails the §4.2 filter"]
-    assert OF.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090", "lidc")
+    assert OF.reasons(offer(inet_up_cost=LG.INET_CEIL * 2), "RTX_4090") == ["bandwidth fails the §4.2 filter"]
+    assert OF.reasons({k: v for k, v in offer().items() if k != "inet_down_cost"}, "RTX_4090")
     E.state(offers=[offer(inet_up_cost=LG.INET_CEIL, inet_down_cost=LG.INET_CEIL)])
     E.pick()
     spent(E, LG.HARD_STOP - 2.8)  # + 0.55 x 4 = HARD_STOP - 0.6 by price alone; the bandwidth estimate takes it past
@@ -561,18 +532,6 @@ def test_launch_cap_adds_the_image_pull(E):
     assert f"WATCHDOG_CAP_S={7200 + RM.PULL_S}" in after(c, "--onstart-cmd") and RM.PULL_S >= 360
     run = E.active()["r1"]
     assert run["deadline"] - run["started"] == pytest.approx(7200 + RM.PULL_S)
-
-
-def test_riga_decrypt_checks_shm_size(E):
-    # BK4-19: Docker's /dev/shm defaults to 64 MB; the step fails loudly before decrypting when it is too small
-    riga_ready(E)
-    (E.bundles / "bundle-riga.tar.age").write_bytes(b"x" * 300 * 1024)
-    o = E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles)
-    (line,) = [ln for ln in o.stdout.splitlines() if "age -d" in ln]
-    assert "df -Pk /dev/shm" in line and '-ge 330 ]' in line and line.index("df -Pk") < line.index("age -d")
-    assert ";" not in line.split("<stdin")[0].replace("'\"'\"'", "")  # one && chain: a failed check stops the decrypt
-    assert "shm=UNVERIFIED" in E.ledger()[-1]["detail"]
-    assert "/dev/shm" in (DOCKER / "image_check.sh").read_text()
 
 
 def test_launch_timeout_destroys(E):
@@ -623,13 +582,13 @@ def test_pick_id_takes_any_admissible_offer_not_only_the_five_shown(E):
 def test_only_north_american_hosts_are_admissible(geo, ok):
     """Owner (2026-11-02): US and CA hosts only. V1: a Thailand host had not pulled the 5.9 GB image in 15 min. A
     fixed rule of the filter, so launch's re-check refuses a saved offer from elsewhere; no location fails."""
-    assert (OF.reasons(offer(geolocation=geo), "RTX_4090", "lidc") == []) == ok
+    assert (OF.reasons(offer(geolocation=geo), "RTX_4090") == []) == ok
 
 
 def test_a_bad_machine_is_never_admissible():
     """2026-11-03 v2: machine 28360's 4090 was busy and power-capped (7.4 of 165 bf16 TFLOPS)."""
-    assert OF.reasons(offer(machine_id=70), "RTX_4090", "lidc") == []
-    assert any("machine 28360" in r for r in OF.reasons(offer(machine_id=28360), "RTX_4090", "lidc"))
+    assert OF.reasons(offer(machine_id=70), "RTX_4090") == []
+    assert any("machine 28360" in r for r in OF.reasons(offer(machine_id=28360), "RTX_4090"))
 
 
 def test_sync_up_checks_the_gpu_before_the_bundle(E):
@@ -660,7 +619,7 @@ def test_offers_search_and_launch_keep_to_north_america(E):
     (q,) = E.vast("search offers")
     assert "geolocation in [US,CA]" in q[q.index("offers") + 1]
     assert "--region" in E.pick("top", "--region", "TH", ok=False).stderr  # no flag widens the rule
-    saved = dict(offer(7, geolocation="Thailand, TH"), _gpu="RTX_4090", _dataset="lidc", _disk=80)
+    saved = dict(offer(7, geolocation="Thailand, TH"), _gpu="RTX_4090", _disk=80)
     (E.home / "offers" / "7.json").write_text(json.dumps(saved))  # saved before the rule, as offers/49545596.json
     p = E.sh("launch.sh", "7", "r1", ok=False)
     assert "region" in p.stderr and not E.vast("create instance")
@@ -673,7 +632,7 @@ def test_launch_needs_a_picked_admissible_offer(E):
     assert not E.vast("create instance")
 
 
-# --- H-GOV and transfer rules in the scripts -----------------------------------------------------------------------
+# --- transfer rules in the scripts -----------------------------------------------------------------------
 
 
 def test_code_snapshot_ships_the_gpu_scoring_test(E):
@@ -688,40 +647,6 @@ def test_code_snapshot_ships_the_gpu_scoring_test(E):
     (inst,) = [ln for ln in o.stdout.splitlines() if "uv pip install" in ln]
     assert "-I -c" in inst and RM.IMPORT_CHECK in inst
     assert "tests." not in RM.IMPORT_CHECK and "experiments." not in RM.IMPORT_CHECK
-
-
-def test_riga_refused_to_community_and_without_permission(E):
-    E.launched()
-    p = E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles, ok=False)
-    assert "H-GOV" in p.stderr and "DRY_RUN" not in p.stdout
-    assert all("objdel-riga-age" not in c["argv"] for c in E.calls("security"))
-
-
-def riga_ready(E):
-    E.allow(riga_permission={"granted": True, "evidence": "written permission, email 2026-11-01"})
-    E.pick("113", "--riga")
-    E.sh("launch.sh", "113", "r1")
-
-
-def test_riga_identity_only_on_ssh_stdin(E):
-    riga_ready(E)
-    E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles, DRY_RUN="0")
-    dec = [c for c in E.calls("ssh") if "age -d -i /dev/stdin" in " ".join(c["argv"])]
-    assert len(dec) == 1 and dec[0]["stdin"].strip() == IDENTITY and "/dev/shm/riga" in " ".join(dec[0]["argv"])
-    rest = [c for c in E.calls() if "age -d" not in " ".join(c["argv"]) and c["tool"] != "security"]
-    assert rest and all(c["stdin"] == "" for c in rest)
-    assert not any(c["env_has_identity"] for c in E.calls())
-    assert IDENTITY not in all_text(E).replace(json.dumps(dec[0]["stdin"]), "")
-    assert IDENTITY not in files_text(E.home)
-    assert "age1publicrecipient" in E.ledger()[-1]["detail"]  # recipient (public) only
-
-
-def test_riga_dry_run_commands_read_identity_from_stdin(E):
-    riga_ready(E)
-    o = E.sh("sync_up.sh", "r1", "--bundle", "riga", "--bundle-dir", E.bundles)
-    (line,) = [ln for ln in o.stdout.splitlines() if "age -d" in ln]
-    assert "age -d -i /dev/stdin" in line and "<stdin: age identity" in line and IDENTITY not in o.stdout
-    assert "AGE" not in line.split("<stdin")[0].replace("AGE-SECRET", "")
 
 
 def test_rsync_never_sends_data_raw(E):
@@ -1062,26 +987,6 @@ def test_bundle_refuses_raw_and_incomplete(tmp_path):
     with pytest.raises(InfraError, match="probe-topology"):
         B.build("lidc", d, tmp_path / "out")
     assert not (tmp_path / "out" / "bundle-lidc.tar").exists()
-
-
-def test_bundle_riga_only_encrypted_to_recorded_recipient(E, monkeypatch):
-    d = data_tree(E.tmp)
-    age = E.tmp / "bin" / "age"  # fake: records argv, writes stdin to -o
-    age.write_text(f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\na = sys.argv[1:]\n"
-                   "Path(a[a.index('-o') + 1]).write_bytes(b'AGE' + sys.stdin.buffer.read())\n"
-                   "open(Path(os.environ['FAKE_DIR']) / 'age.json', 'w').write(json.dumps(a))\n")  # fmt: skip
-    age.chmod(0o755)
-    for k in ("PATH", "FAKE_DIR", "VAST_HOME"):
-        monkeypatch.setenv(k, E.env[k])
-    out = B.build("riga", d, E.tmp / "out")
-    assert sorted(p.name for p in (E.tmp / "out").iterdir()) == ["bundle-riga.tar.age", "bundle-riga.tar.age.sha256"]
-    argv = json.loads((E.fake / "age.json").read_text())
-    assert argv[:2] == ["-r", "age1publicrecipient"] and out.name == "bundle-riga.tar.age"
-    body = out.read_bytes()
-    assert b"prepared/images/riga/r.png" in body and b"lidc" not in body.replace(b"riga", b"")
-    E.allow(riga_recipient=None)
-    with pytest.raises(InfraError, match="recipient"):
-        B.build("riga", d, E.tmp / "out3")
 
 
 def test_bundle_ships_only_the_named_view(tmp_path):
@@ -1604,7 +1509,7 @@ def test_launch_without_an_image_in_the_allowlist_refuses(monkeypatch, tmp_path)
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     (tmp_path / "ledger.csv").write_text(",".join(LG.FIELDS) + "\n")
     (tmp_path / "offers").mkdir()
-    offer = {"_gpu": "RTX_4090", "_dataset": "lidc", "_disk": 80, "dph_total": 0.5, "inet_up_cost": 0.0,
+    offer = {"_gpu": "RTX_4090", "_disk": 80, "dph_total": 0.5, "inet_up_cost": 0.0,
              "inet_down_cost": 0.0}
     (tmp_path / "offers/1.json").write_text(json.dumps(offer))
     compute = SimpleNamespace(cap_hours=4, gpu="RTX_4090")

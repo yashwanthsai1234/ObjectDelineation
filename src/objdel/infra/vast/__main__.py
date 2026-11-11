@@ -1,12 +1,12 @@
-"""Vast AI operations for Phase 2 (PLAN §4, D16, G1-G10): the CLI, `python -I -m objdel.infra.vast <cmd>`. Every
+"""Vast AI operations: the CLI, `python -I -m objdel.infra.vast <cmd>`. Every
 decision and every command is built here or in objdel.infra.vast (offers, ledger, remote, chain); the `*.sh` files in
 experiments/phase2/vast/ are symlinks to the one shim `vast.sh` (the link's name is the command), and `watchdog.sh`
 there is the only logic that runs on the box.
 
-    offers.sh GPU [--riga] [--disk GB] [--pick OFFER_ID|top]   search (§4.2 filter, US/CA hosts), top 5; --pick saves it
+    offers.sh GPU [--disk GB] [--pick OFFER_ID|top]            search (US/CA hosts), top 5; --pick saves it
     launch.sh OFFER_ID RUN_ID --config CONFIG.yaml [--cap-hours H] [--idle-minutes M] [--allow-parallel]
               [--owner-approved]
-    sync_up.sh RUN_ID [--bundle lidc|riga] [--bundle-dir DIR] [--code-only]   code (git ls-files) + bundle, SHA-256
+    sync_up.sh RUN_ID [--bundle lidc] [--bundle-dir DIR] [--code-only]   code (git ls-files) + bundle, SHA-256
     run.sh RUN_ID MODULE|CONFIG.yaml [ARGS]                    timeout + tmux + heartbeat; a config runs its chain
     pull.sh [RUN_ID]                                           rsync runs/<id>/ to the Mac (not PULL_EXCLUDE), then
                                                                PULLED_OK = the pull's start time (no id: all)
@@ -17,18 +17,18 @@ there is the only logic that runs on the box.
     sweep_orphans.sh                                           destroy unknown / overdue instances, close vanished runs;
                                                                alarm and hard stop: see ALARM and HARD_STOP below
 
-G10: a launch is refused when the money committed (closed sessions + every active run to its deadline) plus its own
+Money: a launch is refused when the money committed (closed sessions + every active run to its deadline) plus its own
 worst case passes HARD_STOP, and needs --owner-approved (recorded in the ledger) when that projection reaches ALARM.
 Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H per hour, at the offer's $/GB);
-teardown saves the raw charges and records what Vast billed beside that estimate (`billed`, BK4-18).
+teardown saves the raw charges and records what Vast billed beside that estimate (`billed`).
 
 Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; default:
 <repo>/experiments/phase2/vast), VAST_RUNS (pull target, default <repo>/runs), DRY_RUN=1 (ssh, rsync and `vastai
 create` / `destroy` are printed, never run; `vastai` calls that only read still run, so tests put a fake one on
 PATH), VAST_POLL_S, VAST_LAUNCH_TIMEOUT_S. Secrets live in the macOS keychain and are read with `security`:
 objdel-vast-scoped (scoped API key, passed to vastai as VAST_API_KEY), objdel-ghcr-read (read-only GHCR PAT, Vast
---login), objdel-riga-age (age identity: only ever the stdin of the ssh decrypt command; D16), objdel-hf-write (HF
-token: checked by objdel.infra.hf.token_problems, then only ever the stdin of the ssh upload command).
+--login), objdel-hf-write (HF token: checked by objdel.infra.hf.token_problems, then only ever the stdin of the ssh
+upload command).
 """
 
 import argparse
@@ -63,7 +63,7 @@ from objdel.infra.vast.ledger import (
     spend,
     update_active,
 )
-from objdel.infra.vast.offers import governance, is_raw, offer_cols, query, reasons
+from objdel.infra.vast.offers import is_raw, offer_cols, query, reasons
 from objdel.infra.vast.remote import (
     BAD_STATUS,
     GRACE_S,
@@ -87,9 +87,8 @@ from objdel.infra.vast.remote import (
 
 def cmd_offers(a) -> None:
     """offers.sh: list the five cheapest admissible offers; --pick ID saves one for launch."""
-    ds = "riga" if a.riga else "lidc"
-    got = vast("search", "offers", query(a.gpu, ds, a.disk), "-o", "dph_total", "--storage", str(a.disk), "--raw")
-    ok = [o for o in got if not reasons(o, a.gpu, ds, a.disk)]  # --pick ID: any of them, not only the 5 shown
+    got = vast("search", "offers", query(a.gpu, a.disk), "-o", "dph_total", "--storage", str(a.disk), "--raw")
+    ok = [o for o in got if not reasons(o, a.gpu, a.disk)]  # --pick ID: any of them, not only the 5 shown
     for o in ok[:5]:
         print(f"{o['id']:>10}  ${o['dph_total']:.3f}/h  {o['gpu_ram'] / 1024:.0f} GB  {o['cpu_cores_effective']} cores"
               f"  {o['cpu_ram'] / 1000:.0f} GB RAM  cuda {o['cuda_max_good']}  hosting_type {o.get('hosting_type')}"
@@ -100,8 +99,8 @@ def cmd_offers(a) -> None:
     if o is None:
         raise InfraError(f"offer {a.pick} is not among the admissible offers")
     (home() / "offers").mkdir(exist_ok=True)
-    (home() / "offers" / f"{o['id']}.json").write_text(json.dumps(dict(o, _gpu=a.gpu, _dataset=ds, _disk=a.disk)))
-    ledger(event="offer", offer_id=o["id"], gpu=a.gpu, **offer_cols(o), detail=query(a.gpu, ds, a.disk))
+    (home() / "offers" / f"{o['id']}.json").write_text(json.dumps(dict(o, _gpu=a.gpu, _disk=a.disk)))
+    ledger(event="offer", offer_id=o["id"], gpu=a.gpu, **offer_cols(o), detail=query(a.gpu, a.disk))
     print(f"picked {o['id']}")
 
 
@@ -111,7 +110,7 @@ def launch_refusal(offer: dict, cap_hours: float) -> str:
     money = [offer["dph_total"], offer["inet_up_cost"], offer["inet_down_cost"]]
     if not all(math.isfinite(x) and x >= 0 for x in money) or not (math.isfinite(cap_hours) and cap_hours > 0):
         return f"refused: price {money} and --cap-hours {cap_hours} must be finite, non-negative and the cap positive"
-    if not (home() / "ledger.csv").is_file():  # a missing ledger is unknown spend, not $0 (E8.1)
+    if not (home() / "ledger.csv").is_file():  # a missing ledger is unknown spend, not $0
         return f"no ledger.csv under {home()}: the spend guard cannot count what was spent (G10)"
     now = time.time()
     bw = {k: offer[k] for k in ("inet_up_cost", "inet_down_cost")}
@@ -135,9 +134,9 @@ def cmd_launch(a) -> None:
         raise InfraError(f"preflight gate: {why}")
     if not (o := load(f"offers/{a.offer}.json")):
         raise InfraError(f"offer {a.offer} was not picked with offers.sh --pick")
-    if why := reasons(o, o["_gpu"], o["_dataset"], o["_disk"]):
+    if why := reasons(o, o["_gpu"], o["_disk"]):
         raise InfraError("; ".join(why))
-    compute = load_spec(Path(a.config)).compute  # the spec bounds the flag: one cap source per launch (E6.8b)
+    compute = load_spec(Path(a.config)).compute  # the spec bounds the flag: one cap source per launch
     if a.cap_hours > compute.cap_hours:
         raise InfraError(f"--cap-hours {a.cap_hours} is above the spec's compute.cap_hours {compute.cap_hours}")
     if o["_gpu"] != compute.gpu:
@@ -161,10 +160,10 @@ def cmd_launch(a) -> None:
     flags = ["--ssh", "--direct", "--cancel-unavail", "--label", a.run_id, "--raw"]
     sigs = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     onstart = onstart_cmd(a.run_id, cap_s, now, int(a.idle_minutes * 60))
-    for s in sigs:  # an interrupt from `create` on must reach the destroy below (BK4-3)
+    for s in sigs:  # an interrupt from `create` on must reach the destroy below
         signal.signal(s, signal.default_int_handler)
     iid = None
-    try:  # G8: any failure or interrupt from here on destroys the instance
+    try:  # any failure or interrupt from here on destroys the instance
         out = vast("create", "instance", str(a.offer), "--image", image, "--login", login, "--disk", str(o["_disk"]),
                    "--onstart-cmd", onstart, *flags)  # fmt: skip
         if dry_run():  # printed, not rented: nothing to record, poll or destroy
@@ -177,7 +176,7 @@ def cmd_launch(a) -> None:
         while True:
             inst = vast("show", "instance", str(iid), "--raw", tries=3)
             status, port = inst.get("actual_status"), ((inst.get("ports") or {}).get("22/tcp") or [{}])[0]
-            if status == "running" and inst.get("public_ipaddr") and port.get("HostPort"):  # BK4-4: ports come late
+            if status == "running" and inst.get("public_ipaddr") and port.get("HostPort"):  # ports come late
                 run.update(ip=inst["public_ipaddr"], port=int(port["HostPort"]))
                 update_active(lambda runs: {**runs, a.run_id: run})
                 print(f"running: ssh -p {run['port']} root@{run['ip']}")
@@ -198,12 +197,9 @@ def cmd_launch(a) -> None:
 
 
 def cmd_sync_up(a) -> None:
-    """sync_up.sh: send and install the code snapshot (H-GOV first), check the GPU, then send and unpack the bundle."""
+    """sync_up.sh: send and install the code snapshot, check the GPU, then send and unpack the bundle."""
     run = get_run(a.run_id)
-    o, allow = read_json(home() / "offers" / f"{run['offer']}.json"), load(".vast-allowlist")
-    if why := governance(a.bundle, o, allow):
-        raise InfraError("H-GOV refuses: " + "; ".join(why))
-    name = "bundle-riga.tar.age" if a.bundle == "riga" else f"bundle-{a.bundle}.tar"
+    name = f"bundle-{a.bundle}.tar"
     files = [a.bundle_dir / name, a.bundle_dir / f"{name}.sha256"]
     if any(map(is_raw, [a.bundle_dir, *files])):
         raise InfraError("refusing to send anything under data/raw")
@@ -211,43 +207,32 @@ def cmd_sync_up(a) -> None:
     lst.write_text("\n".join(code_files()) + "\n")
     host = f"root@{run['ip']}:"
     rsync(run, f"{repo_root()}/", f"{host}/workspace/src/", opts=(f"--files-from={lst}",))
-    remote(run, f"printf '%s\\n' {shlex.quote(sha)} > /workspace/src/CODE_SHA")  # the box has no .git (A3)
+    remote(run, f"printf '%s\\n' {shlex.quote(sha)} > /workspace/src/CODE_SHA")  # the box has no .git
     remote(run, "cd /workspace/src && uv pip install --python /opt/venv/bin/python --no-deps --no-build-isolation -e ."
                 f" && cd / && /opt/venv/bin/python -I -c {shlex.quote(IMPORT_CHECK)}")  # fmt: skip
     if a.code_only:  # a code fix mid-session: the bundle is already on the box
         return ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], detail="code only")
-    # GPU check before the bundle (2026-11-03 v2: a busy, power-capped card was found only after a 12 min upload)
+    # GPU check before the bundle (a busy, power-capped card was once found only after a 12 min upload)
     check = f"bash experiments/phase2/docker/image_check.sh /workspace/runs/{a.run_id}/image_check.json"
     remote(run, f"cd /workspace/src && {check}")
     rsync(run, *map(str, files), f"{host}/workspace/data/")
-    verify = f"cd /workspace/data && sha256sum -c {name}.sha256"
-    unpack = "mkdir -p {d} && {x} -C {d} && cd {d} && sha256sum -c --quiet SHA256SUMS"
-    if a.bundle == "riga":  # D16: identity streamed into age over this session's stdin; plaintext only in /dev/shm
-        # BK4-19: Docker's /dev/shm defaults to 64 MB and V0 has not shown Vast's; refuse before decrypting
-        need = -(-(a.bundle_dir / name).stat().st_size * 11 // 10240)  # KB, ciphertext + 10 %
-        shm = f"avail=$(df -Pk /dev/shm | awk 'NR==2 {{print $4}}') && [ \"$avail\" -ge {need} ]"
-        unpack = unpack.format(d="/dev/shm/riga", x=f"age -d -i /dev/stdin {name} | tar -x")
-        remote(run, f"{verify} && {shm} && {unpack}", secret("objdel-riga-age") + "\n",
-               "age identity from the keychain")
-        detail = f"recipient={allow.get('riga_recipient', '')} shm=UNVERIFIED until V0 (BK4-19)"
-    else:
-        remote(run, f"{verify} && " + unpack.format(d=a.bundle, x=f"tar -xf {name}"))
-        detail = ""
-    ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], bundle=name, detail=detail)
+    remote(run, f"cd /workspace/data && sha256sum -c {name}.sha256 && mkdir -p {a.bundle} && tar -xf {name} -C "
+                f"{a.bundle} && cd {a.bundle} && sha256sum -c --quiet SHA256SUMS")  # fmt: skip
+    ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], bundle=name)
 
 
 def cmd_run(a) -> None:
-    """MODULE [ARGS] runs one module (experiments.phase2.*, or R0's xarch_hashes); a run spec specs/<name>.yaml runs
-    its `chain` under one cap, refused on the box while a G-vision reference it reads is missing (R0 writes them).
+    """MODULE [ARGS] runs one module (experiments.phase2.*, or xarch_hashes); a run spec specs/<name>.yaml runs
+    its `chain` under one cap, refused on the box while a G-vision reference it reads is missing.
     Each job has its own tmux session and log (<run_id>-<name>, <name>.log), so a second job can run beside the
     first."""
     run, guard = get_run(a.run_id), []
-    if a.module.endswith(".yaml") and a.args:  # V1: a trailing --cap-hours was silently ignored
+    if a.module.endswith(".yaml") and a.args:  # a trailing --cap-hours would be silently ignored
         raise InfraError(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
     if a.module.endswith(".yaml"):
         stages, name = chain(repo_root() / a.module, a.run_id), Path(a.module).stem
         guard = [f"/opt/venv/bin/python -I -m objdel.infra.vast run_spec {shlex.quote(a.module)} "
-                 f"/workspace/runs/{a.run_id}/run_spec.json"]  # E6.5: the spec, code and versions, before any stage
+                 f"/workspace/runs/{a.run_id}/run_spec.json"]  # the spec, code and versions, before any stage
         guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run train_sft "
                  f"--vision-reference-only first' >&2; false; }}; }}"
                  for r in vision_refs(repo_root() / a.module, a.run_id)]  # fmt: skip
@@ -269,7 +254,7 @@ def cmd_run(a) -> None:
     # the session clock of train_rl --budget-usd (callbacks.BudgetStop): accrued(run, t) = fixed + rate x hours
     rate, fixed = run["dph"] + run.get("inet_up_cost", 0) * UP_GB_PER_H, run.get("inet_down_cost", 0) * DOWN_GB
     clock = f"OBJDEL_SESSION_START={run['started']!r} OBJDEL_RATE_USD_PER_H={rate!r} OBJDEL_FIXED_USD={fixed!r}"
-    # EXIT is removed first: the watchdog's idle destroy needs it (BK4-11); `;` keeps cd/export in this shell
+    # EXIT is removed first: the watchdog's idle destroy needs it; `;` keeps cd/export in this shell
     inner = (f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} {clock} && mkdir -p {rd} && rm -f {rd}/EXIT "
              "|| exit 1; "
              f"(while :; do date -u +%s > {rd}/HEARTBEAT; sleep 60; done) & "
@@ -280,7 +265,7 @@ def cmd_run(a) -> None:
 
 
 def cmd_run_spec(a) -> None:
-    """On the box, the first job of a spec's chain (I16): OUT = the spec, the code sha (objdel.core.io.code_sha:
+    """On the box, the first job of a spec's chain: OUT = the spec, the code sha (objdel.core.io.code_sha:
     CODE_SHA, written by sync_up, else git; else "unknown"), the trl, torch and transformers versions and the reward
     fingerprint, as strict JSON. A different spec already in OUT stops the chain: a second run with the same id never
     overwrites it silently."""
@@ -311,17 +296,24 @@ def cmd_pull(a) -> None:
             remote(run, f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK")
 
 
+def hf_token() -> str:
+    """The HF write token, refused unless it is fine-grained with write on the one repo only (it goes to a rented
+    box over ssh stdin)."""
+    token = secret("objdel-hf-write")
+    if bad := hf.token_problems(hf.whoami(token), hf.REPO):
+        raise InfraError(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: "
+                         f"{'; '.join(bad)}. Recreate it at huggingface.co/settings/tokens as fine-grained with only "
+                         f"{hf.REPO}: write (no other boxes ticked)")
+    return token
+
+
 def cmd_push_hf(a) -> None:
     """hf_push on the box for the run spec CONFIG's run (push_target: its last rl or sft stage); the token is checked
     here first."""
     run = get_run(a.run_id)
     path, out, rl = push_target(load_spec(repo_root() / a.config), a.run_id)
     kind = "--rl" if rl else "--run"
-    token = secret("objdel-hf-write")
-    if bad := hf.token_problems(hf.whoami(token), hf.REPO):
-        raise InfraError(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: "
-                         f"{'; '.join(bad)}. Recreate it at huggingface.co/settings/tokens as fine-grained with only "
-                         f"{hf.REPO}: write (no other boxes ticked)")
+    token = hf_token()
     cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push {kind} {path} "
            f"--repo {hf.REPO} --revision {out}")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
@@ -366,9 +358,7 @@ def cmd_fetch_hf(a) -> None:
                f"/opt/venv/bin/python -I -c {shlex.quote(ROWS_CHECK)} {shlex.quote(d)} {rows_pin(rev)}")
     else:
         cmd = f"{pull} --out /workspace/runs/{a.run_id}/{name}"
-    run, token = get_run(a.run_id), secret("objdel-hf-write")
-    if bad := hf.token_problems(hf.whoami(token), hf.REPO):
-        raise InfraError(f"secret objdel-hf-write is too broad for a rented box: {'; '.join(bad)}")
+    run, token = get_run(a.run_id), hf_token()
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
 
 
@@ -381,7 +371,7 @@ def cmd_teardown(a) -> None:
                 cmd_pull(a)
                 lost = None
                 break
-            except InfraError as e:  # V1: ssh refused, so the pull failed; the box must still go (G8)
+            except InfraError as e:  # ssh refused, so the pull failed; the box must still go
                 lost = e
     finally:  # Ctrl-C included
         destroy(run["instance"], a.run_id, "teardown")
@@ -398,9 +388,9 @@ def cmd_teardown(a) -> None:
 
 def cmd_sweep_orphans(a) -> None:
     """sweep_orphans.sh: close runs whose instance is gone, destroy orphan or overdue instances, and destroy every
-    instance at the hard stop (G10)."""
+    instance at the hard stop."""
     listed, now = vast("show", "instances", "--raw", tries=3), time.time()
-    for k, r in active().items():  # BK4-7: gone without our destroy (watchdog G5, host loss): close at its last state
+    for k, r in active().items():  # gone without our destroy (watchdog, host loss): close at its last state
         if r["instance"] not in {i["id"] for i in listed} and now - r["started"] > GRACE_S:
             alert(f"run {k}: instance {r['instance']} no longer listed; closing it")
             with locked():
@@ -424,12 +414,12 @@ def cmd_sweep_orphans(a) -> None:
 
 FLAG = {"action": "store_true"}
 CLI = {  # subcommand -> its arguments, in order
-    "offers": {"gpu": {}, "--riga": FLAG, "--pick": {}, "--disk": {"type": int, "default": 80}},
+    "offers": {"gpu": {}, "--pick": {}, "--disk": {"type": int, "default": 80}},
     "launch": {"offer": {"type": int}, "run_id": {}, "--config": {"required": True, "help": "the run's config.yaml"},
                "--cap-hours": {"type": float, "default": 4},
                "--allow-parallel": FLAG, "--owner-approved": FLAG,
                "--idle-minutes": {"type": float, "default": 30, "help": "watchdog idle destroy after a pulled EXIT"}},
-    "sync_up": {"run_id": {}, "--bundle": {"default": "lidc", "choices": ["lidc", "riga"]},
+    "sync_up": {"run_id": {}, "--bundle": {"default": "lidc", "choices": ["lidc"]},
                 "--bundle-dir": {"type": Path, "default": repo_root() / "build" / "bundles"}, "--code-only": FLAG},
     "run": {"run_id": {}, "module": {}, "--cap-hours": {"type": float, "default": 24},
             "args": {"nargs": argparse.REMAINDER}},
