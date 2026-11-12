@@ -8,5 +8,5 @@ stages:
   name: gr1
   argv: [-m, pytest, -q, -p, 'no:cacheprovider', -m, gpu, 'tests/rl/test_c_gpu.py::test_g_gr1_requests_independent']
 - {kind: rl, name: c6, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/rows/lidc-train-b1-780', out: '{rd}/c_c6', steps: 20,
-  save_steps: 20, shared_prefix: true, rows_revision: d2c8edb8e15534363ebbced8f839cecace49c495, rows_manifest_sha256: a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9,
+  save_steps: 20, shared_prefix: true, rows_revision: 1d6c9c93809c59270f9c0ce35915fb8c867c53d3, rows_manifest_sha256: a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9,
   group_requests: true}

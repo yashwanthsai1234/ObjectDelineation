@@ -370,7 +370,7 @@ def test_rows_revision_compares_the_pinned_hf_revision(rows_cfg, monkeypatch, tm
     monkeypatch.setattr(huggingface_hub, "HfApi", hub.api)
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", hub.download(tmp_path))
     assert (PF.rows_revision(PF.inputs(rows_cfg.cfg)) == []) is ok
-    assert hub.calls[0] == "d2c8edb8e15534363ebbced8f839cecace49c495"  # the revision specs/b1_rows.yaml pins
+    assert hub.calls[0] == "1d6c9c93809c59270f9c0ce35915fb8c867c53d3"  # the revision specs/b1_rows.yaml pins
 
 
 def test_the_trl_contract_is_the_first_code_check(monkeypatch):

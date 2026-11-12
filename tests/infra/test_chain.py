@@ -125,5 +125,5 @@ def test_push_target_of_a_spec_without_a_training_stage_dies():
 
 def test_rows_pin_reads_the_specs():
     """B1.4 step 5 pin (rows/lidc-train-b1-780): the plans and specs/b1_rows.yaml agree on one manifest SHA-256."""
-    assert policy.rows_pin("d2c8edb8e15534363ebbced8f839cecace49c495") == (
+    assert policy.rows_pin("1d6c9c93809c59270f9c0ce35915fb8c867c53d3") == (
         "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9")

@@ -2,7 +2,7 @@ schema_version: 1
 name: b1_rows
 model: qwen3-vl-2b
 compute: {gpu: RTX_5090, cap_hours: 9.5, budget_usd: 8.0}
-rows: {name: lidc-train-b1-780, revision: 'd2c8edb8e15534363ebbced8f839cecace49c495',
+rows: {name: lidc-train-b1-780, revision: '1d6c9c93809c59270f9c0ce35915fb8c867c53d3',
   manifest_sha256: 'a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9'}
 bundle_view: views/lidc-bundle-v3
 stages:

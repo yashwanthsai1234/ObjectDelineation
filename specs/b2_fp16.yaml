@@ -12,5 +12,5 @@ stages:
   name: fp16_dtype
   argv: [-m, pytest, -q, -p, 'no:cacheprovider', -m, gpu, 'tests/experiments/test_trl_adapter_equivalence.py::test_g08b_fp16_dtype']
 - {kind: rl, name: train, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', train: '{data}/rows/lidc-train-b1-780', out: '{rd}/b2-fp16',
-  steps: 60, save_steps: 60, shared_prefix: true, log_by_prompt: true, lr: 5.0e-05, numerics: fp16-seqmask, rows_revision: d2c8edb8e15534363ebbced8f839cecace49c495,
+  steps: 60, save_steps: 60, shared_prefix: true, log_by_prompt: true, lr: 5.0e-05, numerics: fp16-seqmask, rows_revision: 1d6c9c93809c59270f9c0ce35915fb8c867c53d3,
   rows_manifest_sha256: a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9}

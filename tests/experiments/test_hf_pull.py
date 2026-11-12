@@ -70,7 +70,7 @@ def test_fetch_hf_has_its_shim():
 
 # --- B1.5: rows root and checkpoint folder names (I40, I40b) ------------------------------------------------------
 
-ROWS_REV = "d2c8edb8e15534363ebbced8f839cecace49c495"  # B1.4 step 5 upload (rows/lidc-train-b1) and its manifest pin
+ROWS_REV = "1d6c9c93809c59270f9c0ce35915fb8c867c53d3"  # B1.4 step 5 upload (rows/lidc-train-b1) and its manifest pin
 ROWS_SHA = "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9"
 
 

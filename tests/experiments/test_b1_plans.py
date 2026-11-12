@@ -38,7 +38,7 @@ def test_b1_rows_spec_holds_what_b1_launch_held():
     assert spec.bundle_view == next(s.view for s in r1.stages if s.kind == "sft")
     assert C.push_target(spec, "x")[1:] == ("b1-rows", True)
     train = next(s for s in spec.stages if s.kind == "rl" and not s.merge_last)
-    assert (train.rows_revision, train.rows_manifest_sha256) == ("d2c8edb8e15534363ebbced8f839cecace49c495",
+    assert (train.rows_revision, train.rows_manifest_sha256) == ("1d6c9c93809c59270f9c0ce35915fb8c867c53d3",
                                                                  "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9")
 
 

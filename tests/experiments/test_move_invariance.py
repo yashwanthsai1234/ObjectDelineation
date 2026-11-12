@@ -246,7 +246,7 @@ def golden(name: str = "invariance.json") -> dict:
 
 
 # (old pin, new pin) of the rows root swap in later_edits: HF revision, then manifest SHA-256 (owner, 2026-11-10)
-ROWS_780 = (("34213dceb068128f1a1abf9c67aa65dd59bc1220", "d2c8edb8e15534363ebbced8f839cecace49c495"),
+ROWS_780 = (("34213dceb068128f1a1abf9c67aa65dd59bc1220", "1d6c9c93809c59270f9c0ce35915fb8c867c53d3"),
             ("472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4",
              "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9"))
 

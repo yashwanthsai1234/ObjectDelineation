@@ -30,7 +30,7 @@ stages:
   lr: 5.0e-05
   reward: v5
   grpo: {mask_truncated_completions: false, beta: 0.001, adam_epsilon: 1.0e-08}
-  rows_revision: d2c8edb8e15534363ebbced8f839cecace49c495
+  rows_revision: 1d6c9c93809c59270f9c0ce35915fb8c867c53d3
   rows_manifest_sha256: a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9
   budget_usd: 2.2
 - {kind: rl, name: merge, merge_last: true, model: qwen3-vl-2b, ckpt: '{rd}/ckpt', out: '{rd}/b3-v5'}
