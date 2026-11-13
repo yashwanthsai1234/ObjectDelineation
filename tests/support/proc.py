@@ -10,3 +10,10 @@ def run_isolated(*args, code=None, cwd=None, env=None, timeout=None, check=False
     argv = [sys.executable, "-I", *(["-c", code] if code is not None else []), *map(str, args)]
     return subprocess.run(argv, cwd=cwd, env=None if env is None else os.environ | env, capture_output=True, text=True,
                           timeout=timeout, check=check)
+
+
+def run_module(*args, env=None, timeout=900) -> subprocess.CompletedProcess:
+    """`python -I -m <args>` from the repo root, output captured."""
+    from tests.support.paths import ROOT
+
+    return run_isolated("-m", *args, cwd=ROOT, env=env, timeout=timeout)

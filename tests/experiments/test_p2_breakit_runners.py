@@ -1,7 +1,7 @@
 """Break-it BK3 (Phase 2 Stage 1): the runner pipeline train_sft -> select_ckpt -> g_probe, its YAML configs and the
 configs / vision pieces it wires. Real defects are strict xfails "BK3-<n>"
 (docs/archive/experiments/phase2/impl/BK3.md);
-passing guards stay. Slow tests train a tiny random Qwen3-VL on the CPU (test_p2_scripts._tiny_vlm, no download).
+passing guards stay. Slow tests train a tiny random Qwen3-VL on the CPU (support.tiny_models.tiny_qwen, no download).
 """
 
 import dataclasses
@@ -13,9 +13,11 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from test_p2_scripts import CPU_SFT, ROOT, sft_stages, stage
 
 from objdel.sft import select as sft_select
+from tests.support.paths import ROOT
+from tests.support.specs import CPU_SFT, sft_stages, stage
+from tests.support.tiny_models import tiny_qwen
 
 
 def _train_sft():
@@ -383,12 +385,11 @@ def test_g_probe_zero_variance_null_is_finite():
 @pytest.fixture
 def tiny_run(tmp_path, synthetic_items, monkeypatch):
     pytest.importorskip("trl")
-    from test_p2_scripts import _tiny_vlm
 
     from objdel.cli.data import views as BV
     from objdel.data import store
 
-    model = _tiny_vlm(tmp_path / "tiny")
+    model = tiny_qwen(tmp_path / "tiny")
     store.write(synthetic_items(("train",), unanimous=True), tmp_path / "store")
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
     TS = _train_sft()

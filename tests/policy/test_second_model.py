@@ -10,6 +10,8 @@ import pytest
 
 from objdel.core import spec
 from objdel.policy import models
+from tests.support.images import random_image
+from tests.support.tiny_models import tiny_vlm
 
 HUB = "Hugging" + "FaceTB/Smol" + "VLM-256M-Instruct"  # split: the retired-name scan (CT-07) reads this file
 KEY = "second-family"
@@ -29,20 +31,7 @@ def entry(monkeypatch):
 @pytest.fixture(scope="module")
 def tiny():
     """(random 2-layer model, processor) of the family, from the cached config and processor (no download)."""
-    torch = pytest.importorskip("torch")
-    from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setenv("HF_HUB_OFFLINE", "1")
-        try:
-            cfg = AutoConfig.from_pretrained(HUB, local_files_only=True)
-            proc = AutoProcessor.from_pretrained(HUB, local_files_only=True, **dict(ENTRY.processor))
-        except OSError:
-            pytest.skip(f"{HUB} config / processor not in the local HF cache")
-    cfg.text_config.update(TEXT)
-    cfg.vision_config.update(VISION)
-    torch.manual_seed(0)
-    return AutoModelForImageTextToText.from_config(cfg), proc
+    return tiny_vlm(HUB, TEXT, VISION, processor_kwargs=dict(ENTRY.processor))
 
 
 def test_the_entry_drives_every_derived_setting(entry, tmp_path, capsys):
@@ -66,10 +55,8 @@ def test_the_entry_drives_every_derived_setting(entry, tmp_path, capsys):
 
 
 def test_lora_skips_the_vision_tower_and_a_cpu_forward_runs(entry, tiny):
-    import numpy as np
     import torch
     from peft import get_peft_model
-    from PIL import Image
 
     from objdel.core import datasets
 
@@ -79,7 +66,7 @@ def test_lora_skips_the_vision_tower_and_a_cpu_forward_runs(entry, tiny):
     assert adapted and not [n for n in adapted if "vision_model" in n or "connector" in n]
     msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": datasets.LIDC.prompt}]}]
     text = proc.apply_chat_template(msgs, add_generation_prompt=True)
-    img = Image.fromarray(np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8))
+    img = random_image()
     batch = proc(text=[text], images=[[img]], return_tensors="pt")
     with torch.no_grad():
         logits = peft(**batch).logits

@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from objdel.sft import select as sft_select
+from tests.support.tiny_models import tiny_qwen
 
 ROOT = Path(__file__).resolve().parents[2]
 SPECS = sorted((ROOT / "specs").glob("*.yaml"))
@@ -31,10 +32,9 @@ def tiny_prompts(tmp_path):
     different rotary position grids)."""
     pytest.importorskip("trl")
     from PIL import Image
-    from test_p2_scripts import _tiny_vlm
     from transformers import AutoProcessor
 
-    model = _tiny_vlm(tmp_path / "tiny")
+    model = tiny_qwen(tmp_path / "tiny")
     proc = AutoProcessor.from_pretrained(model)
     msg = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Outline the nodule."}]}]
     text = proc.apply_chat_template(msg, add_generation_prompt=True, tokenize=False)

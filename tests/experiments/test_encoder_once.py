@@ -9,6 +9,8 @@ import dataclasses
 import numpy as np
 import pytest
 
+from tests.support.images import random_image
+
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLModel  # noqa: E402
@@ -309,15 +311,13 @@ def test_trls_full_generate_and_score_runs_under_the_guard(monkeypatch, tmp_path
     """U-EN7 second half and U-EN1: TRL's own _generate_and_score_completions on the tiny model with the guard on does
     not raise; the batch holds no pixel_values, a row-aligned host_meta of length B and one grid row per row; the
     tower ran once (the encode). The reference logprobs equal the pixel path's within float noise."""
-    import PIL.Image
     from transformers import AutoProcessor
 
     try:
         proc = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct", local_files_only=True)
     except OSError:
         pytest.skip("the Qwen3-VL processor is not in the local HF cache")
-    imgs = [PIL.Image.fromarray(np.random.default_rng(i).integers(0, 255, (64, 64, 3), dtype=np.uint8))
-            for i in range(2)]  # fmt: skip
+    imgs = [random_image(seed=i, high=255) for i in range(2)]
     rows = [{"prompt": [{"role": "user", "content": "outline"}], "image": imgs[i // 2]} for i in range(4)]
     out = {}
     for on in (False, True):

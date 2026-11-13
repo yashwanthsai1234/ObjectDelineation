@@ -16,6 +16,7 @@ from objdel.policy import models as rewards
 from objdel.policy import sampler as S
 from objdel.policy.errors import Refusal
 from tests.support.proc import run_isolated
+from tests.support.tiny_models import tiny_qwen
 
 ROOT = Path(__file__).resolve().parents[2]
 VIEW = ROOT / "data/eval_views/lidc-val-shifted"
@@ -207,9 +208,8 @@ def tiny(tmp_path):
     from PIL import Image
 
     from objdel.policy.prompt import _user
-    from tests.experiments.test_p2_scripts import _tiny_vlm
 
-    model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
+    model = tiny_qwen(tmp_path / "tiny", "qwen3-vl-2b")
     rng, rows = np.random.default_rng(0), []
     for i, size in enumerate([(64, 64), (200, 120), (64, 64)]):
         Image.fromarray(rng.integers(0, 255, (*size[::-1], 3), dtype=np.uint8)).save(tmp_path / f"im{i}.png")

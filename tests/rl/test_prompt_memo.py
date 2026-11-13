@@ -13,6 +13,7 @@ import PIL.Image
 import pytest
 
 from objdel.core.hashing import file_sha256
+from tests.support.images import random_image
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
@@ -31,7 +32,7 @@ def load():
 
 
 def image(seed, h=64, w=64, mode="RGB"):
-    img = PIL.Image.fromarray(np.random.default_rng(seed).integers(0, 256, (h, w, 3), dtype=np.uint8))
+    img = random_image(h, w, seed)
     return img.convert(mode)
 
 

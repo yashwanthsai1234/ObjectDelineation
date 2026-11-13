@@ -6,18 +6,12 @@ import os
 from pathlib import Path
 
 import pytest
-from test_p2_scripts import stage
 
 from objdel.policy.errors import Refusal
+from tests.support.specs import CPU_SFT, sft_stages, stage
+from tests.support.tiny_models import tiny_qwen
 
 ROOT = Path(__file__).resolve().parents[2]
-SPECS = sorted((ROOT / "specs").glob("*.yaml"))  # the old train_sft configs (C2, rx8) left git in E6.6
-
-
-def sft_stages():
-    from objdel.core.spec import load_spec
-
-    return [(p.stem, st) for p in SPECS for st in load_spec(p).stages if st.kind == "sft"]
 
 
 
@@ -109,7 +103,6 @@ def test_alloc_conf_is_set_before_anything_loads(TS, tmp_path, monkeypatch):
 
 def _tiny_args(TS, tmp_path, synthetic_items, model_path=None, **kw):
     """The SftStage of a CPU run on a 2-epoch synthetic view (branches 0.5 / 1 at 10 steps/epoch unless overridden)."""
-    from test_p2_scripts import CPU_SFT, _tiny_vlm
 
     from objdel.cli.data import views as BV
     from objdel.data import store
@@ -117,7 +110,7 @@ def _tiny_args(TS, tmp_path, synthetic_items, model_path=None, **kw):
     store.write(synthetic_items(("train",), unanimous=True), tmp_path / "store")
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
     o = {"branches": [0.5, 1.0], "steps_per_epoch": 10, "vision": False, "rolling_minutes": 1e3, "sft": CPU_SFT,
-         "model_path": model_path or str(_tiny_vlm(tmp_path / "m"))}
+         "model_path": model_path or str(tiny_qwen(tmp_path / "m"))}
     return stage("qwen3-vl-2b", str(tmp_path / "view"), str(tmp_path / "o"), **(o | kw))
 
 
