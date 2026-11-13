@@ -40,7 +40,7 @@ import hashlib
 import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from math import ceil
 from pathlib import Path
 
@@ -535,6 +535,18 @@ def gates(report: Mapping) -> list[Gate]:
         _hard("DG17", len(z), "== 0", not z),
         _hard("DG18", wn["padded"], "== 0", wn["padded"] == 0),
     ]
+
+
+def print_gates(gs: Sequence[Gate]) -> None:
+    """Print the gate table: name, state (report for a report gate, else ok or FAIL), value and limit."""
+    for g in gs:
+        state = "report" if not g.hard else "ok" if g.ok else "FAIL"
+        print(f"{g.name:6s} {state:6s} {g.value:10.4f}  {g.limit}")
+
+
+def write_audit(path, gs: Sequence[Gate], report: Mapping) -> None:
+    """The audit record {"gates", "report"} as JSON (indent 1, keys in insertion order) at `path`."""
+    Path(path).write_text(json.dumps({"gates": [asdict(g) for g in gs], "report": report}, indent=1) + "\n")
 
 
 def failures(gs: Sequence[Gate]) -> list[Gate]:

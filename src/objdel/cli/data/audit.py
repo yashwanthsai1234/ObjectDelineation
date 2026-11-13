@@ -10,8 +10,6 @@ On the Mac the manifest's exclusions_sha256 must equal the SHA-256 of the curren
 objdel.verify.ceiling (A2). Reads untrusted data: run with python -I.
 """
 import argparse
-import json
-from dataclasses import asdict
 from pathlib import Path
 
 from objdel.core.provenance import repo_root
@@ -40,13 +38,11 @@ def main(argv=None) -> int:
     report = Q.audit(a.rows, *models.tokenizer(a.model), a.store, a.eval_views, a.val_view, a.exclusions, a.review,
                      a.frozen, a.series_z, a.out)
     gs = Q.gates(report)
-    for g in gs:
-        state = "report" if not g.hard else "ok" if g.ok else "FAIL"
-        print(f"{g.name:6s} {state:6s} {g.value:10.4f}  {g.limit}")
+    Q.print_gates(gs)
     bad = Q.failures(gs)
     print(f"AUDIT {'FAILED: ' + ', '.join(g.name for g in bad) if bad else 'PASSED'} ({a.rows})")
     if a.json:
-        a.json.write_text(json.dumps({"gates": [asdict(g) for g in gs], "report": report}, indent=1) + "\n")
+        Q.write_audit(a.json, gs, report)
     return 1 if bad else 0
 
 

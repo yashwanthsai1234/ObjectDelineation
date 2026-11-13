@@ -21,10 +21,8 @@ References:
 import argparse
 import hashlib
 import json
-import platform
 import time
 from collections import Counter
-from importlib.metadata import version
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -32,6 +30,7 @@ import numpy as np
 
 from objdel.core import datasets
 from objdel.data import store
+from objdel.data.prepare import versions
 from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_mask
@@ -125,7 +124,7 @@ def main():
     out = Path(a.out)
     manifest = {"config": {"build": BuildConfig().__dict__,
                            "frames": {k: d.frame.__dict__ for k, d in datasets.DATASETS.items()}},
-                "versions": {"python": platform.python_version(), **{p: version(p) for p in PINS}},
+                "versions": versions(PINS),
                 "store_manifest_sha256": hashlib.sha256((Path(a.store) / "manifest.json").read_bytes()).hexdigest(),
                 "files": {}}
     summary, all_rows = {}, []

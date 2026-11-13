@@ -31,10 +31,7 @@ References: experiments/phase2/PLAN.md §5.0, §5.1; A4 §2.5 proposal 1; objdel
 import argparse
 import hashlib
 import json
-import platform
 from dataclasses import replace
-from importlib.metadata import version
-from itertools import batched
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -42,7 +39,6 @@ from objdel.core import datasets as registry
 from objdel.core.io import write_json
 from objdel.data import store
 from objdel.data.targets import augment
-from objdel.data.targets.build import target_set_hash
 from objdel.data.targets.frame import frame, rgb, union_box
 
 KINDS = ("shifted", "rescaled", "rotated", "edge")  # --kinds default: the first three
@@ -95,26 +91,16 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
                 (out / ds).mkdir(parents=True, exist_ok=True)
                 its = [it for i, it in enumerate(store.load(ds, split, store_root))
                        if (limit is None or i < limit) and it.image is not None]
-                recs = []
-                for chunk in batched(((str(out), it, kind, seed) for it in its), 12):  # bounds parent memory
-                    recs += pool.map(_record, chunk)
+                recs = data_prepare.map_batched(pool, _record, ((str(out), it, kind, seed) for it in its))
                 text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in recs)
                 rel = f"{ds}/{split}.jsonl"
                 (out / rel).write_text(text)
-                triples = [(r["item_id"], k, t) for r in recs for k, t in zip(r["raters"], r["targets"], strict=True)
-                           if t]
                 m = {"view": name, "seed": seed, "kinds": list(kinds),
                      "store_manifest_sha256": hashlib.sha256(Path(store_root, "manifest.json").read_bytes()).hexdigest(),
                      "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
-                     "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
+                     "versions": data_prepare.versions(),
                      "files": {rel: {"sha256": hashlib.sha256(text.encode()).hexdigest()}},
-                     "sets": {f"{ds}/{split}": {
-                         "items": len(recs), "skipped_no_image": 0, "targets": len(triples),
-                         "target_set_sha256": target_set_hash(triples),
-                         "target_errors": [e for r in recs for e in r["errors"]],
-                         "rl_items": sum(r["rl"] for r in recs),
-                         "rl_targets": sum(t is not None for r in recs if r["rl"] for t in r["targets"]),
-                         "disagreement_items": sum(r["disagreement"] for r in recs),
+                     "sets": {f"{ds}/{split}": data_prepare.set_summary(recs) | {
                          "kept_side": sum(r["view"]["kept_side"] for r in recs),
                          "fallback": sum(r["view"]["fallback"] for r in recs),
                          "padded": sum(r["view"]["padded"] for r in recs),
