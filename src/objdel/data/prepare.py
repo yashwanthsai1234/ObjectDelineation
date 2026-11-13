@@ -30,6 +30,7 @@ from multiprocessing import get_context
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from objdel.core import datasets
 from objdel.core.hashing import pixels_sha256
@@ -52,6 +53,18 @@ def _check_id(out, item_id: str) -> None:
     if "\0" in item_id or Path(item_id).is_absolute() or ".." in Path(item_id).parts or not (
             images / item_id).resolve().is_relative_to(images):
         raise ValueError(f"unsafe id {item_id!r}: it would write outside {out}")
+
+
+def read_image(path) -> np.ndarray | None:
+    """The PNG at `path` as uint8 RGB (H, W, 3) (cv2 decode, BGR -> RGB); None when cv2 cannot read it."""
+    im = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    return None if im is None else cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+
+
+def image_matches(path, sha: str) -> bool:
+    """True when the PNG at `path` reads and its pixels hash (pixels_sha256) to `sha`, the record's image_sha256."""
+    im = read_image(path)
+    return im is not None and pixels_sha256(im) == sha
 
 
 def _prepare(job) -> dict:

@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core.hashing import pixels_sha256
 from objdel.core.io import read_jsonl
 
 RATIO, TV = 0.5, 0.002
@@ -44,7 +45,7 @@ def fixed_set(prepared_root, dataset: str, n: int = N_ITEMS) -> tuple[list[dict]
     out = []
     for r in sorted((recs[i] for i in idx), key=lambda r: r["item_id"])[:n]:
         a = np.asarray(Image.open(root / "images" / f"{r['item_id']}.png").convert("RGB"))
-        if hashlib.sha256(repr(a.shape).encode() + a.tobytes()).hexdigest() != r["image_sha256"]:
+        if pixels_sha256(a) != r["image_sha256"]:
             raise ValueError(f"{r['item_id']}: image differs from its image_sha256")
         out.append({"item_id": r["item_id"], "image": Image.fromarray(a),
                     "target": next(t for t in r["targets"] if t), "image_sha256": r["image_sha256"]})

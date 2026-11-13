@@ -149,10 +149,10 @@ def _to_frame(mask_img, S):
 
 
 def sam_predict(model, root, dataset, jitter_rng=None):
-    from PIL import Image
+    from objdel.policy.rows import image_path, rgb
 
     def predict(rec, caches):
-        img = np.asarray(Image.open(Path(root, "images", rec["item_id"] + ".png")).convert("RGB"))
+        img = np.asarray(rgb(image_path(root, rec["item_id"])))
         S, k = rec["W"], img.shape[0] / rec["W"]
         out = {}
         for n, c in caches.items():

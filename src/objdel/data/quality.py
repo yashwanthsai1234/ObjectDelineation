@@ -53,6 +53,7 @@ from objdel.core.hashing import file_sha256, pixels_sha256
 from objdel.core.io import read_json, read_jsonl
 from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store, windows
+from objdel.data.prepare import image_matches
 from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
 
 from .coverage import cell_coverage, mix_coverage
@@ -319,10 +320,9 @@ def window_checks(rows_root, store_root) -> dict:
             except ValueError:
                 bad.add(r["item_id"])
                 continue
-            png = cv2.imread(str(rows_root / "images" / f"{r['item_id']}.png"), cv2.IMREAD_COLOR)
             sha = pixels_sha256(f.image)
-            if (list(f.box) != box or f.W != v["side"] or sha != r["image_sha256"] or png is None
-                    or pixels_sha256(cv2.cvtColor(png, cv2.COLOR_BGR2RGB)) != sha):
+            if (list(f.box) != box or f.W != v["side"] or sha != r["image_sha256"]
+                    or not image_matches(rows_root / "images" / f"{r['item_id']}.png", sha)):
                 bad.add(r["item_id"])
     bad |= {r["item_id"] for rs in by_src.values() for r in rs}  # rows whose source item is not a train item
     return out | {"mismatch": sorted(bad), "low_contrast": sorted(set(low))}

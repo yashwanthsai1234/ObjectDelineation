@@ -43,6 +43,7 @@ from trl.data_utils import prepare_multimodal_messages
 from objdel.core.io import read_jsonl
 from objdel.policy import models
 from objdel.policy.errors import Refusal
+from objdel.policy.rows import rgb
 from objdel.verify.reward.spec import REWARD_V4
 
 G = REWARD_V4.group
@@ -244,10 +245,7 @@ def outputs(lines: list[dict], results):
             yield rec
 
 
-def _rgb(path):
-    from PIL import Image
-
-    return Image.open(path).convert("RGB")
+_rgb = rgb  # the pinned old name (tests/goldens/phase_e/old_names.json)
 
 
 class VllmSampler(Sampler):

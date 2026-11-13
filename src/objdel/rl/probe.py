@@ -119,13 +119,11 @@ def run(a, prereg) -> int:
         ckpts = [Path(sel["run"]) / "branches" / n for n in candidates(sel)]
     for root in (a.train, a.probe):
         serve.preload(root, [a.dataset])
-    from PIL import Image
-
     from objdel.rl import rows as rl_rows
 
     train = rl_rows.grpo_rows(a.train, a.dataset, "train", oversample=policy_rows.DISAGREEMENT_OVERSAMPLE)
     rows = eval_rows(a.probe, a.dataset, a.items or prereg.G_PROBE["items"])
-    rows = [r | {"image": Image.open(r["image"]).convert("RGB")} for r in rows]
+    rows = [r | {"image": policy_rows.rgb(r["image"])} for r in rows]
     docs = []
     for ckpt in ckpts:  # at most the selected branch and one repair branch
         docs.append(probe(a, ckpt, train, rows, prereg))

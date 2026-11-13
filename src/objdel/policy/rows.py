@@ -26,12 +26,11 @@ reach reward functions: https://huggingface.co/docs/trl/main/en/grpo_trainer).
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 from objdel.core import datasets
-from objdel.core.hashing import pixels_sha256
 from objdel.core.io import read_json, read_jsonl
+from objdel.data.prepare import image_matches
 from objdel.policy.prompt import _user
 
 DISAGREEMENT_OVERSAMPLE = 4  # decided in experiments/phase1/impl/M7_train.md
@@ -50,13 +49,23 @@ def records(root, dataset: str, split: str) -> list[dict]:
     return read_jsonl(Path(root, dataset, f"{split}.jsonl"))
 
 
-def _image(root, item_id: str) -> str:
+def image_path(root, item_id: str) -> str:
+    """The resolved path of the prepared image of `item_id`: <root>/images/<item_id>.png."""
     return str(Path(root, "images", item_id + ".png").resolve())
 
 
+_image = image_path  # the pinned old name (tests/goldens/phase_e/old_names.json)
+
+
+def rgb(path):
+    """The image at `path` as a PIL RGB image (Pillow decode; the processor's input)."""
+    from PIL import Image
+
+    return Image.open(path).convert("RGB")
+
+
 def _check(root, rec: dict) -> None:
-    im = cv2.imread(_image(root, rec["item_id"]), cv2.IMREAD_COLOR)
-    if im is None or pixels_sha256(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) != rec["image_sha256"]:
+    if not image_matches(image_path(root, rec["item_id"]), rec["image_sha256"]):
         raise ValueError(f"{rec['item_id']}: prepared image missing or not the one recorded (image_sha256)")
 
 
