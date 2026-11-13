@@ -13,13 +13,13 @@ import pytest
 from harness.k3_harness import make_jobs
 
 from objdel.core import datasets
-from objdel.core.hashing import file_sha256
 from objdel.rl.reward import TRLReward
 from objdel.sft import select as sft_select
 from objdel.verify import store as serve
 from objdel.verify.reward.advantages import advantages_v4
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
 from objdel.verify.reward.score import score_batch
+from tests.support.prepared import write_prepared_root
 
 ROOT = Path(__file__).resolve().parents[2]
 EOS = 0
@@ -32,22 +32,11 @@ def _write_prepared(out: Path, items) -> Path:
         if it.image is None:
             continue
         rl = rl_eligible(next(iter(it.masks.values())))
-        caches = {}
-        for name, stack in it.masks.items():
-            if rl:
-                (out / "caches" / it.item_id).mkdir(parents=True, exist_ok=True)
-                caches[name] = ExpertCache.build(stack).save(out / "caches" / it.item_id / f"{name}.npz")
         h, w = next(iter(it.masks.values())).shape[1:]
         sets.setdefault(f"{it.dataset}/{it.split}", []).append(
-            {"item_id": it.item_id, "rl": rl, "caches": caches, "W": int(w), "H": int(h)}
+            {"item_id": it.item_id, "rl": rl, "caches": it.masks if rl else {}, "W": int(w), "H": int(h)}
         )
-    files = {}
-    for rel, rows in sets.items():
-        p = out / f"{rel}.jsonl"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("".join(json.dumps(r) + "\n" for r in rows))
-        files[f"{rel}.jsonl"] = {"sha256": file_sha256(p)}
-    (out / "manifest.json").write_text(json.dumps({"files": files, "sets": {k: {} for k in sets}}))
+    write_prepared_root(out, sets, manifest_extra={"sets": {k: {} for k in sets}})
     return out
 
 
