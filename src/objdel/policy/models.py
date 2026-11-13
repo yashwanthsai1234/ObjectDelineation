@@ -109,6 +109,11 @@ def processor_kwargs(model: str) -> dict:
     return dict(get(model).processor)
 
 
+def mm_kwargs(kw: dict) -> dict:
+    """Processor keywords minus padding_side: the per-request keywords of a prompt line (padding is the batch's)."""
+    return {k: v for k, v in kw.items() if k != "padding_side"}
+
+
 def processor(model: str, path=None):
     """The processor at path (default: the entry's hub id) with the entry's keywords; .tokenizer for the tokenizer.
     AutoProcessor is imported here, so a test patching it at class level reaches every caller."""

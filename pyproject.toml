@@ -78,6 +78,7 @@ addopts = "--strict-markers"
 markers = [
     "slow: long-running exhaustive runs (deselect with -m \"not slow\")",
     "data: needs data/fixtures or data/store (skipped when absent)",
+    "model_cache: needs a model's files in the local HF cache, never downloaded (skips with PAIR UNCHECKED, listed in the session summary; OBJDEL_REQUIRE_MODEL_CACHE=1 fails instead)",
     "gpu: needs the CUDA build on a GPU box (skipped on the CPU build)",
     "sanitizer: runs under compute-sanitizer in make gpu-check (small fixed corpus)",
     "docs_build: needs the docs extra and builds the site (make docs)",

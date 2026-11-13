@@ -155,25 +155,41 @@ def test_select_ckpt_runs_the_library_sampler_not_a_script():
         assert not any(x.endswith(".py") for x in cmd)
 
 
-@pytest.mark.data
-def test_build_prompt_ids_equal_trls_own_on_64_validation_rows():
-    """TRL's GRPOTrainer._tokenize_prompts: apply_chat_template(tokenize=True) on prepare_multimodal_messages; the
-    sampler sends build_prompt's text and the image to vLLM, which tokenizes text + image like processor(...)."""
-    pytest.importorskip("trl")
-    if not (VIEW / "manifest.json").is_file():
-        pytest.skip(f"{VIEW} absent")
-    from PIL import Image
+def cached_processor(model: str):
+    """The entry's processor from the local HF cache only, or None. local_files_only (and HF_HUB_OFFLINE for the
+    hub client): a test never downloads a model."""
     from transformers import AutoProcessor
+
+    try:
+        return AutoProcessor.from_pretrained(configs.get(model).hf_id, local_files_only=True,
+                                             **configs.processor_kwargs(model))
+    except OSError:
+        return None
+
+
+@pytest.mark.data
+@pytest.mark.model_cache
+def test_build_prompt_ids_equal_trls_own_on_64_validation_rows(monkeypatch):
+    """The train-vs-eval prompt-ids pair. TRL's GRPOTrainer._tokenize_prompts: apply_chat_template(tokenize=True) on
+    prepare_multimodal_messages; the sampler sends build_prompt's text and the image to vLLM, which tokenizes text +
+    image like processor(...). Runs (and must pass) where the Qwen3-VL-2B processor is cached and the view exists
+    (the owner's Mac); elsewhere it skips with a PAIR UNCHECKED reason that the session summary repeats
+    (tests/conftest.py), and OBJDEL_REQUIRE_MODEL_CACHE=1 turns that skip into a failure."""
+    pytest.importorskip("trl")
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    from PIL import Image
     from trl.data_utils import prepare_multimodal_messages
 
     from objdel.policy import rows as dataset
 
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    try:
-        proc = AutoProcessor.from_pretrained(configs.get("qwen3-vl-2b").hf_id,
-                                             **configs.processor_kwargs("qwen3-vl-2b"))
-    except OSError:
-        pytest.skip("Qwen3-VL-2B processor not in the local HF cache")
+    proc = cached_processor("qwen3-vl-2b")
+    why = (None if proc is not None else f"{configs.get('qwen3-vl-2b').hf_id} processor not in the local HF cache") \
+        or (None if (VIEW / "manifest.json").is_file() else f"{VIEW} absent")
+    if why:
+        msg = f"PAIR UNCHECKED: train-vs-eval prompt ids not compared: {why}"
+        if os.environ.get("OBJDEL_REQUIRE_MODEL_CACHE") == "1":
+            pytest.fail(msg)
+        pytest.skip(msg)
     rows = dataset.prompts(VIEW, "lidc", "val")[:64]
     assert len(rows) == 64
     for r in rows:
@@ -229,7 +245,7 @@ def test_hf_child_resumes_after_the_last_whole_batch(tmp_path, monkeypatch):
         return [{"id": p["id"], "k": k, "token_ids": [1], "finish_reason": "stop", "text": "t"}
                 for _, p in batch for k in range(p["n"])]
 
-    monkeypatch.setattr(S, "load", lambda path, dev: ("model", "proc"))
+    monkeypatch.setattr(S, "load", lambda path, dev, entry=None: ("model", "proc"))
     monkeypatch.setattr(S, "generate", generate)
     out = tmp_path / "c.jsonl"
     argv = ["--kind", "hf", "--prompts", str(prompts), "--model", "m", "--out", str(out), "--batch_items", "2"]
@@ -250,3 +266,66 @@ def test_hf_records_cut_each_row_at_its_own_first_stop():
     assert [(r["id"], r["k"], r["token_ids"], r["finish_reason"], r["text"]) for r in recs] == [
         ("a", 0, [5, 7], "stop", "57"), ("a", 1, [5, 5, 5, 5], "length", "5555"),
         ("b", 0, [7], "stop", "7"), ("b", 1, [9, 2], "stop", "92")]
+
+
+def test_export_sampling_is_params_for_without_n_in_the_old_key_order():
+    """MT-07: export_prompts' sampling dict comes from params_for; the key order and values of the old inline build."""
+    old = configs.sampling("qwen3-vl-2b") | {"seed": 3} | {"max_tokens": 32}
+    old["stop_token_ids"] = [1, 2]
+    new = S.params_for("qwen3-vl-2b", n=4, seed=3, stop_token_ids=[1, 2], max_tokens=32)
+    assert {k: v for k, v in new.items() if k != "n"} == old
+    assert list({k: v for k, v in new.items() if k != "n"}) == list(old)
+    assert "stop_token_ids" not in S.params_for("qwen3-vl-2b", n=1, seed=0, stop_token_ids=None)
+    assert configs.mm_kwargs({"padding_side": "left", "max_pixels": 9}) == {"max_pixels": 9}
+
+
+def _fake_engine(monkeypatch, seen):
+    class Fake:
+        def __init__(self, *a, **k):
+            seen.append(a)
+            self.vllm, self.sampling_params = types.SimpleNamespace(__version__="x"), set()
+
+        def records(self, lines):
+            return []
+
+    monkeypatch.setattr(S, "VllmSampler", Fake)
+
+
+def test_cli_engine_settings_come_from_the_entry(tmp_path, monkeypatch):
+    """MT-18: --entry gives the engine its model key (vllm_eval: 0.85 / 2048); explicit flags still win; neither is
+    refused instead of falling back to vLLM's own defaults."""
+    (tmp_path / "p.jsonl").write_text("")
+    seen = []
+    _fake_engine(monkeypatch, seen)
+    base = ["--kind", "vllm", "--prompts", str(tmp_path / "p.jsonl"), "--model", "m", "--out", str(tmp_path / "c")]
+    S.main([*base, "--entry", "qwen3-vl-2b"])
+    S.main([*base, "--gpu-memory-utilization", "0.5", "--max-model-len", "1024"])
+    assert seen == [(Path("m"), "qwen3-vl-2b", None, None), (Path("m"), None, 0.5, 1024)]
+    with pytest.raises(SystemExit):
+        S.main(base)
+    assert S.image_side() == 512  # the LIDC entry's model image side (the old literal)
+
+
+def test_hf_load_takes_the_entry_processor_keywords(monkeypatch):
+    seen = []
+    monkeypatch.setattr(configs, "load_pair", lambda path, **kw: seen.append(kw["proc_kw"]) or (
+        types.SimpleNamespace(), types.SimpleNamespace(tokenizer=types.SimpleNamespace(padding_side="left"))))
+    S.load("m", "cpu")
+    S.load("m", "cpu", "qwen3-vl-2b")
+    assert seen == [{"padding_side": "left"}, configs.processor_kwargs("qwen3-vl-2b")]
+
+
+def test_select_passes_its_model_key_to_the_sampler_child(tmp_path, monkeypatch):
+    import transformers
+
+    from objdel.sft import select as sft_select
+
+    got = []
+    monkeypatch.setattr(sft_select, "run_sampler", lambda kind, p, m, c, timeout, extra=(): got.append(extra))
+    monkeypatch.setattr(S, "stop_ids", lambda path, proc: {7})
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda path: None)
+    monkeypatch.setattr(S, "export_prompts", lambda *a, **k: None)
+    monkeypatch.setattr(S, "import_completions", lambda *a, **k: [])
+    a = SimpleNamespace(model="qwen3-vl-2b", seed=0, sampler="vllm", timeout_s=None, max_tokens=32)
+    sft_select.sample_view(a, tmp_path, [{"key": "1"}], tmp_path / "o", 8, ["--logprobs"])
+    assert got == [("--entry", "qwen3-vl-2b", "--logprobs")]

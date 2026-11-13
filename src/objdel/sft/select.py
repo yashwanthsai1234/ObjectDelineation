@@ -176,7 +176,7 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     prompts, comps = out / "prompts.jsonl", out / "completions.jsonl"
     sample.export_prompts(rows, prompts, a.model, k, processor=proc, stop_ids=stop, seed=a.seed,
                           max_tokens=a.max_tokens)
-    run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), extra)
+    run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), ("--entry", a.model, *extra))
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
 
 
