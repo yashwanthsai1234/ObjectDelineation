@@ -1,8 +1,9 @@
-"""JSON and JSONL reading, atomic file writing and the git code identity, shared (no heavy imports)."""
+"""JSON and JSONL reading, atomic file and folder writing and the git code identity, shared (no heavy imports)."""
 
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -27,6 +28,17 @@ def write_atomic(path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text)
     os.replace(tmp, path)
+
+
+def replace_dir(write, dest, tmp=None) -> None:
+    """write(tmp) then rename tmp over dest: a crash never leaves a half-written kept folder (resume trusts what
+    exists). tmp defaults to .<dest name>.tmp beside dest; a stale tmp is removed first."""
+    dest = Path(dest)
+    tmp = dest.with_name(f".{dest.name}.tmp") if tmp is None else Path(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)
+    write(tmp)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.replace(tmp, dest)
 
 
 def read_json(path):

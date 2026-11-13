@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from objdel.core.hashing import file_sha256
-from objdel.core.io import read_json, write_json
+from objdel.core.io import read_json, replace_dir, write_json
 from objdel.core.provenance import code_hashes
 from objdel.policy.errors import Refusal
 
@@ -188,15 +188,6 @@ def latest(d) -> str | None:
     return str(max(done, key=lambda c: int(c.name.rsplit("-", 1)[1]))) if done else None
 
 
-def replace_dir(write, dest: Path) -> None:
-    """write(tmp) then rename: a crash never leaves a half-written kept directory (resume trusts what exists)."""
-    tmp = dest.with_name(f".{dest.name}.tmp")
-    shutil.rmtree(tmp, ignore_errors=True)
-    write(tmp)
-    shutil.rmtree(dest, ignore_errors=True)
-    os.replace(tmp, dest)
-
-
 @dataclass
 class Base:
     """What every trainer of a run loads: the weights (src), their processor and the load dtype (the bf16 LoRA base)."""
@@ -323,11 +314,9 @@ def trainer(args, base: Base, rows, stable: int, out_dir, rolling: Rolling, bran
 def finish(base: Base, d: Path) -> None:
     """A kept stable checkpoint, model-only (LoRA merged) with the processor, for the depth curve."""
     if (d / "adapter_config.json").exists():
-        from peft import PeftModel
-        from transformers import AutoModelForImageTextToText
+        from objdel.policy import models as policy_models
 
-        model = AutoModelForImageTextToText.from_pretrained(base.src, dtype=base.dtype)
-        PeftModel.from_pretrained(model, d).merge_and_unload().save_pretrained(d)
+        policy_models.merged(base.src, d, base.dtype).save_pretrained(d)
     for f in d.glob("*"):
         if f.name.startswith(TRAINER_FILES) or f.suffix == ".pt":
             f.unlink()
@@ -388,7 +377,7 @@ def train(args) -> int:
         if "abort" in man:
             break
         if not (out / "branches" / name).is_dir():
-            t = model = None  # V1 R1: the previous trainer's model, grads and AdamW state (~7 GB) made e1 OOM
+            t = None  # V1 R1: the previous trainer's model, grads and AdamW state (~7 GB) made e1 OOM
             gc.collect()
             torch.cuda.empty_cache()
             rolling = callback(man, out, proc, vis, args.rolling_minutes)
@@ -397,9 +386,7 @@ def train(args) -> int:
             man["log"][name], man["peak_memory_gib"][name] = t.state.log_history, peak_gib()
             if "abort" in man:  # G-vision stopped the decay: the branch is unfinished
                 break
-            model = t.model.merge_and_unload() if hasattr(t.model, "merge_and_unload") else t.model  # D6: merged
-            replace_dir(lambda tmp, m=model: (m.save_pretrained(tmp), proc.save_pretrained(tmp)),
-                        out / "branches" / name)
+            policy_models.save_merged(t.model, proc, out / "branches" / name)  # D6: merged
             shutil.rmtree(out / "decay" / name, ignore_errors=True)
         finish(base, out / "stable" / name)  # frees the optimizer state once its branch exists
         write_json(out / "manifest.json", man)

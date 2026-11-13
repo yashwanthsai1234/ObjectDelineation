@@ -75,7 +75,8 @@ def test_vision_config_is_validated_up_front(vision):
 
 def test_lora_runs_are_merged():
     src = (ROOT / "src/objdel/sft/train.py").read_text()
-    assert "merge_and_unload" in src  # D6: "merged after SFT"; the vLLM sampler loads a full model dir
+    assert "save_merged(" in src and "merged(" in src  # D6: "merged after SFT"; the vLLM sampler loads a full model dir
+    assert "merge_and_unload" in (ROOT / "src/objdel/policy/models.py").read_text()  # save_merged / merged
 
 
 def test_train_sft_can_resume_a_crashed_run():

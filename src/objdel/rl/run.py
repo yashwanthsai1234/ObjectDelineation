@@ -218,16 +218,18 @@ def heldout_rows(view: Path, n: int, dataset: str):
 def save_final(model, proc, out: Path) -> None:
     """The unmerged LoRA adapter to out/final_adapter, then the merged model and its processor to out/final.tmp,
     renamed to out/final at the end: a folder named final is always complete."""
-    if hasattr(model, "merge_and_unload"):
-        model.save_pretrained(out / "final_adapter")
-        model = model.merge_and_unload()  # LoRA -> plain weights
-    tmp = out / "final.tmp"
-    shutil.rmtree(tmp, ignore_errors=True)
-    tmp.mkdir(parents=True)
-    model.save_pretrained(tmp)
-    proc.save_pretrained(tmp)
-    shutil.rmtree(out / "final", ignore_errors=True)
-    tmp.rename(out / "final")
+    from objdel.policy import models as policy_models
+
+    policy_models.save_merged(model, proc, out / "final", adapter_to=out / "final_adapter", tmp=out / "final.tmp")
+
+
+def last_checkpoint(out: Path) -> tuple[str | None, int]:
+    """The newest checkpoint-N under out/trainer and N, (None, 0) when there is none. transformers'
+    get_last_checkpoint: it does not check that the checkpoint is complete."""
+    from transformers.trainer_utils import get_last_checkpoint
+
+    last = get_last_checkpoint(str(out / "trainer")) if (out / "trainer").is_dir() else None
+    return last, int(Path(last).name.split("-")[1]) if last else 0
 
 
 def cut_seq_gaps(trainer_dir: Path, step: int) -> None:
@@ -260,8 +262,6 @@ def run_report(log: list[dict]) -> dict:
 
 def merge_last(a) -> int:
     """--merge-last: <out>/final from the last checkpoint when the run ended before its own save."""
-    from transformers.trainer_utils import get_last_checkpoint
-
     out = Path(a.out)
     final = out / "final"
     if (final / "config.json").is_file() and any(final.glob("*.safetensors")):  # save_final renames it when complete
@@ -272,19 +272,18 @@ def merge_last(a) -> int:
             "model": a.model, "steps": None, "partial": None, "ckpt": str(a.ckpt), "final": str(final),
             "recovered": "final complete, rl.json missing"}, keys=("steps", "partial", "recovered"))
     shutil.rmtree(out / "final.tmp", ignore_errors=True)  # the box died inside save_final
-    last = get_last_checkpoint(str(out / "trainer")) if (out / "trainer").is_dir() else None
+    last, step = last_checkpoint(out)
     if last is None:
         print(f"--merge-last: no checkpoint in {out / 'trainer'}", file=sys.stderr)
         return 1
-    from peft import PeftModel
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+    from transformers import AutoProcessor
 
     from objdel.policy import models as policy_models
 
-    model = PeftModel.from_pretrained(AutoModelForImageTextToText.from_pretrained(a.ckpt), last)
+    model = policy_models.adapted(a.ckpt, last)
     save_final(model, AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)), out)
     return save_json(out / "rl.json", {
-        "model": a.model, "steps": int(Path(last).name.split("-")[1]), "partial": True, "merged_from": last,
+        "model": a.model, "steps": step, "partial": True, "merged_from": last,
         "ckpt": str(a.ckpt),
         "final": str(final),
     }, keys=("steps", "partial", "merged_from"))
@@ -367,8 +366,6 @@ class Step1Mismatch(RuntimeError):
 def run_rl(a) -> dict:
     """One full run of the RlStage `a` (the body of train_rl after parsing): resume from the last checkpoint, train,
     merge the LoRA, save <out>/final, write <out>/rl.json; returns the rl.json document."""
-    from transformers.trainer_utils import get_last_checkpoint
-
     from objdel.policy import models as policy_models
     from objdel.policy import rows as policy_rows
     from objdel.policy.callbacks import ExpectStep1, LocGuard
@@ -392,10 +389,9 @@ def run_rl(a) -> dict:
     if a.runaway_cap:
         train = with_caps(train, a)
     heldout = heldout_rows(a.heldout, a.heldout_items, a.dataset) if a.heldout else None
-    last = get_last_checkpoint(str(out / "trainer")) if (out / "trainer").is_dir() else None
+    last, start = last_checkpoint(out)
     if not a.resume and last:
         raise ValueError(f"{last} exists: a fresh run needs an --out without checkpoints (or pass --resume)")
-    start = int(Path(last).name.split("-")[1]) if last else 0
     if start > a.steps:
         raise ValueError(f"--resume: {last} is past --steps {a.steps} (an older run in this --out?)")
     if a.resume and last is None:
