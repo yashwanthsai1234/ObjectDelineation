@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-from objdel.core.io import code_sha, git, git_sha, read_json, write_json
+from objdel.core.io import code_sha, git, git_sha, read_json, read_jsonl, write_json
 from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
 
@@ -53,7 +53,7 @@ def entry(view_dir, known: list[str]) -> dict:
     d = Path(view_dir)
     m = read_json(d / "manifest.json")
     (s,) = m["sets"].values()
-    ids = {json.loads(x)["item_id"] for x in next((d / "lidc").glob("*.jsonl")).read_text().splitlines()}
+    ids = {r["item_id"] for r in read_jsonl(next((d / "lidc").glob("*.jsonl")))}
     return {"view": m["view"], "items": s["items"], "content_sha256": Q.view_content_sha256(d),
             "target_set_sha256": s["target_set_sha256"], "seed": m["seed"], "kinds": m["kinds"],
             "store_manifest_sha256": m["store_manifest_sha256"], "fallback": s["fallback"], "padded": s["padded"],
@@ -72,7 +72,7 @@ def main(argv=None) -> None:
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args(argv)
     if a.check:
-        for v, e in (read_json(a.out) if a.out.is_file() else {}).items():
+        for v, e in read_json(a.out, {}).items():
             print(v, "render files moved:", drift(e) or "none")
         return
     freeze(a.views, a.out, a.known)
@@ -83,10 +83,10 @@ def freeze(views, out: Path, known_report: Path, extra: dict | None = None) -> N
     uncommitted edits."""
     if bad := dirty():
         sys.exit(f"freeze_views: commit the render files first: {bad}")
-    report = read_json(known_report) if known_report.is_file() else {}
+    report = read_json(known_report, {})
     known = [i for ids in report.get("known_label_issues", {}).values() for i in ids]
     new = {(e := entry(d, known))["view"]: e | (extra or {}) for d in views}
-    write_json(out, (read_json(out) if out.is_file() else {}) | new)
+    write_json(out, read_json(out, {}) | new)
     print(json.dumps({v: e["content_sha256"] for v, e in new.items()}, indent=1))
 
 

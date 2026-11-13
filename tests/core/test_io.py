@@ -5,7 +5,18 @@ import json
 
 import pytest
 
-from objdel.core.io import json_text, plain, read_json, read_jsonl, read_jsonl_glob, read_split, write_json, write_jsonl
+from objdel.core.io import (
+    files_under,
+    json_text,
+    plain,
+    read_json,
+    read_jsonl,
+    read_jsonl_cut,
+    read_jsonl_glob,
+    read_split,
+    write_json,
+    write_jsonl,
+)
 
 
 def test_write_json_keeps_the_manifest_bytes(tmp_path):
@@ -69,3 +80,44 @@ def test_read_split_and_glob_read_the_rows_in_name_order(tmp_path):
     assert read_jsonl_glob(tmp_path, "lidc/*.jsonl") == ROWS[:1] + ROWS  # test.jsonl, then val.jsonl
     assert read_jsonl_glob(tmp_path, "*/val.jsonl") == ROWS + ROWS[1:]
     assert read_jsonl_glob(tmp_path, "none/*.jsonl") == []
+
+
+def test_read_json_default_is_for_a_missing_file_only(tmp_path):
+    assert read_json(tmp_path / "none.json", {}) == {} and read_json(tmp_path / "none.json", None) is None
+    assert read_json(tmp_path, "d") == "d"  # a folder is not a JSON file
+    with pytest.raises(FileNotFoundError):
+        read_json(tmp_path / "none.json")
+    (tmp_path / "bad.json").write_text("{")
+    with pytest.raises(ValueError):
+        read_json(tmp_path / "bad.json", {})  # a broken file is an error, not the default
+
+
+def test_read_jsonl_skip_blank(tmp_path):
+    (tmp_path / "a.jsonl").write_text('{"a": 1}\n\n  \n{"a": 2}\n')
+    assert read_jsonl(tmp_path / "a.jsonl", skip_blank=True) == [{"a": 1}, {"a": 2}]
+    with pytest.raises(ValueError):
+        read_jsonl(tmp_path / "a.jsonl")
+
+
+def test_read_jsonl_cut_skips_a_cut_line_anywhere_and_keeps_the_raw_line(tmp_path):
+    f = tmp_path / "c.jsonl"
+    good1, good2 = '{"id": "a", "k": 0}', '{"id": "b", "k": 1, "x": [1]}'
+    cut = ['{"id": "a", "k"', "[1, 2]", "7", '"s"', "", '{"id": "d", "k": 2']
+    f.write_text("\n".join([good1, cut[0], cut[1], cut[2], cut[3], '{"id": "c"}', cut[4], good2, cut[5]]))
+    assert read_jsonl_cut(f, ("id", "k")) == [(good1, {"id": "a", "k": 0}), (good2, {"id": "b", "k": 1, "x": [1]})]
+    assert [c["id"] for _, c in read_jsonl_cut(f, ("id",))] == ["a", "c", "b"]  # fewer keys needed, one more line
+    assert read_jsonl_cut(f) == [(x, json.loads(x)) for x in (good1, '{"id": "c"}', good2)]  # objects only
+    assert read_jsonl_cut(tmp_path / "none.jsonl", ("id",)) == []
+    with pytest.raises(ValueError):
+        read_jsonl(f)  # the strict reader (select.complete) still raises on the same file
+
+
+def test_files_under_sorts_by_the_posix_string_not_by_path(tmp_path):
+    for rel in ("a/x", "a-b/x", "manifest.json", "a/sub/y", "z.txt"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(rel)
+    got = files_under(tmp_path)
+    assert [r for r, _ in got] == sorted(r for r, _ in got) == ["a-b/x", "a/sub/y", "a/x", "manifest.json", "z.txt"]
+    assert sorted(p for _, p in got) != [p for _, p in got]  # Path order differs: a/x before a-b/x
+    assert [r for r, _ in files_under(tmp_path, skip=("manifest.json",))] == ["a-b/x", "a/sub/y", "a/x", "z.txt"]
+    assert all(p == tmp_path / r for r, p in got)

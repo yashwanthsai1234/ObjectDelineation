@@ -93,7 +93,7 @@ def timing(stamps: list[float], batch: int) -> dict:
 
 def probed_depth(path: Path) -> float:
     """The depth (epochs) of the checkpoint that received g_probe's final verdict: its "ckpt" is <run>/branches/e<b>."""
-    doc = read_json(path) if path.is_file() else {}
+    doc = read_json(path, {})
     if doc.get("verdict") and (m := re.fullmatch(r"e(\d+(\.\d+)?)", Path(doc.get("ckpt") or "").name)):
         return float(m[1])
     why = doc.get("skipped") or "missing or unfinished R2"
@@ -229,7 +229,7 @@ def resume_manifest(args, out: Path, view: dict) -> dict:
     """The run manifest (config, code, view identity, pid, status "running"). A run already in out is refused unless
     --resume, which needs a crashed run ("running") of the same config (SAME_RUN) and view, and carries its G-vision
     log, logs, start, timing and peak memory over."""
-    old = read_json(out / "manifest.json") if (out / "manifest.json").exists() else None
+    old = read_json(out / "manifest.json", None)
     if old and not args.resume:
         raise ValueError(f"{out} holds a run: --resume continues it, or pick another output_dir")
     man = {"config": args.model_dump(mode="json", exclude={"kind", "name", "soft"}), "code": code_hashes(),

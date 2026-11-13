@@ -96,7 +96,7 @@ def _view_records(view: Path) -> list[dict]:
 
 def frozen_entry(view_name: str) -> dict | None:
     """The view's frozen_views.json entry, or None (no entry, or no file)."""
-    return read_json(FROZEN_VIEWS).get(view_name) if FROZEN_VIEWS.is_file() else None
+    return read_json(FROZEN_VIEWS, {}).get(view_name)
 
 
 def check_view(view: Path, dataset: str, split: str) -> None:
@@ -203,7 +203,7 @@ def rescore(src: Path, view: Path, dataset: str, split: str, out: Path) -> None:
     from objdel.verify import store as serve
 
     f = src / "final_eval.json"
-    old = read_json(f) if f.exists() else {}
+    old = read_json(f, {})
     if "view_manifest_sha256" not in old:
         raise Refusal(f"rescore: {f} is missing or has no view_manifest_sha256")
     if old["view_manifest_sha256"] != view_manifest_sha256(view):

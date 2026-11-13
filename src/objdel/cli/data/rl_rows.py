@@ -40,7 +40,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.hashing import bytes_sha256, file_sha256
-from objdel.core.io import write_json, write_jsonl
+from objdel.core.io import files_under, write_json, write_jsonl
 from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
 from objdel.data import store, windows
@@ -113,8 +113,7 @@ def materialize(store_root, out: Path, scheduled, procs: int) -> dict[str, dict]
 
 def files_digest(root: Path) -> tuple[int, str]:
     """(count, SHA-256 of the newline-joined sorted relative paths) of the root's files without manifest.json."""
-    rel = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
-    rel = [r for r in rel if r != "manifest.json"]
+    rel = [r for r, _ in files_under(root, skip=("manifest.json",))]
     return len(rel), bytes_sha256("\n".join(rel).encode())
 
 

@@ -401,7 +401,7 @@ def _write(out, name, split, items, patch_list, seed, meta):
     (out / "lidc").mkdir(exist_ok=True)
     sha = write_jsonl(out / "lidc" / f"{split}.jsonl", recs)
     mpath = out / "manifest.json"
-    man = read_json(mpath) if mpath.is_file() else {"files": {}, "sets": {}}
+    man = read_json(mpath, {"files": {}, "sets": {}})
     man["files"][f"lidc/{split}.jsonl"] = {"sha256": sha}
     fam = {f: sum(r["probe"]["family"] == f for r in recs) for f in sorted({r["probe"]["family"] for r in recs})}
     man["sets"][f"lidc/{split}"] = {

@@ -546,10 +546,6 @@ def _train_sha(store_root) -> str:
     return read_json(Path(store_root, "manifest.json"))["files"]["lidc/train.parquet"]["sha256"]
 
 
-def _json_or_empty(path) -> dict:
-    return read_json(path) if Path(path).is_file() else {}
-
-
 def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, exclusions=None, review=None,
           frozen_views=None, series_z=None, out=None, plan=None) -> dict:
     """The report that `gates` reads, for the rows root `rows` (the audit_data and build_rl_rows scripts, and
@@ -564,7 +560,7 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
     rows, store_root, eval_views = Path(rows), Path(store_root), Path(eval_views)
     exclusions = Path(exclusions or ref / "train_exclusions.json")
     plan = plan or read_json(rows / "manifest.json")["schedule"]
-    ex = _json_or_empty(exclusions)
+    ex = read_json(exclusions, {})
     pool = windows.pool(store.load("lidc", "train", store_root), plan["draws"], plan["seed"],
                         frozenset(plan["excluded_ids"]))
     by_id = {w.window_id: w for w in pool.windows}
@@ -576,7 +572,7 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
     wn = window_checks(rows, store_root)
     z = Path(series_z or root / "runs/b1/series_z.json")
     return {
-        "leakage": leakage(store_root, _json_or_empty(review or ref / "neardup_review.json"), ex,
+        "leakage": leakage(store_root, read_json(review or ref / "neardup_review.json", {}), ex,
                            out or root / "runs/b1/audit"),
         "rows": rows_leakage(rows, store_root, view_image_hashes(eval_views), frozenset(ex))
         | {"exclusions_stale": plan["exclusions_sha256"] != file_sha256(exclusions)},
@@ -584,7 +580,7 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
         "schedule": sched | {"unknown": len(recs) - len(scheduled)},
         "tokens": tokens(rows, tokenizer, limit),
         "agreement": agreement(rows, wn["low_contrast"]),
-        "frozen": frozen(eval_views, _json_or_empty(frozen_views or ref / "frozen_views.json")),
+        "frozen": frozen(eval_views, read_json(frozen_views or ref / "frozen_views.json", {})),
         "z": dg17(read_json(z), ex, _train_sha(store_root))
         if z.is_file() else [f"no contour-to-slice report {z}: run check_series_z"],
     }

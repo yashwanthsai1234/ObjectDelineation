@@ -32,7 +32,7 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.core import datasets as registry
-from objdel.core.io import write_json, write_jsonl
+from objdel.core.io import read_jsonl, write_json, write_jsonl
 from objdel.data import store
 from objdel.data.audit import hack_audit
 from objdel.data.targets.frame import frame
@@ -191,7 +191,7 @@ def main():
     ap.add_argument("--datasets", nargs="+", help="datasets the model is judged on (default: those evaluated)")
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()
-    rows = [json.loads(line) for line in a.completions.read_text().splitlines() if line.strip()]
+    rows = read_jsonl(a.completions, skip_blank=True)
     ids = [r["item_id"] for r in rows]
     frames = load_prepared(a.prepared, a.split, ids) if a.prepared else load_frames(a.store, a.split, ids)
     results = evaluate(rows, frames, a.procs)

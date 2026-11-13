@@ -40,7 +40,7 @@ from typing import Any, Protocol
 import pandas as pd
 from trl.data_utils import prepare_multimodal_messages
 
-from objdel.core.io import read_jsonl, write_json, write_jsonl
+from objdel.core.io import read_jsonl, read_jsonl_cut, write_json, write_jsonl
 from objdel.policy import models
 from objdel.policy.errors import Refusal
 from objdel.verify.reward.spec import REWARD_V4
@@ -354,12 +354,8 @@ class HfSampler(Sampler):
 def todo(out: Path, bs: list[list[tuple[int, dict]]]) -> list:
     """Resume: rewrite `out` with the lines of every whole finished batch and return the other batches."""
     have = {}
-    for x in out.read_text().splitlines() if out.exists() else []:
-        try:
-            c = json.loads(x)
-            have.setdefault((c["id"], c["k"]), x)
-        except (ValueError, KeyError, TypeError):
-            continue  # a line cut by a kill
+    for x, c in read_jsonl_cut(out, ("id", "k")):  # a line cut by a kill is skipped
+        have.setdefault((c["id"], c["k"]), x)
     keys = [[(p["id"], k) for _, p in b for k in range(p["n"])] for b in bs]
     done = [all(key in have for key in ks) for ks in keys]
     out.write_text("".join(have[key] + "\n" for ks, d in zip(keys, done, strict=True) if d for key in ks))

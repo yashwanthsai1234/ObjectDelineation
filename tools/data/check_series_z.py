@@ -36,7 +36,7 @@ def main(argv=None) -> int:
     r["store_sha256"] = {sp: quality.file_sha256(a.store / "lidc" / f"{sp}.parquet") for sp in ("val", "test")}
     if previous and previous["store_sha256"] != r["store_sha256"]:
         raise SystemExit("the val or test store changed since --previous: the frozen views pair on those items")
-    exclusions = read_json(a.exclusions) if a.exclusions.exists() else {}
+    exclusions = read_json(a.exclusions, {})
     if a.drop_train_hits:
         today = datetime.date.today().isoformat()
         for s in quality.train_hits_not_excluded(r, exclusions):

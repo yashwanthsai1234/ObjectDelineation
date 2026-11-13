@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.hashing import file_sha256
-from objdel.core.io import read_json, read_jsonl, write_json, write_jsonl
+from objdel.core.io import read_json, read_jsonl, read_jsonl_cut, write_json, write_jsonl
 from objdel.policy import evaluate
 from objdel.policy.errors import Refusal
 
@@ -96,12 +96,7 @@ def complete(comps: Path, want: Counter) -> bool:
 
 def finished(comps: Path, want: Counter) -> int:
     """Prompt ids with all their n completions, cut lines skipped (progress of a resumable child)."""
-    got = Counter()
-    for x in comps.read_text().splitlines() if comps.exists() else []:
-        try:
-            got[json.loads(x)["id"]] += 1
-        except (ValueError, KeyError, TypeError):
-            continue
+    got = Counter(c["id"] for _, c in read_jsonl_cut(comps, ("id",)))
     return sum(got[i] == n for i, n in want.items())
 
 

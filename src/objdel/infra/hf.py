@@ -31,7 +31,7 @@ from importlib import resources
 from pathlib import Path
 
 from objdel.core import datasets
-from objdel.core.io import read_json
+from objdel.core.io import files_under, read_json
 from objdel.infra.errors import InfraError
 
 REPO = "svenk029/objdel-sft"  # the owner's private model repo
@@ -248,11 +248,8 @@ def rows_tar(root: Path, out) -> None:
     and compare it with the Hub's LFS SHA-256 of ROWS_TAR. Directories are implied by the paths."""
     import tarfile
 
-    files = sorted((p.relative_to(root).as_posix(), p) for p in root.rglob("*") if p.is_file())
     with tarfile.open(fileobj=out, mode="w|", format=tarfile.GNU_FORMAT) as tf:
-        for rel, p in files:
-            if rel == "manifest.json":
-                continue
+        for rel, p in files_under(root, skip=("manifest.json",)):
             ti = tarfile.TarInfo(rel)  # TarInfo's defaults: mode 0644, mtime 0, uid/gid 0, no user or group name
             ti.size = p.stat().st_size
             with p.open("rb") as fh:

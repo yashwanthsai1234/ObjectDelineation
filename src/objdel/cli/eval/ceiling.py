@@ -17,7 +17,7 @@ import json
 import time
 from pathlib import Path
 
-from objdel.core.io import write_jsonl
+from objdel.core.io import read_jsonl, write_jsonl
 from objdel.policy import rows as dataset
 from objdel.verify import ceiling
 from objdel.verify import store as serve
@@ -41,8 +41,7 @@ def main(argv=None) -> None:
     recs = [r for r in dataset.records(a.view, "lidc", a.split) if r["rl"]]
     ans = {}
     if a.answers:
-        with open(a.answers) as f:
-            ans = {d["item_id"]: (d["samples"], d["truncated"]) for d in map(json.loads, f)}
+        ans = {d["item_id"]: (d["samples"], d["truncated"]) for d in read_jsonl(a.answers)}
         lost = [r["item_id"] for r in recs if r["item_id"] not in ans]
         if lost:
             raise ValueError(f"{len(lost)} items of the view have no answers in {a.answers}: {lost}")

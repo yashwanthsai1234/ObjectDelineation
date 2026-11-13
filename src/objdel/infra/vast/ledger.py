@@ -86,8 +86,7 @@ def ledger(**row) -> None:
 
 def load(name: str) -> dict:
     """A JSON state file under VAST_HOME ({} when absent): active_runs.json, .vast-allowlist, offers/<id>.json."""
-    f = home() / name
-    return read_json(f) if f.exists() else {}
+    return read_json(home() / name, {})
 
 
 def active(update: dict | None = None) -> dict:

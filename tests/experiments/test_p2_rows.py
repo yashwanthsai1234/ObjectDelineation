@@ -221,6 +221,27 @@ def test_i21_rows_upload_goes_to_the_one_place_with_the_manifest_last(built, tmp
     assert TOKEN not in out + err
 
 
+def test_rows_tar_and_files_digest_keep_the_posix_string_order(tmp_path):
+    """Pinned hashes: a tree with `a-b/x` and `a/x` (string order and Path order differ) packs and digests in the
+    order the pre-files_under code gave: sorted by the relative posix string, manifest.json left out."""
+    import tarfile
+
+    from objdel.cli.data import rl_rows
+    from objdel.infra import hf
+    root = tmp_path / "root"
+    for rel in ("a/x", "a-b/x", "manifest.json", "lidc/train.jsonl"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(rel)
+    old = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+    old = [r for r in old if r != "manifest.json"]
+    assert old == ["a-b/x", "a/x", "lidc/train.jsonl"]
+    assert rl_rows.files_digest(root) == (3, bytes_sha256("\n".join(old).encode()))
+    buf = io.BytesIO()
+    hf.rows_tar(root, buf)
+    with tarfile.open(fileobj=io.BytesIO(buf.getvalue())) as tf:
+        assert tf.getnames() == old
+
+
 def test_i21_nothing_is_uploaded_after_a_hard_gate_failure(run, world, monkeypatch, capsys):  # noqa: F811
     item = world.sched[0].item_id
     s = item.split("/")[1]

@@ -9,10 +9,32 @@ from pathlib import Path
 from objdel.core.hashing import bytes_sha256
 
 
-def read_jsonl(path) -> list[dict]:
-    """One dict per line, read line by line."""
+def read_jsonl(path, *, skip_blank: bool = False) -> list[dict]:
+    """One dict per line, read line by line; a blank line raises unless skip_blank."""
     with open(path) as f:
-        return [json.loads(line) for line in f]
+        return [json.loads(line) for line in f if line.strip() or not skip_blank]
+
+
+def read_jsonl_cut(path, need=()) -> list[tuple[str, dict]]:
+    """(line, record) of every line that is a JSON object holding all the `need` keys, in file order; a missing file
+    gives []. A line cut by a kill (bad JSON, not an object, a key missing) is skipped, anywhere in the file. A
+    resumable file reads this way; a file that must be whole reads with read_jsonl (any bad line raises)."""
+    out = []
+    for x in Path(path).read_text().splitlines() if Path(path).exists() else []:
+        try:
+            c = json.loads(x)
+        except ValueError:
+            continue
+        if isinstance(c, dict) and all(k in c for k in need):
+            out.append((x, c))
+    return out
+
+
+def files_under(root, skip=()) -> list[tuple[str, Path]]:
+    """(relative posix path, path) of every file under root except the `skip` paths, sorted by the posix string (not
+    by Path: `a-b/x` sorts before `a/x` by string, after it by Path; rows_tar and files_digest hashes rest on this)."""
+    return sorted((rel, p) for p in Path(root).rglob("*") if p.is_file()
+                  if (rel := p.relative_to(root).as_posix()) not in skip)
 
 
 def read_split(root, dataset: str, split: str) -> list[dict]:
@@ -51,8 +73,13 @@ def write_atomic(path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def read_json(path):
-    """A whole JSON file."""
+_RAISE = object()
+
+
+def read_json(path, default=_RAISE):
+    """A whole JSON file; `default` instead when the path is not a file (without a default: the OSError)."""
+    if default is not _RAISE and not Path(path).is_file():
+        return default
     return json.loads(Path(path).read_text())
 
 
