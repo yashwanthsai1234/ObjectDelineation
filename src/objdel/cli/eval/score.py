@@ -32,6 +32,7 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.core import datasets as registry
+from objdel.core.io import write_json, write_jsonl
 from objdel.data import store
 from objdel.data.audit import hack_audit
 from objdel.data.targets.frame import frame
@@ -173,12 +174,9 @@ def markdown(report: dict, title: str) -> str:
 
 
 def write(report: dict, results: list[dict], out: Path, title: str) -> None:
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "report.json").write_text(json.dumps(report, indent=1, allow_nan=False) + "\n")
+    write_json(out / "report.json", report, sort_keys=False, strict=True)
     (out / "report.md").write_text(markdown(report, title))
-    with open(out / "items.jsonl", "w") as f:
-        for r in results:
-            f.write(json.dumps(r, allow_nan=False) + "\n")
+    write_jsonl(out / "items.jsonl", results, sort_keys=False, allow_nan=False)
 
 
 def main():

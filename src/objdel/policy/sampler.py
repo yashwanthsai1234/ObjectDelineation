@@ -16,7 +16,7 @@ child. Completions go to the evaluation harness as rows {"item_id", "samples": [
 - Truncation is the reward's rule: models.truncated on the stop ids (`stop_ids(path, proc)` for a checkpoint).
 - export_prompts / import_completions: the JSONL bridge to the sampler child (prompt text, image path, processor
   kwargs minus padding_side, every sampling field and n; completions come back as token ids). export reads TRL's
-  completions tables back into rows; write(rows, path) writes JSONL.
+  completions tables back into rows.
 - main: the child-process entry, `python -I -m objdel.policy.sampler --kind vllm|hf --prompts P --model DIR --out C`
   (CUDA untouched in the parent; the caller sets a timeout, kills the process group and resumes).
 
@@ -40,7 +40,7 @@ from typing import Any, Protocol
 import pandas as pd
 from trl.data_utils import prepare_multimodal_messages
 
-from objdel.core.io import read_jsonl
+from objdel.core.io import read_jsonl, write_json, write_jsonl
 from objdel.policy import models
 from objdel.policy.errors import Refusal
 from objdel.verify.reward.spec import REWARD_V4
@@ -72,14 +72,6 @@ def export(paths: Iterable, keys: Iterable[str] | None = None) -> list[dict]:
     return rows
 
 
-def write(rows: Iterable[dict], path) -> None:
-    """Write rows as JSON lines to `path`, creating its folder."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
-
-
 def _path(image) -> str:
     return image if isinstance(image, str) else image["path"]
 
@@ -99,7 +91,7 @@ def export_prompts(rows, path, model: str, n: int, processor=None, stop_ids=None
     sampling = models.sampling(model) | {"seed": seed} | ({"max_tokens": max_tokens} if max_tokens else {})
     if stop_ids is not None:
         sampling["stop_token_ids"] = sorted(stop_ids)
-    write(prompt_lines(rows, processor, kw, sampling, n), path)
+    write_jsonl(path, prompt_lines(rows, processor, kw, sampling, n), sort_keys=False)
 
 
 def prompt_lines(rows, processor, processor_kwargs: dict, sampling: dict, n: int) -> list[dict]:
@@ -377,10 +369,10 @@ def todo(out: Path, bs: list[list[tuple[int, dict]]]) -> list:
 def _main_vllm(a, lines: list[dict]) -> None:
     s = VllmSampler(a.model, None, a.gpu_memory_utilization, a.max_model_len, dtype=a.dtype, seed=a.seed,
                     logprobs=a.logprobs)
-    write(s.records(lines), a.out)
+    write_jsonl(a.out, s.records(lines), sort_keys=False)
     meta = {"vllm": s.vllm.__version__, "model": str(a.model), "prompts": len(lines),
             "sampling_params": sorted(s.sampling_params)}
-    Path(str(a.out) + ".meta.json").write_text(json.dumps(meta, indent=1) + "\n")
+    write_json(str(a.out) + ".meta.json", meta, sort_keys=False)
     print(json.dumps(meta), file=sys.stderr)
 
 

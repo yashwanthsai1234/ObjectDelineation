@@ -40,7 +40,7 @@ from PIL import Image
 from scipy import ndimage, stats
 
 from objdel.core.hashing import pixels_sha256
-from objdel.core.io import read_json, read_jsonl, write_json, write_jsonl
+from objdel.core.io import read_json, read_split, write_json, write_jsonl
 from objdel.data.targets.build import build_target
 from objdel.data.targets.frame import DIVISORS, LUNG_WINDOW
 from objdel.geom.shape import canonicalize, to_mask
@@ -462,7 +462,7 @@ def build_topology(out, patch_list, holes, multis, diams, seed=2027, per_bin=120
 # ------------------------------------------------------------------------------------------------- scoring
 def records(root, split="val"):
     """The probe records of a split, read from `<root>/lidc/<split>.jsonl`."""
-    return read_jsonl(Path(root, "lidc", f"{split}.jsonl"))
+    return read_split(root, "lidc", split)
 
 
 def gt_mask(rec):

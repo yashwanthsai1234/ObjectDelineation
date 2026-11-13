@@ -40,7 +40,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.hashing import bytes_sha256, file_sha256
-from objdel.core.io import write_json
+from objdel.core.io import write_json, write_jsonl
 from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
 from objdel.data import store, windows
@@ -165,10 +165,8 @@ def build(a) -> int:
 
     recs = materialize(a.store, out, scheduled, a.procs)
     rows = [recs[i] for i in ids]
-    text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
     rel = "lidc/train.jsonl"
-    (out / "lidc").mkdir(parents=True, exist_ok=True)
-    (out / rel).write_text(text)
+    sha = write_jsonl(out / rel, rows)
     t_mat = time.time() - t0
 
     plan = {"steps": a.steps, "planned_steps": a.steps, "block_steps": a.block_steps, "per_step": a.per_step,
@@ -184,7 +182,7 @@ def build(a) -> int:
     for g in gs:
         print(f"{g.name:6s} {'report' if not g.hard else 'ok' if g.ok else 'FAIL':6s} {g.value:10.4f}  {g.limit}")
     if a.json:
-        Path(a.json).write_text(json.dumps({"gates": [asdict(g) for g in gs], "report": report}, indent=1) + "\n")
+        write_json(a.json, {"gates": [asdict(g) for g in gs], "report": report}, sort_keys=False)
     if bad := Q.failures(gs):
         print(f"GATES FAILED: {', '.join(g.name for g in bad)}; no manifest written ({out})", file=sys.stderr)
         return 1
@@ -195,7 +193,7 @@ def build(a) -> int:
          "store_manifest_sha256": file_sha256(Path(a.store, "manifest.json")),
          "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
          "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
-         "files": {rel: {"sha256": bytes_sha256(text.encode())}},
+         "files": {rel: {"sha256": sha}},
          "sets": {"lidc/train": {
              "items": len(rows), "windows": len(uniq), "skipped_no_image": 0, "targets": len(triples),
              "target_set_sha256": target_set_hash(triples),

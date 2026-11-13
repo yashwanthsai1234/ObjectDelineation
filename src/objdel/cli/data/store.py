@@ -22,6 +22,7 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.core.hashing import pixels_sha256
+from objdel.core.io import write_json
 from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store
 from objdel.data.store import Item
@@ -128,7 +129,7 @@ def main(argv=None):
                                                    patient_series),
                 "lidc_identical_slices_across_splits": splits.leaks(stats["split_of"], stats["image_sha"])},
     })
-    (out / "build_report.json").write_text(json.dumps(rep, indent=1, sort_keys=True) + "\n")
+    write_json(out / "build_report.json", rep)
     print(json.dumps({k: v for k, v in rep.items() if k != "manifest"}, indent=1, sort_keys=True))
 
 

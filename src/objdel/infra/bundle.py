@@ -14,14 +14,13 @@ sync_up checks that and SHA256SUMS on the box.
 
 import argparse
 import io
-import json
 import sys
 import tarfile
 from pathlib import Path
 
 from objdel.core import datasets
 from objdel.core.hashing import bytes_sha256, file_sha256
-from objdel.core.io import read_json
+from objdel.core.io import json_text, read_json
 from objdel.core.provenance import repo_root
 from objdel.infra.errors import InfraError
 from objdel.infra.vast.offers import is_raw
@@ -46,7 +45,7 @@ def manifest(ds: str, prep: Path) -> bytes:
     m["files"], m["sets"] = ({k: v for k, v in m[s].items() if k.startswith(f"{ds}/")} for s in ("files", "sets"))
     if missing := [k for k in m["files"] if not (prep / k).is_file()]:
         raise InfraError(f"prepared/manifest.json lists missing files: {missing}")
-    return (json.dumps(m, indent=1, sort_keys=True) + "\n").encode()
+    return json_text(m).encode()
 
 
 def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[str, Path | bytes]]:

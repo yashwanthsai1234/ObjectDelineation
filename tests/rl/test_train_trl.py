@@ -19,6 +19,7 @@ from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast 
 from trl import GRPOConfig, GRPOTrainer  # noqa: E402
 from trl.trainer.utils import RepeatSampler  # noqa: E402
 
+from objdel.core.io import write_jsonl  # noqa: E402
 from objdel.policy import models as policy_models  # noqa: E402
 from objdel.policy import sampler as policy_sampler  # noqa: E402
 from objdel.rl import config as rl_config  # noqa: E402
@@ -247,7 +248,7 @@ def test_completions_table_exports_to_eval_jsonl(char_model, tmp_path):
     for r in rows:
         assert r["samples"] == [t for t, _ in texts[r["item_id"]]] and r["truncated"] == [False] * G
         assert r["step"] == 1
-    policy_sampler.write(rows, tmp_path / "x.jsonl")
+    write_jsonl(tmp_path / "x.jsonl", rows, sort_keys=False)
     assert [json.loads(line) for line in (tmp_path / "x.jsonl").read_text().splitlines()] == rows
     train_rows = policy_sampler.export([path], keys=["lidc/t2"])
     if train_rows:  # the step's training completions, when still in TRL's table

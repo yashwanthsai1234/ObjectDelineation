@@ -31,6 +31,7 @@ import numpy as np
 
 from objdel.core import datasets
 from objdel.core.hashing import file_sha256
+from objdel.core.io import write_json
 from objdel.data import store
 from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
@@ -154,8 +155,8 @@ def main():
     manifest["target_set_sha256"] = target_set_hash(all_rows)
     summary["wall_s"] = round(time.time() - t0, 1)
     summary["target_set_sha256"] = manifest["target_set_sha256"]
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
-    (out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
+    write_json(out / "manifest.json", manifest)
+    write_json(out / "summary.json", summary, sort_keys=False)
     print(json.dumps(summary, indent=1))
 
 

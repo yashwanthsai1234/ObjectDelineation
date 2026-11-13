@@ -17,6 +17,7 @@ import json
 import time
 from pathlib import Path
 
+from objdel.core.io import write_jsonl
 from objdel.policy import rows as dataset
 from objdel.verify import ceiling
 from objdel.verify import store as serve
@@ -52,7 +53,7 @@ def main(argv=None) -> None:
     doc = {"view": str(a.view), "split": a.split, "answers": a.answers and str(a.answers),
            **ceiling.summarize(rows, {r["item_id"]: r["group_id"] for r in recs}), "seconds": time.time() - t0}
     a.out.mkdir(parents=True, exist_ok=True)
-    (a.out / "ceiling_items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    write_jsonl(a.out / "ceiling_items.jsonl", rows, sort_keys=False)
     (a.out / "ceiling.json").write_text(json.dumps(doc, indent=1))
     s = doc["all"]
     print("CEILING", a.split, "items", s["n"], "doctor", round(s["doctor"][0], 4), "legacy item",

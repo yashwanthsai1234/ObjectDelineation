@@ -31,7 +31,7 @@ import numpy as np
 
 from objdel.core import datasets
 from objdel.core.hashing import pixels_sha256
-from objdel.core.io import read_json, read_jsonl
+from objdel.core.io import read_json, read_split
 from objdel.policy.prompt import _user
 
 DISAGREEMENT_OVERSAMPLE = 4  # decided in experiments/phase1/impl/M7_train.md
@@ -45,9 +45,7 @@ def check_root(root, dataset: str, split: str) -> None:
         raise ValueError(f"{root}: holds {sorted(sets)}, not {dataset}/{split} (the stage's dataset and split)")
 
 
-def records(root, dataset: str, split: str) -> list[dict]:
-    """The rows of `<root>/<dataset>/<split>.jsonl` as dicts."""
-    return read_jsonl(Path(root, dataset, f"{split}.jsonl"))
+records = read_split  # the rows of `<root>/<dataset>/<split>.jsonl` as dicts
 
 
 def _image(root, item_id: str) -> str:

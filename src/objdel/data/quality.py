@@ -49,7 +49,7 @@ import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
 from objdel.core.hashing import bytes_sha256, file_sha256, pixels_sha256
-from objdel.core.io import read_json, read_jsonl
+from objdel.core.io import read_json, read_jsonl_glob, read_split
 from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store, windows
 from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
@@ -167,7 +167,7 @@ class Gate:
 
 def records(rows_root) -> list[dict]:
     """The rows root's records (lidc/train.jsonl), in schedule order."""
-    return read_jsonl(Path(rows_root, "lidc", "train.jsonl"))
+    return read_split(rows_root, "lidc", "train")
 
 
 def crop32(image: np.ndarray, ub) -> np.ndarray:
@@ -256,8 +256,8 @@ def leakage(store_root, review: Mapping[str, str], exclusions: Mapping, out) -> 
 
 def view_image_hashes(eval_views_root) -> set[str]:
     """image_sha256 of every record of every val and test view under `eval_views_root`."""
-    return {r["image_sha256"] for p in sorted(Path(eval_views_root).glob("*/lidc/*.jsonl"))
-            if p.stem in ("val", "test") for r in read_jsonl(p)}
+    return {r["image_sha256"] for split in ("val", "test")
+            for r in read_jsonl_glob(eval_views_root, f"*/lidc/{split}.jsonl")}
 
 
 def rows_leakage(rows_root, store_root, view_hashes: set[str], excluded: frozenset[str]) -> dict:
@@ -331,7 +331,7 @@ def view_windows(view_dir, store_root) -> list[Window]:
     """The windows of a shifted eval view as Window objects (geometry only; DG16): kind "shifted", draw 0."""
     view_dir = Path(view_dir)
     split = read_json(view_dir / "manifest.json")["view"].split("-")[1]
-    recs = {r["item_id"]: r for r in read_jsonl(view_dir / "lidc" / f"{split}.jsonl")}
+    recs = {r["item_id"]: r for r in read_split(view_dir, "lidc", split)}
     out = []
     for it in store.load("lidc", split, store_root):
         if r := recs.get(it.item_id):
@@ -458,7 +458,7 @@ def view_content_sha256(view_dir) -> str:
     """Content hash: SHA-256 of the newline-joined JSON tuples [item_id, view.offset, view.side, image_sha256]
     of the view's LIDC records in file order (a prepared root without windows has null offset and side). Manifest
     versions and the reward fingerprint do not enter it."""
-    recs = [r for f in sorted(Path(view_dir, "lidc").glob("*.jsonl")) for r in read_jsonl(f)]
+    recs = read_jsonl_glob(view_dir, "lidc/*.jsonl")
     lines = [json.dumps([r["item_id"], (r.get("view") or {}).get("offset"), (r.get("view") or {}).get("side"),
                          r["image_sha256"]]) for r in recs]
     return bytes_sha256("\n".join(lines).encode())

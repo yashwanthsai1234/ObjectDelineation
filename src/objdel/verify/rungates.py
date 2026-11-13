@@ -32,7 +32,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from objdel.core.io import read_json, read_jsonl
+from objdel.core.io import read_json, read_jsonl, read_split
 from objdel.verify import stats as signal
 
 MISS, DIGITS = signal.MISS, signal.DIGITS
@@ -78,7 +78,7 @@ def load_run(out: Path) -> Run | None:
 
 def view_meta(view: Path, split: str = "val") -> dict[str, dict]:
     """item_id -> {group, offset, padded, fallback} from a view's LIDC records."""
-    rows = read_jsonl(Path(view) / "lidc" / f"{split}.jsonl")
+    rows = read_split(view, "lidc", split)
     return {r["item_id"]: {"group": r["group_id"], "offset": r["view"]["offset_frac"], "padded": r["view"]["padded"],
                            "fallback": r["view"]["fallback"]} for r in rows}
 

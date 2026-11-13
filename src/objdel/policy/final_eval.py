@@ -35,7 +35,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.hashing import file_sha256
-from objdel.core.io import code_sha, read_json, read_jsonl
+from objdel.core.io import code_sha, read_json, read_jsonl, read_jsonl_glob, write_jsonl
 from objdel.core.io import write_atomic as _write
 from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
@@ -91,7 +91,7 @@ def view_manifest_sha256(view: Path) -> str:
 
 def _view_records(view: Path) -> list[dict]:
     """Every record of the view, file by file in name order."""
-    return [r for f in sorted(Path(view).glob("*/*.jsonl")) for r in read_jsonl(f)]
+    return read_jsonl_glob(view, "*/*.jsonl")
 
 
 def frozen_entry(view_name: str) -> dict | None:
@@ -130,11 +130,6 @@ def hash_view(view: Path, out: Path, commits: dict[str, str]) -> None:
         "render_files": commits, "r5_commit": None,
         "note": "r5_commit not recorded: no file under runs/r5/ holds a code commit. Equal to the R5 box view by "
                 "code identity, not measured"}, indent=1))
-
-
-def _lines(rows: list[dict]) -> str:
-    """Rows as JSON lines."""
-    return "".join(json.dumps(r) + "\n" for r in rows)
 
 
 def resummarize(run: Path, out: Path, store: Path) -> None:
@@ -187,8 +182,8 @@ def write_scored(view: Path, dataset: str, split: str, out: Path, results: list[
     doc = run | summarize(items, groups) | {"noise_floor": noise_floor(results, groups), "partial": False,
                                             "engine": engine_record()}
     doc["seconds"] = run["seconds"] | {"total": time.time() - t0}
-    _write(out / "metrics.jsonl", _lines(results))
-    _write(out / "items.jsonl", _lines(items))
+    write_jsonl(out / "metrics.jsonl", results, sort_keys=False, atomic=True)
+    write_jsonl(out / "items.jsonl", items, sort_keys=False, atomic=True)
     _write(out / "final_eval.json", json.dumps(doc, indent=1, allow_nan=False))
     print("FINAL_EVAL", split, json.dumps({m: round(doc[m]["mean"], 4) for m in METRICS if m in doc}),
           "items", doc["items"], f"s {doc['seconds']['total']:.0f}")  # fmt: skip
@@ -220,7 +215,7 @@ def rescore(src: Path, view: Path, dataset: str, split: str, out: Path) -> None:
     run = ({k: old[k] for k in ("ckpt", "K", "seed", "sampler") if k in old} | _identity(view, split)
            | {"rescored_from": str(src), "seconds": {}})
     serve.preload(view, [dataset])
-    _write(out / "answers.jsonl", _lines(answers))
+    write_jsonl(out / "answers.jsonl", answers, sort_keys=False, atomic=True)
     start_scoring()
     results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view.resolve())
     write_scored(view, dataset, split, out, results, run, t0)
@@ -269,7 +264,7 @@ def run(a) -> None:
                       **{k: d[k] for k in ("samples", "truncated", "tokens")}}
                      for r, d in zip(rows, answers, strict=True)]
             run["seconds"] = {"load_and_sample": time.time() - t0}
-            _write(out / "answers.jsonl", _lines(lines))
+            write_jsonl(out / "answers.jsonl", lines, sort_keys=False, atomic=True)
             _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
             start_scoring()
 

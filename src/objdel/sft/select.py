@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.hashing import file_sha256
-from objdel.core.io import read_json, read_jsonl
+from objdel.core.io import read_json, read_jsonl, write_json, write_jsonl
 from objdel.policy import evaluate
 from objdel.policy.errors import Refusal
 
@@ -188,7 +188,7 @@ def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:
 
     rows = evaluate.eval_rows(view, a.dataset, a.items)
     results, groups = evaluate.score_items(rows, sample_view(a, branch, rows, out, k), view.resolve())
-    (out / "items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in results))
+    write_jsonl(out / "items.jsonl", results, sort_keys=False)
     iou = {r["item_id"]: {n: float(np.mean(o["iou_tc"])) for n, o in r["objects"].items()} for r in results}
     return {"summary": summarize(results), "panel": signal.panel(groups), "iou": iou}
 
@@ -278,8 +278,7 @@ def judge(a, sel: dict, out: Path, baselines) -> dict:
 
 def dump(path: Path, doc: dict) -> None:
     """Indented JSON to path (parents created)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc, indent=1, default=str) + "\n")
+    write_json(path, doc, sort_keys=False, default=str)
 
 
 def topology_only(a, out: Path) -> int:

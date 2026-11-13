@@ -28,7 +28,7 @@ import numpy as np
 from scipy.stats import binomtest
 
 from objdel.core import datasets
-from objdel.core.io import read_jsonl
+from objdel.core.io import read_split
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.verify.reward.cache import ExpertCache
@@ -38,10 +38,6 @@ MEDSAM, SAM2 = "flaviagiammarino/medsam-vit-base", "facebook/sam2.1-hiera-tiny"
 MARGIN = {"lidc": 1, "riga": 5}
 
 
-def _records(root, dataset, split):
-    return read_jsonl(Path(root, dataset, f"{split}.jsonl"))
-
-
 def _caches(root, rec):
     return {n: ExpertCache.load(Path(root, "caches", rec["item_id"], f"{n}.npz"), d) for n, d in rec["caches"].items()}
 
@@ -49,7 +45,7 @@ def _caches(root, rec):
 def fit_prior(root, dataset, split="train"):
     """{S: {structure: median equivalent diameter}} of the certified targets (>= 5 px) per frame side."""
     by = {}
-    for r in _records(root, dataset, split):
+    for r in read_split(root, dataset, split):
         for t in r["targets"]:
             p = parse(t, datasets.get(dataset).names) if t else None
             for n, parts in p.objs.items() if p and p.ok else ():
@@ -67,7 +63,7 @@ def _disc(S, d):
 def _score_rows(root, dataset, split, predict, every=1):
     """[{"item_id", "iou_tc": {structure: v}}] of predict(rec, caches) -> {structure: mask} on RL items."""
     rows = []
-    for i, rec in enumerate(r for r in _records(root, dataset, split) if r["rl"]):
+    for i, rec in enumerate(r for r in read_split(root, dataset, split) if r["rl"]):
         if i % every:
             continue
         caches = _caches(root, rec)

@@ -10,10 +10,10 @@ On the Mac the manifest's exclusions_sha256 must equal the SHA-256 of the curren
 objdel.verify.ceiling (A2). Reads untrusted data: run with python -I.
 """
 import argparse
-import json
 from dataclasses import asdict
 from pathlib import Path
 
+from objdel.core.io import write_json
 from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
 
@@ -46,7 +46,7 @@ def main(argv=None) -> int:
     bad = Q.failures(gs)
     print(f"AUDIT {'FAILED: ' + ', '.join(g.name for g in bad) if bad else 'PASSED'} ({a.rows})")
     if a.json:
-        a.json.write_text(json.dumps({"gates": [asdict(g) for g in gs], "report": report}, indent=1) + "\n")
+        write_json(a.json, {"gates": [asdict(g) for g in gs], "report": report}, sort_keys=False)
     return 1 if bad else 0
 
 

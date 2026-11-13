@@ -46,7 +46,7 @@ import time
 from pathlib import Path
 
 from objdel.core.hashing import bytes_sha256
-from objdel.core.io import plain, read_json, write_atomic
+from objdel.core.io import plain, read_json, write_json
 from objdel.rl import build
 
 
@@ -349,8 +349,7 @@ def finite(x):
 def save_json(path: Path, doc: dict, keys: tuple[str, ...]) -> int:
     """Strict JSON (numpy values as plain numbers and lists) to path, through write_atomic; prints doc's `keys` on
     one line. A NaN or inf anywhere raises ValueError before anything is written (U25)."""
-    text = json.dumps(doc, indent=1, allow_nan=False, default=plain) + "\n"
-    write_atomic(path, text)
+    write_json(path, doc, sort_keys=False, strict=True, default=plain)
     print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False, default=plain))
     return 0
 

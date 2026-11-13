@@ -1,5 +1,6 @@
 """JSON and JSONL reading, atomic file writing and the git code identity, shared (no heavy imports)."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -14,11 +15,31 @@ def read_jsonl(path) -> list[dict]:
         return [json.loads(line) for line in f]
 
 
-def write_jsonl(path, rows) -> str:
-    """rows as sorted-key JSON lines to path; the SHA-256 hex digest of the text written."""
-    text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
-    Path(path).write_text(text)
-    return bytes_sha256(text.encode())
+def read_split(root, dataset: str, split: str) -> list[dict]:
+    """The rows of `<root>/<dataset>/<split>.jsonl`."""
+    return read_jsonl(Path(root, dataset, f"{split}.jsonl"))
+
+
+def read_jsonl_glob(root, pattern: str) -> list[dict]:
+    """The rows of every file under root that matches the glob pattern, file by file in name order."""
+    return [r for p in sorted(Path(root).glob(pattern)) for r in read_jsonl(p)]
+
+
+def write_jsonl(path, rows, *, sort_keys: bool = True, atomic: bool = False, **dumps) -> str:
+    """rows as JSON lines (sorted keys unless sort_keys=False; `dumps`: json.dumps options) to path, line by line, its
+    folder made first; through a temp file and os.replace when atomic. The SHA-256 hex digest of the text written."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp") if atomic else path
+    h = hashlib.sha256()
+    with open(tmp, "w", encoding="utf-8") as f:
+        for r in rows:
+            line = json.dumps(r, sort_keys=sort_keys, **dumps) + "\n"
+            f.write(line)
+            h.update(line.encode())
+    if atomic:
+        os.replace(tmp, path)
+    return h.hexdigest()
 
 
 def write_atomic(path, text: str) -> None:
@@ -40,9 +61,14 @@ def plain(x):
     return x.tolist() if hasattr(x, "tolist") else x.item()
 
 
-def write_json(path, doc) -> None:
-    """doc as JSON with indent 1, sorted keys and a trailing newline (the manifests' bytes), through write_atomic."""
-    write_atomic(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
+def json_text(doc, *, sort_keys: bool = True, strict: bool = False, default=None, newline: bool = True) -> str:
+    """doc as JSON with indent 1 (the manifests' text): sorted keys, a trailing newline; strict raises on NaN, inf."""
+    return json.dumps(doc, indent=1, sort_keys=sort_keys, allow_nan=not strict, default=default) + "\n" * newline
+
+
+def write_json(path, doc, **options) -> None:
+    """doc as json_text(doc, **options), through write_atomic (the defaults are the manifests' bytes)."""
+    write_atomic(path, json_text(doc, **options))
 
 
 def _git(args, root) -> bytes:
