@@ -15,6 +15,8 @@ from objdel.verify import store as serve
 from objdel.verify.api import VerifyError
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_batch
+from tests.support.outlines import outline_text, square_ring
+from tests.support.shapes import rect_mask
 
 ROOT = Path(__file__).resolve().parents[2]
 SIDE, CELL = 50, 20  # 50 x 50 pixels; the 0-1000 grid has 20 units per pixel
@@ -23,15 +25,12 @@ ROWS = [{"key": KEY, "W": SIDE, "H": SIDE, "names": ["nodule"]}]
 
 
 def square(x0, y0, side=20) -> np.ndarray:
-    m = np.zeros((SIDE, SIDE), bool)
-    m[y0:y0 + side, x0:x0 + side] = True
-    return m
+    return rect_mask((SIDE, SIDE), x0, y0, x0 + side, y0 + side)
 
 
 def text(x0, y0, side=20) -> str:
     """The outline text of the pixel square [x0, x0 + side) x [y0, y0 + side), clockwise on screen."""
-    a, b, c, d = x0 * CELL, y0 * CELL, (x0 + side) * CELL, (y0 + side) * CELL
-    return json.dumps({"nodule": [{"outer": [[a, b], [c, b], [c, d], [a, d]], "holes": []}]}, separators=(",", ":"))
+    return outline_text(square_ring(x0, y0, x0 + side, y0 + side, scale=CELL))
 
 
 ON, SHIFTED = text(10, 10), text(20, 20)  # the raters' square, and one moved by 10 pixels in x and y

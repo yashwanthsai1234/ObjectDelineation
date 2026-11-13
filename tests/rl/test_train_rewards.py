@@ -11,6 +11,7 @@ from objdel.verify.reward import advantages as reward_advantages
 from objdel.verify.reward.advantages import advantages_v4, legal_gate, topology_reward
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_batch
+from tests.support.outlines import outline_text, square_ring
 
 G, W = 8, 50
 NAMES = ("nodule",)
@@ -18,7 +19,7 @@ EOS, PAD = 7, 0
 
 
 def square(x0, y0, x1, y1):
-    return f'{{"nodule":[{{"outer":[[{x0},{y0}],[{x1},{y0}],[{x1},{y1}],[{x0},{y1}]],"holes":[]}}]}}'
+    return outline_text(square_ring(x0, y0, x1, y1))
 
 
 def rater_stack():

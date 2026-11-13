@@ -14,3 +14,10 @@ def annulus(h, w, cy, cx, r, hole=0):
     y, x = np.ogrid[:h, :w]
     d2 = (y - cy) ** 2 + (x - cx) ** 2
     return (d2 <= r * r) & (d2 > hole * hole)
+
+
+def rect_mask(shape, x0, y0, x1, y1):
+    """bool `shape`: True on rows y0:y1 and columns x0:x1."""
+    m = np.zeros(shape, bool)
+    m[y0:y1, x0:x1] = True
+    return m

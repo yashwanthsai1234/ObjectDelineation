@@ -10,7 +10,7 @@ import pytest
 from objdel.verify import ceiling as C
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
-from tests.support.shapes import annulus
+from tests.support.shapes import annulus, rect_mask
 
 H = W = 64
 
@@ -20,9 +20,7 @@ def disc(cy, cx, r, hole=0):
 
 
 def rect(y0, y1, x0, x1):
-    m = np.zeros((H, W), bool)
-    m[y0:y1, x0:x1] = True
-    return m
+    return rect_mask((H, W), x0, y0, x1, y1)
 
 
 def plain_iou(a, b):

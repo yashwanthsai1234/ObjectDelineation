@@ -10,6 +10,7 @@ from objdel.core import datasets
 from objdel.data.store import Item
 from objdel.data.targets.build import build_target
 from objdel.data.targets.frame import FrameConfig, frame
+from tests.support.shapes import rect_mask
 
 DIVISORS = {d for d in range(1, 501) if 1000 % d == 0}
 
@@ -21,9 +22,7 @@ def item(masks, image=None, dataset="riga"):
 
 
 def blob(shape, y0, x0, y1, x1):
-    m = np.zeros(shape, bool)
-    m[y0:y1, x0:x1] = True
-    return m
+    return rect_mask(shape, x0, y0, x1, y1)
 
 
 def union_box(stack):

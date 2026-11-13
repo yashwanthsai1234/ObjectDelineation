@@ -2,7 +2,6 @@
 needed).
 
 Data-backed gates (K8, K8b, K9, R3, R4, R5, local gradient) are in test_reward_gates.py."""
-import json
 import math
 import multiprocessing
 import pickle
@@ -20,11 +19,13 @@ from oracles import reward_reference as ref
 from oracles.score_numpy import same_sig
 
 from objdel.geom.shape import to_mask
+from objdel.geom.text import serialize
 from objdel.verify.reward import cache as cache_mod
 from objdel.verify.reward.advantages import advantages_v4, legal_gate, loo_bias, topology_reward, topology_valid
 from objdel.verify.reward.cache import ExpertCache, StaleCacheError, rl_eligible, voters
 from objdel.verify.reward.score import NUMERIC, rater_answers, score_batch, score_completion, score_many, score_mask
 from objdel.verify.reward.spec import CACHE_SPEC, REWARD_V4, TERMS, fingerprint
+from tests.support.outlines import square_ring
 
 
 def disk(n, r, cy=None, cx=None):
@@ -312,13 +313,11 @@ G20 = 20  # grid units per pixel on a 50 x 50 crop
 
 
 def rect(x0, y0, x1, y1, hole=False):
-    r = [[x0 * G20, y0 * G20], [x1 * G20, y0 * G20], [x1 * G20, y1 * G20], [x0 * G20, y1 * G20]]
-    return r[::-1] if hole else r
+    return square_ring(x0, y0, x1, y1, hole, G20)
 
 
 def text(objs):
-    return json.dumps({n: [{"outer": o, "holes": hs} for o, hs in parts] for n, parts in objs.items()},
-                      separators=(",", ":"))
+    return serialize(objs, tuple(objs))
 
 
 def raster(parts):

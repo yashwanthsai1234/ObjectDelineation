@@ -3,7 +3,6 @@ location against the numpy oracle (docs/implementation2.0/specs/B.spec.md s5.2; 
 tests/experiments/test_scorer_sums.py,
 T13 left with adv_scale; T7-T9, T12, T14, T15 are tests/verify/test_reward_v5_advantages.py)."""
 import dataclasses
-import json
 
 import numpy as np
 import pytest
@@ -12,6 +11,7 @@ from oracles import score_numpy as host
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import gated_loc, location, score_completion, score_mask, sig_id
 from objdel.verify.reward.spec import REWARD_V5, RewardV5
+from tests.support.outlines import outline_text, square_ring
 from tests.support.shapes import disc as disc_hw
 from tests.verify.test_reward_v5_advantages import R_of, group
 
@@ -106,8 +106,7 @@ def test_t6_illegal_or_unparseable_answers_get_zero(cache):
 def test_completion_loc_matches_the_oracle(cache):
     caches = {"nodule": cache}
     x0, x1, y0, y1 = [round(v * 1000 / N) for v in (C[1] + 15, C[1] + 27, C[0] - 6, C[0] + 6)]
-    text = json.dumps({"nodule": [{"outer": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], "holes": []}]},
-                      separators=(",", ":"))
+    text = outline_text(square_ring(x0, y0, x1, y1))
     got = score_completion(text, False, ("nodule",), caches, N, N)
     assert got == host.score_completion(text, False, ("nodule",), caches, N, N) and got["loc"] > 0
 

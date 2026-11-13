@@ -18,6 +18,8 @@ from objdel.verify.reward.advantages import logged_terms
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_batch
 from objdel.verify.reward.spec import REWARD_V4, fingerprint
+from tests.support.outlines import outline_text, square_ring
+from tests.support.shapes import rect_mask
 
 
 def test_score_has_the_bits_of_the_shared_scoring_function(view_root, answers):
@@ -65,14 +67,11 @@ def test_stamp_and_spec_hold_the_fingerprint(view_root):
 
 def box(x0, y0, x1, y1, holes=()):
     """Outline text of one nodule part: the clockwise grid box (x0, y0)-(x1, y1) with hole rings `holes`."""
-    ring = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-    return json.dumps({"nodule": [{"outer": ring, "holes": [list(h) for h in holes]}]}, separators=(",", ":"))
+    return outline_text(square_ring(x0, y0, x1, y1), holes)
 
 
 def square(x0, y0, x1, y1, side=SIDE):
-    m = np.zeros((side, side), bool)
-    m[y0:y1, x0:x1] = True
-    return m
+    return rect_mask((side, side), x0, y0, x1, y1)
 
 
 def bits(r):
