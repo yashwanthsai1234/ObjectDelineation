@@ -123,27 +123,32 @@ def build_prompt(row, processor) -> tuple[str, list]:
     return (text[0] if isinstance(text, list) else text), [image]
 
 
-def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = None) -> list[dict]:
-    """The sampler child's completions -> eval_run rows {"item_id", "samples", "truncated", "tokens"} (tokens:
-    completion length in token ids, for verify.metrics' token stats; samples in k order, items in first-seen order).
-    ValueError unless every id has exactly the exported n samples k = 0 .. n-1, each once, and (with ids, the
-    exported keys) the ids are exactly those (a cut or doubled file would change K silently)."""
+def group(recs: Iterable[dict], n: int, ids: Iterable[str] | None = None, where="completions") -> dict[str, list]:
+    """Output records ({"id", "k", ...}) -> {id: its n records in k order}, ids in first-seen order. ValueError unless
+    every id has exactly n samples k = 0 .. n-1, each once, and (with ids) the ids are exactly those (a cut or doubled
+    file would change K silently)."""
     by: dict[str, dict[int, dict]] = {}
-    for c in read_jsonl(path):
+    for c in recs:
         if by.setdefault(c["id"], {}).setdefault(c["k"], c) is not c:
             raise ValueError(f"{c['id']}: sample k = {c['k']} twice")
     if ids is not None and set(by) != set(ids):
-        raise ValueError(f"{path}: missing: {sorted(set(ids) - set(by))[:5]}, not exported: "
+        raise ValueError(f"{where}: missing: {sorted(set(ids) - set(by))[:5]}, not exported: "
                          f"{sorted(set(by) - set(ids))[:5]}")
-    rows = []
     for key, cs in by.items():
         if sorted(cs) != list(range(n)):
             raise ValueError(f"{key}: {len(cs)} samples k = {sorted(cs)[:3]}.., want {n} samples k = 0 .. {n - 1}")
-        cs = [cs[k] for k in range(n)]
-        rows.append({"item_id": key, "samples": [c["text"] for c in cs],
-                     "truncated": [models.truncated(c["token_ids"], stop_ids) for c in cs],
-                     "tokens": [len(c["token_ids"]) for c in cs]})
-    return rows
+    return {key: [cs[k] for k in range(n)] for key, cs in by.items()}
+
+
+def _sample(key: str, cs: list[dict], stop) -> "Sample":
+    return Sample(key, tuple(c["text"] for c in cs), tuple(tuple(c["token_ids"]) for c in cs),
+                  tuple(models.truncated(c["token_ids"], stop) for c in cs))
+
+
+def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = None) -> list[dict]:
+    """The sampler child's completions -> eval_run rows (Sample.row; samples in k order, items in first-seen order),
+    through the checked `group`."""
+    return [_sample(key, cs, stop_ids).row() for key, cs in group(read_jsonl(path), n, ids, path).items()]
 
 
 def stop_ids(path: Path, proc) -> set[int]:
@@ -175,6 +180,12 @@ class Sample:
     token_ids: tuple[tuple[int, ...], ...]
     truncated: tuple[bool, ...]
 
+    def row(self) -> dict:
+        """The answers row the scorers read: {"item_id", "samples", "truncated", "tokens"} (tokens: completion length
+        in token ids, for verify.metrics' token stats)."""
+        return {"item_id": self.item_id, "samples": list(self.texts), "truncated": list(self.truncated),
+                "tokens": [len(t) for t in self.token_ids]}
+
 
 class Sampler(Protocol):
     """Rows (prompt, image path, key) and params_for's dict -> one Sample per row, in row order."""
@@ -190,16 +201,10 @@ def _rows_lines(rows: Sequence[Mapping], processor, model: str, params: Mapping[
 
 
 def samples(lines: list[dict], recs: Iterable[dict], stop) -> list[Sample]:
-    """Output records ({"id", "k", "text", "token_ids"}) -> one Sample per prompt line, in line order."""
-    by: dict[str, dict[int, dict]] = {}
-    for c in recs:
-        by.setdefault(c["id"], {})[c["k"]] = c
-    out = []
-    for x in lines:
-        cs = [by[x["id"]][k] for k in range(x["n"])]
-        out.append(Sample(x["id"], tuple(c["text"] for c in cs), tuple(tuple(c["token_ids"]) for c in cs),
-                          tuple(models.truncated(c["token_ids"], stop) for c in cs)))
-    return out
+    """Output records ({"id", "k", "text", "token_ids"}) -> one Sample per prompt line, in line order (the checked
+    `group`: every line's n samples, each once, and no other id)."""
+    by = group(recs, lines[0]["n"] if lines else 0, [x["id"] for x in lines], "samples")
+    return [_sample(x["id"], by[x["id"]], stop) for x in lines]
 
 
 FREE = 0.90  # of total device memory, before the vLLM engine starts

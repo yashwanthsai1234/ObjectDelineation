@@ -15,7 +15,7 @@ from objdel.core.io import read_json
 from objdel.geom.shape import canonicalize
 from objdel.geom.text import parse, serialize
 from objdel.policy.prompt import _user
-from objdel.policy.rows import _image, _verified, as_dataset, records, target_tokens
+from objdel.policy.rows import _image, _verified, as_dataset, outline_tokens, records, target_tokens
 from objdel.verify.store import voting
 
 
@@ -25,8 +25,8 @@ def sft_rows(root, dataset: str, split: str, tokenizer=None, max_tokens: int | N
     for r in _verified(root, records(root, dataset, split)):
         voters = voting(root, r, dataset)
         for i, (rater, text) in enumerate(zip(r["raters"], r["targets"], strict=True)):
-            if text is None or i not in voters or (max_tokens and target_tokens(tokenizer, text) + 1 > max_tokens):
-                continue  # max_tokens + 1: the end-of-turn token
+            if text is None or i not in voters or (max_tokens and outline_tokens(tokenizer, text) > max_tokens):
+                continue
             answer = {"role": "assistant", "content": [{"type": "text", "text": text}]}
             rows.append({"messages": [_user(dataset), answer], "image": _image(root, r["item_id"]),
                          "key": r["item_id"], "rater": rater})
@@ -106,8 +106,8 @@ def view_rows(view_dir, tokenizer=None, max_tokens: int | None = None, a0: bool 
         if a0:
             target = _no_holes(target, datasets.get(spec["dataset"]).names)
         n = target_tokens(tokenizer, target) if tokenizer else len(target)
-        if max_tokens and n + 1 > max_tokens:
-            continue  # + 1: the end-of-turn token
+        if max_tokens and n + 1 > max_tokens:  # outline_tokens on the n already counted (length column)
+            continue
         answer = {"role": "assistant", "content": [{"type": "text", "text": target}]}
         rows.append({"messages": [_user(spec["dataset"]), answer], "spec": json.dumps(spec), "key": spec["item_id"],
                      "rater": spec["rater"], "row_id": spec["row_id"], "epoch": spec["epoch"], "length": n})

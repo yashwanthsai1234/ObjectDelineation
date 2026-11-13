@@ -36,14 +36,13 @@ def encode(processor, x: dict):
 def teacher(model, processor, x: dict, ids: list[int]) -> np.ndarray:
     """HF logprobs (float32 log_softmax) of the sampled ids after prompt `x`."""
     import torch
-    enc = encode(processor, x)
+
+    from objdel.policy.vision import extend
+    enc = dict(encode(processor, x))
     n, comp = enc["input_ids"].shape[1], torch.tensor([ids])
     kw = {}
-    for k, v in enc.items():
-        if isinstance(v, torch.Tensor) and v.shape == (1, n):  # token-aligned: extend over the completion
-            tail = comp if k == "input_ids" else torch.ones_like(comp) if k == "attention_mask" else 0 * comp
-            v = torch.cat([v, tail.to(v.dtype)], 1)
-        elif isinstance(v, torch.Tensor) and v.is_floating_point():
+    for k, v in extend(enc, comp).items():  # token-aligned tensors extended over the completion
+        if isinstance(v, torch.Tensor) and v.is_floating_point():
             v = v.to(model.dtype)
         kw[k] = v.to(model.device) if isinstance(v, torch.Tensor) else v
     with torch.no_grad():

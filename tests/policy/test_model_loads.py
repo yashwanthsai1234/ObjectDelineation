@@ -41,7 +41,8 @@ def test_load_pair_passes_each_callers_dtype_device_and_keywords(monkeypatch):
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained",
                         lambda path, **kw: log.append(("proc", path, kw)) or SimpleNamespace())
     models.load_pair("/s", dtype="bf16", device="cuda", proc_kw={"padding_side": "left"})  # HF sampler
-    assert log == [("model", "/s", {"dtype": "bf16"}), ("to", "cuda"), ("eval",), ("proc", "/s", {"padding_side": "left"})]
+    assert log == [("model", "/s", {"dtype": "bf16"}), ("to", "cuda"), ("eval",),
+                   ("proc", "/s", {"padding_side": "left"})]
     log.clear()
     models.load_pair("/b", dtype="float32", device_map="cpu")  # G-vision in select: the saved processor as is
     assert log == [("model", "/b", {"dtype": "float32", "device_map": "cpu"}), ("eval",), ("proc", "/b", {})]

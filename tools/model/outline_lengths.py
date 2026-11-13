@@ -90,7 +90,7 @@ def answers(answer_rows: Iterable[dict], metric_rows: Iterable[dict]) -> dict:
 
 def tokens_of(tokenizer) -> Callable[[str], int]:
     """Outline length of a text: target tokens without special tokens + 1 end token."""
-    return lambda text: dataset.target_tokens(tokenizer, text) + 1
+    return lambda text: dataset.outline_tokens(tokenizer, text)
 
 
 def report(train: Path, views: list[Path], datasets: list[str], splits: list[str], tok: Callable[[str], int],

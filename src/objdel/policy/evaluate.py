@@ -145,8 +145,7 @@ def evaluate(sampler: "Sampler", rows: Sequence[Mapping], params: Mapping[str, A
     got = list(sampler.sample(rows, params))
     if len(got) != len(rows) or any(s.item_id != r["key"] for s, r in zip(got, rows, strict=True)):
         raise ValueError(f"evaluate: expected one Sample per row in row order, got {[s.item_id for s in got]}")
-    answers = [{"item_id": s.item_id, "samples": list(s.texts), "truncated": list(s.truncated),
-                "tokens": [len(t) for t in s.token_ids]} for s in got]
+    answers = [s.row() for s in got]
     keep(answers)
     results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view_root)
     return {"answers": answers, "results": results, "items": [per_item(r) for r in results]}

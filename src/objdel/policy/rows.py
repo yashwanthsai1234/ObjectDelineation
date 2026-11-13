@@ -72,6 +72,12 @@ def target_tokens(tokenizer, text: str) -> int:
     return len(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 
+def outline_tokens(tokenizer, text: str) -> int:
+    """The length rule of an answer against the completion budget: target tokens + 1 end-of-turn token (SFT drops a
+    target above the budget, the RL runaway cap and the I5 budget report count the same)."""
+    return target_tokens(tokenizer, text) + 1
+
+
 def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: int = 1, subset=None) -> list[dict]:
     """Prompt rows (prompt, image path, key, W, H, names) of the records (images checked against them): RL-eligible
     items only, or with rl_only=False every item (probe views, whose records are rl: false); disagreement items

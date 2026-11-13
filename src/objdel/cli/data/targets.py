@@ -47,7 +47,9 @@ def _tokens(text):
     if not _TOK:
         from objdel.policy.models import tokenizer
         _TOK.update({k: tokenizer(k)[0] for k in MODELS})
-    return {k: len(t(text, add_special_tokens=False)["input_ids"]) for k, t in _TOK.items()}
+    from objdel.policy.rows import target_tokens
+
+    return {k: target_tokens(t, text) for k, t in _TOK.items()}
 
 
 def _job(job):

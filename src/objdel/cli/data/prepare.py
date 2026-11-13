@@ -31,7 +31,7 @@ def token_budget(out):
     for m, entry in MODELS.items():
         tok = tokenizer(m)[0]
         for ds in sorted({k.split("/")[0] for k in read_json(Path(out, "manifest.json"))["sets"]}):
-            n = [len(tok(t, add_special_tokens=False)["input_ids"]) + 1
+            n = [policy_rows.outline_tokens(tok, t)
                  for r in policy_rows.records(out, ds, "train") for t in r["targets"] if t]
             over = sorted(x for x in n if x > entry.max_completion)
             res[f"{m}/{ds}"] = {"targets": len(n), "budget": entry.max_completion, "over": len(over), "max": max(n),
