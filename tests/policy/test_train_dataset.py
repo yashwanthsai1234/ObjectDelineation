@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.core.hashing import file_sha256
+
 pytest.importorskip("pyarrow")
 pytest.importorskip("datasets")
 
@@ -48,7 +50,7 @@ def test_prepare_counts_skips_and_layout(prepared):
     assert not (out / "caches" / "lidc/1.2.1/n000/z003").exists()  # one rater: not RL-eligible, no cache
     assert json.loads((out / "manifest.json").read_text()) == m
     for rel, entry in m["files"].items():
-        assert hashlib.sha256((out / rel).read_bytes()).hexdigest() == entry["sha256"]
+        assert file_sha256(out / rel) == entry["sha256"]
 
 
 def test_records_and_cache_loader(prepared):
@@ -239,7 +241,7 @@ def test_r1_round_trip_on_the_prepared_train_set(dataset):
         pytest.skip(f"no prepared set at {PREPARED} (run src/objdel/cli/data/prepare.py)")
     m = json.loads((PREPARED / "manifest.json").read_text())
     rel = f"{dataset}/train.jsonl"
-    assert hashlib.sha256((PREPARED / rel).read_bytes()).hexdigest() == m["files"][rel]["sha256"]
+    assert file_sha256(PREPARED / rel) == m["files"][rel]["sha256"]
     n, abstained, bad = round_trip(PREPARED, dataset, "train")
     assert n + abstained == m["sets"][f"{dataset}/train"]["rl_targets"] and not bad[:5]
     rl = {r["item_id"] for r in policy_rows.records(PREPARED, dataset, "train") if r["rl"]}

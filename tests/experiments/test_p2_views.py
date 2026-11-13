@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from objdel.core import datasets
-from objdel.core.hashing import pixels_sha256
+from objdel.core.hashing import file_sha256, pixels_sha256
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
@@ -273,7 +273,7 @@ def test_view_rows_schema_order_and_repeats(views, synthetic_items):
     ring = [r for r in rows if r["item_id"].endswith("z001") and r["rater"] == "2"]
     assert not any(r["simple"] for r in ring) and all(r["simple"] for r in rows if r not in ring)
     assert len({(tuple(r["offset"]), r["side"], r["op"], r["noise_seed"]) for r in ring}) == len(ring)
-    assert m["view_hash"] == hashlib.sha256((d / "rows.jsonl").read_bytes()).hexdigest()
+    assert m["view_hash"] == file_sha256(d / "rows.jsonl")
     assert m["counts"]["rows"] == len(rows) and m["view"] == "lidc-train"
     for r in rows:
         lo, hi = r["window"]
@@ -309,7 +309,7 @@ def test_view_manifest_pins_every_context(views):
     d = root / "v1" / "lidc-train"
     assert set(m["contexts"]) == {r["item_id"] for r in _rows(d)}
     for item_id, sha in m["contexts"].items():
-        assert hashlib.sha256((d / "context" / f"{item_id}.npz").read_bytes()).hexdigest() == sha
+        assert file_sha256(d / "context" / f"{item_id}.npz") == sha
     assert json.loads((d / "manifest.json").read_text())["contexts"] == m["contexts"]
 
 

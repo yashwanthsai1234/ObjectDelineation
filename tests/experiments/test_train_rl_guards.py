@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from objdel.core.hashing import file_sha256
 from objdel.rl import run as rl_run
 
 H = 3600.0
@@ -203,7 +204,7 @@ def make_root(tmp_path, steps=4, per_step=32, block_steps=2, schedule=True):
         m["schedule"] = dict(steps=steps, per_step=per_step, block_steps=block_steps,
                              ids_sha256=hashlib.sha256("\n".join(ids).encode()).hexdigest())
     (tmp_path / "manifest.json").write_text(json.dumps(m))
-    return tmp_path, ids, hashlib.sha256((tmp_path / "manifest.json").read_bytes()).hexdigest()
+    return tmp_path, ids, file_sha256(tmp_path / "manifest.json")
 
 
 def test_schedule_root_needs_the_pinned_manifest(tmp_path):
@@ -311,7 +312,7 @@ def schedule_root(prepared, out, steps=4, per_step=1, block_steps=2):
     m["schedule"] = {"steps": steps, "per_step": per_step, "block_steps": block_steps, "files_count": 0,
                      "ids_sha256": hashlib.sha256("\n".join(keys).encode()).hexdigest()}
     (out / "manifest.json").write_text(json.dumps(m, indent=1))
-    return out, keys, hashlib.sha256((out / "manifest.json").read_bytes()).hexdigest()
+    return out, keys, file_sha256(out / "manifest.json")
 
 
 SMOKE = {"per_device_train_batch_size": 8, "gradient_accumulation_steps": 1, "per_device_eval_batch_size": 8,
@@ -342,7 +343,7 @@ def test_refusals_come_before_any_load(prepared, tmp_path, no_load, case, match)
         m = json.loads((root / "manifest.json").read_text())
         m["schedule"]["steps"] = 5
         (root / "manifest.json").write_text(json.dumps(m))
-        sha = hashlib.sha256((root / "manifest.json").read_bytes()).hexdigest()
+        sha = file_sha256(root / "manifest.json")
     grpo = SMOKE | ({"num_iterations": 2} if case == "iterations" else {})
     grpo |= {"per_device_train_batch_size": 16} if case == "per_step" else {}
     argv = ["--model", "qwen3-vl-2b", "--ckpt", str(tmp_path / "none"), "--train", str(root), "--out",

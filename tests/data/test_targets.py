@@ -21,6 +21,7 @@ from objdel.geom.topology import min_area, signature, size_filter
 from tests.oracles.crops_oracle import mask_sha, pad_div
 from tests.oracles.kept_oracle import kept
 from tests.oracles.polygonize_oracle import polygonize
+from tests.support.shapes import disc as disc_hw
 
 
 def check(masks, names, ma=None, cfg=None):
@@ -73,8 +74,7 @@ def place(m, S, at=(0, 0)):
 
 
 def disc(S, cy, cx, r):
-    y, x = np.mgrid[:S, :S]
-    return (y - cy) ** 2 + (x - cx) ** 2 <= r * r
+    return disc_hw(S, S, cy, cx, r)
 
 
 CASES = {

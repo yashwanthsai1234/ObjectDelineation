@@ -17,6 +17,7 @@ from objdel.geom.shape import pack_objects
 from objdel.geom.text import GRID, MAX_RINGS
 from tests.oracles import cuda_parity as C
 from tests.oracles.kept_oracle import kept as kept_oracle
+from tests.support.shapes import disc as disc_hw
 
 
 def pack_masks(ms):
@@ -248,8 +249,7 @@ class Spy:
 
 
 def _disc(S, cy, cx, r):
-    y, x = np.ogrid[:S, :S]
-    return (y - cy) ** 2 + (x - cx) ** 2 <= r * r
+    return disc_hw(S, S, cy, cx, r)
 
 
 def test_one_call_per_name_and_level(monkeypatch):

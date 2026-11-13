@@ -22,6 +22,7 @@ from unittest import mock
 import pytest
 
 from objdel.core import datasets
+from objdel.core.hashing import file_sha256
 from objdel.core.io import git_sha
 from objdel.infra import bundle as B
 from objdel.infra import preflight as PF
@@ -1018,7 +1019,7 @@ def test_bundle_lidc_members_manifest_and_determinism(tmp_path):
     b = B.build("lidc", d, tmp_path / "out2")
     assert a.name == "bundle-lidc.tar" and a.read_bytes() == b.read_bytes()  # byte-identical builds
     side = (tmp_path / "out1" / "bundle-lidc.tar.sha256").read_text()
-    assert side == f"{hashlib.sha256(a.read_bytes()).hexdigest()}  bundle-lidc.tar\n"
+    assert side == f"{file_sha256(a)}  bundle-lidc.tar\n"
     with tarfile.open(a) as t:
         names = t.getnames()
         sums = dict(ln.split("  ")[::-1] for ln in t.extractfile("SHA256SUMS").read().decode().splitlines())

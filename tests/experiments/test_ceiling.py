@@ -10,14 +10,13 @@ import pytest
 from objdel.verify import ceiling as C
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.shapes import annulus
 
 H = W = 64
 
 
 def disc(cy, cx, r, hole=0):
-    y, x = np.ogrid[:H, :W]
-    d2 = (y - cy) ** 2 + (x - cx) ** 2
-    return (d2 <= r * r) & (d2 > hole * hole)
+    return annulus(H, W, cy, cx, r, hole)
 
 
 def rect(y0, y1, x0, x1):

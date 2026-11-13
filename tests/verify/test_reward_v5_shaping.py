@@ -12,6 +12,7 @@ from oracles import score_numpy as host
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import gated_loc, location, score_completion, score_mask, sig_id
 from objdel.verify.reward.spec import REWARD_V5, RewardV5
+from tests.support.shapes import disc as disc_hw
 from tests.verify.test_reward_v5_advantages import R_of, group
 
 N = 96
@@ -19,8 +20,7 @@ C = (48, 30)  # nodule centre (row, column)
 
 
 def disk(r, cy, cx):
-    yy, xx = np.mgrid[:N, :N]
-    return (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
+    return disc_hw(N, N, cy, cx, r)
 
 
 @pytest.fixture(scope="module")

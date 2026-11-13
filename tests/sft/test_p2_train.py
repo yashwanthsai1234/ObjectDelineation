@@ -11,6 +11,8 @@ import types
 import numpy as np
 import pytest
 
+from objdel.core.hashing import file_sha256
+
 pytest.importorskip("datasets")
 pytest.importorskip("trl")
 
@@ -66,7 +68,7 @@ def view_dir(tmp_path_factory, disc_mask):
         path = root / "context" / f"{item}.npz"
         path.parent.mkdir(parents=True, exist_ok=True)
         np.savez(path, pixels=px, x0=0, y0=0)
-        contexts[item] = hashlib.sha256(path.read_bytes()).hexdigest()
+        contexts[item] = file_sha256(path)
     (root / "manifest.json").write_text(json.dumps({"view": root.name, "contexts": contexts, "view_hash":
                                                     hashlib.sha256(text.encode()).hexdigest()}))
     return root, rows

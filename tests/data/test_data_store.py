@@ -1,6 +1,5 @@
 """Parquet store: exact round trip, deterministic bytes (K10), manifest, contract checks (tampered files:
 tests/data/test_breakit_data.py::test_store_tampering_is_detected)."""
-import hashlib
 import json
 
 import numpy as np
@@ -9,6 +8,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.extra.numpy import arrays
 
+from objdel.core.hashing import file_sha256
 from objdel.data import store
 from objdel.data.store import Item
 
@@ -72,7 +72,7 @@ def test_manifest_lists_hashes_and_rows(tmp_path):
     assert {k: v["rows"] for k, v in m["files"].items()} == {
         "lidc/val.parquet": 3, "riga/test.parquet": 1, "riga/train.parquet": 2}
     for rel, f in m["files"].items():
-        assert hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest() == f["sha256"]
+        assert file_sha256(tmp_path / rel) == f["sha256"]
     assert store.verify(tmp_path) == m
 
 

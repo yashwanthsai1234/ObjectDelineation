@@ -2,7 +2,6 @@
 preloaded caches, and the K3/K4 harness. CI-safe: a mini prepared layout is written from the conftest synthetic items
 (no datasets, no torch); the real-data K3 run is evidence in docs/archive/experiments/phase2/impl/M3.md."""
 
-import hashlib
 import json
 import pickle
 import shutil
@@ -14,6 +13,7 @@ import pytest
 from harness.k3_harness import make_jobs
 
 from objdel.core import datasets
+from objdel.core.hashing import file_sha256
 from objdel.rl.reward import TRLReward
 from objdel.sft import select as sft_select
 from objdel.verify import store as serve
@@ -46,7 +46,7 @@ def _write_prepared(out: Path, items) -> Path:
         p = out / f"{rel}.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("".join(json.dumps(r) + "\n" for r in rows))
-        files[f"{rel}.jsonl"] = {"sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+        files[f"{rel}.jsonl"] = {"sha256": file_sha256(p)}
     (out / "manifest.json").write_text(json.dumps({"files": files, "sets": {k: {} for k in sets}}))
     return out
 

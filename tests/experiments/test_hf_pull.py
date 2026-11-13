@@ -1,7 +1,6 @@
 """hf_pull (box) and fetch_hf.sh (Mac): a model revision from the private HF repo onto the box for RL; the token
 travels on the ssh session's stdin only, as for push_hf (never on argv, in the environment or on disk)."""
 
-import hashlib
 import io
 import json
 import shlex
@@ -11,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from objdel.core.hashing import file_sha256
 
 hub = pytest.importorskip("huggingface_hub")
 from objdel.cli.hub import pull as L  # noqa: E402
@@ -113,7 +114,7 @@ def rows_root(tmp: Path, files_count=2) -> tuple[Path, str]:
     (d / "lidc/train.jsonl").write_text("{}")
     (d / "images.png").write_bytes(b"x")
     (d / "manifest.json").write_text(json.dumps({"schedule": {"files_count": files_count}}))
-    return d, hashlib.sha256((d / "manifest.json").read_bytes()).hexdigest()
+    return d, file_sha256(d / "manifest.json")
 
 
 @pytest.mark.parametrize("case", ["ok", "sha", "count", "missing"])

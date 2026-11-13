@@ -17,13 +17,13 @@ from objdel.data.targets.build import build_target, min_areas
 from objdel.verify import gates
 from objdel.verify.metrics import hm_iou, metrics, min_mode_retention, summarize, tv_js
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.shapes import disc as disc_hw
 
 S = 50
 
 
 def disk(cy, cx, r, side=S):
-    yy, xx = np.ogrid[:side, :side]
-    return (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
+    return disc_hw(side, side, cy, cx, r)
 
 
 def raters_and_targets():

@@ -13,13 +13,13 @@ from pathlib import Path
 import numpy as np
 
 from objdel.data.targets.build import build_target, min_areas
+from tests.support.shapes import disc as disc_hw
 
 GOLDEN = Path(__file__).resolve().parents[1] / "goldens" / "d_r02_targets.json"
 
 
 def _disc(h, w, cy, cx, r):
-    y, x = np.ogrid[:h, :w]
-    return (y - cy) ** 2 + (x - cx) ** 2 <= r * r
+    return disc_hw(h, w, cy, cx, r)
 
 
 def fixtures(seed=20261109):

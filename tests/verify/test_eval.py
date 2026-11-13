@@ -28,13 +28,13 @@ from objdel.verify.metrics import (
     tv_js,
 )
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.shapes import disc as disc_hw
 
 S = 50  # frame side (divides 1000)
 
 
 def disk(cy, cx, r, side=S):
-    yy, xx = np.ogrid[:side, :side]
-    return (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
+    return disc_hw(side, side, cy, cx, r)
 
 
 def nodule_raters():

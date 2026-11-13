@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from objdel.cli.eval import run as CLI
+from objdel.core.hashing import file_sha256
 from objdel.policy import evaluate as EV
 from objdel.policy import final_eval as FE
 from objdel.verify import stats as S
@@ -466,7 +467,7 @@ def test_full_run_replaces_the_partial(ev, tmp_path, monkeypatch):
     assert fe["partial"] is False and fe["schema"] == 2 and RUN_SHA_KEYS <= set(fe)
     assert (fe["K"], fe["seed"], fe["split"], fe["items"], fe["patients"]) == (8, 11, "val", 6, 3)
     assert fe["checker_build"] == _gpucheck.build() and set(fe["noise_floor"]) == {"item_sd", "mean_sd"}
-    assert fe["view_manifest_sha256"] == hashlib.sha256((ev / "manifest.json").read_bytes()).hexdigest()
+    assert fe["view_manifest_sha256"] == file_sha256(ev / "manifest.json")
     assert fe["view_content_sha256"] == FE.Q.view_content_sha256(ev)
     ans, met, items = jsonl(out / "answers.jsonl"), jsonl(out / "metrics.jsonl"), jsonl(out / "items.jsonl")
     ids = [r["item_id"] for r in policy_rows.records(ev, "lidc", "val") if r["rl"]]
@@ -938,7 +939,7 @@ def test_frozen_check_ignores_manifest_versions_and_reward_fingerprint(frozen):
 def test_frozen_entry_is_a_content_hash_not_the_manifest_sha(frozen):
     """A frozen entry that holds view_manifest_sha256 (the manifest file's SHA-256) never passes."""
     d, f = frozen
-    f.write_text(json.dumps({d.name: {"content_sha256": hashlib.sha256((d / "manifest.json").read_bytes()).hexdigest(),
+    f.write_text(json.dumps({d.name: {"content_sha256": file_sha256(d / "manifest.json"),
                                       "target_set_sha256": "t" * 64}}))
     with pytest.raises(FE.Refusal, match="content_sha256"):
         FE.check_view(d, "lidc", "test")

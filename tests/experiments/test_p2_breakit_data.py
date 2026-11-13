@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from objdel.core import datasets
+from objdel.core.hashing import file_sha256
 from objdel.data import store
 from objdel.data.store import Item
 from objdel.data.targets import augment
@@ -286,7 +287,7 @@ def test_epoch_prefix_and_process_count_determinism(bk_views):
                                   ).read_bytes()
     per = {e: [(r["offset"], r["side"], r["op"]) for r in r3 if r["epoch"] == e] for e in range(3)}
     assert per[0] != per[1] != per[2] and len(per[0]) == len(per[1]) == len(per[2])
-    assert m3["view_hash"] == hashlib.sha256((root / "e3/lidc-train/rows.jsonl").read_bytes()).hexdigest()
+    assert m3["view_hash"] == file_sha256(root / "e3/lidc-train/rows.jsonl")
 
 
 def test_row_counts_voting_raters_and_repeats(bk_views):

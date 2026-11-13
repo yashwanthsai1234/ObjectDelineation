@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.support.shapes import disc as disc_hw
+
 pytest.importorskip("pyarrow")
 pytest.importorskip("datasets")
 
@@ -36,8 +38,7 @@ def need(path: Path) -> Path:
 
 
 def disc(h, w, cy, cx, r):
-    y, x = np.ogrid[:h, :w]
-    return (y - cy) ** 2 + (x - cx) ** 2 <= r * r
+    return disc_hw(h, w, cy, cx, r)
 
 
 def prepared(tmp_path) -> Path:

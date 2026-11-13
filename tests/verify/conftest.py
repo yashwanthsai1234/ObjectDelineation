@@ -1,20 +1,20 @@
 """A tiny prepared view root (one item, one object) and answers for it, built in tmp_path."""
-import hashlib
 import json
 
 import numpy as np
 import pytest
 
+from objdel.core.hashing import file_sha256
 from objdel.data.targets.build import build_target
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.shapes import disc as disc_hw
 
 SIDE = 50
 KEY = "lidc/1.2.0/n000/z000"
 
 
 def disk(cy, cx, r):
-    yy, xx = np.ogrid[:SIDE, :SIDE]
-    return (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
+    return disc_hw(SIDE, SIDE, cy, cx, r)
 
 
 def build_root(root, items):
@@ -29,7 +29,7 @@ def build_root(root, items):
     records.parent.mkdir(parents=True)
     records.write_text("\n".join(lines) + "\n")
     (root / "manifest.json").write_text(json.dumps({"files": {"lidc/val.jsonl": {
-        "sha256": hashlib.sha256(records.read_bytes()).hexdigest()}}}))
+        "sha256": file_sha256(records)}}}))
     return root
 
 

@@ -2,12 +2,13 @@
 (tests/experiments/test_trl_adapter_equivalence.tiny_model) with a LoRA adapter; the real 2B run is the `data` test at
 the end."""
 
-import hashlib
 import math
 import os
 from pathlib import Path
 
 import pytest
+
+from objdel.core.hashing import file_sha256
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("peft")
@@ -93,10 +94,6 @@ def test_report_signed_and_absolute_gaps_by_64_token_bins():
     assert all(math.isfinite(v) for b in r["bins"] for v in (b["signed"], b["abs"]))
 
 
-def sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 @pytest.mark.data
 def test_g04_mac_part_on_the_full_run(tmp_path):
     """G04 CPU half on the real checkpoint (1 prompt x 2 answers): finite gaps for every pair, adapter unchanged."""
@@ -104,14 +101,14 @@ def test_g04_mac_part_on_the_full_run(tmp_path):
     adapter = root / "rl/train_rl/trainer/checkpoint-100"
     if not (adapter / "adapter_model.safetensors").exists():
         pytest.skip(f"no adapter at {adapter}")
-    h = sha(adapter / "adapter_model.safetensors")
+    h = file_sha256(adapter / "adapter_model.safetensors")
     out = tmp_path / "attr.json"
     assert B.main(["--adapters", str(adapter), "--prompts", "1", "--k", "2", "--out", str(out)]) == 0
     doc = __import__("json").loads(out.read_text())
     pairs = doc["adapters"][str(adapter)]
     assert set(pairs) == {f"{a}-{b}" for a, b in B.PAIRS}
     assert all(math.isfinite(p["signed"]) and math.isfinite(p["abs"]) and p["bins"] for p in pairs.values())
-    assert sha(adapter / "adapter_model.safetensors") == h
+    assert file_sha256(adapter / "adapter_model.safetensors") == h
 
 
 def test_default_adapters_are_the_plan_checkpoints_100_and_770():

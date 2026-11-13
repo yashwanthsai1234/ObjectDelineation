@@ -2,13 +2,13 @@
 FastGRPO: __init__ and _generate) is patched to raise; the sampler is a stub and the scoring is real (score_items and
 per_item on the preloaded caches of a tiny view root built in tmp_path)."""
 import ast
-import hashlib
 import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from objdel.core.hashing import file_sha256
 from objdel.policy import evaluate as EV
 from objdel.policy.sampler import Sample
 from objdel.verify import store as serve
@@ -47,7 +47,7 @@ def view_root(tmp_path, clean_store) -> Path:
     records.parent.mkdir()
     records.write_text(json.dumps({"item_id": KEY, "rl": True, "caches": {"nodule": digest}}) + "\n")
     (tmp_path / "manifest.json").write_text(json.dumps({"files": {"lidc/val.jsonl": {
-        "sha256": hashlib.sha256(records.read_bytes()).hexdigest()}}}))
+        "sha256": file_sha256(records)}}}))
     serve.preload(tmp_path, ["lidc"])
     return tmp_path.resolve()
 
