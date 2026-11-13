@@ -18,7 +18,7 @@ from objdel.cli.hub import pull as L  # noqa: E402
 from objdel.infra import hf as H  # noqa: E402
 from objdel.infra.errors import InfraError  # noqa: E402
 from objdel.infra.vast import __main__ as P  # noqa: E402
-from tests.experiments.test_p2_hf_push import REPO, token  # noqa: E402
+from tests.support.hf_fakes import REPO, fake_mac, token  # noqa: E402
 
 
 def test_hf_pull_downloads_the_revision_with_the_stdin_token(tmp_path, monkeypatch):
@@ -45,12 +45,7 @@ def test_hf_pull_refuses_without_a_token(monkeypatch):
 
 
 def box(monkeypatch) -> list:
-    sent = []
-    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "ip": "1.2.3.4", "port": 22})
-    monkeypatch.setattr(P, "secret", lambda s: {"objdel-hf-write": "hf_secret"}[s])
-    monkeypatch.setattr(H, "whoami", lambda tok: token())
-    monkeypatch.setattr(P, "remote", lambda run, cmd, stdin=None, what="": sent.append((cmd, stdin, what)))
-    return sent
+    return fake_mac(monkeypatch, token())
 
 
 def fetch(revision=None, rows=None, name="ckpt"):
