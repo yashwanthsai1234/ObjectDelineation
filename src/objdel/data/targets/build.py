@@ -170,7 +170,20 @@ def _climb(name, rings, ladder, level, ref, min_area, exact, iou_min, W, H):
 def min_areas(stacks: Mapping[str, np.ndarray]) -> dict[str, int]:
     """The reward's size rule per structure of one item's rater stacks {name: (k, H, W)}: min_area of the union of
     all raters, as ExpertCache computes it. This is build_target's min_area argument for every rater of the item."""
-    return {n: topology.min_area(int(s.any(0).sum())) for n, s in stacks.items()}
+    return {n: topology.union_min_area(s) for n, s in stacks.items()}
+
+
+def rater_targets(stacks: Mapping[str, np.ndarray], names, k: int, cfg: BuildConfig | None = None
+                  ) -> tuple[dict[str, int], list["Target | ValueError"]]:
+    """(min_areas(stacks), one entry per rater r < k): build_target of rater r's masks of one item's frame stacks
+    {name: (k, H, W)} at that size rule, or the ValueError it raised (each caller handles a failed build its way)."""
+    ma, out = min_areas(stacks), []
+    for r in range(k):
+        try:
+            out.append(build_target({n: stacks[n][r] for n in names}, names, cfg, ma))
+        except ValueError as e:
+            out.append(e.with_traceback(None))  # the frames of the failed build are not kept alive
+    return ma, out
 
 
 def build_target(masks: Mapping[str, np.ndarray], names, cfg: BuildConfig | None = None,

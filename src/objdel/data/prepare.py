@@ -36,7 +36,7 @@ from objdel.core import datasets
 from objdel.core.hashing import pixels_sha256
 from objdel.core.io import read_json, write_json, write_jsonl
 from objdel.data import store
-from objdel.data.targets.build import build_target, min_areas, target_set_hash
+from objdel.data.targets.build import rater_targets, target_set_hash
 from objdel.data.targets.frame import frame
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
 from objdel.verify.reward.score import rater_answers
@@ -114,14 +114,9 @@ def _prepare(job) -> dict:
     worker never reads the dataset registry."""
     out, item_id, names, group_id, raters, f = job
     _check_id(out, item_id)
-    ma = min_areas(f.masks)  # the reward's size rule
-    targets, errors = [], []
-    for r, rater in enumerate(raters):
-        try:
-            targets.append(build_target({n: f.masks[n][r] for n in names}, names, None, ma).text)
-        except ValueError as e:
-            targets.append(None)
-            errors.append([item_id, rater, str(e)])
+    _, built = rater_targets(f.masks, names, len(raters))  # at the reward's size rule
+    targets = [None if isinstance(t, ValueError) else t.text for t in built]
+    errors = [[item_id, rater, str(t)] for rater, t in zip(raters, built, strict=True) if isinstance(t, ValueError)]
     write_png(Path(out, "images", item_id + ".png"), f.image)
     rec = {"item_id": item_id, "group_id": group_id, "W": f.W, "H": f.H, "box": list(map(int, f.box)),
            "scale": f.scale, "raters": list(raters), "targets": targets, "rl": rl_eligible(raters),

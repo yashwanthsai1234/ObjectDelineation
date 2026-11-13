@@ -44,7 +44,7 @@ from objdel.data.targets.build import build_target
 from objdel.data.targets.frame import DIVISORS, LUNG_WINDOW, rgb
 from objdel.geom.shape import canonicalize, to_mask
 from objdel.geom.text import GRID, parse, serialize
-from objdel.geom.topology import min_area, signature, size_filter
+from objdel.geom.topology import min_area, signature, size_filter, union_min_area
 from objdel.verify.reward.cache import boundary  # foreground pixels with a 4-adjacent background pixel
 
 SHAPE = (0.2, 0.15)
@@ -303,7 +303,7 @@ def lidc_stats(store_root):
     for it in store.load("lidc", "train", store_root):
         f = frame(it)
         st = f.masks["nodule"]
-        ma = min_area(int(st.any(0).sum()))
+        ma = union_min_area(st)
         sigs = [signature(m, ma) for m in st]
         vote = voters(sigs)
         for i in vote:

@@ -31,7 +31,7 @@ import numpy as np
 from objdel.core import datasets
 from objdel.data import store
 from objdel.data.prepare import versions
-from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
+from objdel.data.targets.build import BuildConfig, rater_targets, target_set_hash
 from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse, serialize
@@ -54,15 +54,13 @@ def _job(job):
     item_id, ds, raters, masks = job
     names = datasets.get(ds).names
     W = next(iter(masks.values())).shape[2]
-    ma = min_areas(masks)
+    ma, built = rater_targets(masks, names, len(raters), BuildConfig())
     rows = []
-    for r, rater in enumerate(raters):
+    for r, (rater, t) in enumerate(zip(raters, built, strict=True)):
         src = {n: masks[n][r] for n in names}
         row = {"item_id": item_id, "rater": rater, "W": W}
-        try:
-            t = build_target(src, names, BuildConfig(), ma)
-        except ValueError as e:
-            rows.append({**row, "error": str(e)})
+        if isinstance(t, ValueError):
+            rows.append({**row, "error": str(t)})
             continue
         p = parse(t.text, names)
         row.update(text=t.text, parse=p.ok, time=t.info["time"], tokens=_tokens(t.text), obj={})

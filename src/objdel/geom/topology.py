@@ -133,6 +133,11 @@ def min_area(union_area: int) -> int:
     return max(5, -(-int(union_area) // 200))  # integer ceil(union_area / 200)
 
 
+def union_min_area(stack: np.ndarray) -> int:
+    """The reward's size rule of one structure's rater stack (k, H, W): min_area of the raters' union pixel count."""
+    return min_area(int(stack.any(0).sum()))
+
+
 def filtered(masks: Sequence, min_area) -> list[tuple[np.ndarray, int, int]]:
     """(size_filter(mask, min_area), b0, b1 of it) of each mask, in one engine call (min_area: one value or one per
     mask)."""

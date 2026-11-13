@@ -43,6 +43,7 @@ import numpy as np
 from objdel.geom import engine as _gpucheck
 from objdel.geom.shape import pack_objects
 from objdel.geom.text import GRID, parse
+from objdel.geom.topology import as_mask, pack_masks
 from objdel.verify.reward.cache import ExpertCache, device_many
 from objdel.verify.reward.spec import REWARD_V5
 
@@ -96,12 +97,9 @@ def _object(r: dict, i: int, cache: ExpertCache) -> ObjectTerms:
 def score_mask(mask: np.ndarray, cache: ExpertCache) -> ObjectTerms:
     """Terms of one object's mask (H, W) against its cache, on the device (for masks that do not come from a
     completion: baselines, reward gates)."""
-    m = np.ascontiguousarray(mask, dtype=bool)
-    if m.shape != cache.union.shape:
-        raise ValueError(f"mask shape {m.shape} != cache shape {cache.union.shape}")
-    H, W = m.shape
-    r = _gpucheck.score_masks(m.view(np.uint8).reshape(-1), np.array([[H, W]], np.int32),
-                              np.array([0, H * W], np.int64), np.array([cache.device()], np.int64))
+    if np.shape(mask) != cache.union.shape:
+        raise ValueError(f"mask shape {np.shape(mask)} != cache shape {cache.union.shape}")
+    r = _gpucheck.score_masks(*pack_masks([as_mask(mask)]), np.array([cache.device()], np.int64))
     return _object(r, 0, cache)
 
 
