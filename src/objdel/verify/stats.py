@@ -102,7 +102,7 @@ def per_item(groups: Sequence[dict]) -> dict[str, np.ndarray]:
 def cluster(item_id: str) -> str:
     """The cluster of an item id (LIDC: its nodule): the id without its dataset entry's last cluster_depth path parts
     (objdel.core.datasets), the id itself for depth 0 or an unregistered prefix."""
-    entry = datasets.DATASETS.get(item_id.split("/")[0])
+    entry = datasets.DATASETS.get(datasets.of(item_id))
     return item_id.rsplit("/", entry.cluster_depth)[0] if entry and entry.cluster_depth else item_id
 
 

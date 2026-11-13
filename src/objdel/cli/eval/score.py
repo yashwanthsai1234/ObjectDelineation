@@ -44,7 +44,7 @@ def load_frames(root, split: str, ids=None, every: dict | None = None) -> dict:
     every = {dataset: n} keeps every n-th item). Streams the store and keeps only the framed masks (a RIGA item's
     full-size rater stacks are ~40 MB, its frame ~3 MB). KeyError if a requested id is missing."""
     want = None if ids is None else set(ids)
-    datasets = tuple(registry.DATASETS) if want is None else sorted({i.split("/")[0] for i in want})
+    datasets = tuple(registry.DATASETS) if want is None else sorted({registry.of(i) for i in want})
     out = {}
     for ds in datasets:
         for i, it in enumerate(store.load(ds, split, root)):

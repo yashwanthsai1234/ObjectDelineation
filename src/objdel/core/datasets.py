@@ -73,6 +73,11 @@ LIDC = Dataset(
 DATASETS: dict[str, Dataset] = {d.name: d for d in (LIDC,)}
 
 
+def of(item_id: str) -> str:
+    """The dataset name of an item id: its first path part (every item id starts with its dataset)."""
+    return item_id.split("/")[0]
+
+
 def get(name: str) -> Dataset:
     """The entry of `name`; KeyError naming the registered datasets."""
     if name not in DATASETS:

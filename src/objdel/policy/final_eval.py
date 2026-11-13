@@ -34,6 +34,7 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core import datasets
 from objdel.core.hashing import file_sha256
 from objdel.core.io import code_sha, read_json, read_jsonl
 from objdel.core.io import write_atomic as _write
@@ -144,7 +145,7 @@ def resummarize(run: Path, out: Path, store: Path) -> None:
 
     doc = read_json(run / "final_eval.json")
     items = read_jsonl(run / "items.jsonl")
-    (dataset,) = {it["item_id"].split("/")[0] for it in items}  # an item id starts with its dataset
+    (dataset,) = {datasets.of(it["item_id"]) for it in items}
     table = pq.read_table(store / dataset / f"{doc['split']}.parquet", columns=["item_id", "group_id"])
     found = {i: g for i, g in zip(*table.to_pydict().values(), strict=True) if g}
     lost = [it["item_id"] for it in items if it["item_id"] not in found]

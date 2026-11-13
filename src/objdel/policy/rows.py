@@ -77,6 +77,11 @@ def _verified(root, recs: list[dict]) -> list[dict]:
     return recs
 
 
+def draw_subset(seq, n: int, seed: int) -> list:
+    """n elements of seq drawn once without replacement with numpy's default_rng(seed), kept in seq order."""
+    return [seq[i] for i in sorted(np.random.default_rng(seed).choice(len(seq), n, replace=False))]
+
+
 def target_tokens(tokenizer, text: str) -> int:
     """Token count of the text under the tokenizer, without special tokens."""
     return len(tokenizer(text, add_special_tokens=False)["input_ids"])
@@ -90,8 +95,7 @@ def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: in
     kind and cell); other records have no such columns."""
     recs = [r for r in records(root, dataset, split) if r["rl"] or not rl_only]
     if subset and subset[0] < len(recs):
-        n, seed = subset
-        recs = [recs[i] for i in sorted(np.random.default_rng(seed).choice(len(recs), n, replace=False))]
+        recs = draw_subset(recs, *subset)
     return [{"prompt": [_user(dataset)], "image": _image(root, r["item_id"]), "key": r["item_id"], "W": r["W"],
              "H": r["H"], "names": list(datasets.get(dataset).names),
              **({"kind": r["view"]["kind"], "cell": r["cell"]} if "cell" in r else {})}
