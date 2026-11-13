@@ -74,7 +74,6 @@ from objdel.verify.reward.advantages import (
     LOGGED,
     advantages_v4,
     advantages_v5,
-    legal_gate,
     logged_terms,
     topology_reward,
 )
@@ -163,9 +162,9 @@ class TRLReward:
             if isinstance(v, np.ndarray) and v.dtype.kind == "f" and not np.isfinite(v).all():
                 i = int(np.flatnonzero(~np.isfinite(v).reshape(len(v), -1).all(1))[0])
                 raise ValueError(f"reward term {n} is not finite ({v[i]}) for key {keys[i]}")
-        legal = legal_gate(T)
-        self.by_prompt = (T["iou_tc"] * legal).reshape(-1, g).mean(1).tolist()
-        out = {n: v.tolist() for n, v in logged_terms(T).items()}
+        gated = logged_terms(T)  # the GATED terms times legal_gate
+        self.by_prompt = gated["iou_tc"].reshape(-1, g).mean(1).tolist()
+        out = {n: v.tolist() for n, v in gated.items()}
         out["r_topo"] = topology_reward(T, g, self.spec).tolist()
         adv = advantages_v5(T, g, self.spec) if isinstance(self.spec, RewardV5) else advantages_v4(T)
         out[self.aggregator] = adv.tolist()
@@ -175,7 +174,7 @@ class TRLReward:
                 log_metric(f"error/{code}", T["error"].count(code) / len(jobs))
             for d in DEFECTS:
                 log_metric(f"defect/{d}", sum(d in x for x in T["defects"]) / len(jobs))
-            self._log_views(log_metric, T["iou_tc"] * legal, T["loc"] * legal, kind, cell, g)
+            self._log_views(log_metric, gated["iou_tc"], gated["loc"], kind, cell, g)
             tokens = np.abs(adv) * [len(ids) for ids in completion_ids]
             cut = np.array([j[1] for j in jobs])
             log_metric("completions/truncated_grad_share", float(tokens[cut].sum() / tokens.sum()) if tokens.sum()

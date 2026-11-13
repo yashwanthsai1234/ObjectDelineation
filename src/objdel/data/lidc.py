@@ -54,6 +54,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from objdel.geom.box import boxes_meet
+from objdel.geom.topology import foreground_box
 
 from .store import Item
 
@@ -224,11 +225,6 @@ def clusters(sessions, zvals) -> list[tuple[dict[int, dict[int, np.ndarray]], bo
     return out
 
 
-def _box(mask) -> tuple[int, int, int, int]:
-    ys, xs = np.nonzero(mask)
-    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
-
-
 def slices(sessions, zvals) -> list[Slice]:
     """Every slice of every nodule on which at least two readers drew distinct masks, with the boxes of the
     other nodules outlined on that slice."""
@@ -236,7 +232,7 @@ def slices(sessions, zvals) -> list[Slice]:
     boxes = {}  # slice index -> [(cluster, box)]
     for ci, (per_reader, _) in enumerate(cl):
         for k in sorted({k for m in per_reader.values() for k in m}):
-            boxes.setdefault(k, []).append((ci, _box(np.logical_or.reduce([m[k] for m in per_reader.values()
+            boxes.setdefault(k, []).append((ci, foreground_box(np.logical_or.reduce([m[k] for m in per_reader.values()
                                                                            if k in m]))))
     out = []
     for ci, (per_reader, dup) in enumerate(cl):

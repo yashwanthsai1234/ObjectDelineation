@@ -92,7 +92,7 @@ import numpy as np
 from scipy import integrate, stats
 
 from objdel.geom import engine as _gpucheck
-from objdel.geom.topology import min_area
+from objdel.geom.topology import bbox, min_area
 from objdel.verify.reward.spec import CACHE_SPEC, fingerprint
 
 _CROSS = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
@@ -297,7 +297,7 @@ class ExpertCache:
         self.n_vote = int(np.count_nonzero(self.vote))
         self.rater_areas = tuple(int(np.count_nonzero(m)) for m in raters)
         self.min_area = min_area(int(np.count_nonzero(self.union)))
-        x, y, w, h = cv2.boundingRect(self.union.view(np.uint8))
+        x, y, w, h = bbox(self.union)
         self.box = (y, y + h, x, x + w)  # union bounding box (empty if the union is empty)
         self.digest = digest or _digest(raters, self.tau, self.t5, fingerprint())
         self._device = None  # handle of the tables on the checker's device

@@ -54,7 +54,7 @@ from objdel.core import datasets
 from objdel.core.datasets import FrameConfig
 from objdel.data.store import Item
 from objdel.geom.box import boxes_meet
-from objdel.geom.topology import as_mask
+from objdel.geom.topology import as_mask, foreground_box
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
 LUNG_WINDOW = datasets.LIDC.window
@@ -96,10 +96,9 @@ def _blocks(a, f):
 def union_box(item: Item) -> tuple[int, int, int, int]:
     """Half-open (x0, y0, x1, y1) box of every rater's union over all structures; ValueError when empty."""
     union = np.logical_or.reduce([as_mask(s, 3).any(0) for s in item.masks.values()])
-    ys, xs = np.nonzero(union.any(1)), np.nonzero(union.any(0))
-    if not ys[0].size:
+    if not union.any():
         raise ValueError(f"{item.item_id}: no rater drew anything")
-    return int(xs[0][0]), int(ys[0][0]), int(xs[0][-1]) + 1, int(ys[0][-1]) + 1
+    return foreground_box(union)
 
 
 def padded(box, W: int, H: int) -> bool:

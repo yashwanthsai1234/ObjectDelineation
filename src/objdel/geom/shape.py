@@ -131,6 +131,11 @@ def pack_objects(objs: Sequence[tuple[list[Part], int, int]]) -> tuple[np.ndarra
             np.ascontiguousarray(dims[:, 0]), np.ascontiguousarray(dims[:, 1]))
 
 
+def defects_of(row) -> dict[str, int]:
+    """{defect: count} of the nonzero counts of one engine result row (r["defects"][i]), in DEFECTS order."""
+    return {d: int(c) for d, c in zip(_gpucheck.DEFECTS, row.tolist(), strict=True) if c}
+
+
 def to_masks(objs: Sequence[tuple[list[Part], int, int]]) -> list[Geometry]:
     """to_mask of many objects, each (parts, W, H), on the CUDA checker: one objdel.geom.engine.check_polygons call for
     all of them, which returns the even-odd masks bit-packed (unpack_rows). On a CUDA box it runs on the GPU (`make
@@ -142,7 +147,7 @@ def to_masks(objs: Sequence[tuple[list[Part], int, int]]) -> list[Geometry]:
     r = _gpucheck.check_polygons(*pack_objects(objs), GRID)
     out = []
     for i, (_, W, H) in enumerate(objs):
-        defects = {d: int(c) for d, c in zip(_gpucheck.DEFECTS, r["defects"][i], strict=True) if c}
+        defects = defects_of(r["defects"][i])
         mask = unpack_rows(r["evenodd"][r["word_start"][i]:r["word_start"][i + 1]], H, W)
         out.append(Geometry(mask, not defects, defects))
     return out

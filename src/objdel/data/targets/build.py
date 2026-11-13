@@ -39,7 +39,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
-import cv2
 import numpy as np
 
 from objdel.data.targets.simplify import STEPS, lattice_path, simplify, to_grid
@@ -83,7 +82,7 @@ def _rings(mask):
     the rings the same way). The texts cannot change: the ring start key orders vertices by (y, x, d) for any width,
     so a translation keeps every ring's start and order."""
     mask = np.ascontiguousarray(mask, dtype=bool)
-    x0, y0, w, h = cv2.boundingRect(mask.view(np.uint8))
+    x0, y0, w, h = topology.bbox(mask)
     if not w:
         return []
     return [(*lattice_path(r.pts), r.part, r.hole) for r in trace([mask[y0:y0 + h, x0:x0 + w]], [(x0, y0)])[0].rings]

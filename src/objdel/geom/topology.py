@@ -80,6 +80,15 @@ def as_mask(mask, ndim: int = 2) -> np.ndarray:
     return np.ascontiguousarray(m, bool)  # x != 0 by value
 
 
+def foreground_box(mask: np.ndarray) -> tuple[int, int, int, int]:
+    """Half-open foreground box (x0, y0, x1, y1) of a 2-D mask (any nonzero value is foreground); ValueError when
+    it has no foreground."""
+    ys, xs = np.nonzero(mask.any(1))[0], np.nonzero(mask.any(0))[0]
+    if not ys.size:
+        raise ValueError("the mask has no foreground")
+    return int(xs[0]), int(ys[0]), int(xs[-1]) + 1, int(ys[-1]) + 1
+
+
 def bbox(m: np.ndarray) -> tuple[int, int, int, int]:
     """Foreground bounding box (x, y, w, h) of an as_mask mask; (0, 0, 0, 0) if it has no foreground."""
     return cv2.boundingRect(m.view(np.uint8))  # box of the non-zero pixels

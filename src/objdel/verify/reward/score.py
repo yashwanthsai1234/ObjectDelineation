@@ -41,7 +41,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from objdel.geom import engine as _gpucheck
-from objdel.geom.shape import pack_objects
+from objdel.geom.shape import defects_of, pack_objects
 from objdel.geom.text import GRID, parse
 from objdel.geom.topology import as_mask, pack_masks
 from objdel.verify.reward.cache import ExpertCache, device_many, joint_voters
@@ -156,9 +156,8 @@ def _combine(names, caches, answers, r: dict, idx) -> tuple[dict, dict[str, Obje
     """A parsed completion's terms from its objects' rows idx of the device result r."""
     legal, defects, terms = True, {}, {}
     for n, i in zip(names, idx, strict=True):
-        for d, c in zip(_gpucheck.DEFECTS, r["defects"][i].tolist(), strict=True):
-            if c:
-                legal, defects[d] = False, defects.get(d, 0) + c
+        for d, c in defects_of(r["defects"][i]).items():
+            legal, defects[d] = False, defects.get(d, 0) + c
         terms[n] = _object(r, i, caches[n])
     ts = list(terms.values())
     sigs = tuple(t.sig for t in ts)
