@@ -27,6 +27,7 @@ Reference: https://huggingface.co/docs/huggingface_hub/guides/upload#upload-file
 
 import json
 import re
+import sys
 from importlib import resources
 from pathlib import Path
 
@@ -62,9 +63,33 @@ def token_problems(who: dict, repo: str) -> list[str]:
 
 def whoami(token: str) -> dict:
     """huggingface_hub whoami() of a token."""
-    from huggingface_hub import HfApi
+    return api(token).whoami()
 
-    return HfApi(token=token).whoami()
+
+def stdin_token(tool: str) -> str:
+    """The token on the first line of stdin (the CLIs get it there, never in argv); exits "TOOL: no token on stdin"."""
+    return sys.stdin.readline().strip() or sys.exit(f"{tool}: no token on stdin")
+
+
+def require_scoped_token(token: str, repo: str, what: str = "the token may not be used here", hint: str = "") -> None:
+    """InfraError unless the token is fine-grained with write on `repo` only (token_problems); the message is
+    `what`, the problems, then `hint`."""
+    if problems := token_problems(whoami(token), repo):
+        raise InfraError(f"{what}: {'; '.join(problems)}{hint}")
+
+
+def commit(hub, repo: str, revision: str, ops: list, message: str) -> None:
+    """One commit of `ops` on branch `revision` of the model repo (the branch is made when missing)."""
+    hub.create_branch(repo, branch=revision, repo_type="model", exist_ok=True)
+    hub.create_commit(repo, operations=ops, commit_message=message, revision=revision, repo_type="model")
+
+
+def dir_ops(src: Path, prefix: str = "") -> list:
+    """A CommitOperationAdd for each file under `src` (sorted), at its path relative to `src` under `prefix`."""
+    from huggingface_hub import CommitOperationAdd
+
+    return [CommitOperationAdd(prefix + f.relative_to(src).as_posix(), str(f)) for f in sorted(src.rglob("*"))
+            if f.is_file()]
 
 
 def api(token: str):
@@ -147,11 +172,9 @@ def rl_ops(out: Path, hub, repo: str) -> list:
     doc = read_json(out / "rl.json")
     base = models.get(doc["model"]).hf_id
     lic, meta = base_card(base)
-    files = [(f.relative_to(out / "final"), f) for f in sorted((out / "final").rglob("*")) if f.is_file()]
-    files += [(f.relative_to(out), f) for f in sorted((out / "final_adapter").rglob("*")) if f.is_file()]
     card = rl_card(base, meta, doc, out).encode()
-    return [CommitOperationAdd(r.as_posix(), str(f)) for r, f in files] + [CommitOperationAdd("LICENSE", lic),
-                                                                           CommitOperationAdd("README.md", card)]
+    return [*dir_ops(out / "final"), *dir_ops(out / "final_adapter", "final_adapter/"),
+            CommitOperationAdd("LICENSE", lic), CommitOperationAdd("README.md", card)]
 
 
 METRIC_NAMES = {"iou_tc": "IoU (against the expert band)", "f5": "boundary F-score", "precision_vote": "precision",
@@ -189,8 +212,7 @@ def card_only(repo: str, revision: str, headline: Path, token: str) -> int:
     """--card-only: replace the card's evaluation sections at one revision. No weights, no GPU."""
     from huggingface_hub import hf_hub_download
 
-    if problems := token_problems(whoami(token), repo):
-        raise InfraError(f"the token may not be used here: {'; '.join(problems)}")
+    require_scoped_token(token, repo)
     hub = api(token)
     require_private(hub, repo)
     old = Path(hf_hub_download(repo, "README.md", revision=revision, token=token)).read_text()
@@ -210,9 +232,7 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
     if rl:
         hub = api(token)
         ops = rl_ops(rl, hub, repo)
-        hub.create_branch(repo, branch=revision, repo_type="model", exist_ok=True)
-        hub.create_commit(repo, operations=ops, commit_message=f"{rl.name}: train_rl final and final_adapter",
-                          revision=revision, repo_type="model")  # fmt: skip
+        commit(hub, repo, revision, ops, f"{rl.name}: train_rl final and final_adapter")
         print(f"hf_push: {rl} -> {repo}@{revision}")
         return 0
     sel = read_json(run / "select" / "selected.json")
@@ -232,12 +252,9 @@ def push(run: Path | None, rl: Path | None, repo: str, revision: str, view: Path
     base = models.get(man["config"]["model"]).hf_id
     lic, meta = base_card(base)
     src = run / "branches" / sel["selected"]
-    ops = [CommitOperationAdd(f.relative_to(src).as_posix(), str(f)) for f in sorted(src.rglob("*")) if f.is_file()]
     readme = card(base, meta, man, sel, run).encode()
-    ops += [CommitOperationAdd("LICENSE", lic), CommitOperationAdd("README.md", readme)]
-    hub.create_branch(repo, branch=revision, repo_type="model", exist_ok=True)
-    hub.create_commit(repo, operations=ops, commit_message=f"{run.name}: branch {sel['selected']}",
-                      revision=revision, repo_type="model")  # fmt: skip
+    ops = [*dir_ops(src), CommitOperationAdd("LICENSE", lic), CommitOperationAdd("README.md", readme)]
+    commit(hub, repo, revision, ops, f"{run.name}: branch {sel['selected']}")
     print(f"hf_push: {src} -> {repo}@{revision}")
     return 0
 

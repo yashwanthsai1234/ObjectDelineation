@@ -65,6 +65,12 @@ def git(*args: str, root, required: bool = True) -> str | None:
     return _or_none(lambda: _git(args, root).decode().strip(), required)
 
 
+def git_files(root, *flags: str) -> list[str]:
+    """`git ls-files -z FLAGS` in root as paths (NUL split, no strip: a name with spaces stays whole). A missing .git or
+    a git failure raises."""
+    return [f.decode() for f in _git(("ls-files", "-z", *flags), root).split(b"\0")[:-1]]
+
+
 def git_sha(root, required: bool = True) -> str | None:
     """The code identity of the tree at root (vast sync_up writes it to the box as CODE_SHA): git rev-parse HEAD, plus
     -dirty-<first 12 hex of sha256(D)> when git status --porcelain is not empty; D = git diff HEAD, then the sorted

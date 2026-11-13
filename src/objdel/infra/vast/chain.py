@@ -6,6 +6,7 @@ from pathlib import Path
 from objdel.core.provenance import repo_root
 from objdel.core.spec import RunSpec, fill, load_spec, spec_dataset, to_argv
 from objdel.infra.errors import InfraError
+from objdel.infra.vast.remote import box_run_dir
 
 BOX_DATA = "/workspace/data/{dataset}"  # {data} on the box: the folder sync_up unpacks the dataset's bundle into
 
@@ -23,13 +24,13 @@ def chain(cfg: Path, run_id: str) -> list[list[str]]:
     spec = load_spec(Path(cfg))
     if Path(cfg).resolve().parent != (repo_root() / "specs").resolve():
         raise ValueError(f"{cfg}: the box chain runs only a run spec in specs/")
-    return [to_argv(s, f"/workspace/runs/{run_id}", box_data(spec)) for s in spec.stages]
+    return [to_argv(s, box_run_dir(run_id), box_data(spec)) for s in spec.stages]
 
 
 def vision_refs(cfg: Path, run_id: str) -> list[str]:
     """The G-vision reference JSON a run spec reads on the box: the reference of each sft and select stage, in stage
     order, once ([] for a number or no vision)."""
-    rd, refs, spec = f"/workspace/runs/{run_id}", [], load_spec(Path(cfg))
+    rd, refs, spec = box_run_dir(run_id), [], load_spec(Path(cfg))
     for s in spec.stages:
         if s.kind == "sft" and s.vision and isinstance(s.vision["reference"], str):
             refs.append(f"{rd}/{s.vision['reference']}")
@@ -44,7 +45,7 @@ def push_target(spec: RunSpec, run_id: str) -> tuple[str, str, bool]:
     last = next((s for s in reversed(spec.stages) if s.kind in ("rl", "sft")), None)
     if last is None:
         raise InfraError("nothing to push: the spec has no rl or sft stage")
-    rd = f"/workspace/runs/{run_id}"
+    rd = box_run_dir(run_id)
     if last.kind == "rl":
         path = fill(last.out, rd, box_data(spec))
         return path, path.rsplit("/", 1)[1], True
