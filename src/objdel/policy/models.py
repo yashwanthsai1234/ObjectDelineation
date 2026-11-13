@@ -109,6 +109,65 @@ def processor_kwargs(model: str) -> dict:
     return dict(get(model).processor)
 
 
+def mm_kwargs(kw: dict) -> dict:
+    """Processor keywords minus padding_side: the per-request keywords of a prompt line (padding is the batch's)."""
+    return {k: v for k, v in kw.items() if k != "padding_side"}
+
+
+def processor(model: str, path=None):
+    """The processor at path (default: the entry's hub id) with the entry's keywords; .tokenizer for the tokenizer.
+    AutoProcessor is imported here, so a test patching it at class level reaches every caller."""
+    from transformers import AutoProcessor
+
+    return AutoProcessor.from_pretrained(get(model).hf_id if path is None else path, **processor_kwargs(model))
+
+
+def load_pair(path, *, dtype, device=None, proc_kw=None, **load):
+    """(model, processor) of a checkpoint for inference: the model in dtype (moved to device when given; `load` =
+    more from_pretrained keywords), in eval mode, and its processor with proc_kw (None: the saved processor as is).
+    Each caller passes its own dtype: G-vision is a recorded fp32 CPU measurement, the HF sampler runs bf16 on CUDA."""
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    model = AutoModelForImageTextToText.from_pretrained(path, dtype=dtype, **load)
+    if device is not None:
+        model = model.to(device)
+    return model.eval(), AutoProcessor.from_pretrained(path, **(proc_kw or {}))
+
+
+def adapted(base, adapter_dir, dtype=None):
+    """The base weights at `base` with the LoRA adapter at `adapter_dir` (a PeftModel, not merged); dtype None loads
+    the base at the library default."""
+    from peft import PeftModel
+    from transformers import AutoModelForImageTextToText
+
+    kw = {} if dtype is None else {"dtype": dtype}
+    return PeftModel.from_pretrained(AutoModelForImageTextToText.from_pretrained(base, **kw), adapter_dir)
+
+
+def merged(base, adapter_dir, dtype=None):
+    """adapted(...) with the LoRA merged in: a plain model."""
+    return adapted(base, adapter_dir, dtype).merge_and_unload()
+
+
+def save_merged(model, proc, dest, adapter_to=None, tmp=None) -> None:
+    """A plain model folder at dest: a LoRA model is merged first (its unmerged adapter saved to adapter_to when
+    given), then the model and its processor are written to tmp and renamed to dest (objdel.core.io.replace_dir), so
+    a folder named dest is always complete."""
+    from objdel.core.io import replace_dir
+
+    if hasattr(model, "merge_and_unload"):
+        if adapter_to is not None:
+            model.save_pretrained(adapter_to)
+        model = model.merge_and_unload()  # LoRA -> plain weights
+
+    def write(t):
+        t.mkdir(parents=True)
+        model.save_pretrained(t)
+        proc.save_pretrained(t)
+
+    replace_dir(write, dest, tmp)
+
+
 def _bf16(overrides: dict) -> bool:
     """bf16 where TrainingArguments' own check (__post_init__) accepts it, never together with fp16."""
     return is_torch_bf16_gpu_available() and not overrides.get("fp16", False)

@@ -72,6 +72,12 @@ def target_tokens(tokenizer, text: str) -> int:
     return len(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 
+def outline_tokens(tokenizer, text: str) -> int:
+    """The length rule of an answer against the completion budget: target tokens + 1 end-of-turn token (SFT drops a
+    target above the budget, the RL runaway cap and the I5 budget report count the same)."""
+    return target_tokens(tokenizer, text) + 1
+
+
 def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: int = 1, subset=None) -> list[dict]:
     """Prompt rows (prompt, image path, key, W, H, names) of the records (images checked against them): RL-eligible
     items only, or with rl_only=False every item (probe views, whose records are rl: false); disagreement items
@@ -86,3 +92,10 @@ def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: in
              "H": r["H"], "names": list(datasets.get(dataset).names),
              **({"kind": r["view"]["kind"], "cell": r["cell"]} if "cell" in r else {})}
             for r in _verified(root, recs) for _ in range(oversample if r["disagreement"] else 1)]
+
+
+def as_dataset(rows: list[dict]):
+    """Prompt rows as a datasets.Dataset whose image column (paths) decodes to PIL images on access (TRL's input)."""
+    from datasets import Dataset, Image
+
+    return Dataset.from_list(rows).cast_column("image", Image())

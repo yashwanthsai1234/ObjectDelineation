@@ -90,7 +90,7 @@ def answers(answer_rows: Iterable[dict], metric_rows: Iterable[dict]) -> dict:
 
 def tokens_of(tokenizer) -> Callable[[str], int]:
     """Outline length of a text: target tokens without special tokens + 1 end token."""
-    return lambda text: dataset.target_tokens(tokenizer, text) + 1
+    return lambda text: dataset.outline_tokens(tokenizer, text)
 
 
 def report(train: Path, views: list[Path], datasets: list[str], splits: list[str], tok: Callable[[str], int],
@@ -142,10 +142,8 @@ def main():
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    from transformers import AutoProcessor
-
     # the tokenizer does not depend on the dataset's image size: one load (export_prompts' call)
-    tok = AutoProcessor.from_pretrained(configs.get(a.model).hf_id, **configs.processor_kwargs(a.model)).tokenizer
+    tok = configs.processor(a.model).tokenizer
     doc = {"model": a.model} | report(a.train, a.views, a.datasets, a.splits, tokens_of(tok), a.answers)
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "outline_lengths.json").write_text(json.dumps(doc, indent=1))

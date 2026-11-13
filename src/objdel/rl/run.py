@@ -53,7 +53,6 @@ from objdel.rl import build
 def checked(a):
     """The RlStage `a` with f_check resolved (--f-check, --no-f-check, else on under the f_check.PRESETS), after the
     rules that need objdel.rl (numerics preset names, the --grpo keys train_rl owns); exit 2 on a broken one."""
-    from objdel.policy import models as policy_models
     from objdel.rl import config as configs
     from objdel.rl import f_check
 
@@ -75,11 +74,19 @@ def checked(a):
         error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     if a.grpo.get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
         error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
-    if a.no_ckpt_layers and a.no_ckpt_layers > (n := policy_models.get(a.model).text_layers):
-        error(f"--no-ckpt-layers {a.no_ckpt_layers}: {a.model} has {n} text decoder layers")
-    if (why := rl_refusal(a.dataset)) is not None:
+    if (why := stage_refusal(a.model, a.dataset, a.no_ckpt_layers)) is not None:
         error(why)
     return a
+
+
+def stage_refusal(model: str, dataset: str, no_ckpt_layers: int | None) -> str | None:
+    """Why an RL stage (train_rl, the G-probe) cannot run: --no-ckpt-layers above the model's text decoder layers,
+    then rl_refusal(dataset); else None."""
+    from objdel.policy import models as policy_models
+
+    if no_ckpt_layers and no_ckpt_layers > (n := policy_models.get(model).text_layers):
+        return f"--no-ckpt-layers {no_ckpt_layers}: {model} has {n} text decoder layers"
+    return rl_refusal(dataset)
 
 
 def rl_refusal(dataset: str) -> str | None:
@@ -200,7 +207,6 @@ def heldout_rows(view: Path, n: int, dataset: str):
     """n val-shape items of an eval view (a seeded draw in record order), as GRPO rows: val-select items never enter
     training's held-out curve."""
     import numpy as np
-    from datasets import Dataset, Image
 
     from objdel.data.splits import val_half
     from objdel.policy import rows as policy_rows
@@ -212,22 +218,24 @@ def heldout_rows(view: Path, n: int, dataset: str):
         raise ValueError(f"--heldout {view}: no val-shape RL item")
     if n < len(rows):
         rows = [rows[i] for i in sorted(np.random.default_rng(0).choice(len(rows), n, replace=False))]
-    return Dataset.from_list(rows).cast_column("image", Image())
+    return policy_rows.as_dataset(rows)
 
 
 def save_final(model, proc, out: Path) -> None:
     """The unmerged LoRA adapter to out/final_adapter, then the merged model and its processor to out/final.tmp,
     renamed to out/final at the end: a folder named final is always complete."""
-    if hasattr(model, "merge_and_unload"):
-        model.save_pretrained(out / "final_adapter")
-        model = model.merge_and_unload()  # LoRA -> plain weights
-    tmp = out / "final.tmp"
-    shutil.rmtree(tmp, ignore_errors=True)
-    tmp.mkdir(parents=True)
-    model.save_pretrained(tmp)
-    proc.save_pretrained(tmp)
-    shutil.rmtree(out / "final", ignore_errors=True)
-    tmp.rename(out / "final")
+    from objdel.policy import models as policy_models
+
+    policy_models.save_merged(model, proc, out / "final", adapter_to=out / "final_adapter", tmp=out / "final.tmp")
+
+
+def last_checkpoint(out: Path) -> tuple[str | None, int]:
+    """The newest checkpoint-N under out/trainer and N, (None, 0) when there is none. transformers'
+    get_last_checkpoint: it does not check that the checkpoint is complete."""
+    from transformers.trainer_utils import get_last_checkpoint
+
+    last = get_last_checkpoint(str(out / "trainer")) if (out / "trainer").is_dir() else None
+    return last, int(Path(last).name.split("-")[1]) if last else 0
 
 
 def cut_seq_gaps(trainer_dir: Path, step: int) -> None:
@@ -260,8 +268,6 @@ def run_report(log: list[dict]) -> dict:
 
 def merge_last(a) -> int:
     """--merge-last: <out>/final from the last checkpoint when the run ended before its own save."""
-    from transformers.trainer_utils import get_last_checkpoint
-
     out = Path(a.out)
     final = out / "final"
     if (final / "config.json").is_file() and any(final.glob("*.safetensors")):  # save_final renames it when complete
@@ -272,19 +278,15 @@ def merge_last(a) -> int:
             "model": a.model, "steps": None, "partial": None, "ckpt": str(a.ckpt), "final": str(final),
             "recovered": "final complete, rl.json missing"}, keys=("steps", "partial", "recovered"))
     shutil.rmtree(out / "final.tmp", ignore_errors=True)  # the box died inside save_final
-    last = get_last_checkpoint(str(out / "trainer")) if (out / "trainer").is_dir() else None
+    last, step = last_checkpoint(out)
     if last is None:
         print(f"--merge-last: no checkpoint in {out / 'trainer'}", file=sys.stderr)
         return 1
-    from peft import PeftModel
-    from transformers import AutoModelForImageTextToText, AutoProcessor
-
     from objdel.policy import models as policy_models
 
-    model = PeftModel.from_pretrained(AutoModelForImageTextToText.from_pretrained(a.ckpt), last)
-    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)), out)
+    save_final(policy_models.adapted(a.ckpt, last), policy_models.processor(a.model, a.ckpt), out)
     return save_json(out / "rl.json", {
-        "model": a.model, "steps": int(Path(last).name.split("-")[1]), "partial": True, "merged_from": last,
+        "model": a.model, "steps": step, "partial": True, "merged_from": last,
         "ckpt": str(a.ckpt),
         "final": str(final),
     }, keys=("steps", "partial", "merged_from"))
@@ -293,13 +295,11 @@ def merge_last(a) -> int:
 def with_caps(train, a):
     """C11: the rows plus a `cap` column (FastGRPO sends it as each prompt's max_tokens); T_i from the row's own
     record."""
-    from transformers import AutoProcessor
-
     from objdel.policy import models as policy_models
     from objdel.policy import rows as policy_rows
     from objdel.rl import runaway
 
-    tok = AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)).tokenizer
+    tok = policy_models.processor(a.model, a.ckpt).tokenizer
     caps = runaway.row_caps(train["key"], policy_rows.records(a.train, a.dataset, "train"),
                             lambda text: policy_rows.target_tokens(tok, text),
                             a.grpo.get("max_completion_length", policy_models.get(a.model).max_completion),
@@ -367,8 +367,6 @@ class Step1Mismatch(RuntimeError):
 def run_rl(a) -> dict:
     """One full run of the RlStage `a` (the body of train_rl after parsing): resume from the last checkpoint, train,
     merge the LoRA, save <out>/final, write <out>/rl.json; returns the rl.json document."""
-    from transformers.trainer_utils import get_last_checkpoint
-
     from objdel.policy import models as policy_models
     from objdel.policy import rows as policy_rows
     from objdel.policy.callbacks import ExpectStep1, LocGuard
@@ -392,10 +390,9 @@ def run_rl(a) -> dict:
     if a.runaway_cap:
         train = with_caps(train, a)
     heldout = heldout_rows(a.heldout, a.heldout_items, a.dataset) if a.heldout else None
-    last = get_last_checkpoint(str(out / "trainer")) if (out / "trainer").is_dir() else None
+    last, start = last_checkpoint(out)
     if not a.resume and last:
         raise ValueError(f"{last} exists: a fresh run needs an --out without checkpoints (or pass --resume)")
-    start = int(Path(last).name.split("-")[1]) if last else 0
     if start > a.steps:
         raise ValueError(f"--resume: {last} is past --steps {a.steps} (an older run in this --out?)")
     if a.resume and last is None:

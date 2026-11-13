@@ -24,6 +24,23 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip)
 
 
+_UNCHECKED: list[str] = []
+
+
+def pytest_runtest_logreport(report):
+    """Collect the skipped model_cache tests (a train-vs-eval pair left unchecked on this machine)."""
+    if report.skipped and "model_cache" in report.keywords:
+        _UNCHECKED.append(report.nodeid)
+
+
+def pytest_terminal_summary(terminalreporter):
+    """A model_cache skip is listed at the end of the session, not only counted among the skips."""
+    if _UNCHECKED:
+        terminalreporter.section("PAIR UNCHECKED (model not in the local HF cache)", sep="!", red=True, bold=True)
+        for nodeid in _UNCHECKED:
+            terminalreporter.line(f"{nodeid}: skipped; OBJDEL_REQUIRE_MODEL_CACHE=1 makes it fail")
+
+
 @pytest.fixture(autouse=True)
 def _no_real_secrets(tmp_path_factory, monkeypatch):
     """No test reads the owner's <repo>/.secrets (objdel.infra.secrets): a path that does not exist, and a fresh

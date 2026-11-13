@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.io import read_jsonl
+from objdel.policy.prompt import user_turn
 
 RATIO, TV = 0.5, 0.002
 N_IMAGES, N_ITEMS, T = 4, 8, 24
@@ -59,7 +60,7 @@ def black(image):
 
 
 def _batch(model, processor, image, prompt):
-    msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+    msgs = [user_turn(prompt)]
     chat = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     b = processor(text=[chat], images=[[image]], return_tensors="pt")
     return {k: v.to(model.device, model.dtype) if v.is_floating_point() else v.to(model.device) for k, v in b.items()}
@@ -87,17 +88,28 @@ def projector_distance(model, processor, images, prompt: str) -> float:
     return float(np.mean(d))
 
 
+def extend(batch: dict, ids) -> dict:
+    """A one-prompt processor batch with answer ids (a (1, T) tensor) appended for a teacher-forced forward: every
+    token-aligned (1, n) tensor is extended over the answer (input_ids by the ids, attention_mask by ones, the others,
+    e.g. mm_token_type_ids, by zeros), each in its own dtype and device; other entries are unchanged."""
+    import torch
+    n, out = batch["input_ids"].shape[1], {}
+    for k, v in batch.items():
+        if isinstance(v, torch.Tensor) and v.shape == (1, n):
+            t = ids.to(v.device)
+            tail = t if k == "input_ids" else torch.ones_like(t) if k == "attention_mask" else torch.zeros_like(t)
+            v = torch.cat([v, tail.to(v.dtype)], 1)
+        out[k] = v
+    return out
+
+
 def next_token_probs(model, processor, image, target: str, prompt: str, T: int = T) -> np.ndarray:
     """(positions, vocab) float64 next-token distributions over the first T teacher-forced target tokens."""
     import torch
     b = _batch(model, processor, image, prompt)
     n = b["input_ids"].shape[1]
     tgt = processor.tokenizer(target, add_special_tokens=False, return_tensors="pt")["input_ids"][:, :T]
-    tgt = tgt.to(b["input_ids"].device)  # on the model's device: mm_token_type_ids is extended with its zeros below
-    b["input_ids"] = torch.cat([b["input_ids"], tgt], 1)
-    b["attention_mask"] = torch.ones_like(b["input_ids"])
-    if "mm_token_type_ids" in b:
-        b["mm_token_type_ids"] = torch.cat([b["mm_token_type_ids"], torch.zeros_like(tgt)], 1)
+    b = extend(b, tgt)
     with torch.inference_mode():
         logits = model(**b).logits[0, n - 1:n - 1 + tgt.shape[1]]
     return torch.softmax(logits.double(), -1).cpu().numpy()

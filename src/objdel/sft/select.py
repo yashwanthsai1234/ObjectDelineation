@@ -176,7 +176,7 @@ def sample_view(a, branch: Path, rows: list[dict], out: Path, k: int, extra=()) 
     prompts, comps = out / "prompts.jsonl", out / "completions.jsonl"
     sample.export_prompts(rows, prompts, a.model, k, processor=proc, stop_ids=stop, seed=a.seed,
                           max_tokens=a.max_tokens)
-    run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), extra)
+    run_sampler(a.sampler, prompts, branch, comps, sampler_timeout(a, len(rows) * k), ("--entry", a.model, *extra))
     return {r["item_id"]: r for r in sample.import_completions(comps, stop, n=k, ids=[r["key"] for r in rows])}
 
 
@@ -240,12 +240,11 @@ def vision_check(branch: Path, cfg: dict | None) -> dict:
     """G-vision on the CPU in float32 ; not measured (pass None, so it fails) under --no-vision."""
     if cfg is None:
         return {"pass": None, "measured": False}
-    from transformers import AutoModelForImageTextToText, AutoProcessor
-
+    from objdel.policy import models as policy_models
     from objdel.sft.train import vision_check as check
 
-    model = AutoModelForImageTextToText.from_pretrained(branch, dtype="float32", device_map="cpu")
-    return check(model, AutoProcessor.from_pretrained(branch), cfg)
+    # the saved processor as is (train_sft wrote it with the run's keywords)
+    return check(*policy_models.load_pair(branch, dtype="float32", device_map="cpu"), cfg)
 
 
 def judge(a, sel: dict, out: Path, baselines) -> dict:

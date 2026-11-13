@@ -17,27 +17,45 @@ import json
 import time
 from pathlib import Path
 
+from objdel.core import datasets
 from objdel.policy import rows as dataset
 from objdel.verify import ceiling
 from objdel.verify import store as serve
 
 
 def _item(job) -> dict:
-    """One item's ceiling row on the preloaded caches."""
-    item_id, root, texts, truncated, W, H = job
-    return ceiling.item(serve.CacheRef(item_id, root)["nodule"], texts, truncated, W, H)
+    """One item's ceiling row on the preloaded caches (the dataset's one structure)."""
+    item_id, root, name, texts, truncated, W, H = job
+    return ceiling.item(serve.CacheRef(item_id, root)[name], texts, truncated, W, H)
+
+
+def view_dataset(view: Path, split: str, dataset: str | None) -> tuple[str, str]:
+    """(dataset, its structure name): --dataset, else the one registered one-structure dataset (the ceiling scores
+    one structure) with <view>/<dataset>/<split>.jsonl; ValueError when that is not exactly one, or --dataset has
+    several structures."""
+    found = [dataset] if dataset else [d for d, e in datasets.DATASETS.items()
+                                       if len(e.names) == 1 and Path(view, d, f"{split}.jsonl").is_file()]
+    if len(found) != 1:
+        raise ValueError(f"{view}: {split} records of {found or 'no registered dataset'}: pass --dataset")
+    names = datasets.get(found[0]).names
+    if len(names) != 1:
+        raise ValueError(f"{found[0]}: structures {names}; the ceiling scores one structure")
+    return found[0], names[0]
 
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--view", type=Path, required=True, help="a view directory (data/prepared layout)")
     ap.add_argument("--split", default="val")
+    ap.add_argument("--dataset", choices=sorted(datasets.DATASETS),
+                    help="default: the one registered one-structure dataset with records of --split in the view")
     ap.add_argument("--answers", type=Path, help="final_eval's answers.jsonl of this view")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
 
     t0 = time.time()
-    recs = [r for r in dataset.records(a.view, "lidc", a.split) if r["rl"]]
+    ds, name = view_dataset(a.view, a.split, a.dataset)
+    recs = [r for r in dataset.records(a.view, ds, a.split) if r["rl"]]
     ans = {}
     if a.answers:
         with open(a.answers) as f:
@@ -46,8 +64,8 @@ def main(argv=None) -> None:
         if lost:
             raise ValueError(f"{len(lost)} items of the view have no answers in {a.answers}: {lost}")
     root = str(a.view.resolve())
-    serve.preload(root, ["lidc"])
-    jobs = [(r["item_id"], root, *ans.get(r["item_id"], (None, None)), r["W"], r["H"]) for r in recs]
+    serve.preload(root, [ds])
+    jobs = [(r["item_id"], root, name, *ans.get(r["item_id"], (None, None)), r["W"], r["H"]) for r in recs]
     rows = [{"item_id": r["item_id"], "group_id": r["group_id"]} | _item(j) for r, j in zip(recs, jobs, strict=True)]
     doc = {"view": str(a.view), "split": a.split, "answers": a.answers and str(a.answers),
            **ceiling.summarize(rows, {r["item_id"]: r["group_id"] for r in recs}), "seconds": time.time() - t0}

@@ -40,6 +40,7 @@ from typing import Any, Protocol
 import pandas as pd
 from trl.data_utils import prepare_multimodal_messages
 
+from objdel.core import datasets
 from objdel.core.io import read_jsonl
 from objdel.policy import models
 from objdel.policy.errors import Refusal
@@ -91,20 +92,18 @@ def export_prompts(rows, path, model: str, n: int, processor=None, stop_ids=None
     max_tokens: a completion cap below the model's budget (the CPU smoke), else the entry's max_completion."""
     kw = models.processor_kwargs(model)
     if processor is None:
-        from transformers import AutoProcessor
-        processor = AutoProcessor.from_pretrained(models.get(model).hf_id, **kw)
+        processor = models.processor(model)
     if hasattr(rows, "cast_column"):  # a datasets.Dataset: paths, not decoded images
         from datasets import Image
         rows = rows.cast_column("image", Image(decode=False))
-    sampling = models.sampling(model) | {"seed": seed} | ({"max_tokens": max_tokens} if max_tokens else {})
-    if stop_ids is not None:
-        sampling["stop_token_ids"] = sorted(stop_ids)
-    write(prompt_lines(rows, processor, kw, sampling, n), path)
+    sampling = params_for(model, n=n, seed=seed, stop_token_ids=None if stop_ids is None else sorted(stop_ids),
+                          max_tokens=max_tokens)
+    write(prompt_lines(rows, processor, kw, {k: v for k, v in sampling.items() if k != "n"}, n), path)
 
 
 def prompt_lines(rows, processor, processor_kwargs: dict, sampling: dict, n: int) -> list[dict]:
     """Prompt rows (prompt, image, key) -> the prompts JSONL lines; ValueError on a repeated key."""
-    mm = {k: v for k, v in processor_kwargs.items() if k != "padding_side"}
+    mm = models.mm_kwargs(processor_kwargs)
     seen, out = set(), []
     for r in rows:
         if r["key"] in seen:
@@ -124,27 +123,32 @@ def build_prompt(row, processor) -> tuple[str, list]:
     return (text[0] if isinstance(text, list) else text), [image]
 
 
-def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = None) -> list[dict]:
-    """The sampler child's completions -> eval_run rows {"item_id", "samples", "truncated", "tokens"} (tokens:
-    completion length in token ids, for verify.metrics' token stats; samples in k order, items in first-seen order).
-    ValueError unless every id has exactly the exported n samples k = 0 .. n-1, each once, and (with ids, the
-    exported keys) the ids are exactly those (a cut or doubled file would change K silently)."""
+def group(recs: Iterable[dict], n: int, ids: Iterable[str] | None = None, where="completions") -> dict[str, list]:
+    """Output records ({"id", "k", ...}) -> {id: its n records in k order}, ids in first-seen order. ValueError unless
+    every id has exactly n samples k = 0 .. n-1, each once, and (with ids) the ids are exactly those (a cut or doubled
+    file would change K silently)."""
     by: dict[str, dict[int, dict]] = {}
-    for c in read_jsonl(path):
+    for c in recs:
         if by.setdefault(c["id"], {}).setdefault(c["k"], c) is not c:
             raise ValueError(f"{c['id']}: sample k = {c['k']} twice")
     if ids is not None and set(by) != set(ids):
-        raise ValueError(f"{path}: missing: {sorted(set(ids) - set(by))[:5]}, not exported: "
+        raise ValueError(f"{where}: missing: {sorted(set(ids) - set(by))[:5]}, not exported: "
                          f"{sorted(set(by) - set(ids))[:5]}")
-    rows = []
     for key, cs in by.items():
         if sorted(cs) != list(range(n)):
             raise ValueError(f"{key}: {len(cs)} samples k = {sorted(cs)[:3]}.., want {n} samples k = 0 .. {n - 1}")
-        cs = [cs[k] for k in range(n)]
-        rows.append({"item_id": key, "samples": [c["text"] for c in cs],
-                     "truncated": [models.truncated(c["token_ids"], stop_ids) for c in cs],
-                     "tokens": [len(c["token_ids"]) for c in cs]})
-    return rows
+    return {key: [cs[k] for k in range(n)] for key, cs in by.items()}
+
+
+def _sample(key: str, cs: list[dict], stop) -> "Sample":
+    return Sample(key, tuple(c["text"] for c in cs), tuple(tuple(c["token_ids"]) for c in cs),
+                  tuple(models.truncated(c["token_ids"], stop) for c in cs))
+
+
+def import_completions(path, stop_ids, n: int = G, ids: Iterable[str] | None = None) -> list[dict]:
+    """The sampler child's completions -> eval_run rows (Sample.row; samples in k order, items in first-seen order),
+    through the checked `group`."""
+    return [_sample(key, cs, stop_ids).row() for key, cs in group(read_jsonl(path), n, ids, path).items()]
 
 
 def stop_ids(path: Path, proc) -> set[int]:
@@ -161,10 +165,14 @@ def stop_ids(path: Path, proc) -> set[int]:
     return models.stop_ids(SimpleNamespace(generation_config=gen), proc)
 
 
-def params_for(model: str, *, n: int, seed: int, stop_token_ids: Sequence[int]) -> dict:
-    """Every vLLM SamplingParams field of one sampling (module docstring). No vLLM import; HfSampler maps it with
+def params_for(model: str, *, n: int, seed: int, stop_token_ids: Sequence[int] | None,
+               max_tokens: int | None = None) -> dict:
+    """Every vLLM SamplingParams field of one sampling (module docstring): the entry's fields, n, seed and the stop
+    ids (None: no stop_token_ids key, as export_prompts writes without them); max_tokens (when set) caps the
+    completion below the entry's budget in its own key position. No vLLM import; HfSampler maps it with
     models.as_names(..., "hf")."""
-    return models.sampling(model, "vllm") | {"n": n, "seed": seed, "stop_token_ids": list(stop_token_ids)}
+    s = models.sampling(model, "vllm") | {"n": n, "seed": seed} | ({"max_tokens": max_tokens} if max_tokens else {})
+    return s | ({} if stop_token_ids is None else {"stop_token_ids": list(stop_token_ids)})
 
 
 @dataclass(frozen=True)
@@ -175,6 +183,12 @@ class Sample:
     texts: tuple[str, ...]
     token_ids: tuple[tuple[int, ...], ...]
     truncated: tuple[bool, ...]
+
+    def row(self) -> dict:
+        """The answers row the scorers read: {"item_id", "samples", "truncated", "tokens"} (tokens: completion length
+        in token ids, for verify.metrics' token stats)."""
+        return {"item_id": self.item_id, "samples": list(self.texts), "truncated": list(self.truncated),
+                "tokens": [len(t) for t in self.token_ids]}
 
 
 class Sampler(Protocol):
@@ -191,16 +205,10 @@ def _rows_lines(rows: Sequence[Mapping], processor, model: str, params: Mapping[
 
 
 def samples(lines: list[dict], recs: Iterable[dict], stop) -> list[Sample]:
-    """Output records ({"id", "k", "text", "token_ids"}) -> one Sample per prompt line, in line order."""
-    by: dict[str, dict[int, dict]] = {}
-    for c in recs:
-        by.setdefault(c["id"], {})[c["k"]] = c
-    out = []
-    for x in lines:
-        cs = [by[x["id"]][k] for k in range(x["n"])]
-        out.append(Sample(x["id"], tuple(c["text"] for c in cs), tuple(tuple(c["token_ids"]) for c in cs),
-                          tuple(models.truncated(c["token_ids"], stop) for c in cs)))
-    return out
+    """Output records ({"id", "k", "text", "token_ids"}) -> one Sample per prompt line, in line order (the checked
+    `group`: every line's n samples, each once, and no other id)."""
+    by = group(recs, lines[0]["n"] if lines else 0, [x["id"] for x in lines], "samples")
+    return [_sample(x["id"], by[x["id"]], stop) for x in lines]
 
 
 FREE = 0.90  # of total device memory, before the vLLM engine starts
@@ -244,6 +252,12 @@ def outputs(lines: list[dict], results):
             yield rec
 
 
+def image_side() -> int:
+    """The largest model image side of the registered datasets (the LIDC entry's 512): the engine's image limit,
+    which only sizes vLLM's memory profile."""
+    return max(d.frame.image_side or d.frame.max_side for d in datasets.DATASETS.values())
+
+
 def _rgb(path):
     from PIL import Image
 
@@ -254,7 +268,7 @@ class VllmSampler(Sampler):
     """vllm.LLM offline, in this process (module docstring). `model` (a models.MODELS key) is needed by sample() and
     with an adapter (its LoRA rank); records() samples prompt lines as they are. `sampling_params` collects repr of
     every SamplingParams built. The engine's memory share and length default to the model's vllm_eval (the CLI
-    passes both and no model)."""
+    passes --entry, the select child's model key); explicit values win."""
 
     def __init__(self, ckpt: Path, model: str | None = None, gpu_memory_utilization: float | None = None,
                  max_model_len: int | None = None, *, adapter: Path | None = None, dtype: str = "bfloat16",
@@ -267,10 +281,11 @@ class VllmSampler(Sampler):
 
         self.vllm, self.ckpt, self.model, self.logprobs, self.sampling_params = vllm, ckpt, model, logprobs, set()
         mem, length = models.get(model).vllm_eval if model else (None, None)  # explicit values win
+        side = image_side()
         self.lora = None if adapter is None else vllm.lora.request.LoRARequest("adapter", 1, str(adapter))
         self.llm = vllm.LLM(model=str(ckpt), dtype=dtype, gpu_memory_utilization=gpu_memory_utilization or mem,
                             max_model_len=max_model_len or length, enable_prefix_caching=True, seed=seed,
-                            limit_mm_per_prompt={"image": {"count": 1, "width": 512, "height": 512}},
+                            limit_mm_per_prompt={"image": {"count": 1, "width": side, "height": side}},
                             **({"logprobs_mode": "processed_logprobs"} if logprobs else {}),
                             **({"enable_lora": True, "max_lora_rank": models.get(model).lora_r}
                                if adapter is not None else {}))
@@ -294,16 +309,17 @@ class VllmSampler(Sampler):
         return samples(lines, self.records(lines), set(params["stop_token_ids"]))
 
 
-def load(path, device: str):
-    """(model, processor): library generation defaults, never the card's; left padding for batches. CUDA samples in
-    bf16 whatever the checkpoint holds (full FT saves fp32), the dtype of D13's vLLM path; CPU runs use fp32."""
+def load(path, device: str, entry: str | None = None):
+    """(model, processor): library generation defaults, never the card's; left padding for batches (the entry's
+    processor keywords with a model key, else left padding alone). CUDA samples in bf16 whatever the checkpoint holds
+    (full FT saves fp32), the dtype of D13's vLLM path; CPU runs use fp32."""
     import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor, GenerationConfig
+    from transformers import GenerationConfig
 
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    model = AutoModelForImageTextToText.from_pretrained(path, dtype=dtype).to(device).eval()
+    kw = models.processor_kwargs(entry) if entry else {"padding_side": "left"}
+    model, proc = models.load_pair(path, dtype=dtype, device=device, proc_kw=kw)
     model.generation_config = GenerationConfig()
-    proc = AutoProcessor.from_pretrained(path, padding_side="left")
     if proc.tokenizer.padding_side != "left":
         raise Refusal(f"sampler: {path}: the tokenizer pads on the {proc.tokenizer.padding_side}")
     return model, proc
@@ -325,7 +341,7 @@ def generate(model, proc, dev, batch: list[tuple[int, dict]]) -> list[dict]:
     import torch
 
     ps = [p for _, p in batch]
-    s, kw = ps[0]["sampling"], {k: v for k, v in ps[0]["processor_kwargs"].items() if k != "padding_side"}
+    s, kw = ps[0]["sampling"], models.mm_kwargs(ps[0]["processor_kwargs"])
     gen = models.as_names(s, "hf")
     x = proc(text=[p["prompt"] for p in ps], images=[[_rgb(p["image"])] for p in ps], padding=True,
              return_tensors="pt", **kw)
@@ -350,7 +366,7 @@ class HfSampler(Sampler):
 
     def __init__(self, ckpt: Path, model: str, device: str = "cpu", batch_items: int = 8):
         self.model, self.device, self.batch_items = model, device, batch_items
-        self.net, self.processor = load(ckpt, device)
+        self.net, self.processor = load(ckpt, device, model)
 
     def sample(self, rows: Sequence[Mapping], params: Mapping[str, Any]) -> list[Sample]:
         """One Sample per row, in row order (batch_items rows per generate call)."""
@@ -375,7 +391,7 @@ def todo(out: Path, bs: list[list[tuple[int, dict]]]) -> list:
 
 
 def _main_vllm(a, lines: list[dict]) -> None:
-    s = VllmSampler(a.model, None, a.gpu_memory_utilization, a.max_model_len, dtype=a.dtype, seed=a.seed,
+    s = VllmSampler(a.model, a.entry, a.gpu_memory_utilization, a.max_model_len, dtype=a.dtype, seed=a.seed,
                     logprobs=a.logprobs)
     write(s.records(lines), a.out)
     meta = {"vllm": s.vllm.__version__, "model": str(a.model), "prompts": len(lines),
@@ -390,7 +406,7 @@ def _main_hf(a, lines: list[dict]) -> None:
     left = todo(a.out, batches(lines, a.batch_items))
     t0 = time.perf_counter()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    model, proc = load(a.model, dev) if left else (None, None)
+    model, proc = load(a.model, dev, a.entry) if left else (None, None)
     t1 = time.perf_counter()
     recs = []
     with open(a.out, "a") as f:
@@ -420,13 +436,18 @@ def main(argv=None) -> None:
     ap.add_argument("--model", type=Path, required=True, help="checkpoint directory (with its processor)")
     ap.add_argument("--out", type=Path, required=True, help="completions JSONL")
     ap.add_argument("--dtype", default="bfloat16", help="vllm")
-    ap.add_argument("--gpu-memory-utilization", type=float, default=0.85, help="vllm")
-    ap.add_argument("--max-model-len", type=int, default=2048, help="vllm: prompt (<= ~420 tokens) + max_tokens")
+    ap.add_argument("--entry", choices=sorted(models.MODELS),
+                    help="the model key: vllm engine settings (vllm_eval) and the processor keywords of the hf path")
+    ap.add_argument("--gpu-memory-utilization", type=float, help="vllm (default: the --entry model's vllm_eval)")
+    ap.add_argument("--max-model-len", type=int,
+                    help="vllm: prompt (<= ~420 tokens) + max_tokens (default: the --entry model's vllm_eval)")
     ap.add_argument("--seed", type=int, default=0, help="vllm engine seed (each request carries its own)")
     ap.add_argument("--logprobs", action="store_true", help="vllm: also write the sampled tokens' processed logprobs")
     ap.add_argument("--batch_items", type=int, default=8, help="hf: prompts per generate call (x n samples each)")
     ap.add_argument("--timing", type=Path, help="hf: write generate seconds per item-sample here (R0 rate)")
     a = ap.parse_args(argv)
+    if a.kind == "vllm" and a.entry is None and None in (a.gpu_memory_utilization, a.max_model_len):
+        ap.error("--kind vllm: pass --entry or both --gpu-memory-utilization and --max-model-len")
     try:
         (_main_vllm if a.kind == "vllm" else _main_hf)(a, read_jsonl(a.prompts))
     except Refusal as e:

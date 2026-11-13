@@ -44,8 +44,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from objdel.core import datasets
 from objdel.core.hashing import file_sha256
-from objdel.core.io import read_json, write_json
+from objdel.core.io import read_json, replace_dir, write_json
 from objdel.core.provenance import code_hashes
 from objdel.policy.errors import Refusal
 
@@ -55,7 +56,9 @@ ABORTED = 3  # exit code of a G-vision abort
 WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator and loader warm-up)
 
 
-BOX_DATA, BOX_RUNS = Path("/workspace/data/lidc"), Path("/workspace/runs")  # sync_up / pull.sh on a Vast box (M7)
+# sync_up / pull.sh on a Vast box (M7). An SFT stage names its dataset only in its view's manifest, which lives
+# under the data root, so the box default is the LIDC bundle's folder
+BOX_DATA, BOX_RUNS = Path(datasets.BOX_DATA.format(dataset="lidc")), Path("/workspace/runs")
 
 
 SAME_RUN = ("model", "branches", "a0", "seed", "steps_per_epoch", "sft")  # resume check
@@ -128,7 +131,6 @@ def reference(ref, model: str | None, set_sha256: str) -> float:
 def load_items(cfg: dict, model: str | None, dataset: str) -> dict:
     """{"prepared", "reference"} and the dataset -> the fixed set, its checked reference and the dataset's prompt
     {"items", "set_sha256", "reference", "prompt"}."""
-    from objdel.core import datasets
     from objdel.policy import vision
 
     items, sha = vision.fixed_set(cfg["prepared"], dataset)
@@ -139,17 +141,14 @@ def load_items(cfg: dict, model: str | None, dataset: str) -> dict:
 def vision_reference(args) -> int:
     """projector_distance of the base model on the fixed set, CPU float32 -> vision.reference."""
     import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor
 
-    from objdel.core import datasets
     from objdel.policy import models as policy_models
     from objdel.policy import vision
 
     if not (args.vision and isinstance(args.vision["reference"], str)):
         raise ValueError("--vision-reference-only writes vision.reference: set it to a .json path")
     src = args.model_path or policy_models.get(args.model).hf_id
-    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model))
-    model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.float32).eval()
+    model, proc = policy_models.load_pair(src, dtype=torch.float32, proc_kw=policy_models.processor_kwargs(args.model))
     dataset = read_json(Path(args.view, "manifest.json"))["dataset"]  # the training view's
     items, sha = vision.fixed_set(args.vision["prepared"], dataset)
     d = vision.projector_distance(model, proc, [it["image"] for it in items[: vision.N_IMAGES]],
@@ -186,15 +185,6 @@ def latest(d) -> str | None:
     """The newest complete Trainer checkpoint in d (trainer_state.json is written last)."""
     done = [c for c in Path(d).glob("checkpoint-*") if (c / "trainer_state.json").exists()]
     return str(max(done, key=lambda c: int(c.name.rsplit("-", 1)[1]))) if done else None
-
-
-def replace_dir(write, dest: Path) -> None:
-    """write(tmp) then rename: a crash never leaves a half-written kept directory (resume trusts what exists)."""
-    tmp = dest.with_name(f".{dest.name}.tmp")
-    shutil.rmtree(tmp, ignore_errors=True)
-    write(tmp)
-    shutil.rmtree(dest, ignore_errors=True)
-    os.replace(tmp, dest)
 
 
 @dataclass
@@ -323,11 +313,9 @@ def trainer(args, base: Base, rows, stable: int, out_dir, rolling: Rolling, bran
 def finish(base: Base, d: Path) -> None:
     """A kept stable checkpoint, model-only (LoRA merged) with the processor, for the depth curve."""
     if (d / "adapter_config.json").exists():
-        from peft import PeftModel
-        from transformers import AutoModelForImageTextToText
+        from objdel.policy import models as policy_models
 
-        model = AutoModelForImageTextToText.from_pretrained(base.src, dtype=base.dtype)
-        PeftModel.from_pretrained(model, d).merge_and_unload().save_pretrained(d)
+        policy_models.merged(base.src, d, base.dtype).save_pretrained(d)
     for f in d.glob("*"):
         if f.name.startswith(TRAINER_FILES) or f.suffix == ".pt":
             f.unlink()
@@ -338,7 +326,7 @@ def train(args) -> int:
     """One SFT run of an objdel.core.spec.SftStage."""
     os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")  # read at the first CUDA allocation
     import torch
-    from transformers import AutoProcessor, TrainerCallback
+    from transformers import TrainerCallback
 
     from objdel.policy import models as policy_models
     from objdel.sft import rows as dataset
@@ -357,7 +345,7 @@ def train(args) -> int:
     man = resume_manifest(args, out, view)
     write_json(out / "manifest.json", man)
     src = args.model_path or policy_models.get(args.model).hf_id
-    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model))
+    proc = policy_models.processor(args.model, src)
     base = Base(src, proc, torch.bfloat16)  # the frozen LoRA base
     rows = dataset.view_rows(args.view, proc.tokenizer, policy_models.get(args.model).max_completion, a0=args.a0)
     epochs = list(rows["epoch"])
@@ -388,7 +376,7 @@ def train(args) -> int:
         if "abort" in man:
             break
         if not (out / "branches" / name).is_dir():
-            t = model = None  # V1 R1: the previous trainer's model, grads and AdamW state (~7 GB) made e1 OOM
+            t = None  # V1 R1: the previous trainer's model, grads and AdamW state (~7 GB) made e1 OOM
             gc.collect()
             torch.cuda.empty_cache()
             rolling = callback(man, out, proc, vis, args.rolling_minutes)
@@ -397,9 +385,7 @@ def train(args) -> int:
             man["log"][name], man["peak_memory_gib"][name] = t.state.log_history, peak_gib()
             if "abort" in man:  # G-vision stopped the decay: the branch is unfinished
                 break
-            model = t.model.merge_and_unload() if hasattr(t.model, "merge_and_unload") else t.model  # D6: merged
-            replace_dir(lambda tmp, m=model: (m.save_pretrained(tmp), proc.save_pretrained(tmp)),
-                        out / "branches" / name)
+            policy_models.save_merged(t.model, proc, out / "branches" / name)  # D6: merged
             shutil.rmtree(out / "decay" / name, ignore_errors=True)
         finish(base, out / "stable" / name)  # frees the optimizer state once its branch exists
         write_json(out / "manifest.json", man)

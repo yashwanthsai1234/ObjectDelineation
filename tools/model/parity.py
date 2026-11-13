@@ -36,14 +36,13 @@ def encode(processor, x: dict):
 def teacher(model, processor, x: dict, ids: list[int]) -> np.ndarray:
     """HF logprobs (float32 log_softmax) of the sampled ids after prompt `x`."""
     import torch
-    enc = encode(processor, x)
+
+    from objdel.policy.vision import extend
+    enc = dict(encode(processor, x))
     n, comp = enc["input_ids"].shape[1], torch.tensor([ids])
     kw = {}
-    for k, v in enc.items():
-        if isinstance(v, torch.Tensor) and v.shape == (1, n):  # token-aligned: extend over the completion
-            tail = comp if k == "input_ids" else torch.ones_like(comp) if k == "attention_mask" else 0 * comp
-            v = torch.cat([v, tail.to(v.dtype)], 1)
-        elif isinstance(v, torch.Tensor) and v.is_floating_point():
+    for k, v in extend(enc, comp).items():  # token-aligned tensors extended over the completion
+        if isinstance(v, torch.Tensor) and v.is_floating_point():
             v = v.to(model.dtype)
         kw[k] = v.to(model.device) if isinstance(v, torch.Tensor) else v
     with torch.no_grad():
@@ -55,14 +54,14 @@ def load(model_dir, prompts: dict, dtype: str):
     """(model, processor) of model_dir in dtype, on CUDA when there is one (call it after the sampler child has
     exited), the processor with the prompts' one processor configuration."""
     import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    from objdel.policy.models import load_pair
 
     kwargs = {json.dumps(x["processor_kwargs"], sort_keys=True) for x in prompts.values()}
     if len(kwargs) != 1:
         raise SystemExit("parity: one processor configuration per prompts file")
-    processor = AutoProcessor.from_pretrained(model_dir, **json.loads(kwargs.pop()))
-    model = AutoModelForImageTextToText.from_pretrained(model_dir, dtype=getattr(torch, dtype))
-    return model.to("cuda" if torch.cuda.is_available() else "cpu").eval(), processor
+    return load_pair(model_dir, dtype=getattr(torch, dtype), device="cuda" if torch.cuda.is_available() else "cpu",
+                     proc_kw=json.loads(kwargs.pop()))
 
 
 def compare(model_dir, prompts_path, comps_path, dtype: str, teach=None) -> dict:

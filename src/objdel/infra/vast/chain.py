@@ -3,12 +3,13 @@ folder `push_hf` uploads (`push_target`)."""
 
 from pathlib import Path
 
+from objdel.core import datasets
 from objdel.core.provenance import repo_root
 from objdel.core.spec import RunSpec, fill, load_spec, spec_dataset, to_argv
 from objdel.infra.errors import InfraError
 from objdel.infra.vast.remote import box_run_dir
 
-BOX_DATA = "/workspace/data/{dataset}"  # {data} on the box: the folder sync_up unpacks the dataset's bundle into
+BOX_DATA = datasets.BOX_DATA  # {data} on the box: the folder sync_up unpacks the dataset's bundle into
 
 
 def box_data(spec: RunSpec) -> str:
