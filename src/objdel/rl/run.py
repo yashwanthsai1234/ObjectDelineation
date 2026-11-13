@@ -53,7 +53,6 @@ from objdel.rl import build
 def checked(a):
     """The RlStage `a` with f_check resolved (--f-check, --no-f-check, else on under the f_check.PRESETS), after the
     rules that need objdel.rl (numerics preset names, the --grpo keys train_rl owns); exit 2 on a broken one."""
-    from objdel.policy import models as policy_models
     from objdel.rl import config as configs
     from objdel.rl import f_check
 
@@ -75,11 +74,19 @@ def checked(a):
         error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     if a.grpo.get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
         error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
-    if a.no_ckpt_layers and a.no_ckpt_layers > (n := policy_models.get(a.model).text_layers):
-        error(f"--no-ckpt-layers {a.no_ckpt_layers}: {a.model} has {n} text decoder layers")
-    if (why := rl_refusal(a.dataset)) is not None:
+    if (why := stage_refusal(a.model, a.dataset, a.no_ckpt_layers)) is not None:
         error(why)
     return a
+
+
+def stage_refusal(model: str, dataset: str, no_ckpt_layers: int | None) -> str | None:
+    """Why an RL stage (train_rl, the G-probe) cannot run: --no-ckpt-layers above the model's text decoder layers,
+    then rl_refusal(dataset); else None."""
+    from objdel.policy import models as policy_models
+
+    if no_ckpt_layers and no_ckpt_layers > (n := policy_models.get(model).text_layers):
+        return f"--no-ckpt-layers {no_ckpt_layers}: {model} has {n} text decoder layers"
+    return rl_refusal(dataset)
 
 
 def rl_refusal(dataset: str) -> str | None:

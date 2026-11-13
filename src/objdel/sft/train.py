@@ -44,6 +44,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from objdel.core import datasets
 from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json, replace_dir, write_json
 from objdel.core.provenance import code_hashes
@@ -55,7 +56,9 @@ ABORTED = 3  # exit code of a G-vision abort
 WARM = 3  # timing: steps left out of the mean s/step (compilation, allocator and loader warm-up)
 
 
-BOX_DATA, BOX_RUNS = Path("/workspace/data/lidc"), Path("/workspace/runs")  # sync_up / pull.sh on a Vast box (M7)
+# sync_up / pull.sh on a Vast box (M7). An SFT stage names its dataset only in its view's manifest, which lives
+# under the data root, so the box default is the LIDC bundle's folder
+BOX_DATA, BOX_RUNS = Path(datasets.BOX_DATA.format(dataset="lidc")), Path("/workspace/runs")
 
 
 SAME_RUN = ("model", "branches", "a0", "seed", "steps_per_epoch", "sft")  # resume check
@@ -128,7 +131,6 @@ def reference(ref, model: str | None, set_sha256: str) -> float:
 def load_items(cfg: dict, model: str | None, dataset: str) -> dict:
     """{"prepared", "reference"} and the dataset -> the fixed set, its checked reference and the dataset's prompt
     {"items", "set_sha256", "reference", "prompt"}."""
-    from objdel.core import datasets
     from objdel.policy import vision
 
     items, sha = vision.fixed_set(cfg["prepared"], dataset)
@@ -140,7 +142,6 @@ def vision_reference(args) -> int:
     """projector_distance of the base model on the fixed set, CPU float32 -> vision.reference."""
     import torch
 
-    from objdel.core import datasets
     from objdel.policy import models as policy_models
     from objdel.policy import vision
 

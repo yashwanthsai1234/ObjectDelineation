@@ -28,18 +28,14 @@ import numpy as np
 from scipy.stats import binomtest
 
 from objdel.core import datasets
-from objdel.core.io import read_jsonl
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
+from objdel.policy.rows import records as _records
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_mask
 
 MEDSAM, SAM2 = "flaviagiammarino/medsam-vit-base", "facebook/sam2.1-hiera-tiny"
-MARGIN = {"lidc": 1, "riga": 5}
-
-
-def _records(root, dataset, split):
-    return read_jsonl(Path(root, dataset, f"{split}.jsonl"))
+MARGIN = {"lidc": 1, "riga": 5}  # SAM box margin, px, per dataset key (a test checks every registered key)
 
 
 def _caches(root, rec):
@@ -180,7 +176,7 @@ def main():
         ],
     )
     ap.add_argument("--prepared", default="data/prepared", help="centred train records the prior is fit on")
-    ap.add_argument("--datasets", nargs="+", default=["lidc"])
+    ap.add_argument("--datasets", nargs="+", default=sorted(datasets.DATASETS))
     ap.add_argument("--models", nargs="+", default=["prior", "medsam", "sam2"])
     ap.add_argument("--split", default="val")
     ap.add_argument("--every", type=int, default=1)

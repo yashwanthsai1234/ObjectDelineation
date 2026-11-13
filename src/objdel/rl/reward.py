@@ -81,6 +81,7 @@ from objdel.verify.reward.advantages import (
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_batch
 from objdel.verify.reward.spec import REWARD_V4, RewardV5
+from objdel.verify.stats import MISS
 
 
 def aggregator(spec) -> str:
@@ -90,7 +91,7 @@ def aggregator(spec) -> str:
 
 AGGREGATOR = aggregator(REWARD_V4)
 
-MISS_IOU = 0.1  # a missed answer: gated IoU_tc below this (glossary)
+MISS_IOU = MISS  # a missed answer: gated IoU_tc below this (glossary); the final eval's per-item miss line
 
 
 def score_jobs(jobs) -> dict:
