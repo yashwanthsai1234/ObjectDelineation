@@ -3,7 +3,6 @@ hash, target-set hash, build arguments, generator commit, render files and known
 import hashlib
 import json
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -12,8 +11,8 @@ from objdel.core.hashing import file_sha256
 from objdel.core.io import code_sha, git_sha
 from objdel.data import quality as Q
 from objdel.data import store
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 RECORD = ROOT / "reference/frozen_views.json"
 KEYS = {"view", "items", "content_sha256", "target_set_sha256", "seed", "kinds", "store_manifest_sha256",
         "generator_commit", "render_files", "known_label_issues", "fallback", "padded", "r5_code_commit"}

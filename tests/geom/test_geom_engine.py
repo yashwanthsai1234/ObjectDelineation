@@ -2,12 +2,11 @@
 `_gpucheck.<name>` that src, tests and experiments use, and each name exists in the built extension."""
 
 import re
-from pathlib import Path
 
 from objdel.geom import engine
 from objdel.geom import engine as ext
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 USE = re.compile(r"\b_gpucheck\.([A-Za-z]\w*)\b")
 
 

@@ -25,11 +25,11 @@ from objdel.data.targets.frame import CLEARANCE, FrameConfig, centred, crowded, 
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.geom.topology import signature
+from tests.support.paths import ROOT
 from tests.support.prepared import prepare_items
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
-ROOT = Path(__file__).resolve().parents[2]
 NOD = ("nodule",)
 
 

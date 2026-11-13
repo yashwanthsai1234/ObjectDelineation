@@ -6,7 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 PATH_RE = re.compile(r"tests/[\w/]+\.py(?:::\w+)?")
 SOURCES = ("pyproject.toml", "Makefile", ".github", "ops", "tools", "specs", "src")
 

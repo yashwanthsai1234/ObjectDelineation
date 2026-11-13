@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from objdel.core.hashing import file_sha256
+from tests.support.items import speck_item
 from tests.support.prepared import prepare_items
 from tests.support.targets import rater_texts
 
@@ -203,16 +204,9 @@ def test_view_rows_on_the_real_view_builder(tmp_path, synthetic_items, disc_mask
     """Agent V's builder (M1) on the conftest items plus an item with a sub-filter speck rater: rows render through
     the real augment.render, only voting raters are taught (I27 / B2-4), non-simple rows are repeated, A0 keeps
     every row."""
-    from objdel.data.store import Item
     from objdel.data.targets import augment
     build = pytest.importorskip("objdel.cli.data.views")
-    rng = np.random.default_rng(1)
-    speck = np.zeros((100, 100), bool)
-    speck[50:52, 50:52] = True  # 4 px < min_area 5: abstains from the topology vote
-    item = Item("lidc/1.2.9/n000/z001", "lidc", "LIDC-IDRI-0009", "train",
-                rng.integers(-1000, 400, (100, 100), dtype=np.int16),
-                {"nodule": np.stack([disc_mask(100, 100, 50, 50, 12), disc_mask(100, 100, 50, 50, 11), speck])},
-                ["1", "2", "3"], {})
+    item = speck_item()
     store.write(sorted([*synthetic_items(), item], key=lambda i: (i.dataset, i.split, i.item_id)), tmp_path / "s")
     m = build.build(tmp_path / "s", tmp_path / "v", "lidc", "train", procs=1)
     ds = sft_rows.view_rows(tmp_path / "v")

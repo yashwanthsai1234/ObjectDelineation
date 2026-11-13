@@ -15,14 +15,13 @@ import re
 import subprocess
 import sys
 import tomllib
-from pathlib import Path
 
 import numpy as np
 import pytest
 
+from tests.support.paths import ROOT
 from tests.support.prepared import prepare_items
 
-ROOT = Path(__file__).resolve().parents[2]
 PREPARED = ROOT / "data" / "prepared"
 G = 8
 
@@ -163,8 +162,6 @@ def test_b4_3_logged_completions_carry_item_key_and_truncation(chain):
     assert files
     cols = set(pd.read_parquet(files[-1]).columns)
     assert "key" in cols and "truncated" in cols
-
-
 
 
 def test_eval_runner_edges(chain):

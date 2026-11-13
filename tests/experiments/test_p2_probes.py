@@ -4,16 +4,15 @@ objdel.cli.data.probes and objdel.cli.eval.baselines CLIs.
 Synthetic tests build small probe directories on synthetic lung patches; the `data` tests use the real store."""
 
 import json
-from pathlib import Path
 
 import numpy as np
 import probe_models as M
 import pytest
 
 from objdel.data import probes as P
+from tests.support.paths import ROOT
 from tests.support.proc import run_isolated
 
-ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 
 

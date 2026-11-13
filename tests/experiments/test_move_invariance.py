@@ -15,7 +15,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 GOLDENS = ROOT / "tests/goldens/phase_e"
 PLATFORM = f"{sys.platform}-{platform.machine()}"
 # E6.2: every plan that is live and goes through policy.chain; the goldens also hold plans that left the repo

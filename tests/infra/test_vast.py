@@ -33,9 +33,9 @@ from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
 from tests.support.gitrepo import init_repo
+from tests.support.paths import ROOT
 from tests.support.proc import run_isolated
 
-ROOT = Path(__file__).resolve().parents[2]
 VAST = ROOT / "ops" / "vast"
 DOCKER = ROOT / "ops" / "docker"
 SNAP = ROOT / "tests" / "fixtures" / "vast_snapshot.json"

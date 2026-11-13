@@ -1,15 +1,14 @@
 """E6: the run spec (objdel.core.spec): strict loading, one definition of each flag, and a CLI round trip."""
 import json
 import sys
-from pathlib import Path
 
 import pytest
 import yaml
 from pydantic import ValidationError
 
 from objdel.core import spec as S
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 SPECS = sorted((ROOT / "specs").glob("*.yaml"))
 RD, DATA = "/workspace/runs/x", "/workspace/data/lidc"
 HEX40, HEX64 = "a" * 40, "b" * 64
@@ -229,7 +228,6 @@ def test_a_flag_value_out_of_range_exits_2():
             S.cli_stage(S.RlStage, ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "2",
                                     *argv])
         assert e.value.code == 2, argv
-
 
 
 def test_a_bool_field_named_no_x_parses_its_bare_flag_as_true():

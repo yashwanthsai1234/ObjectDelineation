@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.support.paths import ROOT
 from tests.support.shapes import disc as disc_hw
 
 pytest.importorskip("pyarrow")
@@ -27,7 +28,6 @@ from objdel.rl import rows as rl_rows  # noqa: E402
 from objdel.sft import rows as sft_rows  # noqa: E402
 from objdel.verify import store as verify_store  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
 PREPARED = ROOT / "data" / "prepared"
 
 

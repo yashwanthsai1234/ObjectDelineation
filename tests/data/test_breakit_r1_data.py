@@ -11,7 +11,7 @@ from objdel.verify import ceiling as C
 from objdel.verify import gates as G
 from objdel.verify import select
 from objdel.verify import stats as S
-from tests.experiments.test_data_windows import lidc_item
+from tests.support.items import lidc_item
 
 
 def FE():

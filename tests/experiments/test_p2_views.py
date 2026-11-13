@@ -19,11 +19,11 @@ from objdel.data.targets.frame import CLEARANCE, DIVISORS, LUNG_WINDOW, FrameCon
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.geom.topology import signature
+from tests.support.paths import ROOT
 from tests.support.prepared import prepare_items
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
-ROOT = Path(__file__).resolve().parents[2]
 PREPARED, STORE = ROOT / "data" / "prepared", ROOT / "data" / "store"
 BUNDLE, EVAL_VIEWS = ROOT / "data" / "views" / "lidc-bundle-v3", ROOT / "data" / "eval_views"  # the bundle trained on
 FRAME_SHA = {  # targets.frame before the Phase 2 change (box, masks, image bytes)

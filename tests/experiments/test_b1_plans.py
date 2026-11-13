@@ -4,15 +4,14 @@ or unknown flag fails here and not on the paid box."""
 
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
 from objdel.core.spec import MODULE
+from tests.support.paths import ROOT
 
 yaml = pytest.importorskip("yaml")
 
-ROOT = Path(__file__).resolve().parents[2]
 NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
 CONFIGS = ROOT / "specs"  # E6.2: the run specs replaced the plan files
 C_SPEED_CHECK = "tools.studies.c_speed_check"  # the C speed arm's own CLI (specs/c_speed.yaml)

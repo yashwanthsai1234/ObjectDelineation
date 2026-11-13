@@ -16,8 +16,8 @@ import pytest
 from objdel.geom import engine as G
 from objdel.geom.shape import unpack_rows
 from tests.goldens.make_b_goldens import b_sets, b_tables, random_masks, score_masks_of
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = ROOT / "tests" / "goldens" / "b_g01.json"
 BOX_INPUTS = ("checker_eval/masks.npz",)
 

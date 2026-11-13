@@ -2,9 +2,10 @@
 G-probe generates with vLLM colocate, the GRPO step keeps
 256 answers in larger micro-batches, and the per-micro-batch host syncs are off."""
 
-from pathlib import Path
 
 import pytest
+
+from tests.support.paths import ROOT
 
 pytest.importorskip("trl")
 from objdel.policy import models as policy_models  # noqa: E402
@@ -12,7 +13,6 @@ from objdel.rl import config as rl_config  # noqa: E402
 from objdel.sft import config as sft_config  # noqa: E402
 from objdel.verify.reward.spec import REWARD_V4  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
 KV_PER_TOKEN = 112 * 1024  # Qwen3-VL-2B bf16: 28 layers x 8 KV heads x 128 x (K, V) x 2 bytes (PLAN D13)
 PROMPT = 330  # tokens: chat text + 256 image tokens (R1 collator)
 

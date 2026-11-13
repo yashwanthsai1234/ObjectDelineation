@@ -7,9 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.paths import ROOT
 from tools import sweep as fs
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def make(tmp_path: Path, files: dict[str, str]) -> fs.Ctx:

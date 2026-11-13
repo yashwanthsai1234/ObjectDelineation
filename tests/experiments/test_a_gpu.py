@@ -20,8 +20,8 @@ from objdel.verify import ceiling
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
 from tests.goldens import make_a_goldens as GOLD
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 PREPARED = Path(os.environ.get("OBJDEL_PREPARED", ROOT / "data" / "prepared"))  # the box's prepared root
 CUDA = pytest.mark.skipif(_gpucheck.build() != "cuda", reason="CPU build: the CUDA build runs on the box")
 

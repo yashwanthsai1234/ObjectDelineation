@@ -19,9 +19,9 @@ from objdel.verify import store as serve
 from objdel.verify.reward.advantages import advantages_v4
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
 from objdel.verify.reward.score import score_batch
+from tests.support.paths import ROOT
 from tests.support.prepared import write_prepared_root
 
-ROOT = Path(__file__).resolve().parents[2]
 EOS = 0
 
 

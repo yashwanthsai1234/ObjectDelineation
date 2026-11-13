@@ -11,10 +11,11 @@ import re
 import subprocess
 import sys
 import textwrap
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from tests.support.paths import ROOT
 
 torch = pytest.importorskip("torch")
 trl = pytest.importorskip("trl")
@@ -24,8 +25,6 @@ from trl.generation.vllm_generation import VLLMGeneration  # noqa: E402
 from objdel.policy import caches as policy_caches  # noqa: E402
 from objdel.rl import forward as rl_forward  # noqa: E402
 from objdel.rl import trl_adapter as T  # noqa: E402
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_the_environment_has_the_pinned_trl():

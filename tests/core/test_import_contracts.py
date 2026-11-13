@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 # The editable install redirects `objdel` to the real tree; the scratch copy must win, so the runner drops that finder.
 RUNNER = """
 import sys

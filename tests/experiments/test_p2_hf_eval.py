@@ -9,18 +9,16 @@ import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from objdel.sft import select as sft_select
+from tests.support.paths import ROOT
 from tests.support.tiny_models import tiny_qwen
 
-ROOT = Path(__file__).resolve().parents[2]
 SPECS = sorted((ROOT / "specs").glob("*.yaml"))
-
 
 
 # ---------------------------------------------------------------- hf_sample: batches of items, resume

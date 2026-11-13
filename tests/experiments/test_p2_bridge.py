@@ -2,7 +2,6 @@
 (objdel.policy.sampler's vLLM request builder and output records)."""
 import json
 import types
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,8 +9,6 @@ import pytest
 from objdel.core.io import write_jsonl
 from objdel.policy.errors import Refusal
 from tests.support.tiny_models import tiny_qwen
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 class Processor:

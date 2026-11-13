@@ -15,8 +15,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from objdel.data import lidc, store
-
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
 
 
 def square(x0, y0, x1, y1):

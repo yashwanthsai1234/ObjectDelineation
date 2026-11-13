@@ -15,10 +15,10 @@ from objdel.policy import models as configs
 from objdel.policy import models as rewards
 from objdel.policy import sampler as S
 from objdel.policy.errors import Refusal
+from tests.support.paths import ROOT
 from tests.support.proc import run_isolated
 from tests.support.tiny_models import tiny_qwen
 
-ROOT = Path(__file__).resolve().parents[2]
 VIEW = ROOT / "data/eval_views/lidc-val-shifted"
 
 

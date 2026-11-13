@@ -12,8 +12,8 @@ from scipy import stats
 
 from objdel.cli.train import prereg as P
 from objdel.verify import stats as S
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 # B2 shifted, retired 450M, 10 items
 FIX = json.loads((Path(__file__).parents[1] / "fixtures" / "p2_signal_fixture.json").read_text())
 LAB = json.loads((Path(__file__).parents[1] / "goldens" / "p2_lab_refs.json").read_text())  # lab outputs, seeded inputs

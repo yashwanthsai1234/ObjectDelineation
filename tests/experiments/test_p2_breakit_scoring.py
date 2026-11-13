@@ -25,10 +25,10 @@ from objdel.verify import stats as S
 from objdel.verify import store as serve
 from objdel.verify.metrics import _ged, metrics, min_mode_retention, summarize, tv_js
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.paths import ROOT
 from tests.support.shapes import disc as disc_hw
 from tests.support.targets import rater_texts
 
-ROOT = Path(__file__).resolve().parents[2]
 VIEWS = ROOT / "data" / "eval_views"
 SIDE = 50
 STOP = {1}

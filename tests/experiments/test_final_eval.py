@@ -19,10 +19,10 @@ from objdel.core.hashing import file_sha256
 from objdel.policy import evaluate as EV
 from objdel.policy import final_eval as FE
 from objdel.verify import stats as S
+from tests.support.paths import ROOT
 from tests.support.prepared import prepare_items
 from tests.support.proc import run_isolated
 
-ROOT = Path(__file__).resolve().parents[2]
 CI_KEYS = {"mean", "ci95_nodule", "ci95_patient", "ci95_item", "higher_is_better"}
 
 

@@ -1,7 +1,6 @@
 """E6: C.chain() on a run spec gives, string for string, what the old plan files gave (golden 5), and the
 G-vision references and the SFT launch config map onto spec stages."""
 import json
-from pathlib import Path
 
 import pytest
 import yaml
@@ -11,8 +10,8 @@ from objdel.infra.errors import InfraError
 from objdel.infra.vast import __main__ as policy
 from objdel.infra.vast import chain as C
 from tests.experiments.test_move_invariance import later_edits
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 SPECS = ROOT / "specs"
 GOLDEN = json.loads((ROOT / "tests/goldens/phase_e/invariance.json").read_text())["chain_argv"]
 for _g in GOLDEN.values():

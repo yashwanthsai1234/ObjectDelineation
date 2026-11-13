@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from objdel.sft import train as sft_train
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")
 LOCAL_DOCS = pytest.mark.skipif(not (ROOT / "docs").is_dir(), reason="docs/ is local-only (git-ignored, 2026-11-11)")
 GOLDENS = ROOT / "tests" / "goldens"

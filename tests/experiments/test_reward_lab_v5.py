@@ -1,11 +1,11 @@
 """B3.7: the lab report on synthetic scored groups (the real round needs A3's saved val answers)."""
 import shutil
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from objdel.verify.reward.spec import REWARD_V5
+from tests.support.paths import ROOT
 from tools.studies.reward_lab_v5 import (
     allmiss_grad_share,
     b3_grpo,
@@ -16,8 +16,6 @@ from tools.studies.reward_lab_v5 import (
     variance_share,
     write_grpo,
 )
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def groups():

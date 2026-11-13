@@ -13,10 +13,10 @@ from objdel.verify import store as serve
 from objdel.verify.api import VerifyError
 from objdel.verify.reward.score import score_batch
 from tests.support.outlines import outline_text, square_ring
+from tests.support.paths import ROOT
 from tests.support.prepared import write_prepared_root
 from tests.support.shapes import rect_mask
 
-ROOT = Path(__file__).resolve().parents[2]
 SIDE, CELL = 50, 20  # 50 x 50 pixels; the 0-1000 grid has 20 units per pixel
 KEY = "lidc/1.2.0/n000/z000"
 ROWS = [{"key": KEY, "W": SIDE, "H": SIDE, "names": ["nodule"]}]

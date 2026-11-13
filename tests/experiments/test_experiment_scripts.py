@@ -13,11 +13,11 @@ https://docs.python.org/3/library/runpy.html#runpy.run_module, https://docs.pyth
 import json
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 SCRIPTS = [".".join(p.relative_to(root).with_suffix("").parts)
            for root, pattern in ((ROOT, "tools/**/*.py"), (ROOT / "src", "objdel/cli/*/*.py"))
            for p in sorted(root.glob(pattern)) if p.stem != "__init__"]

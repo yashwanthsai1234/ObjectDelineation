@@ -3,16 +3,12 @@ block, C2's depth read from R2's g_probe.json (branches_from) and runner-only co
 
 import json
 import os
-from pathlib import Path
 
 import pytest
 
 from objdel.policy.errors import Refusal
 from tests.support.specs import CPU_SFT, sft_stages, stage
 from tests.support.tiny_models import tiny_qwen
-
-ROOT = Path(__file__).resolve().parents[2]
-
 
 
 @pytest.fixture

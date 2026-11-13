@@ -12,8 +12,8 @@ import pytest
 
 from objdel.infra import bundle as BU
 from objdel.infra.vast import remote as P
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 SRC = "/workspace/src/"
 
 

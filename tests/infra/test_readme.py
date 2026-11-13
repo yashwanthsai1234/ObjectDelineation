@@ -2,9 +2,9 @@
 import contextlib
 import io
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 README = (ROOT / "README.md").read_text()
 
 

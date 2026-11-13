@@ -6,7 +6,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 DOCKER = ROOT / "ops" / "docker"
 LOCKS = DOCKER / "locks"
 

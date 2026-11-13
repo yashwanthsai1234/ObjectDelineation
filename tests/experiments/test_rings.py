@@ -10,7 +10,6 @@ import inspect
 import json
 import shutil
 import sys
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -25,8 +24,8 @@ from tests.geom.test_cuda_checker import k1_masks
 from tests.oracles import bitquad_oracle as BQ
 from tests.oracles import cuda_parity as C
 from tests.oracles import polygonize_oracle as PO
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 MASKS = ROOT / "data" / "checker_eval" / "masks.npz"
 
 
