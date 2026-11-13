@@ -9,6 +9,8 @@ from hypothesis import strategies as st
 from oracles.largest_remainder import lrr
 
 from objdel.data import windows as Wn
+from tests.support.items import lidc_item
+from tests.support.shapes import annulus
 
 
 def win(kind="shifted", draw=0, *, item_id="lidc/p0/n000/z001", side=100, s0=100, offset=0.0, extent_px=20,
@@ -89,17 +91,7 @@ def test_cell_shares():
 
 # --------------------------------------------------------------------------------------------------- pool (B1.1)
 def disk(cy, cx, r, hole=0, n=200):
-    y, x = np.ogrid[:n, :n]
-    d2 = (y - cy) ** 2 + (x - cx) ** 2
-    return (d2 <= r * r) & (d2 > hole * hole)
-
-
-def lidc_item(item_id, discs, *, other=(), group="LIDC-IDRI-0000", n=200, image=True):
-    """A synthetic LIDC slice: one doctor mask per disc (cy, cx, r[, hole]), other outlined nodules as boxes."""
-    from objdel.data.store import Item
-    hu = np.random.default_rng(len(item_id)).integers(-1000, 400, (n, n), dtype=np.int16) if image else None
-    return Item(item_id, "lidc", group, "train", hu, {"nodule": np.stack([disk(*d, n=n) for d in discs])},
-                [str(k + 1) for k in range(len(discs))], {"other_nodules": [list(b) for b in other]})
+    return annulus(n, n, cy, cx, r, hole)
 
 
 def store30():

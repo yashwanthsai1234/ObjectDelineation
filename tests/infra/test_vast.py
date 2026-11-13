@@ -22,6 +22,7 @@ from unittest import mock
 import pytest
 
 from objdel.core import datasets
+from objdel.core.hashing import file_sha256
 from objdel.core.io import git_sha
 from objdel.infra import bundle as B
 from objdel.infra import preflight as PF
@@ -31,8 +32,10 @@ from objdel.infra.vast import chain as CH
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
+from tests.support.gitrepo import init_repo
+from tests.support.paths import ROOT
+from tests.support.proc import run_isolated
 
-ROOT = Path(__file__).resolve().parents[2]
 VAST = ROOT / "ops" / "vast"
 DOCKER = ROOT / "ops" / "docker"
 SNAP = ROOT / "tests" / "fixtures" / "vast_snapshot.json"
@@ -676,10 +679,8 @@ def test_frozen_views_ship(tmp_path, monkeypatch):
     """I50: the code snapshot keeps the two reference/ records the box reads (final_eval's frozen check, the
     held-out val_half) and drops docs/; on a copy of the snapshot both lookups find their file."""
     repo = tmp_path / "repo"
-    for f in (*SHIPPED, "docs/a.md", "docs/reference/data.md", "tests/verify/test_gpu_scoring.py", "pyproject.toml"):
-        (repo / f).parent.mkdir(parents=True, exist_ok=True)
-        (repo / f).write_text("{}")
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    init_repo(repo, (*SHIPPED, "docs/a.md", "docs/reference/data.md", "tests/verify/test_gpu_scoring.py",
+                     "pyproject.toml"), content="{}")
     with monkeypatch.context() as m:
         m.setenv("OBJDEL_REPO", str(repo))
         assert sorted(RM.code_files()) == sorted([*SHIPPED, "tests/verify/test_gpu_scoring.py", "pyproject.toml"])
@@ -1018,7 +1019,7 @@ def test_bundle_lidc_members_manifest_and_determinism(tmp_path):
     b = B.build("lidc", d, tmp_path / "out2")
     assert a.name == "bundle-lidc.tar" and a.read_bytes() == b.read_bytes()  # byte-identical builds
     side = (tmp_path / "out1" / "bundle-lidc.tar.sha256").read_text()
-    assert side == f"{hashlib.sha256(a.read_bytes()).hexdigest()}  bundle-lidc.tar\n"
+    assert side == f"{file_sha256(a)}  bundle-lidc.tar\n"
     with tarfile.open(a) as t:
         names = t.getnames()
         sums = dict(ln.split("  ")[::-1] for ln in t.extractfile("SHA256SUMS").read().decode().splitlines())
@@ -1087,8 +1088,7 @@ def test_bundle_real_lidc_selection():
 
 
 def test_bundle_help():
-    p = subprocess.run([sys.executable, "-I", "-m", "objdel.infra.bundle", "--help"], capture_output=True,
-                       text=True)  # fmt: skip
+    p = run_isolated("-m", "objdel.infra.bundle", "--help")
     assert p.returncode == 0 and "usage" in p.stdout
 
 
@@ -1324,21 +1324,14 @@ def test_pull_stamps_its_start_and_skips_full_checkpoints(E):
 def test_code_files_keep_paths_with_spaces_whole(tmp_path, monkeypatch):
     """V1 (2026-11-02): `git ls-files` output was split on any whitespace, so a tracked path with spaces (docs/research
     notes) became words that rsync --files-from could not stat, and sync_up failed before sending a byte."""
-    for p in ("tests/verify/test_gpu_scoring.py", "tools/my dir/a b.py", "docs/notes with space/x.md",
-              "pyproject.toml"):
-        (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / p).write_text("x")
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    init_repo(tmp_path, ("tests/verify/test_gpu_scoring.py", "tools/my dir/a b.py", "docs/notes with space/x.md",
+                         "pyproject.toml"), add=True)
     monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
     assert sorted(RM.code_files()) == ["pyproject.toml", "tests/verify/test_gpu_scoring.py", "tools/my dir/a b.py"]
 
 
 def _git_repo(root, files):
-    for f in files:
-        (root / f).parent.mkdir(parents=True, exist_ok=True)
-        (root / f).write_text("x")
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    init_repo(root, files)
 
 
 def test_code_snapshot_drops_agent_and_archive_folders(tmp_path, monkeypatch):
@@ -1517,11 +1510,7 @@ def test_code_files_ship_reference_but_nothing_from_docs(tmp_path, monkeypatch):
             "docs/implementation2.0/kernels/K1/build/x", "docs/implementation2.0/kernels/K1/results/x.txt",
             "docs/implementation2.0/kernels/README.md", "docs/implementation2.0/kernels/K4/a.cpp",
             "docs/reference/other.json", "docs/implementation2.0/Implementation.md"]
-    for p in keep + drop:
-        (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / p).write_text("x")
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    init_repo(tmp_path, keep + drop, add=True)
     monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
     assert sorted(RM.code_files()) == sorted(keep)
 

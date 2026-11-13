@@ -10,20 +10,18 @@ import pytest
 from objdel.verify import ceiling as C
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.shapes import annulus, rect_mask
+from tests.support.targets import mask_text
 
 H = W = 64
 
 
 def disc(cy, cx, r, hole=0):
-    y, x = np.ogrid[:H, :W]
-    d2 = (y - cy) ** 2 + (x - cx) ** 2
-    return (d2 <= r * r) & (d2 > hole * hole)
+    return annulus(H, W, cy, cx, r, hole)
 
 
 def rect(y0, y1, x0, x1):
-    m = np.zeros((H, W), bool)
-    m[y0:y1, x0:x1] = True
-    return m
+    return rect_mask((H, W), x0, y0, x1, y1)
 
 
 def plain_iou(a, b):
@@ -102,9 +100,7 @@ def test_k2_both_empty_scores_one_not_nan():
 
 def text_of(mask):
     """The repo's target text of a mask (exact for LIDC nodules)."""
-    from objdel.data.targets.build import build_target, min_areas
-
-    return build_target({"nodule": mask}, ("nodule",), None, min_areas({"nodule": mask[None]})).text
+    return mask_text(mask)
 
 
 def test_identical_doctors_score_one():

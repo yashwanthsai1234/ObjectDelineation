@@ -9,11 +9,11 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 SCRIPT = ROOT / "tools/profiling/nsys_capture.sh"
 
 

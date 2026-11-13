@@ -1,6 +1,6 @@
 """E3 gate (R-3): the verifier side (geom, verify, data) loads no ML stack and no training package."""
-import subprocess
-import sys
+
+from tests.support.proc import run_isolated
 
 CODE = """
 import importlib, pkgutil, sys
@@ -16,5 +16,5 @@ print(sorted(ml | up))
 
 
 def test_verifier_side_imports_no_ml_stack():
-    out = subprocess.run([sys.executable, "-I", "-c", CODE], capture_output=True, text=True, check=True).stdout
+    out = run_isolated(code=CODE, check=True).stdout
     assert out.strip() == "[]"

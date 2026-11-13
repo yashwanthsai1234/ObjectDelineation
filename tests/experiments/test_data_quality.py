@@ -14,12 +14,14 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from test_data_windows import lidc_item, store30
+from test_data_windows import store30
 
 from objdel.data import quality as Q
 from objdel.data import store
 from objdel.data import windows as Wn
 from objdel.data.targets.frame import frame
+from tests.support.items import lidc_item
+from tests.support.quality import Tok, quality_stubs, stub_ceiling
 
 SHARES = {"centred": 0.5, "shifted": 0.5, "rescaled": 0.0}
 PLAN = {"steps": 13, "per_step": 2, "block_steps": 13, "seed": 4, "draws": 1, "shares": SHARES,
@@ -360,15 +362,6 @@ def test_schedule_report_reads_the_apparent_size(world, monkeypatch):  # U59
 
 
 # ----------------------------------------------------------------------------------- tokens (U23), agreement (I31)
-class Tok:
-    def __init__(self, n):
-        self.n = n
-
-    def __call__(self, texts, add_special_tokens=False):
-        assert not add_special_tokens
-        return {"input_ids": [[0] * (self.n if i == 0 else 3) for i, _ in enumerate(texts)]}
-
-
 @pytest.mark.parametrize("n,ok", [(1536 - 102, True), (1536 - 101, False), (1536 - 100, False)])
 def test_dg12_fencepost(world, n, ok):
     got = Q.tokens(world.rows, Tok(n), 1536)
@@ -380,17 +373,6 @@ def test_dg12_fails_on_a_target_error(world, rows):
     edit_records(rows, lambda recs: recs[0]["errors"].append(["x", "1", "bad"]))
     got = Q.tokens(rows, Tok(10), 1536)
     assert got["errors"] == 1 and not {x.name: x for x in Q.gates(clean_report() | {"tokens": got})}["DG12"].ok
-
-
-def stub_ceiling(monkeypatch, values):
-    """objdel.verify.ceiling with a loo_caches whose left-out doctor r scores values[r % len(values)] (score_mask
-    patched to return the stub cache's value)."""
-    from objdel.verify.reward import score
-
-    def loo_caches(cache):
-        return [types.SimpleNamespace(index=r, cache=values[r % len(values)]) for r in range(cache.k)]
-    monkeypatch.setitem(sys.modules, "objdel.verify.ceiling", types.SimpleNamespace(loo_caches=loo_caches))
-    monkeypatch.setattr(score, "score_mask", lambda mask, cache: types.SimpleNamespace(iou_tc=cache))
 
 
 def test_agreement_reports_the_doctor_loo_iou_per_cell(tmp_path, monkeypatch):
@@ -491,27 +473,17 @@ def test_policy_side_limit_is_exact(world):
 @pytest.fixture
 def cli(world, tmp_path, monkeypatch):
     from objdel.cli.data import audit as A
-    from objdel.data import splits
-    from objdel.policy import models
-    stub_ceiling(monkeypatch, [0.9, 0.8])
-    monkeypatch.setattr(models, "tokenizer", lambda model: (Tok(50), 1536))
-    monkeypatch.setattr(splits, "val_half", lambda g: "shape" if int(g[-1]) % 2 else "select")  # fixture patients
-    ex = tmp_path / "train_exclusions.json"
-    ex.write_text("{}")
-    frozen = tmp_path / "frozen_views.json"
-    frozen.write_text(json.dumps({v: {"content_sha256": Q.view_content_sha256(world.views / v),
-                                      "target_set_sha256": Q.target_set_sha256(world.views / v)} for v in Q.FROZEN}))
-    z = {"train_sha256": Q.file_sha256(world.store / "lidc/train.parquet"), "series": {}, "step2": []}
-    (tmp_path / "z.json").write_text(json.dumps(z))
+    stubs = quality_stubs(world, tmp_path, monkeypatch)
+    ex, frozen = stubs.ex, stubs.frozen
 
     def run(rows, *extra):
         out = tmp_path / "audit.json"
         code = A.main(["--rows", str(rows), "--store", str(world.store), "--eval-views", str(world.views),
                        "--exclusions", str(ex), "--review", str(tmp_path / "none.json"), "--frozen", str(frozen),
-                       "--series-z", str(tmp_path / "z.json"), "--out", str(tmp_path / "png"), "--json", str(out),
+                       "--series-z", str(stubs.z), "--out", str(tmp_path / "png"), "--json", str(out),
                        *extra])
         return code, json.loads(out.read_text())
-    return types.SimpleNamespace(run=run, ex=ex, z=tmp_path / "z.json")
+    return types.SimpleNamespace(run=run, ex=ex, z=stubs.z)
 
 
 def test_audit_data_passes_a_clean_root(cli, world, capsys):

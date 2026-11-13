@@ -1,11 +1,9 @@
 """U40 (E5.1): the objdel.rl package is lazy. Its __init__ holds a docstring only, so importing the rows module loads no
 TRL and no vLLM (sampler-side and data-side callers import objdel.rl.rows without the trainer stack)."""
 import ast
-import subprocess
-import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+from tests.support.proc import run_isolated
 
 
 def test_rl_init_holds_a_docstring_only():
@@ -16,5 +14,5 @@ def test_rl_init_holds_a_docstring_only():
 
 def test_importing_rl_rows_loads_no_trl_and_no_vllm():
     code = "import sys, objdel.rl.rows; print(sorted({'trl', 'vllm'} & {m.split('.')[0] for m in sys.modules}))"
-    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
+    out = run_isolated(code=code, check=True)
     assert out.stdout.strip() == "[]"

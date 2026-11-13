@@ -5,9 +5,9 @@ skip."""
 import re
 import runpy
 import subprocess
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 BOX = ROOT / "ops/box/run_box.sh"
 JUNIT_SKIPS = ROOT / "ops/box/junit_skips.py"  # run by path: ops/ is not a Python package
 PY = ROOT / ".venv/bin/python"

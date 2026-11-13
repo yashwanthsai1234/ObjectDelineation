@@ -28,13 +28,14 @@ from objdel.verify.metrics import (
     tv_js,
 )
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.shapes import disc as disc_hw
+from tests.support.targets import rater_texts
 
 S = 50  # frame side (divides 1000)
 
 
 def disk(cy, cx, r, side=S):
-    yy, xx = np.ogrid[:side, :side]
-    return (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
+    return disc_hw(side, side, cy, cx, r)
 
 
 def nodule_raters():
@@ -51,9 +52,7 @@ def riga_raters():
 
 
 def targets(raters, names):
-    ma = min_areas({n: raters[n] for n in names})
-    k = len(raters[names[0]])
-    return [build_target({n: raters[n][r] for n in names}, names, min_area=ma).text for r in range(k)]
+    return rater_texts(raters, names)
 
 
 def text_of(masks: dict, names, raters):

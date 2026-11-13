@@ -3,7 +3,6 @@ the vLLM request builder, HfSampler on a tiny offline model, the child-process e
 trl.trainer, no vllm)."""
 import json
 import os
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -16,8 +15,10 @@ from objdel.policy import models as configs
 from objdel.policy import models as rewards
 from objdel.policy import sampler as S
 from objdel.policy.errors import Refusal
+from tests.support.paths import ROOT
+from tests.support.proc import run_isolated
+from tests.support.tiny_models import tiny_qwen
 
-ROOT = Path(__file__).resolve().parents[2]
 VIEW = ROOT / "data/eval_views/lidc-val-shifted"
 
 
@@ -135,13 +136,12 @@ def test_vllm_sampler_serves_an_adapter_unmerged(monkeypatch, tmp_path):
 def test_import_loads_neither_trl_trainer_nor_vllm():
     code = ("import sys, objdel.policy.sampler, objdel.policy.evaluate\n"
             "print(sorted(m for m in sys.modules if m.startswith(('trl.trainer', 'vllm'))))")
-    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
+    out = run_isolated(code=code, check=True)
     assert out.stdout.strip() == "[]"
 
 
 def test_help_runs_without_vllm():
-    out = subprocess.run([sys.executable, "-I", "-m", "objdel.policy.sampler", "--help"], capture_output=True,
-                         text=True, check=True)
+    out = run_isolated("-m", "objdel.policy.sampler", "--help", check=True)
     assert "--kind" in out.stdout and "--logprobs" in out.stdout and "--batch_items" in out.stdout
 
 
@@ -208,9 +208,8 @@ def tiny(tmp_path):
     from PIL import Image
 
     from objdel.policy.prompt import _user
-    from tests.experiments.test_p2_scripts import _tiny_vlm
 
-    model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
+    model = tiny_qwen(tmp_path / "tiny", "qwen3-vl-2b")
     rng, rows = np.random.default_rng(0), []
     for i, size in enumerate([(64, 64), (200, 120), (64, 64)]):
         Image.fromarray(rng.integers(0, 255, (*size[::-1], 3), dtype=np.uint8)).save(tmp_path / f"im{i}.png")

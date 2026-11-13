@@ -3,16 +3,16 @@ hash, target-set hash, build arguments, generator commit, render files and known
 import hashlib
 import json
 import subprocess
-from pathlib import Path
 
 import pytest
 
 from objdel.cli.data import freeze as FV
+from objdel.core.hashing import file_sha256
 from objdel.core.io import code_sha, git_sha
 from objdel.data import quality as Q
 from objdel.data import store
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 RECORD = ROOT / "reference/frozen_views.json"
 KEYS = {"view", "items", "content_sha256", "target_set_sha256", "seed", "kinds", "store_manifest_sha256",
         "generator_commit", "render_files", "known_label_issues", "fallback", "padded", "r5_code_commit"}
@@ -39,7 +39,7 @@ def test_entry_holds_the_content_hash_and_the_build_record(view):
     ids = [json.loads(x)["item_id"] for x in (view / "lidc/val.jsonl").read_text().splitlines()]
     e = FV.entry(view, known=[ids[0], "lidc/9.9/n000/z001"])
     assert set(e) == KEYS and e["view"] == "lidc-val-edge" and e["items"] == len(ids)
-    assert e["content_sha256"] == _content(view) != hashlib.sha256((view / "manifest.json").read_bytes()).hexdigest()
+    assert e["content_sha256"] == _content(view) != file_sha256(view / "manifest.json")
     assert e["target_set_sha256"] == m["sets"]["lidc/val"]["target_set_sha256"]
     assert (e["seed"], e["kinds"], e["store_manifest_sha256"]) == (0, ["shifted", "edge"], m["store_manifest_sha256"])
     assert e["known_label_issues"] == [ids[0]]  # only the view's own items

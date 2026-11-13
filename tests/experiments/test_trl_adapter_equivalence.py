@@ -14,6 +14,8 @@ import time
 import numpy as np
 import pytest
 
+from tests.support.tiny_models import tiny_llama
+
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 from datasets import Dataset  # noqa: E402
@@ -797,22 +799,13 @@ def tiny_loop_vllm_fake(monkeypatch, out, steps=3, eval_steps=None, shared_prefi
     eval_steps: a held-out eval every eval_steps steps; shared_prefix: FastGRPO's flag; over: GRPOConfig fields
     that replace the defaults. Returns the trained trainer."""
     import trl.trainer.grpo_trainer as G
-    from tokenizers import Tokenizer, models, pre_tokenizers
-    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
     from trl import GRPOConfig
 
     monkeypatch.setattr(G, "VLLMGeneration", FakeVLLM)
     # rows: no image
     monkeypatch.setattr(rl_trl_adapter.FastGRPO, "get_train_dataloader", GRPOTrainer.get_train_dataloader)
     monkeypatch.setattr(rl_trl_adapter.FastGRPO, "patch_vllm_prompts", lambda self: None)  # text only: no image pads
-    vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "prompt", *map(str, range(FakeVLLM.VOCAB - 3))])}
-    tk = Tokenizer(models.WordLevel(vocab, unk_token="<pad>"))
-    tk.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
-    tok = PreTrainedTokenizerFast(tokenizer_object=tk, pad_token="<pad>", eos_token="<eos>", padding_side="left")
-    torch.manual_seed(0)
-    model = LlamaForCausalLM(LlamaConfig(vocab_size=len(vocab), hidden_size=16, intermediate_size=32,
-                                         num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
-                                         pad_token_id=0, eos_token_id=1, bos_token_id=1))  # fmt: skip
+    model, tok = tiny_llama(FakeVLLM.VOCAB - 3)
     ev = {"eval_strategy": "steps", "eval_steps": eval_steps, "per_device_eval_batch_size": 8} if eval_steps else {}
     args = GRPOConfig(**dict(output_dir=str(out), max_steps=steps, per_device_train_batch_size=8, num_generations=8,
                       max_completion_length=4, use_cpu=True, bf16=False, report_to="none", logging_steps=1,

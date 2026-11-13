@@ -20,39 +20,16 @@ import pytest
 from objdel.policy import evaluate
 from objdel.sft import select as sft_select
 from objdel.sft import train as sft_train
-
-ROOT = Path(__file__).resolve().parents[2]
-# the sft stages of the run specs (the old train_sft configs left git in E6.6)
-SPECS = sorted((ROOT / "specs").glob("*.yaml"))
-CPU_SFT = {"per_device_train_batch_size": 1, "gradient_accumulation_steps": 1, "use_cpu": True, "bf16": False,
-           "logging_steps": 1, "dataloader_num_workers": 0, "dataloader_persistent_workers": False,
-           "dataloader_prefetch_factor": None}  # tiny CPU runs of train_sft
-
-
-def stage(model, view, output_dir, **kw):
-    """train_sft's SftStage in the old RunArgs order (model, view, output_dir)."""
-    from objdel.core.spec import SftStage
-
-    return SftStage(model=model, view=view, output_dir=output_dir, **kw)
-
-
-def sft_stages():
-    """(spec name, SftStage) for each sft stage of the run specs."""
-    from objdel.core.spec import load_spec
-
-    return [(p.stem, st) for p in SPECS for st in load_spec(p).stages if st.kind == "sft"]
-
-
-def _module(*args, env=None, timeout=900):
-    """python -I -m <args> from the repo root, output captured."""
-    return subprocess.run([sys.executable, "-I", "-m", *args], cwd=ROOT, env=env, capture_output=True, text=True,
-                          timeout=timeout)
+from tests.support.paths import ROOT
+from tests.support.proc import run_module
+from tests.support.specs import CPU_SFT, GRPO_SMOKE, sft_stages, stage
+from tests.support.tiny_models import tiny_qwen
 
 
 @pytest.mark.parametrize("script", ["sft", "select", "probe", "rl"])
 def test_help(script):
     pytest.importorskip("trl")
-    r = _module(f"objdel.cli.train.{script}", "--help", timeout=300)
+    r = run_module(f"objdel.cli.train.{script}", "--help", timeout=300)
     assert r.returncode == 0 and "usage" in r.stdout, r.stderr[-2000:]
 
 
@@ -277,37 +254,6 @@ def test_g_probe_repair_is_the_next_earlier_eligible_branch():
 # ---------------------------------------------------------------- CPU smoke (slow)
 
 
-TINY = {  # model key -> (cached hub id, config fields of a random 2-layer model)
-    "qwen3-vl-2b": ("Qwen/Qwen3-VL-2B-Instruct", dict(
-        text=dict(hidden_size=64, intermediate_size=128, num_hidden_layers=2, num_attention_heads=4,
-                  num_key_value_heads=2, head_dim=16,
-                  rope_parameters={"rope_type": "default", "rope_theta": 5e6, "mrope_interleaved": True,
-                                   "mrope_section": [2, 3, 3]}),
-        vision=dict(hidden_size=32, intermediate_size=64, depth=2, num_heads=2, out_hidden_size=64,
-                    deepstack_visual_indexes=[0, 1]))),
-}
-
-
-def _tiny_vlm(out: Path, model: str = "qwen3-vl-2b") -> Path:
-    """A random 2-layer model of `model` with its cached processor (no download)."""
-    torch = pytest.importorskip("torch")
-    from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
-
-    hub, dims = TINY[model]
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    try:
-        cfg = AutoConfig.from_pretrained(hub)
-        proc = AutoProcessor.from_pretrained(hub)
-    except OSError:
-        pytest.skip(f"{hub} config / processor not in the local HF cache")
-    cfg.text_config.update(dims["text"])
-    cfg.vision_config.update(dims["vision"])
-    torch.manual_seed(0)
-    AutoModelForImageTextToText.from_config(cfg).save_pretrained(out)
-    proc.save_pretrained(out)
-    return out
-
-
 @pytest.mark.slow
 def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     """train_sft (LoRA with checkpointing, D6; G-vision at the branch points, WSD branches), select_ckpt and g_probe.
@@ -321,7 +267,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     from objdel.policy import prompt as dataset
 
     name = "qwen3-vl-2b"
-    model = _tiny_vlm(tmp_path / "tiny", name)
+    model = tiny_qwen(tmp_path / "tiny", name)
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
     BV.build(tmp_path / "store", tmp_path / "view", "lidc", "train", epochs=2, seed=3, procs=1)
     # eval-view layout
@@ -335,7 +281,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     env = os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
     ref = tmp_path / f"vision_ref/{name}.json"
     for extra in (["--vision-reference-only"], []):  # R0's G-vision base reference, then the run
-        tr = _module(*argv, *extra, env=env)
+        tr = run_module(*argv, *extra, env=env)
         assert tr.returncode == 0, tr.stderr[-4000:]
     assert json.loads(ref.read_text())["reference"] > 0
     man = json.loads((run / "manifest.json").read_text())
@@ -348,7 +294,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
         assert "model.safetensors" in files and not {f for f in files if f.startswith("adapter_")}, (d, files)
     ev = str(tmp_path / "evalview")
     vision = json.dumps({"prepared": ev, "reference": str(ref)})  # the run's block
-    sel = _module("objdel.cli.train.select", "--run", str(run), "--shifted", ev, "--sampler", "hf",
+    sel = run_module("objdel.cli.train.select", "--run", str(run), "--shifted", ev, "--sampler", "hf",
                   "--prepared", ev, "--vision", vision, "--max-tokens", "16", env=env)
     assert sel.returncode == 0, sel.stderr[-4000:]
     doc = json.loads((run / "select/selected.json").read_text())
@@ -364,7 +310,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     k16 = json.loads((run / "select/report.json").read_text())["k16"]["datasets"]["lidc"]
     assert k16["samples"] == 16 * k16["items"] and "hm_iou" in k16["objects"]["nodule"]
     best = run / "branches" / (doc["selected"] or "e1")
-    gp = _module("objdel.cli.train.probe", "--model", name, "--ckpt", str(best), "--train", ev,
+    gp = run_module("objdel.cli.train.probe", "--model", name, "--ckpt", str(best), "--train", ev,
                  "--probe", ev, "--out", str(run / "gp"), "--grpo", json.dumps(GRPO_SMOKE), env=env)
     assert gp.returncode == 0, gp.stderr[-4000:]
     res = json.loads((run / "gp/g_probe.json").read_text())
@@ -375,7 +321,3 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
 
 
 # use_vllm off: vLLM needs a GPU (TRL 1.17 refuses use_vllm without it installed); the box's profile arms run vLLM
-GRPO_SMOKE = {"per_device_train_batch_size": 8, "gradient_accumulation_steps": 1, "per_device_eval_batch_size": 8,
-              "max_completion_length": 8, "use_cpu": True, "bf16": False, "beta": 0.0, "use_vllm": False}
-
-

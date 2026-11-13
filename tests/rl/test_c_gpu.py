@@ -11,6 +11,7 @@ import pytest
 
 from objdel.geom import engine as _gpucheck
 from objdel.infra.hf import REPO
+from tests.support.images import random_image
 
 CUDA = pytest.mark.skipif(_gpucheck.build() != "cuda", reason="CPU build: the CUDA build runs on the box")
 REVISION = "b1-rows"
@@ -288,13 +289,11 @@ def test_g_im1_memo_pixels_on_cuda_grid_on_cpu(per_image):
 def test_g_im1_fallback_pixels_on_cuda():
     """G-IM1, fallback path: a call holding an image patchify cannot match (500 x 500) falls back to the processor
     for the whole call; its pixel_values should still be on CUDA and equal the processor."""
-    import numpy as np
-    import PIL.Image
     import torch
 
     ip = processor()
     a = pil_images(1)[0]
-    bad = PIL.Image.fromarray(np.random.default_rng(1).integers(0, 256, (500, 500, 3), dtype=np.uint8))
+    bad = random_image(500, 500, seed=1)
     memo = gpu_memo()
     out = memo([a, bad, a], return_tensors="pt")
     assert memo.fallback_calls == 1

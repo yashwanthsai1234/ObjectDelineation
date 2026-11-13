@@ -2,13 +2,12 @@
 five-series fixture: A (train) has two SOP UIDs at z 123.5, B (train) an ROI 2 mm from the nearest slice at 1.25 mm
 spacing, C (train, LIDC-IDRI-0396) is clean, T (test) has a sidecar with fewer slices than cited SOPs, V (val) a
 sidecar with slices matched by z."""
-import hashlib
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
 
+from objdel.core.hashing import file_sha256
 from objdel.data import lidc, quality, store
 from tools.data import check_series_z
 
@@ -65,16 +64,12 @@ def report(data, previous=None):
     return quality.z_report(data / "store", data / "xml", data / "slices", SCANS, previous)
 
 
-def sha(path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
 def test_one_entry_per_store_series(data):  # I35: every series of the store, not a list
     r = report(data)
     assert set(r["series"]) == set(SPLIT)
     assert {s: (e["split"], e["patient"], e["items"]) for s, e in r["series"].items()} == {
         s: (SPLIT[s], PATIENT[s], NITEMS[s]) for s in SPLIT}
-    assert r["train_sha256"] == sha(data / "store/lidc/train.parquet")
+    assert r["train_sha256"] == file_sha256(data / "store/lidc/train.parquet")
 
 
 def test_shared_z_lists_both_sop_uids(data):  # I17 (a)
@@ -167,9 +162,9 @@ def cli(data, monkeypatch):
 
 
 def test_cli_reports_without_changing_any_input_and_fails_dg17(cli, capsys):  # I17, I37, I45
-    before = {p: sha(p) for p in cli.rglob("*") if p.is_file()}
+    before = {p: file_sha256(p) for p in cli.rglob("*") if p.is_file()}
     assert run(cli) == 1
-    assert {p: sha(p) for p in before} == before  # store, XML, sidecars, exclusions untouched: the report drops nothing
+    assert {p: file_sha256(p) for p in before} == before  # inputs untouched: the report drops nothing
     r = json.loads((cli / "out/report.json").read_text())
     assert r["step2"] == sorted([A, B, T, V])
     assert r["series"][A]["resolution"] is None and "resolution" not in r["series"][T]

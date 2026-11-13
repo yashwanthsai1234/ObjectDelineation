@@ -11,15 +11,14 @@ import dataclasses
 import gc as pygc
 import subprocess
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from objdel.geom import engine as gc
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 BASELINE = (4, 2)  # (waits, drain_syncs) per score_polygons call before D5 (gpucheck.cpp score_polygons, score_words)
 EVENTS = ("waits", "drain_syncs", "label_pairs", "sync_alloc", "sync_free", "pool_allocs", "pool_frees", "pinned_grows",
           "eval_scratch_peak")

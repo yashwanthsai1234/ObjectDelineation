@@ -12,15 +12,7 @@ from objdel.cli.hub import push as HP
 from objdel.infra import hf as H
 from objdel.infra.errors import InfraError
 from objdel.infra.vast import __main__ as P
-
-REPO = "svenk029/objdel-sft"
-
-
-def token(role="fineGrained", scoped=None, global_=()):
-    scoped = [{"entity": {"type": "model", "name": REPO}, "permissions": ["repo.content.read", "repo.write"]}] \
-        if scoped is None else scoped  # fmt: skip
-    return {"auth": {"type": "access_token", "accessToken": {
-        "role": role, "fineGrained": {"global": list(global_), "scoped": scoped}}}}  # fmt: skip
+from tests.support.hf_fakes import REPO, fake_mac, token
 
 
 def test_a_token_scoped_to_the_one_repo_passes():
@@ -134,12 +126,7 @@ def test_push_refuses_a_public_repo(tmp_path, monkeypatch, fake):
 
 
 def _mac(monkeypatch, who):
-    sent = []
-    monkeypatch.setattr(P, "get_run", lambda rid: {"instance": 7, "ip": "1.2.3.4", "port": 22})
-    monkeypatch.setattr(P, "secret", lambda s: {"objdel-hf-write": "hf_secret"}[s])
-    monkeypatch.setattr(H, "whoami", lambda tok: who)
-    monkeypatch.setattr(P, "remote", lambda run, cmd, stdin=None, what="": sent.append((cmd, stdin, what)))
-    return sent
+    return fake_mac(monkeypatch, who)
 
 
 def test_push_hf_streams_the_token_over_stdin_only(monkeypatch):

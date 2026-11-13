@@ -4,17 +4,15 @@ objdel.cli.data.probes and objdel.cli.eval.baselines CLIs.
 Synthetic tests build small probe directories on synthetic lung patches; the `data` tests use the real store."""
 
 import json
-import subprocess
-import sys
-from pathlib import Path
 
 import numpy as np
 import probe_models as M
 import pytest
 
 from objdel.data import probes as P
+from tests.support.paths import ROOT
+from tests.support.proc import run_isolated
 
-ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 
 
@@ -182,13 +180,7 @@ def test_stratified_bootstrap_equals_power_c2():
 
 @pytest.mark.parametrize("module", ["data.probes", "eval.baselines"])
 def test_cli_help(module):
-    out = subprocess.run(
-        [sys.executable, "-I", "-m", f"objdel.cli.{module}", "--help"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    out = run_isolated("-m", f"objdel.cli.{module}", "--help", cwd=ROOT, timeout=120)
     assert out.returncode == 0 and "usage" in out.stdout
 
 

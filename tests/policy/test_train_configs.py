@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.paths import ROOT
+
 pytest.importorskip("trl")
 
 from objdel.policy import models as policy_models  # noqa: E402
@@ -20,7 +22,6 @@ from objdel.verify.reward.spec import REWARD_V4  # noqa: E402
 
 OLD = "smol" + "vlm-256m"  # the retired key, built so this file never holds the word
 OLD8 = "l" + "fm2.5-vl-450m"  # CLEAN8's retired key, built the same way
-ROOT = Path(__file__).resolve().parents[2]
 KEPT_MODELS = {"qwen3-vl-2b": "Qwen/Qwen3-VL-2B-Instruct"}  # CT-62: MODELS of the parent commit minus OLD8
 KEPT_MAX = {"qwen3-vl-2b": 1536}  # CT-62: MAX_COMPLETION of the parent commit minus OLD8
 NEEDS_ARCHIVE = pytest.mark.skipif(not (ROOT / "archive").exists(), reason="archive/ is local-only (git-ignored)")

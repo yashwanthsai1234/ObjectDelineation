@@ -1,6 +1,5 @@
 """objdel.cli.data.rl_rows end to end (Implementation.md B.9 E03, E06, E07, E08) on the test_data_quality
 fixture store, through the `run` fixture of test_p2_rows (one 13-step block of 2 rows)."""
-import hashlib
 import json
 import multiprocessing
 import os
@@ -16,13 +15,14 @@ from test_data_quality import (
 )
 from test_p2_rows import run  # noqa: F401 (the fixture)
 
+from objdel.core.hashing import file_sha256
 from objdel.data import prepare as data_prepare
 from objdel.data import quality as Q
 
 
 def _files(root):
     """Relative path -> SHA-256 of every file of a rows root but manifest.json (the root's name is in it)."""
-    return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+    return {p.relative_to(root).as_posix(): file_sha256(p)
             for p in sorted(root.rglob("*")) if p.is_file() and p.name != "manifest.json"}
 
 

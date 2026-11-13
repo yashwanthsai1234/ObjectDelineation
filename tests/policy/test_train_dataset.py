@@ -6,8 +6,11 @@ import json
 import shutil
 from pathlib import Path
 
-import numpy as np
 import pytest
+
+from objdel.core.hashing import file_sha256
+from tests.support.items import speck_item
+from tests.support.prepared import prepare_items
 
 pytest.importorskip("pyarrow")
 pytest.importorskip("datasets")
@@ -15,7 +18,6 @@ pytest.importorskip("datasets")
 from objdel.core import datasets  # noqa: E402
 from objdel.data import prepare as data_prepare  # noqa: E402
 from objdel.data import store  # noqa: E402
-from objdel.data.store import Item  # noqa: E402
 from objdel.policy import prompt as policy_prompt  # noqa: E402
 from objdel.policy import rows as policy_rows  # noqa: E402
 from objdel.rl import rows as rl_rows  # noqa: E402
@@ -29,9 +31,7 @@ PREPARED = Path(__file__).resolve().parents[2] / "data" / "prepared"
 @pytest.fixture(scope="module")
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep")
-    store.write(synthetic_items(), root / "store")
-    manifest = data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1,
-        prompts=policy_prompt.PROMPTS)
+    manifest = prepare_items(synthetic_items(), root, splits=("train",), out="out")
     return root, manifest
 
 
@@ -48,7 +48,7 @@ def test_prepare_counts_skips_and_layout(prepared):
     assert not (out / "caches" / "lidc/1.2.1/n000/z003").exists()  # one rater: not RL-eligible, no cache
     assert json.loads((out / "manifest.json").read_text()) == m
     for rel, entry in m["files"].items():
-        assert hashlib.sha256((out / rel).read_bytes()).hexdigest() == entry["sha256"]
+        assert file_sha256(out / rel) == entry["sha256"]
 
 
 def test_records_and_cache_loader(prepared):
@@ -102,13 +102,7 @@ def test_sft_rows_drop_answers_beyond_the_token_budget(prepared):
 def test_sft_rows_teach_only_voting_raters(tmp_path, disc_mask, synthetic_items):
     """A rater whose whole mask is below the size filter abstains from the topology vote (B2-4): its own answer can
     never be topo-any, so SFT does not teach it; RL keeps the item."""
-    rng = np.random.default_rng(1)
-    speck = np.zeros((100, 100), bool)
-    speck[50:52, 50:52] = True  # 4 px < min_area 5
-    item = Item("lidc/1.2.9/n000/z001", "lidc", "LIDC-IDRI-0009", "train",
-                rng.integers(-1000, 400, (100, 100), dtype=np.int16),
-                {"nodule": np.stack([disc_mask(100, 100, 50, 50, 12), disc_mask(100, 100, 50, 50, 11), speck])},
-                ["1", "2", "3"], {})
+    item = speck_item()
     riga = [it for it in synthetic_items() if it.dataset == "riga"]  # prepare reads both datasets
     store.write([item, *riga], tmp_path / "store")
     data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1,
@@ -239,7 +233,7 @@ def test_r1_round_trip_on_the_prepared_train_set(dataset):
         pytest.skip(f"no prepared set at {PREPARED} (run src/objdel/cli/data/prepare.py)")
     m = json.loads((PREPARED / "manifest.json").read_text())
     rel = f"{dataset}/train.jsonl"
-    assert hashlib.sha256((PREPARED / rel).read_bytes()).hexdigest() == m["files"][rel]["sha256"]
+    assert file_sha256(PREPARED / rel) == m["files"][rel]["sha256"]
     n, abstained, bad = round_trip(PREPARED, dataset, "train")
     assert n + abstained == m["sets"][f"{dataset}/train"]["rl_targets"] and not bad[:5]
     rl = {r["item_id"] for r in policy_rows.records(PREPARED, dataset, "train") if r["rl"]}

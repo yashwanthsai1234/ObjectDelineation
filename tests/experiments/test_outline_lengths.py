@@ -9,9 +9,8 @@ import pytest
 
 from objdel.policy import rows as policy_rows
 from objdel.verify import store as verify_store
+from tests.support.paths import ROOT
 from tools.model import outline_lengths as OL
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_count_takes_the_lengths_as_given_and_skips_none_targets():

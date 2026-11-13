@@ -4,7 +4,8 @@ import json
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 SRC, TESTS, TOOLS = ROOT / "src/objdel", ROOT / "tests", ROOT / "tools"
 GOLDENS = TESTS / "goldens/phase_e"
 

@@ -5,8 +5,6 @@ the reward path, and S12 (`reward` never imports `train`). CUDA and NVTX are fak
 import importlib
 import json
 import os
-import subprocess
-import sys
 import time
 
 import numpy as np
@@ -14,6 +12,8 @@ import pytest
 import torch
 
 from objdel.policy import marks as nvtx
+from tests.support.proc import run_isolated
+from tests.support.tiny_models import tiny_llama
 
 
 @pytest.fixture
@@ -81,8 +81,7 @@ def test_import_is_inert_it_imports_no_torch():
     """an import-time CUDA query would poison a later fork (the reward test pool forks,
     tests/verify/test_eval_device.py)."""
     code = "import sys, objdel.policy.marks as n; assert 'torch' not in sys.modules, 'torch imported'; print(n._ON)"
-    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True,
-                         env=os.environ | {"OBJDEL_NVTX": "1"}, cwd=os.path.dirname(__file__))  # fmt: skip
+    out = run_isolated(code=code, env={"OBJDEL_NVTX": "1"}, cwd=os.path.dirname(__file__))
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "True"
 
@@ -664,20 +663,11 @@ def test_log_adds_no_host_read(monkeypatch):
 def tiny_grpo(tmp_path_factory):
     """A FastGRPO on a 1-layer Llama (CPU, HF generation), groups of 8 answers to one prompt."""
     from datasets import Dataset
-    from tokenizers import Tokenizer, models, pre_tokenizers
-    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
     from trl import GRPOConfig
 
     from objdel.rl import trl_adapter as rl_trl_adapter
 
-    vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "prompt", *map(str, range(40))])}
-    tk = Tokenizer(models.WordLevel(vocab, unk_token="<pad>"))
-    tk.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
-    tok = PreTrainedTokenizerFast(tokenizer_object=tk, pad_token="<pad>", eos_token="<eos>", padding_side="left")
-    torch.manual_seed(0)
-    model = LlamaForCausalLM(LlamaConfig(vocab_size=len(vocab), hidden_size=16, intermediate_size=32,
-                                         num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
-                                         pad_token_id=0, eos_token_id=1, bos_token_id=1))  # fmt: skip
+    model, tok = tiny_llama()
     args = GRPOConfig(output_dir=str(tmp_path_factory.mktemp("grpo")), max_steps=1, per_device_train_batch_size=8,
                       num_generations=8, max_completion_length=4, use_cpu=True, bf16=False, report_to="none",
                       logging_steps=1, save_strategy="no", seed=0, remove_unused_columns=False)  # fmt: skip

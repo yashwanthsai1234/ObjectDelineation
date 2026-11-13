@@ -5,13 +5,15 @@ the real Qwen3-VL processor (skipped when it is not in the local HF cache), U-IM
 two-step tiny FastGRPO run with and without the memo that must give identical logs and weights."""
 
 import copy
-import hashlib
 import pickle
 import threading
 
 import numpy as np
 import PIL.Image
 import pytest
+
+from objdel.core.hashing import file_sha256
+from tests.support.images import random_image
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
@@ -30,7 +32,7 @@ def load():
 
 
 def image(seed, h=64, w=64, mode="RGB"):
-    img = PIL.Image.fromarray(np.random.default_rng(seed).integers(0, 256, (h, w, 3), dtype=np.uint8))
+    img = random_image(h, w, seed)
     return img.convert(mode)
 
 
@@ -85,7 +87,7 @@ def test_u_pm2_isinstance_attributes_saved_files_copies_and_one_wrap(tmp_path):
     assert caches.PromptMemo.install(proc, proc.image_processor) is memo and type(proc).__mro__[1] is mro[0]
     plain.save_pretrained(tmp_path / "a")
     proc.save_pretrained(tmp_path / "b")
-    digest = lambda d: {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(d.iterdir())}  # noqa: E731
+    digest = lambda d: {f.name: file_sha256(f) for f in sorted(d.iterdir())}  # noqa: E731
     assert digest(tmp_path / "a") == digest(tmp_path / "b")
     for back in (copy.deepcopy(proc), pickle.loads(pickle.dumps(proc))):
         assert type(back) is mro[0]

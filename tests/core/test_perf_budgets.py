@@ -6,11 +6,11 @@ import platform
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.paths import ROOT
+
 PERF = ROOT / "tests/goldens/perf.json"
 PLATFORM = f"{sys.platform}-{platform.machine()}"
 FAST_DEPS = ("numpy", "cv2", "scipy")  # only their modules may take more than 0.5 s of self time

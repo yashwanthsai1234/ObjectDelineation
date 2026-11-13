@@ -13,6 +13,7 @@ from objdel.policy import final_eval as FE
 from objdel.policy import rows as policy_rows
 from objdel.policy.sampler import Sample
 from tests.experiments.test_ceiling import text_of
+from tests.support.shapes import disc as disc_hw
 from tools.model import outline_lengths as OL
 
 S, K = 100, 8
@@ -20,8 +21,7 @@ EMPTY_POLYGON = '{"nodule":[{"outer":[],"holes":[]}]}'
 
 
 def _disc(cy, cx, r):
-    y, x = np.ogrid[:S, :S]
-    return (y - cy) ** 2 + (x - cx) ** 2 <= r * r
+    return disc_hw(S, S, cy, cx, r)
 
 
 def _masks(i):

@@ -18,6 +18,7 @@ from objdel.data.targets.frame import frame
 from objdel.geom.topology import signature
 from objdel.verify.metrics import metrics
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.targets import rater_texts
 
 pytestmark = pytest.mark.data
 
@@ -46,8 +47,7 @@ def models(frames):
         names = datasets.get(ds).names
         caches = {n: ExpertCache.build(masks[n]) for n in names}
         ma = min_areas({n: masks[n] for n in names})
-        k = caches[names[0]].k
-        texts = [build_target({n: masks[n][r] for n in names}, names, min_area=ma).text for r in range(k)]
+        texts = rater_texts(masks, names)
         out["raters"].append({"item_id": item_id, "dataset": ds, **metrics(texts, masks, S, S, names, caches=caches)})
         adv = {n: H.adversaries(masks[n], caches[n], np.random.default_rng(len(out["raters"]))) for n in names}
         for a in EXPECTED:
@@ -90,9 +90,7 @@ def test_eval_run_cli_end_to_end(frames, store_dir, tmp_path):
     rows = []
     for item_id, ds, masks, _ in picked:
         names = datasets.get(ds).names
-        ma = min_areas({n: masks[n] for n in names})
-        k = len(masks[names[0]])
-        texts = [build_target({n: masks[n][r] for n in names}, names, min_area=ma).text for r in range(k)]
+        texts = rater_texts(masks, names)
         rows.append({"item_id": item_id, "samples": texts, "truncated": [False] * len(texts)})
     (tmp_path / "c.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     args = ["--completions", tmp_path / "c.jsonl", "--out", tmp_path / "out", "--store", store_dir, "--procs", "1"]

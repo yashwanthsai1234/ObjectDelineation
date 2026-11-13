@@ -2,15 +2,13 @@
 (objdel.policy.sampler's vLLM request builder and output records)."""
 import json
 import types
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from objdel.core.io import write_jsonl
 from objdel.policy.errors import Refusal
-
-ROOT = Path(__file__).resolve().parents[2]
+from tests.support.tiny_models import tiny_qwen
 
 
 class Processor:
@@ -178,10 +176,9 @@ def test_logprob_parity_on_a_tiny_model(tmp_path):
 
     from objdel.policy import sampler as sample
     from objdel.policy.prompt import _user
-    from tests.experiments.test_p2_scripts import _tiny_vlm
     from tools.model import parity
 
-    model_dir = _tiny_vlm(tmp_path / "tiny")
+    model_dir = tiny_qwen(tmp_path / "tiny")
     proc = AutoProcessor.from_pretrained(model_dir)
     model = AutoModelForImageTextToText.from_pretrained(model_dir, dtype=torch.float32)  # "auto" would be bf16
     rng = np.random.default_rng(0)

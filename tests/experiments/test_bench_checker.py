@@ -1,7 +1,6 @@
 """tools/checker/bench.py (Phase D, D1): the checker benchmark (I16), its replay arm without cv2 or
 scipy (S10), and its inputs read only under OBJDEL_DATA_ROOT (S15). CPU build; reads no data/."""
 import builtins
-import hashlib
 import json
 import os
 import re
@@ -14,6 +13,7 @@ import numpy as np
 import pytest
 
 from objdel import _gpucheck
+from objdel.core.hashing import file_sha256
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_many
 from tools.checker import bench as B
@@ -26,10 +26,6 @@ MODULE = "tools.checker.bench"
 def _disc(n, r, cy, cx):
     y, x = np.mgrid[:n, :n]
     return np.hypot(y - cy, x - cx) <= r
-
-
-def _sha(p: Path) -> str:
-    return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
 @pytest.fixture()
@@ -74,7 +70,7 @@ def test_tiny_run_writes_build_device_inputs_times_and_stats(root, tmp_path):
     assert r["build"] == _gpucheck.build() and r["device"] and r["engine"] == "current"
     masks = root / "checker_eval/masks.npz"
     assert r["root"] == str(root) and r["inputs"] == {"checker_eval/masks.npz": {"path": str(masks),
-                                                                                "sha256": _sha(masks)}}
+                                                                                "sha256": file_sha256(masks)}}
     assert set(r["workloads"]) == {"crops", "lesion512_b1"}
     for w in r["workloads"].values():
         assert w["repeats"] == 3 and w["median_ms"] > 0 and w["iqr_ms"] >= 0
@@ -158,7 +154,7 @@ def _replay_child(code, cwd, extra_path=(), flags=("-I",)):
 def test_replay_arm_runs_without_cv2_or_scipy(tmp_path):
     npz, out = tmp_path / "replay_inputs.npz", tmp_path / "replay.json"
     _run(["--dump-replay", npz, "--synthetic", "8"], tmp_path)
-    assert npz.is_file() and (tmp_path / "replay_inputs.npz.sha256").read_text().split()[0] == _sha(npz)
+    assert npz.is_file() and (tmp_path / "replay_inputs.npz.sha256").read_text().split()[0] == file_sha256(npz)
     argv = [str(SCRIPT), "--engine", "current", "--replay", str(npz), "--warmup", "1", "--repeats", "2", "--out",
             str(out)]
     run = f"import runpy; sys.argv = {argv!r}; runpy.run_path({str(SCRIPT)!r}, run_name='__main__')"
@@ -171,7 +167,7 @@ def test_replay_arm_runs_without_cv2_or_scipy(tmp_path):
     res = r["replay"]["results"]
     assert res["iou_tc"] == [o.iou_tc for o in want] and res["f5"] == [o.f5 for o in want]
     assert res["area"] == [o.area for o in want] and r["replay"]["objects"] == 8
-    assert r["replay"]["stats"]["waits"] == 4 and r["inputs"]["replay_inputs.npz"]["sha256"] == _sha(npz)
+    assert r["replay"]["stats"]["waits"] == 4 and r["inputs"]["replay_inputs.npz"]["sha256"] == file_sha256(npz)
 
     p = _replay_child(f"import runpy; runpy.run_path({str(SCRIPT)!r})", tmp_path)  # import alone
     assert p.returncode == 0, p.stderr

@@ -22,10 +22,10 @@ from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
 from objdel.sft import train as sft_train
-from tests.experiments.test_p2_scripts import stage
 from tests.infra import test_vast as V
+from tests.support.paths import ROOT
+from tests.support.specs import stage
 
-ROOT = Path(__file__).resolve().parents[2]
 CONFIGS = sorted(c for c in (ROOT / "experiments" / "phase2" / "configs").glob("*.yaml")
                  if "\nsteps:" not in c.read_text())  # r0.yaml is a step list for run.sh, not a train_sft config
 ANCHOR = '    save = lambda: (d / "state.json").write_text(json.dumps(st))\n'

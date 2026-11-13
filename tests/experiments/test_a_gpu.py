@@ -2,7 +2,6 @@
 tests run on the box's CUDA build (make test on a GPU box) and skip on the CPU build; `data` tests read data/ and
 runs/ on the Mac."""
 
-import hashlib
 import json
 import os
 import resource
@@ -15,13 +14,14 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from objdel.core.hashing import file_sha256
 from objdel.geom import engine as _gpucheck
 from objdel.verify import ceiling
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
 from tests.goldens import make_a_goldens as GOLD
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 PREPARED = Path(os.environ.get("OBJDEL_PREPARED", ROOT / "data" / "prepared"))  # the box's prepared root
 CUDA = pytest.mark.skipif(_gpucheck.build() != "cuda", reason="CPU build: the CUDA build runs on the box")
 
@@ -158,7 +158,7 @@ def test_g05_outline_lengths(tmp_path):
     assert (row["n_records"], row["n_targets"], row["max"], row["above"]["1200"]) == (7341, 23469, 1182, 0)
     assert row["n_targets"] == sum(t is not None for r in recs for t in r["targets"])
     for v in views:
-        assert roots[str(v)]["manifest_sha256"] == hashlib.sha256((v / "manifest.json").read_bytes()).hexdigest()
+        assert roots[str(v)]["manifest_sha256"] == file_sha256(v / "manifest.json")
 
 
 @pytest.mark.data

@@ -4,7 +4,6 @@ docs/archive/experiments/phase2/impl/BK2.md;
 a real defect is an xfail(strict=True) "BK2-<n>", every other test is a guard that passes today.
 Real-data tests are marked `data` (data/eval_views)."""
 
-import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -16,8 +15,8 @@ from oracles.eval_oracle import pairwise_iou
 
 from objdel.cli.eval import baselines
 from objdel.cli.train import prereg as P
+from objdel.core.hashing import file_sha256
 from objdel.data import probes
-from objdel.data.targets.build import build_target
 from objdel.policy import evaluate
 from objdel.policy import sampler as V
 from objdel.sft import select as sft_select
@@ -26,23 +25,22 @@ from objdel.verify import stats as S
 from objdel.verify import store as serve
 from objdel.verify.metrics import _ged, metrics, min_mode_retention, summarize, tv_js
 from objdel.verify.reward.cache import ExpertCache
+from tests.support.paths import ROOT
+from tests.support.shapes import disc as disc_hw
+from tests.support.targets import rater_texts
 
-ROOT = Path(__file__).resolve().parents[2]
 VIEWS = ROOT / "data" / "eval_views"
 SIDE = 50
 STOP = {1}
 
 
 def disk(cy, cx, r, side=SIDE):
-    yy, xx = np.ogrid[:side, :side]
-    return (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
+    return disc_hw(side, side, cy, cx, r)
 
 
 def item():
     raters = {"nodule": np.stack([disk(25, 25, 10), disk(25, 26, 11), disk(24, 25, 9)])}
-    ma = {"nodule": ExpertCache.build(raters["nodule"]).min_area}
-    texts = [build_target({"nodule": m}, ("nodule",), min_area=ma).text for m in raters["nodule"]]
-    return raters, texts
+    return raters, rater_texts(raters)
 
 
 def m_of(samples, truncated=None, tokens=None):
@@ -128,7 +126,7 @@ def _mini_root(out: Path, n=3) -> Path:
     p.parent.mkdir(parents=True)
     p.write_text("".join(json.dumps(r) + "\n" for r in rows))
     (out / "manifest.json").write_text(json.dumps({"files": {"lidc/val.jsonl": {
-        "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}}}))
+        "sha256": file_sha256(p)}}}))
     return out
 
 

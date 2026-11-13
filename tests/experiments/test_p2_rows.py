@@ -12,29 +12,19 @@ from pathlib import Path
 
 import cv2
 import pytest
-from test_data_quality import PLAN, SHARES, Tok, all_items, stub_ceiling, world, write_store  # noqa: F401
+from test_data_quality import PLAN, SHARES, all_items, world, write_store  # noqa: F401
 
 from objdel.core.hashing import bytes_sha256, pixels_sha256
 from objdel.data import quality as Q
 from objdel.data import windows as Wn
+from tests.support.quality import quality_stubs
 
 
 @pytest.fixture
 def run(world, tmp_path, monkeypatch):  # noqa: F811
     from objdel.cli.data import rl_rows as R
-    from objdel.data import splits
-    from objdel.policy import models
-    stub_ceiling(monkeypatch, [0.9, 0.8])
-    monkeypatch.setattr(models, "tokenizer", lambda model: (Tok(50), 1536))
-    monkeypatch.setattr(splits, "val_half", lambda g: "shape" if int(g[-1]) % 2 else "select")
-    ex = tmp_path / "train_exclusions.json"
-    ex.write_text("{}")
-    frozen = tmp_path / "frozen_views.json"
-    frozen.write_text(json.dumps({v: {"content_sha256": Q.view_content_sha256(world.views / v),
-                                      "target_set_sha256": Q.target_set_sha256(world.views / v)} for v in Q.FROZEN}))
-    z = tmp_path / "z.json"
-    z.write_text(json.dumps({"train_sha256": Q.file_sha256(world.store / "lidc/train.parquet"), "series": {},
-                             "step2": []}))
+    stubs = quality_stubs(world, tmp_path, monkeypatch)
+    ex, frozen, z = stubs.ex, stubs.frozen, stubs.z
     out = tmp_path / "rows"
 
     def go(*extra, steps=PLAN["steps"], store=world.store):

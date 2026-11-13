@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from objdel.core import datasets
+from objdel.core.hashing import file_sha256
 from objdel.data import store
 from objdel.data.store import Item
 from objdel.data.targets import augment
@@ -24,10 +25,11 @@ from objdel.data.targets.frame import CLEARANCE, FrameConfig, centred, crowded, 
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.geom.topology import signature
+from tests.support.paths import ROOT
+from tests.support.prepared import prepare_items
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
-ROOT = Path(__file__).resolve().parents[2]
 NOD = ("nodule",)
 
 
@@ -286,7 +288,7 @@ def test_epoch_prefix_and_process_count_determinism(bk_views):
                                   ).read_bytes()
     per = {e: [(r["offset"], r["side"], r["op"]) for r in r3 if r["epoch"] == e] for e in range(3)}
     assert per[0] != per[1] != per[2] and len(per[0]) == len(per[1]) == len(per[2])
-    assert m3["view_hash"] == hashlib.sha256((root / "e3/lidc-train/rows.jsonl").read_bytes()).hexdigest()
+    assert m3["view_hash"] == file_sha256(root / "e3/lidc-train/rows.jsonl")
 
 
 def test_row_counts_voting_raters_and_repeats(bk_views):
@@ -408,14 +410,10 @@ def test_view_rows_refuse_an_edited_context(bk_views, D, tmp_path):
 def bundled(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
     from objdel.cli.data import views as BV
-    from objdel.data import prepare as data_prepare
     from objdel.infra import bundle as B
-    from objdel.policy import prompt as policy_prompt
     root = tmp_path_factory.mktemp("bk1bundle")
     data = root / "data"
-    store.write(synthetic_items(("train", "val")), root / "store")
-    # both datasets, as data/prepared does
-    data_prepare.prepare(root / "store", data / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val")), root, out="data/prepared")  # both datasets, as data/prepared does
     BV.build(root / "store", data / "views" / "lidc-train", procs=1)
     for n in B.LIDC_EVAL:
         (data / "eval_views" / n).mkdir(parents=True)

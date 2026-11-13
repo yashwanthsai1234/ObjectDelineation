@@ -11,13 +11,18 @@ import types
 import numpy as np
 import pytest
 
+from objdel.core.hashing import file_sha256
+from tests.support.items import speck_item
+from tests.support.prepared import prepare_items
+from tests.support.targets import rater_texts
+
 pytest.importorskip("datasets")
 pytest.importorskip("trl")
 
 from objdel.core import datasets  # noqa: E402
 from objdel.data import prepare as data_prepare  # noqa: E402
 from objdel.data import store  # noqa: E402
-from objdel.data.targets.build import build_target, min_areas  # noqa: E402
+from objdel.data.targets.build import build_target  # noqa: E402
 from objdel.geom.shape import canonicalize, to_mask  # noqa: E402
 from objdel.geom.text import parse, serialize  # noqa: E402
 from objdel.policy import models as policy_models  # noqa: E402
@@ -35,8 +40,7 @@ from objdel.verify import store as verify_store  # noqa: E402
 def _target(disc, dataset, *discs):
     names = datasets.get(dataset).names
     stacks = {n: np.stack([disc(50, 50, *d) for d in ds]) for n, ds in zip(names, discs, strict=True)}
-    ma = min_areas(stacks)
-    return [build_target({n: stacks[n][r] for n in names}, names, None, ma).text for r in range(len(discs[0]))]
+    return rater_texts(stacks, names)
 
 
 def _row(i, item, dataset, rater, target, op="id", rep=0, simple=True):
@@ -66,7 +70,7 @@ def view_dir(tmp_path_factory, disc_mask):
         path = root / "context" / f"{item}.npz"
         path.parent.mkdir(parents=True, exist_ok=True)
         np.savez(path, pixels=px, x0=0, y0=0)
-        contexts[item] = hashlib.sha256(path.read_bytes()).hexdigest()
+        contexts[item] = file_sha256(path)
     (root / "manifest.json").write_text(json.dumps({"view": root.name, "contexts": contexts, "view_hash":
                                                     hashlib.sha256(text.encode()).hexdigest()}))
     return root, rows
@@ -200,16 +204,9 @@ def test_view_rows_on_the_real_view_builder(tmp_path, synthetic_items, disc_mask
     """Agent V's builder (M1) on the conftest items plus an item with a sub-filter speck rater: rows render through
     the real augment.render, only voting raters are taught (I27 / B2-4), non-simple rows are repeated, A0 keeps
     every row."""
-    from objdel.data.store import Item
     from objdel.data.targets import augment
     build = pytest.importorskip("objdel.cli.data.views")
-    rng = np.random.default_rng(1)
-    speck = np.zeros((100, 100), bool)
-    speck[50:52, 50:52] = True  # 4 px < min_area 5: abstains from the topology vote
-    item = Item("lidc/1.2.9/n000/z001", "lidc", "LIDC-IDRI-0009", "train",
-                rng.integers(-1000, 400, (100, 100), dtype=np.int16),
-                {"nodule": np.stack([disc_mask(100, 100, 50, 50, 12), disc_mask(100, 100, 50, 50, 11), speck])},
-                ["1", "2", "3"], {})
+    item = speck_item()
     store.write(sorted([*synthetic_items(), item], key=lambda i: (i.dataset, i.split, i.item_id)), tmp_path / "s")
     m = build.build(tmp_path / "s", tmp_path / "v", "lidc", "train", procs=1)
     ds = sft_rows.view_rows(tmp_path / "v")
@@ -369,8 +366,7 @@ def test_qwen3_vl_trains_with_trls_own_template():
 @pytest.fixture(scope="module")
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep9")
-    store.write(synthetic_items(), root / "store")
-    data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(), root, splits=("train",), out="out")
     return root / "out"
 
 

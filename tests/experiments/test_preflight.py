@@ -13,8 +13,8 @@ import yaml
 
 from objdel.core import datasets
 from objdel.infra import preflight as PF
+from tests.support.paths import ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = b'{"schedule": {}}\n'
 CMD = {"kind": "cmd", "name": "box", "argv": ["bash", "-c", "true"]}
 

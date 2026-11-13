@@ -3,14 +3,12 @@ populations; the real store is checked by the data-backed tests at the end."""
 import csv
 import json
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from objdel.data import splits, store
 
-ROOT = Path(__file__).resolve().parents[2]
 TARGET = dict(splits.LIDC_FRACTIONS)
 
 

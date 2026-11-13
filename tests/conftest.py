@@ -8,6 +8,7 @@ import pytest
 
 from objdel.core import datasets
 from objdel.geom import engine
+from tests.support.shapes import annulus
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(os.environ.get("OBJDEL_FIXTURES", ROOT / "data" / "fixtures"))
@@ -90,12 +91,6 @@ def store_dir() -> Path:
     return STORE
 
 
-def _disc(h, w, cy, cx, r, hole=0):
-    y, x = np.ogrid[:h, :w]
-    d2 = (y - cy) ** 2 + (x - cx) ** 2
-    return (d2 <= r * r) & (d2 > hole * hole)
-
-
 def _synthetic_items(splits=("train",), unanimous=False):
     """Per split (numbered s = 1, 2, ...): riga/MESSIDOR/image00<s> (3 raters, nested disc and cup) and LIDC items
     lidc/1.2.<s>/n000/z001 (raters disagree: a solid disc vs a ring with a hole), z002 (no pixels), z003 (one rater)
@@ -107,10 +102,10 @@ def _synthetic_items(splits=("train",), unanimous=False):
     for s, split in enumerate(splits, 1):
         out.append(Item(f"riga/MESSIDOR/image00{s}", "riga", f"riga:MESSIDOR/image00{s}", split,
                         rng.integers(0, 256, (120, 160, 3), dtype=np.uint8),
-                        {"disc": np.stack([_disc(120, 160, 60, 80, 30 + d) for d in (0, 1, 2)]),
-                         "cup": np.stack([_disc(120, 160, 60, 80, 14 + d) for d in (0, 1, 2)])}, ["1", "2", "3"], {}))
+                        {"disc": np.stack([annulus(120, 160, 60, 80, 30 + d) for d in (0, 1, 2)]),
+                         "cup": np.stack([annulus(120, 160, 60, 80, 14 + d) for d in (0, 1, 2)])}, ["1", "2", "3"], {}))
         g, z = f"LIDC-IDRI-000{s}", f"lidc/1.2.{s}/n000/z00"
-        nod = lambda *discs: {"nodule": np.stack([_disc(100, 100, *d) for d in discs])}
+        nod = lambda *discs: {"nodule": np.stack([annulus(100, 100, *d) for d in discs])}
         out += [Item(z + "1", "lidc", g, split, hu(), nod((50, 50, 12), (50, 50, 12, 5)), ["1", "2"], {}),
                 Item(z + "2", "lidc", g, split, None, nod((40, 40, 8), (40, 40, 8)), ["1", "2"], {}),
                 Item(z + "3", "lidc", g, split, hu(), nod((30, 60, 6)), ["1"], {})]
@@ -122,7 +117,7 @@ def _synthetic_items(splits=("train",), unanimous=False):
 @pytest.fixture(scope="session")
 def disc_mask():
     """disc_mask(h, w, cy, cx, r, hole=0) -> bool (h, w): a disc, a ring when hole > 0."""
-    return _disc
+    return annulus
 
 
 @pytest.fixture(scope="session")

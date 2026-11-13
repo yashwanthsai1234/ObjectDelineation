@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from objdel.core import datasets
-from objdel.core.hashing import pixels_sha256
+from objdel.core.hashing import file_sha256, pixels_sha256
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
@@ -19,10 +19,11 @@ from objdel.data.targets.frame import CLEARANCE, DIVISORS, LUNG_WINDOW, FrameCon
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.geom.topology import signature
+from tests.support.paths import ROOT
+from tests.support.prepared import prepare_items
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
-ROOT = Path(__file__).resolve().parents[2]
 PREPARED, STORE = ROOT / "data" / "prepared", ROOT / "data" / "store"
 BUNDLE, EVAL_VIEWS = ROOT / "data" / "views" / "lidc-bundle-v3", ROOT / "data" / "eval_views"  # the bundle trained on
 FRAME_SHA = {  # targets.frame before the Phase 2 change (box, masks, image bytes)
@@ -273,7 +274,7 @@ def test_view_rows_schema_order_and_repeats(views, synthetic_items):
     ring = [r for r in rows if r["item_id"].endswith("z001") and r["rater"] == "2"]
     assert not any(r["simple"] for r in ring) and all(r["simple"] for r in rows if r not in ring)
     assert len({(tuple(r["offset"]), r["side"], r["op"], r["noise_seed"]) for r in ring}) == len(ring)
-    assert m["view_hash"] == hashlib.sha256((d / "rows.jsonl").read_bytes()).hexdigest()
+    assert m["view_hash"] == file_sha256(d / "rows.jsonl")
     assert m["counts"]["rows"] == len(rows) and m["view"] == "lidc-train"
     for r in rows:
         lo, hi = r["window"]
@@ -309,7 +310,7 @@ def test_view_manifest_pins_every_context(views):
     d = root / "v1" / "lidc-train"
     assert set(m["contexts"]) == {r["item_id"] for r in _rows(d)}
     for item_id, sha in m["contexts"].items():
-        assert hashlib.sha256((d / "context" / f"{item_id}.npz").read_bytes()).hexdigest() == sha
+        assert file_sha256(d / "context" / f"{item_id}.npz") == sha
     assert json.loads((d / "manifest.json").read_text())["contexts"] == m["contexts"]
 
 
@@ -713,12 +714,9 @@ def val_view(tmp_path_factory, synthetic_items):
     """The prepared root (centred frames of train and val) and the shifted val view of the same val items."""
     pytest.importorskip("datasets")
     from objdel.cli.data import eval_views as BE
-    from objdel.data import prepare as data_prepare
-    from objdel.policy import prompt as policy_prompt
 
     root = tmp_path_factory.mktemp("val_view")
-    store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val"), unanimous=True), root)
     BE.build(root / "store", root / "views", ("lidc",), "val", seed=0, procs=1)
     return root / "prepared", root / "views" / "lidc-val-shifted"
 

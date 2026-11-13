@@ -5,8 +5,9 @@ update), though a step has 32 distinct images; dataset.OpenOnce hands both passe
 of an image, so a memo keyed by the object serves both passes from one preparation per image."""
 
 import numpy as np
-import PIL.Image
 import pytest
+
+from tests.support.images import random_image
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
@@ -17,7 +18,7 @@ from objdel.rl import trl_adapter as rl_trl_adapter  # noqa: E402
 
 
 def image(seed, h=64, w=64):
-    return PIL.Image.fromarray(np.random.default_rng(seed).integers(0, 256, (h, w, 3), dtype=np.uint8))
+    return random_image(h, w, seed)
 
 
 @pytest.fixture
