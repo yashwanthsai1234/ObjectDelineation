@@ -57,3 +57,12 @@ def test_samples_and_import_share_one_checked_grouping(tmp_path):
         S.samples(lines, [*recs, _rec("a", 0)], {7})
     with pytest.raises(ValueError, match="want 2 samples"):  # a missing sample: ValueError, no bare KeyError
         S.samples(lines, recs[1:], {7})
+
+
+def test_chat_turns_keep_their_dicts():
+    from objdel.core import datasets
+    from objdel.policy.prompt import _user, assistant_turn, user_turn
+
+    assert user_turn("p") == {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "p"}]}
+    assert _user("lidc") == user_turn(datasets.get("lidc").prompt)  # RL / SFT / eval rows and G-vision: one turn
+    assert assistant_turn("t") == {"role": "assistant", "content": [{"type": "text", "text": "t"}]}

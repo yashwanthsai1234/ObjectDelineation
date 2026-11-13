@@ -14,7 +14,7 @@ from objdel.core import datasets
 from objdel.core.io import read_json
 from objdel.geom.shape import canonicalize
 from objdel.geom.text import parse, serialize
-from objdel.policy.prompt import _user
+from objdel.policy.prompt import _user, assistant_turn
 from objdel.policy.rows import _image, _verified, as_dataset, outline_tokens, records, target_tokens
 from objdel.verify.store import voting
 
@@ -27,8 +27,7 @@ def sft_rows(root, dataset: str, split: str, tokenizer=None, max_tokens: int | N
         for i, (rater, text) in enumerate(zip(r["raters"], r["targets"], strict=True)):
             if text is None or i not in voters or (max_tokens and outline_tokens(tokenizer, text) > max_tokens):
                 continue
-            answer = {"role": "assistant", "content": [{"type": "text", "text": text}]}
-            rows.append({"messages": [_user(dataset), answer], "image": _image(root, r["item_id"]),
+            rows.append({"messages": [_user(dataset), assistant_turn(text)], "image": _image(root, r["item_id"]),
                          "key": r["item_id"], "rater": rater})
     return as_dataset(rows)
 
@@ -108,9 +107,9 @@ def view_rows(view_dir, tokenizer=None, max_tokens: int | None = None, a0: bool 
         n = target_tokens(tokenizer, target) if tokenizer else len(target)
         if max_tokens and n + 1 > max_tokens:  # outline_tokens on the n already counted (length column)
             continue
-        answer = {"role": "assistant", "content": [{"type": "text", "text": target}]}
-        rows.append({"messages": [_user(spec["dataset"]), answer], "spec": json.dumps(spec), "key": spec["item_id"],
-                     "rater": spec["rater"], "row_id": spec["row_id"], "epoch": spec["epoch"], "length": n})
+        rows.append({"messages": [_user(spec["dataset"]), assistant_turn(target)], "spec": json.dumps(spec),
+                     "key": spec["item_id"], "rater": spec["rater"], "row_id": spec["row_id"], "epoch": spec["epoch"],
+                     "length": n})
     _contexts(view_dir, manifest, {r["key"] for r in rows})
     ds = Dataset.from_list(rows)
     return _ViewRows(ds.data, ds.info, ds.split).with_transform(_Render(view_dir))

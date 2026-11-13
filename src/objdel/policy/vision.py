@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.io import read_jsonl
+from objdel.policy.prompt import user_turn
 
 RATIO, TV = 0.5, 0.002
 N_IMAGES, N_ITEMS, T = 4, 8, 24
@@ -59,7 +60,7 @@ def black(image):
 
 
 def _batch(model, processor, image, prompt):
-    msgs = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+    msgs = [user_turn(prompt)]
     chat = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     b = processor(text=[chat], images=[[image]], return_tensors="pt")
     return {k: v.to(model.device, model.dtype) if v.is_floating_point() else v.to(model.device) for k, v in b.items()}
