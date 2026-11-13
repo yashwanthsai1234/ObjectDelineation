@@ -94,6 +94,16 @@ def bbox(m: np.ndarray) -> tuple[int, int, int, int]:
     return cv2.boundingRect(m.view(np.uint8))  # box of the non-zero pixels
 
 
+def equivalent_radius(area):
+    """The radius of the disc of the same area: sqrt(area / pi)."""
+    return np.sqrt(area / np.pi)
+
+
+def equivalent_diameter(area):
+    """The diameter of the disc of the same area: 2 * sqrt(area / pi)."""
+    return 2 * equivalent_radius(area)
+
+
 def iou(inter: int, union: int) -> float:
     """inter / union; 1.0 when the union is empty (two empty masks agree)."""
     return 1.0 if union == 0 else inter / union
