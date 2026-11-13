@@ -14,7 +14,6 @@ sync_up checks that and SHA256SUMS on the box.
 
 import argparse
 import io
-import sys
 import tarfile
 from pathlib import Path
 
@@ -22,7 +21,7 @@ from objdel.core import datasets
 from objdel.core.hashing import bytes_sha256, file_sha256
 from objdel.core.io import json_text, read_json
 from objdel.core.provenance import repo_root
-from objdel.infra.errors import InfraError
+from objdel.infra.errors import InfraError, exits
 from objdel.infra.vast.offers import is_raw
 
 LIDC_EVAL = datasets.LIDC.exams  # the LIDC bundle's exam views (each dataset's are its entry's `exams`)
@@ -110,6 +109,7 @@ def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Pat
     return target
 
 
+@exits("vast")  # the prefix this CLI has always printed
 def main(argv: list[str] | None = None) -> None:
     """The bundle CLI (dataset, --view, --data, --out)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -118,10 +118,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--data", type=Path, default=repo_root() / "data")
     ap.add_argument("--out", type=Path, default=repo_root() / "build" / "bundles")
     a = ap.parse_args(argv)
-    try:
-        build(a.dataset, a.data, a.out, a.view)
-    except InfraError as e:
-        sys.exit(f"vast: {e}")
+    build(a.dataset, a.data, a.out, a.view)
 
 
 if __name__ == "__main__":

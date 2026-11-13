@@ -20,7 +20,7 @@ def parse(argv=None):
     from objdel.core.spec import RlStage, cli_stage
     from objdel.rl.run import checked
 
-    return checked(cli_stage(RlStage, sys.argv[1:] if argv is None else argv))
+    return checked(cli_stage(RlStage, argv))
 
 
 def main(argv=None) -> int:

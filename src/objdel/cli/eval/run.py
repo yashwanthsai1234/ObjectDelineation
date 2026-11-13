@@ -23,8 +23,9 @@ import sys
 from pathlib import Path
 
 from objdel.cli.data.freeze import render_files
+from objdel.core.provenance import STORE
 from objdel.policy import final_eval as E
-from objdel.policy.errors import Refusal
+from objdel.policy.errors import exits_on_refusal
 
 
 def no_model(argv: list[str]) -> None:
@@ -34,7 +35,7 @@ def no_model(argv: list[str]) -> None:
     mode.add_argument("--hash-view", type=Path, metavar="VIEW", help="write VIEW's identity record to --out and exit")
     mode.add_argument("--resummarize", type=Path, metavar="DIR", help="a finished run: summarize its items.jsonl again")
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--store", type=Path, default=Path("data/store"), help="the item store (group_id per item)")
+    ap.add_argument("--store", type=Path, default=Path(STORE), help="the item store (group_id per item)")
     a = ap.parse_args(argv)
     if a.hash_view:
         return E.hash_view(a.hash_view, a.out, render_files())
@@ -43,17 +44,15 @@ def no_model(argv: list[str]) -> None:
     return E.resummarize(a.resummarize, a.out, a.store)
 
 
+@exits_on_refusal
 def main(argv=None) -> None:
     """The no-model forms, else the EvalStage of the flags to objdel.policy.final_eval.run."""
     from objdel.core.spec import EvalStage, cli_stage
 
     argv = sys.argv[1:] if argv is None else list(argv)
-    try:
-        if {"--hash-view", "--resummarize"} & set(argv):
-            return no_model(argv)
-        return E.run(cli_stage(EvalStage, argv))
-    except Refusal as e:
-        raise e.system_exit() from None
+    if {"--hash-view", "--resummarize"} & set(argv):
+        return no_model(argv)
+    return E.run(cli_stage(EvalStage, argv))
 
 
 if __name__ == "__main__":

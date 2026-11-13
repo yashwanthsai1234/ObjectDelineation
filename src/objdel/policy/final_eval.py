@@ -27,6 +27,7 @@ reference/frozen_views.json, and --split must name a set of the view (the test v
 run before any model load or rescoring; a failed one raises Refusal. Reads untrusted data: run with python -I.
 """
 
+import functools
 import json
 import sys
 import time
@@ -37,7 +38,7 @@ import numpy as np
 from objdel.core.hashing import file_sha256
 from objdel.core.io import code_sha, read_json, read_jsonl, read_jsonl_glob, write_jsonl
 from objdel.core.io import write_atomic as _write
-from objdel.core.provenance import repo_root
+from objdel.core.provenance import reference_dir, repo_root
 from objdel.data import quality as Q
 from objdel.geom import engine as _gpucheck
 from objdel.policy.errors import Refusal
@@ -45,7 +46,7 @@ from objdel.policy.evaluate import METRICS, evaluate, per_item, score_items, sum
 from objdel.verify import device
 from objdel.verify import stats as signal
 
-FROZEN_VIEWS = repo_root() / "reference/frozen_views.json"  # /workspace/src on the box
+FROZEN_VIEWS = reference_dir() / "frozen_views.json"  # /workspace/src on the box
 
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 SAMPLER_LABEL = "VllmSampler; sampler not box-verified (E-G10 open)"  # written into every result
@@ -221,25 +222,25 @@ def rescore(src: Path, view: Path, dataset: str, split: str, out: Path) -> None:
     write_scored(view, dataset, split, out, results, run, t0)
 
 
+usage = functools.partial(Refusal.usage, "final_eval")
+
+
 def run(a) -> None:
     """--rescore, or sample and score every view of the EvalStage `a` (module docstring); exit 2 on a bad flag."""
-    def error(msg: str):
-        raise Refusal(f"final_eval: error: {msg}", 2)
-
     for name in ("adapter_config.json", "adapter_model.safetensors") if a.adapter else ():
         if not (Path(a.adapter) / name).is_file():
-            error(f"--adapter {a.adapter}: {name} is missing")
+            raise usage(f"--adapter {a.adapter}: {name} is missing")
     views, splits = [Path(v) for v in a.view], list(a.split) or ["val"] * len(a.view)
     outs = [Path(o) for o in a.out] if len(a.out) == len(views) else [Path(a.out[0]) / v.resolve().name for v in views]
     for view, split in zip(views, splits, strict=True):
         check_view(view, a.dataset, split)
     if len({o.resolve() for o in outs}) != len(outs):
-        error("two views write the same --out folder: give distinct --view directory names or one --out each")
+        raise usage("two views write the same --out folder: give distinct --view directory names or one --out each")
     if a.rescore:
         if outs[0].resolve() == Path(a.rescore).resolve():
-            error("--out must not be the --rescore folder")
+            raise usage("--out must not be the --rescore folder")
         if len(views) != 1:
-            error("--rescore takes one --view")
+            raise usage("--rescore takes one --view")
         return rescore(Path(a.rescore), views[0], a.dataset, splits[0], outs[0])
 
     import torch

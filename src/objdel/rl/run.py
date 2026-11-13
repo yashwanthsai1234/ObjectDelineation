@@ -35,6 +35,7 @@ rows provenance, timing, `report` (run_report: the clipped_ratio slope, the trun
 TRL's log. --reward v5 trains on reward v5 and adds callbacks.LocGuard (stop and save; loc_guard_stopped).
 """
 
+import functools
 import gc
 import json
 import math
@@ -47,9 +48,13 @@ from pathlib import Path
 
 from objdel.core.hashing import bytes_sha256
 from objdel.core.io import plain, read_json, write_json
+from objdel.policy.errors import Refusal, exits_on_refusal
 from objdel.rl import build
 
+usage = functools.partial(Refusal.usage, "train_rl")
 
+
+@exits_on_refusal
 def checked(a):
     """The RlStage `a` with f_check resolved (--f-check, --no-f-check, else on under the f_check.PRESETS), after the
     rules that need objdel.rl (numerics preset names, the --grpo keys train_rl owns); exit 2 on a broken one."""
@@ -57,28 +62,24 @@ def checked(a):
     from objdel.rl import config as configs
     from objdel.rl import f_check
 
-    def error(msg: str):
-        print(f"train_rl: error: {msg}", file=sys.stderr)
-        sys.exit(2)
-
     numerics = a.numerics or configs.DEFAULT_NUMERICS
     if numerics not in configs.NUMERICS:
-        error(f"--numerics {a.numerics}: one of {sorted(configs.NUMERICS)}")
+        raise usage(f"--numerics {a.numerics}: one of {sorted(configs.NUMERICS)}")
     if a.f_check and numerics not in f_check.PRESETS:
-        error(f"--f-check: only under --numerics {' or '.join(f_check.PRESETS)}, not {numerics}")
+        raise usage(f"--f-check: only under --numerics {' or '.join(f_check.PRESETS)}, not {numerics}")
     a = a.model_copy(update={"f_check": a.f_check or (numerics in f_check.PRESETS and not a.no_f_check)})
     if a.f_check and numerics == "lora-seqmask" and not a.merge_last and a.b1_adapter is None:
-        error("--f-check under --numerics lora-seqmask needs --b1-adapter (the comparator's B1 adapter)")
+        raise usage("--f-check under --numerics lora-seqmask needs --b1-adapter (the comparator's B1 adapter)")
     if a.opsm_start_delta is not None and (numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
-        error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
+        raise usage("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
     if "off_policy_mask_threshold" in a.grpo:
-        error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
+        raise usage("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     if a.grpo.get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
-        error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
+        raise usage("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
     if a.no_ckpt_layers and a.no_ckpt_layers > (n := policy_models.get(a.model).text_layers):
-        error(f"--no-ckpt-layers {a.no_ckpt_layers}: {a.model} has {n} text decoder layers")
+        raise usage(f"--no-ckpt-layers {a.no_ckpt_layers}: {a.model} has {n} text decoder layers")
     if (why := rl_refusal(a.dataset)) is not None:
-        error(why)
+        raise usage(why)
     return a
 
 

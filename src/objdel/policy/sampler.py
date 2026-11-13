@@ -42,7 +42,7 @@ from trl.data_utils import prepare_multimodal_messages
 
 from objdel.core.io import read_jsonl, read_jsonl_cut, write_json, write_jsonl
 from objdel.policy import models
-from objdel.policy.errors import Refusal
+from objdel.policy.errors import Refusal, exits_on_refusal
 from objdel.verify.reward.spec import REWARD_V4
 
 G = REWARD_V4.group
@@ -396,6 +396,7 @@ def _main_hf(a, lines: list[dict]) -> None:
             "length_share": sum(c["finish_reason"] == "length" for c in recs) / n if n else None}) + "\n")  # fmt: skip
 
 
+@exits_on_refusal
 def main(argv=None) -> None:
     """Child-process entry (module docstring). Input: export_prompts' lines. Output: one record per completion (vLLM:
     written once at the end, with <out>.meta.json holding every distinct SamplingParams as vLLM built it; HF: appended
@@ -415,10 +416,7 @@ def main(argv=None) -> None:
     ap.add_argument("--batch_items", type=int, default=8, help="hf: prompts per generate call (x n samples each)")
     ap.add_argument("--timing", type=Path, help="hf: write generate seconds per item-sample here (R0 rate)")
     a = ap.parse_args(argv)
-    try:
-        (_main_vllm if a.kind == "vllm" else _main_hf)(a, read_jsonl(a.prompts))
-    except Refusal as e:
-        raise e.system_exit() from None
+    (_main_vllm if a.kind == "vllm" else _main_hf)(a, read_jsonl(a.prompts))
 
 
 if __name__ == "__main__":
