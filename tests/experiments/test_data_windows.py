@@ -276,7 +276,7 @@ def test_disagreement_is_per_slice(items30, tmp_path):  # U11: the prepare._prep
 
 
 def test_draw0_matches_build_eval_views(items30, tmp_path):  # I02 on synthetic items
-    from experiments.phase2 import build_eval_views as V
+    from objdel.cli.data import eval_views as V
     p = Wn.pool(items30, draws=1)
     got = {(w.item_id, w.kind): (w.dx, w.dy, w.side) for w in p.windows if w.kind != "centred"}
     from oracles.windows_oracle import brute_admissible

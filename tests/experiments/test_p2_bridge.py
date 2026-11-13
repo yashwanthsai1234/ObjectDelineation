@@ -158,7 +158,7 @@ def test_refuses_to_start_on_a_busy_gpu(V):
 
 
 def test_parity_help():
-    from experiments.phase2 import parity
+    from tools.model import parity
     with pytest.raises(SystemExit) as e:
         parity.main(["--help"])
     assert e.value.code == 0
@@ -166,7 +166,7 @@ def test_parity_help():
 
 @pytest.mark.slow
 def test_logprob_parity_on_a_tiny_model(tmp_path):
-    """S1-16: experiments/phase2/parity.py teacher-forces sample_vllm --logprobs completions. The "vLLM" logprobs
+    """S1-16: tools/model/parity.py teacher-forces sample_vllm --logprobs completions. The "vLLM" logprobs
     here come from the lab's path (apply_chat_template(tokenize=True) on the conversation, B5 hf_teacher), so a pass
     shows the exported prompt text gives the same inputs; a 0.1-nat shift per token fails."""
     torch = pytest.importorskip("torch")
@@ -175,10 +175,10 @@ def test_logprob_parity_on_a_tiny_model(tmp_path):
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from trl.data_utils import prepare_multimodal_messages
 
-    from experiments.phase2 import parity
     from objdel.policy import sampler as sample
     from objdel.policy.prompt import _user
     from tests.experiments.test_p2_scripts import _tiny_vlm
+    from tools.model import parity
 
     model_dir = _tiny_vlm(tmp_path / "tiny")
     proc = AutoProcessor.from_pretrained(model_dir)

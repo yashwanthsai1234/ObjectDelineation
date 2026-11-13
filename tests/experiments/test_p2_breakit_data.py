@@ -261,7 +261,7 @@ def test_s200_lidc_targets_are_pixel_exact():
 # ------------------------------------------------------------------------------------------------ build_views
 @pytest.fixture(scope="module")
 def bk_views(tmp_path_factory):
-    from experiments.phase2 import build_views as BV
+    from objdel.cli.data import views as BV
     root = tmp_path_factory.mktemp("bk1views")
     its = sorted(_items(), key=lambda i: i.item_id)
     store.write(its, root / "store")
@@ -406,7 +406,7 @@ def test_view_rows_refuse_an_edited_context(bk_views, D, tmp_path):
 @pytest.fixture(scope="module")
 def bundled(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
-    from experiments.phase2 import build_views as BV
+    from objdel.cli.data import views as BV
     from objdel.data import prepare as data_prepare
     from objdel.infra import bundle as B
     from objdel.policy import prompt as policy_prompt

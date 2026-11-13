@@ -49,10 +49,10 @@ def _module(*args, env=None, timeout=900):
                           timeout=timeout)
 
 
-@pytest.mark.parametrize("script", ["train_sft", "select_ckpt", "g_probe", "train_rl"])
+@pytest.mark.parametrize("script", ["sft", "select", "probe", "rl"])
 def test_help(script):
     pytest.importorskip("trl")
-    r = _module(f"experiments.phase2.{script}", "--help", timeout=300)
+    r = _module(f"objdel.cli.train.{script}", "--help", timeout=300)
     assert r.returncode == 0 and "usage" in r.stdout, r.stderr[-2000:]
 
 
@@ -147,7 +147,7 @@ def test_eligibility_floors():
 def test_rb_on_fixture_branch_panels():
     """R-B over the B2 fixture panels (shifted val of the retired 450M model, 36 vs 150 steps) with the eligibility
     floors applied."""
-    from experiments.phase2 import prereg
+    from objdel.cli.train import prereg
     from objdel.verify import stats as signal
 
     fix = json.loads((ROOT / "tests/fixtures/p2_signal_fixture.json").read_text())["runs"]
@@ -257,7 +257,7 @@ def test_g_probe_report_form():
     assert GP.train_log(log) == {"steps_1_5": pytest.approx(1.0), "steps_11_20": pytest.approx(0.7)}
     draw = lambda legal: {"per_item": {"r_mean": np.zeros(40)}, "ids": [f"lidc/{i}/z" for i in range(40)],  # noqa: E731
                           "legal": legal, "sigma_share": 0.9}
-    from experiments.phase2 import prereg
+    from objdel.cli.train import prereg
 
     res = GP.verdict(draw(0.96), draw(0.90), draw(0.89), prereg.g_probe)
     assert res["verdict"] == "INCONCLUSIVE"  # legal drop 0.93 - 0.89 = 4 pts; draw a alone would say 7 (FAIL)
@@ -314,7 +314,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     A random Qwen3-VL never stops, so its 1,536-token samples would take hours on a CPU: select_ckpt's max_tokens and
     g_probe's flags.grpo cap them (CLEAN8)."""
     pytest.importorskip("trl")
-    from experiments.phase2 import build_views as BV
+    from objdel.cli.data import views as BV
     from objdel.core.spec import to_argv
     from objdel.data import prepare as data_prepare
     from objdel.data import store
@@ -348,7 +348,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
         assert "model.safetensors" in files and not {f for f in files if f.startswith("adapter_")}, (d, files)
     ev = str(tmp_path / "evalview")
     vision = json.dumps({"prepared": ev, "reference": str(ref)})  # the run's block
-    sel = _module("experiments.phase2.select_ckpt", "--run", str(run), "--shifted", ev, "--sampler", "hf",
+    sel = _module("objdel.cli.train.select", "--run", str(run), "--shifted", ev, "--sampler", "hf",
                   "--prepared", ev, "--vision", vision, "--max-tokens", "16", env=env)
     assert sel.returncode == 0, sel.stderr[-4000:]
     doc = json.loads((run / "select/selected.json").read_text())
@@ -364,7 +364,7 @@ def test_cpu_smoke_train_then_select(tmp_path, synthetic_items):
     k16 = json.loads((run / "select/report.json").read_text())["k16"]["datasets"]["lidc"]
     assert k16["samples"] == 16 * k16["items"] and "hm_iou" in k16["objects"]["nodule"]
     best = run / "branches" / (doc["selected"] or "e1")
-    gp = _module("experiments.phase2.g_probe", "--model", name, "--ckpt", str(best), "--train", ev,
+    gp = _module("objdel.cli.train.probe", "--model", name, "--ckpt", str(best), "--train", ev,
                  "--probe", ev, "--out", str(run / "gp"), "--grpo", json.dumps(GRPO_SMOKE), env=env)
     assert gp.returncode == 0, gp.stderr[-4000:]
     res = json.loads((run / "gp/g_probe.json").read_text())

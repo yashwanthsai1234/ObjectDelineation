@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 hub = pytest.importorskip("huggingface_hub")
-from experiments.phase2 import hf_pull as L  # noqa: E402
+from objdel.cli.hub import pull as L  # noqa: E402
 from objdel.infra import hf as H  # noqa: E402
 from objdel.infra.errors import InfraError  # noqa: E402
 from objdel.infra.vast import __main__ as P  # noqa: E402
@@ -61,11 +61,11 @@ def test_fetch_hf_streams_the_token_over_stdin_only(monkeypatch):
     fetch("r1-qwen3vl2b")
     ((cmd, stdin, what),) = sent
     assert "hf_secret" not in cmd and stdin == "hf_secret\n" and "objdel.infra.secrets" in what
-    assert f"-m experiments.phase2.hf_pull --repo {REPO} --revision r1-qwen3vl2b --out /workspace/runs/p1/ckpt" in cmd
+    assert f"-m objdel.cli.hub.pull --repo {REPO} --revision r1-qwen3vl2b --out /workspace/runs/p1/ckpt" in cmd
 
 
 def test_fetch_hf_has_its_shim():
-    assert (P.repo_root() / "experiments/phase2/vast/fetch_hf.sh").resolve().name == "vast.sh"
+    assert (P.repo_root() / "ops/vast/fetch_hf.sh").resolve().name == "vast.sh"
 
 
 # --- B1.5: rows root and checkpoint folder names (I40, I40b) ------------------------------------------------------
@@ -98,7 +98,7 @@ def test_fetch_rows_downloads_the_root_and_checks_it_on_the_box(monkeypatch):
     fetch(rows=[ROWS_REV, "lidc-train-b1"])
     ((cmd, stdin, _),) = sent
     assert "hf_secret" not in cmd and stdin == "hf_secret\n"
-    assert (f"-m experiments.phase2.hf_pull --repo {REPO} --revision {ROWS_REV} --out /workspace/data/lidc "
+    assert (f"-m objdel.cli.hub.pull --repo {REPO} --revision {ROWS_REV} --out /workspace/data/lidc "
             "--allow 'rows/lidc-train-b1/**' && ") in cmd
     untar, check = (shlex.split(c) for c in cmd.split(" && ")[-2:])
     assert untar[:4] == ["/opt/venv/bin/python", "-I", "-c", P.UNTAR]

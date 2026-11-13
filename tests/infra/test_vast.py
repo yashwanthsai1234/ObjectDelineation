@@ -33,8 +33,8 @@ from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
 
 ROOT = Path(__file__).resolve().parents[2]
-VAST = ROOT / "experiments" / "phase2" / "vast"
-DOCKER = ROOT / "experiments" / "phase2" / "docker"
+VAST = ROOT / "ops" / "vast"
+DOCKER = ROOT / "ops" / "docker"
 SNAP = ROOT / "tests" / "fixtures" / "vast_snapshot.json"
 IDENTITY = "AGE-SECRET-KEY-1FAKEIDENTITYFORTESTSQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
 API_KEY = "fakevastscopedkey0123456789abcdef"
@@ -429,7 +429,7 @@ def test_end_to_end_dry_run(E):
     assert len(E.vast("show instance")) == 2  # polled loading -> running
     assert all(x["api_key"] == API_KEY for x in E.calls("vastai"))  # scoped key via env, never argv
     o3 = E.sh("sync_up.sh", "r1", "--bundle-dir", E.bundles)
-    o4 = E.sh("run.sh", "r1", "experiments.phase2.train_sft", "--spec", "specs/r1_qwen3vl2b.yaml", "--stage", "train")
+    o4 = E.sh("run.sh", "r1", "objdel.cli.train.sft", "--spec", "specs/r1_qwen3vl2b.yaml", "--stage", "train")
     assert "timeout" in o4.stdout and "tmux new-session" in o4.stdout and "HEARTBEAT" in o4.stdout
     o5 = E.sh("pull.sh", "r1")
     assert "PULLED_OK" in o5.stdout
@@ -638,7 +638,7 @@ def test_launch_needs_a_picked_admissible_offer(E):
 
 def test_code_snapshot_ships_the_gpu_scoring_test(E):
     """E8: the chain runs tests/verify/test_gpu_scoring.py on the box; the install's import check names library modules
-    and the box stack only (no tests.* and no experiments.*)."""
+    and the box stack only (no tests.* and no tools.*)."""
     files = RM.code_files()
     assert "tests/verify/test_gpu_scoring.py" in files and "tests/oracles/reward_reference.py" in files
     assert "src/objdel/__init__.py" in files and not [f for f in files if f.startswith(("data/", ".venv/", "build/"))]
@@ -647,7 +647,7 @@ def test_code_snapshot_ships_the_gpu_scoring_test(E):
     assert "tests/oracles/reward_reference.py" in (E.home / "code_files.txt").read_text().split()
     (inst,) = [ln for ln in o.stdout.splitlines() if "uv pip install" in ln]
     assert "-I -c" in inst and RM.IMPORT_CHECK in inst
-    assert "tests." not in RM.IMPORT_CHECK and "experiments." not in RM.IMPORT_CHECK
+    assert "tests." not in RM.IMPORT_CHECK and "tools." not in RM.IMPORT_CHECK
 
 
 def test_rsync_never_sends_data_raw(E):
@@ -945,6 +945,13 @@ def test_script_help_and_strict_mode(E, script):
     assert "usage" in E.sh(script, "--help").stdout.lower()
 
 
+def test_shim_runs_the_repo_venv_two_levels_up():
+    """vast.sh finds the repo at a fixed depth (ops/vast/ -> the root): without PYTHON it runs the repo's .venv."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("VAST", "DRY_RUN", "PYTHON"))}
+    p = subprocess.run(["bash", str(VAST / "offers.sh"), "--help"], env=env, capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0 and "usage" in p.stdout.lower(), p.stderr
+
+
 def test_shell_syntax():
     files = [*VAST.glob("*.sh"), *DOCKER.glob("*.sh")]
     assert len(files) >= 10
@@ -955,9 +962,9 @@ def test_shell_syntax():
 
 def test_launchd_plists():
     for name, interval in [("pull", 1200), ("sweep", 3600)]:
-        plist = VAST / f"com.objdel.vast.{name}.plist"
+        plist = VAST / "launchd" / f"com.objdel.vast.{name}.plist"
         assert f"<integer>{interval}</integer>" in plist.read_text()
-        assert "__REPO__/experiments/phase2/vast/" in plist.read_text()
+        assert "__REPO__/ops/vast/" in plist.read_text()
         assert not shutil.which("plutil") or subprocess.run(["plutil", "-lint", str(plist)]).returncode == 0
 
 
@@ -1093,17 +1100,17 @@ def test_run_chain_for_an_r1_config(E):
     cfg, box = ROOT / "specs/r1_qwen3vl2b.yaml", "/workspace/data/lidc"
     gpu, train, select, probe = CH.chain(cfg, "r1")
     assert gpu[:2] == ["bash", "-c"] and "run_box.sh --build-only" in gpu[2]  # scoring runs on the CUDA checker
-    assert train[:2] == ["-m", "experiments.phase2.train_sft"] and after(train, "--output-dir") == "r1-qwen3vl2b"
-    assert select[:2] == ["-m", "experiments.phase2.select_ckpt"] and "--no-vision" not in select
+    assert train[:2] == ["-m", "objdel.cli.train.sft"] and after(train, "--output-dir") == "r1-qwen3vl2b"
+    assert select[:2] == ["-m", "objdel.cli.train.select"] and "--no-vision" not in select
     vision = json.loads(after(select, "--vision"))
     assert vision == {"prepared": f"{box}/prepared", "reference": "/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"}
     assert after(select, "--run") == "/workspace/runs/r1/r1-qwen3vl2b"
-    assert probe[:2] == ["-m", "experiments.phase2.g_probe"] and "--ckpt" not in probe
+    assert probe[:2] == ["-m", "objdel.cli.train.probe"] and "--ckpt" not in probe
     assert after(probe, "--select") == "/workspace/runs/r1/r1-qwen3vl2b/select"
     assert after(probe, "--model") == "qwen3-vl-2b"
     E.launched()
     line = E.tmux(cfg.relative_to(ROOT))
-    words = ("experiments.phase2.train_sft", "experiments.phase2.select_ckpt", "--vision", "experiments.phase2.g_probe",
+    words = ("objdel.cli.train.sft", "objdel.cli.train.select", "--vision", "objdel.cli.train.probe",
              "/workspace/runs/r1/r1-qwen3vl2b/select", "OBJDEL_RUN_DIR=/workspace/runs/r1")  # fmt: skip
     assert [w for w in words if w not in line] == []
 
@@ -1112,7 +1119,7 @@ def test_r1_refuses_on_the_box_without_its_g_vision_reference(E):
     E.launched()
     line, ref = E.tmux("specs/r1_qwen3vl2b.yaml"), "/workspace/runs/r1/vision_ref/qwen3-vl-2b.json"
     assert f"test -f {ref}" in line and "--vision-reference-only first" in line  # refused on the box, with the remedy
-    assert line.index(f"test -f {ref}") < line.index("experiments.phase2.train_sft")
+    assert line.index(f"test -f {ref}") < line.index("objdel.cli.train.sft")
     assert CH.vision_refs(ROOT / "specs/r1_qwen3vl2b.yaml", "r1") == [ref]
 
 
@@ -1120,12 +1127,13 @@ def test_each_run_sh_job_has_its_own_tmux_session_and_log(E):
     """Audit: one session and one run.log per run_id made a second job (K3 under R1's load, §4.7 step 6) fail and
     overwrote logs."""
     E.launched()
-    out = E.sh("run.sh", "r1", "experiments.phase2.final_eval", "--out", "/workspace/runs/r1/k3_load.json").stdout
-    assert "tmux new-session -d -s r1-final_eval" in out and "/workspace/runs/r1/final_eval.log" in out
+    out = E.sh("run.sh", "r1", "objdel.cli.eval.run", "--out", "/workspace/runs/r1/k3_load.json").stdout
+    assert "tmux new-session -d -s r1-eval_run" in out and "/workspace/runs/r1/eval_run.log" in out
     out = E.sh("run.sh", "r1", "specs/r1_qwen3vl2b.yaml").stdout
     assert "-s r1-r1_qwen3vl2b" in out and "/workspace/runs/r1/r1_qwen3vl2b.log" in out
-    E.sh("run.sh", "r1", "experiments.phase1.bench.xarch_hashes", "--out", "x.json")
-    E.sh("run.sh", "r1", "experiments.phase1.build_data", ok=False)  # only the one Phase 1 module R0 needs
+    E.sh("run.sh", "r1", "tools.xarch.xarch_hashes", "--out", "x.json")
+    E.sh("run.sh", "r1", "objdel.cli.data.store", "--help")  # every command module runs
+    E.sh("run.sh", "r1", "objdel.infra.bundle", ok=False)  # a library module is no command
 
 
 def _exe(path: Path, text: str) -> None:
@@ -1155,9 +1163,9 @@ def test_run_sh_job_runs_in_the_code_dir_with_the_run_dir_exported(E, tmp_path):
     """Audit: `cd ... && export ... && (heartbeat) &` backgrounded the whole && list, so the job ran in ssh's home dir
     without OBJDEL_RUN_DIR (relative --config paths and train_sft's /workspace/runs check fail on the box)."""
     E.launched()
-    calls, code, rd = _on_box(E, tmp_path, "experiments.phase2.final_eval", "--out", "x.json")
-    assert calls == [[str(tmp_path / "src"), str(rd), "-I -m experiments.phase2.final_eval --out x.json"]]
-    assert code == "0" and (rd / "final_eval.log").exists() and (rd / "HEARTBEAT").exists()
+    calls, code, rd = _on_box(E, tmp_path, "objdel.cli.eval.run", "--out", "x.json")
+    assert calls == [[str(tmp_path / "src"), str(rd), "-I -m objdel.cli.eval.run --out x.json"]]
+    assert code == "0" and (rd / "eval_run.log").exists() and (rd / "HEARTBEAT").exists()
 
 
 def test_soft_steps_continue_and_hard_steps_stop_the_chain(E, tmp_path):
@@ -1208,7 +1216,7 @@ def test_code_snapshot_ships_no_local_vast_state():
     """Audit: `git ls-files -co --exclude-standard` also lists untracked files, so the ledger, offers, invoices and run
     records would reach the rented host. They are ignored; the allowlist (image pin, no secret) stays tracked."""
     state = ("ledger.csv", "offers/", "invoices/", "active_runs.json", "code_files.txt", "known_hosts", ".lock")
-    assert not {f for f in RM.code_files() for s in state if f.startswith(f"experiments/phase2/vast/{s}")}
+    assert not {f for f in RM.code_files() for s in state if f.startswith(f"ops/vast/{s}")}
 
 
 def test_launch_idle_minutes_reach_the_watchdog(E):
@@ -1295,7 +1303,7 @@ def test_teardown_destroys_on_ctrl_c_during_the_final_pull(monkeypatch, tmp_path
 def test_run_cap_kills_a_job_that_ignores_sigterm(E):
     """A process stuck in CUDA can ignore timeout's SIGTERM; -k sends SIGKILL 120 s later."""
     E.launched()
-    assert re.search(r"timeout -k 120 \d+s bash -c", E.tmux("experiments.phase2.final_eval"))
+    assert re.search(r"timeout -k 120 \d+s bash -c", E.tmux("objdel.cli.eval.run"))
 
 
 def test_pull_stamps_its_start_and_skips_full_checkpoints(E):
@@ -1317,15 +1325,14 @@ def test_pull_stamps_its_start_and_skips_full_checkpoints(E):
 def test_code_files_keep_paths_with_spaces_whole(tmp_path, monkeypatch):
     """V1 (2026-11-02): `git ls-files` output was split on any whitespace, so a tracked path with spaces (docs/research
     notes) became words that rsync --files-from could not stat, and sync_up failed before sending a byte."""
-    for p in ("tests/verify/test_gpu_scoring.py", "experiments/my dir/a b.py", "docs/notes with space/x.md",
+    for p in ("tests/verify/test_gpu_scoring.py", "tools/my dir/a b.py", "docs/notes with space/x.md",
               "pyproject.toml"):
         (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / p).write_text("x")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
-    assert sorted(RM.code_files()) == ["experiments/my dir/a b.py", "pyproject.toml",
-                                       "tests/verify/test_gpu_scoring.py"]
+    assert sorted(RM.code_files()) == ["pyproject.toml", "tests/verify/test_gpu_scoring.py", "tools/my dir/a b.py"]
 
 
 def _git_repo(root, files):
@@ -1336,11 +1343,12 @@ def _git_repo(root, files):
 
 
 def test_code_snapshot_drops_agent_and_archive_folders(tmp_path, monkeypatch):
-    """CLEAN1: .claude/ and archive/ never ship, even untracked; tracked-but-moved files and look-alikes are handled."""
+    """CLEAN1: .claude/ and archive/ never ship, even untracked; tracked-but-moved files and look-alikes are handled.
+    The checker's raw results stay home; its record results/checker.md ships (the checker eval on the box writes it)."""
     keep = ["tests/verify/test_gpu_scoring.py", "src/a.py", "src/archive_util.py", "tests/data_helpers.py",
-            "experiments/p/riga.py", "pyproject.toml"]
+            "tools/p/riga.py", "results/checker.md", "pyproject.toml"]
     drop = [".claude/x", ".claude/worktrees/w/a.py", "archive/x/y.py", "data/d.npz", "docs/a.md",
-            "experiments/p/lab/l.py", "experiments/p/results/r.json", "experiments/p/RIGA_x.CSV"]  # fmt: skip
+            "results/checker/cuda.json", "tools/p/RIGA_x.CSV"]  # fmt: skip
     _git_repo(tmp_path, keep + drop + ["src/gone.py"])
     subprocess.run(["git", "add", "src/gone.py"], cwd=tmp_path, check=True)
     (tmp_path / "src/gone.py").unlink()  # tracked, deleted on disk: rsync --files-from would abort on it
@@ -1376,7 +1384,7 @@ def test_bundle_imports_standalone(tmp_path):
         "[importlib.import_module(m) for m in mods]\n"
         "out = []\n"
         "for n, m in sorted(sys.modules.items()):\n"
-        "    if n.split('.')[0] in ('objdel', 'experiments', 'tests'):\n"
+        "    if n.split('.')[0] in ('objdel', 'tools', 'tests'):\n"
         "        out += [m.__file__] if getattr(m, '__file__', None) else list(m.__path__)\n"
         "print(json.dumps(out))\n"
     )

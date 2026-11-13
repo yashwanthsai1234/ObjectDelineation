@@ -1,10 +1,10 @@
 """The owner's private HF model repo: `push` uploads a run's selected branch (on the box; the Mac runs push_hf.sh),
 `card_only` rewrites its card's evaluation sections, `pull` fetches one revision onto the box (fetch_hf.sh). The CLIs
-are experiments.phase2.hf_push and experiments.phase2.hf_pull (argument parsing, the stdin token, one call here).
+are objdel.cli.hub.push and objdel.cli.hub.pull (argument parsing, the stdin token, one call here).
 
-    python -I -m experiments.phase2.hf_push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
-    python -I -m experiments.phase2.hf_push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
-    python -I -m experiments.phase2.hf_push --rows data/views/lidc-train-b1-780 --repo svenk029/objdel-sft \
+    python -I -m objdel.cli.hub.push --run RUN_DIR --repo svenk029/objdel-sft --revision r1-qwen3vl2b < token
+    python -I -m objdel.cli.hub.push --rl TRAIN_RL_OUT --repo svenk029/objdel-sft --revision b1-rows < token
+    python -I -m objdel.cli.hub.push --rows data/views/lidc-train-b1-780 --repo svenk029/objdel-sft \
         --revision main
     (on the Mac, after pull.sh: add --view data/views/<name>, the local copy of the box's view; its view_hash must
     be the run's)

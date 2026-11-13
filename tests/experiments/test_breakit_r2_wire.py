@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from experiments.phase2 import final_eval as CLI
-from experiments.phase2 import train_rl as TR
+from objdel.cli.eval import run as CLI
+from objdel.cli.train import rl as TR
 from objdel.infra import preflight as PF
 from objdel.infra.vast import __main__ as P
 from objdel.infra.vast import ledger as LG

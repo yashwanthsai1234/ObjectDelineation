@@ -47,7 +47,7 @@ def test_configs_carry_the_plan_values(name, a):
     """PLAN D5 / D6 / D13 / §5.1: LR 5e-4 LoRA, the model's completion budget, the pre-registered probe LRs (5e-6
     for full fine-tuning stays a frozen record), WSD."""
     _train_sft()
-    from experiments.phase2.prereg import G_PROBE
+    from objdel.cli.train.prereg import G_PROBE
     from objdel.policy import models as policy_models
     from objdel.sft import config as sft_config
 
@@ -263,7 +263,7 @@ def test_hf_sample_min_p_is_explicit(tmp_path, monkeypatch):
 
 def _sc():
     pytest.importorskip("trl")
-    from experiments.phase2 import select_ckpt as SC
+    from objdel.cli.train import select as SC
 
     return SC
 
@@ -284,7 +284,7 @@ def _fake_select(tmp_path, monkeypatch, *, names=("e0.5", "e1"), eligible=True, 
     """select_ckpt.main with the sampler / scorer replaced: records every score_view call; the HF check (D13, run
     with the default --sampler vllm) returns `hf_check` as its pass."""
     SC = _sc()
-    from experiments.phase2 import prereg
+    from objdel.cli.train import prereg
     from objdel.verify import store as serve
 
     run = tmp_path / "run"
@@ -366,7 +366,7 @@ def test_sampler_child_failure_stops_select(tmp_path, monkeypatch):
 
 def test_g_probe_zero_variance_null_is_finite():
     pytest.importorskip("scipy")
-    from experiments.phase2.prereg import g_probe
+    from objdel.cli.train.prereg import g_probe
 
     ids = [f"lidc/{i // 2}/{i}" for i in range(40)]
     r0 = np.linspace(0.1, 0.5, 40)
@@ -383,7 +383,7 @@ def tiny_run(tmp_path, synthetic_items, monkeypatch):
     pytest.importorskip("trl")
     from test_p2_scripts import _tiny_vlm
 
-    from experiments.phase2 import build_views as BV
+    from objdel.cli.data import views as BV
     from objdel.data import store
 
     model = _tiny_vlm(tmp_path / "tiny")

@@ -14,7 +14,7 @@ pytest.importorskip("trl")
 from transformers import Trainer  # noqa: E402
 from trl import GRPOTrainer  # noqa: E402
 
-from experiments.phase2 import final_eval as CLI
+from objdel.cli.eval import run as CLI
 from objdel.geom import engine as _gpucheck  # noqa: E402
 from objdel.policy import caches as policy_caches  # noqa: E402
 from objdel.policy import final_eval as FE  # noqa: E402

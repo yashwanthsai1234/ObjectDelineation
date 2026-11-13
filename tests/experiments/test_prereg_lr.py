@@ -1,5 +1,5 @@
 """E1.1: the pre-registered GRPO learning rates and the code's one learning-rate function cannot drift."""
-from experiments.phase2.prereg import G_PROBE
+from objdel.cli.train.prereg import G_PROBE
 from objdel.policy import models as policy_models
 from objdel.rl import config as rl_config
 

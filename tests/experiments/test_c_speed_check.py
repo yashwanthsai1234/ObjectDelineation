@@ -12,13 +12,13 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 from datasets import Dataset, Image  # noqa: E402
 
-from experiments.phase2 import c_speed_check as C  # noqa: E402
 from objdel.core.hashing import pixels_sha256  # noqa: E402
 from objdel.rl import rows as dataset  # noqa: E402
 from objdel.rl import trl_adapter as fast  # noqa: E402
 from objdel.rl import vllm_sync  # noqa: E402
 from tests.experiments.test_trl_adapter_equivalence import _lora_bf16  # noqa: E402
 from tests.rl.test_vllm_sync import FakeEngine, lora_request  # noqa: E402, F401  (the fixture)
+from tools.studies import c_speed_check as C  # noqa: E402
 
 MB = 1 << 20
 

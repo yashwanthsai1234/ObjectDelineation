@@ -99,7 +99,7 @@ def test_to_argv_writes_only_the_flags_the_spec_sets_in_plan_order():
     st = S.RlStage(name="t", model="m", ckpt="{rd}/c", train="{data}/t", out="{rd}/o", steps=260, save_steps=50,
                    shared_prefix=True, lr=5.0e-5, budget_usd=2.05, resume=False)
     assert S.to_argv(st, RD, DATA) == [
-        "-m", "experiments.phase2.train_rl", "--model", "m", "--ckpt", f"{RD}/c", "--train", f"{DATA}/t", "--out",
+        "-m", "objdel.cli.train.rl", "--model", "m", "--ckpt", f"{RD}/c", "--train", f"{DATA}/t", "--out",
         f"{RD}/o", "--steps", "260", "--save-steps", "50", "--shared-prefix", "--lr", "5e-5", "--budget-usd", "2.05"]
 
 
@@ -139,7 +139,7 @@ def round_trips(stage) -> bool:
     """to_argv of the stage (without its `~`, which is no CLI token), parsed by its CLI, equals the stage with its
     placeholders filled."""
     argv = S.to_argv(stage.model_copy(update={"soft": False}), RD, DATA)
-    assert argv[:2] == ["-m", f"experiments.phase2.{S.MODULE[stage.kind]}"]
+    assert argv[:2] == ["-m", S.MODULE[stage.kind]]
     want = type(stage).model_validate(filled(stage.model_dump(mode="json")))
     return S.same_stage(S.cli_parse(type(stage), argv[2:]), want)
 

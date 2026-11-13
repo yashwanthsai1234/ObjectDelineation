@@ -1,4 +1,4 @@
-"""experiments.phase2.final_eval: per-item K-sample means and the split summary (schema 2: mean, item, nodule and
+"""objdel.cli.eval.run: per-item K-sample means and the split summary (schema 2: mean, item, nodule and
 patient bootstrap intervals, median), and --resummarize of a finished run."""
 
 import hashlib
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from experiments.phase2 import final_eval as CLI
+from objdel.cli.eval import run as CLI
 from objdel.policy import evaluate as EV
 from objdel.policy import final_eval as FE
 from objdel.verify import stats as S
@@ -250,7 +250,7 @@ def test_resummarize_is_repeatable_across_processes(tmp_path):
     for seed, threads in (("1", "1"), ("2", "4")):
         out = tmp_path / f"out{seed}"
         env = os.environ | {"PYTHONHASHSEED": seed, "OMP_NUM_THREADS": threads}
-        subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.final_eval", "--resummarize", str(run),
+        subprocess.run([sys.executable, "-I", "-m", "objdel.cli.eval.run", "--resummarize", str(run),
                         "--store", str(store), "--out", str(out)], cwd=ROOT, env=env, check=True)
         outs.append((out / "final_eval.json").read_bytes())
     assert outs[0] == outs[1]
@@ -511,10 +511,10 @@ def test_rescore_loads_no_model(ev, tmp_path, monkeypatch):
     src = tmp_path / "src"
     run_fe(ev, src, monkeypatch)
     code = ("import sys\n"
-            "from experiments.phase2 import final_eval as CLI\n"
+            "from objdel.cli.eval import run as CLI\n"
             f"CLI.main(['--rescore', {str(src)!r}, '--view', {str(ev)!r}, '--split', 'val', '--out', "
             f"{str(tmp_path / 're')!r}])\n"
-            "print(sorted(m for m in ('torch', 'vllm', 'transformers', 'trl', 'experiments.phase2.g_probe')"
+            "print(sorted(m for m in ('torch', 'vllm', 'transformers', 'trl', 'objdel.cli.train.probe')"
             " if m in sys.modules))\n")
     p = subprocess.run([sys.executable, "-I", "-c", code], cwd=ROOT, check=True, capture_output=True, text=True)
     assert p.stdout.splitlines()[-1] == "[]" and (tmp_path / "re" / "final_eval.json").is_file()
@@ -749,9 +749,9 @@ def test_view_content_hash(tmp_path, monkeypatch, capsys):
                         "r5_commit", "note"}
     assert (doc["items"], doc["content_sha256"], doc["target_set_sha256"], doc["r5_commit"]) == (3, want, "t" * 64,
                                                                                                 None)
-    assert set(doc["render_files"]) == set(CLI.render_files()) and "experiments/phase2/build_eval_views.py" in doc[
+    assert set(doc["render_files"]) == set(CLI.render_files()) and "src/objdel/cli/data/eval_views.py" in doc[
         "render_files"]
-    assert doc["generator_commit"] == doc["render_files"]["experiments/phase2/build_eval_views.py"]
+    assert doc["generator_commit"] == doc["render_files"]["src/objdel/cli/data/eval_views.py"]
     assert all(c is None or len(c) == 40 for c in doc["render_files"].values()) and "not recorded" in doc["note"]
 
 
@@ -864,7 +864,7 @@ def test_rescore_is_repeatable_across_processes(ev, tmp_path, monkeypatch):
     for seed, threads in (("1", "1"), ("2", "4")):
         out = tmp_path / f"re{seed}"
         env = os.environ | {"PYTHONHASHSEED": seed, "OMP_NUM_THREADS": threads}
-        subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.final_eval", "--rescore", str(src), "--view",
+        subprocess.run([sys.executable, "-I", "-m", "objdel.cli.eval.run", "--rescore", str(src), "--view",
                         str(ev), "--split", "val", "--out", str(out)], cwd=ROOT, env=env, check=True,
                        capture_output=True)
         doc = json.loads((out / "final_eval.json").read_text())
@@ -966,21 +966,22 @@ def test_the_test_view_needs_the_explicit_split_flag(frozen, tmp_path):
 
 
 def test_no_phase_b_script_but_final_eval_scores_the_test_view():
-    """I28 (grep): the scoring code (experiments/phase2/*.py; objdel.verify, policy, rl, sft; data audit, probes and
-    prepare) names the test view only in final_eval (freeze_views hashes it, never scores it), and every config line
-    that names it is a final_eval step."""
+    """I28 (grep): the scoring code (objdel.cli, experiments/phase2/*.py; objdel.verify, policy, rl, sft; data audit,
+    probes and prepare) names the test view only in final_eval (freeze_views hashes it, never scores it), and every
+    config line that names it is a final_eval step."""
     lib = [*(f for d in ("verify", "policy", "rl", "sft") for f in (ROOT / "src/objdel" / d).rglob("*.py")),
            *(ROOT / "src/objdel/data" / f for f in ("audit.py", "probes.py", "prepare.py"))]
-    hits = [p.relative_to(ROOT).as_posix() for p in [*(ROOT / "experiments/phase2").glob("*.py"), *lib]
-            if re.search(r"lidc-test|--split\W+test", p.read_text())]
-    assert sorted(hits) == ["experiments/phase2/final_eval.py", "experiments/phase2/freeze_views.py",
+    scripts = [*(ROOT / "src/objdel/cli").rglob("*.py"), *(ROOT / "experiments/phase2").glob("*.py")]
+    hits = [p.relative_to(ROOT).as_posix() for p in [*scripts, *lib] if re.search(r"lidc-test|--split\W+test",
+                                                                                  p.read_text())]
+    assert sorted(hits) == ["src/objdel/cli/data/freeze.py", "src/objdel/cli/eval/run.py",
                             "src/objdel/policy/final_eval.py"]
     from objdel.infra.vast import chain as C
 
     for y in sorted((ROOT / "specs").glob("*.yaml")):
         for step in C.chain(y, "r"):
             if "lidc-test" in " ".join(step):
-                assert "experiments.phase2.final_eval" in step, (y.name, step)
+                assert "objdel.cli.eval.run" in step, (y.name, step)
 
 
 def adapter_dir(tmp_path, *, config=True):

@@ -78,7 +78,7 @@ def test_the_coupling_page_has_one_row_per_item_with_the_case_that_breaks_it():
 
 
 def test_no_live_python_file_says_trl_1_16():
-    stale = [p for d in ("src", "experiments") for p in (ROOT / d).rglob("*.py")
+    stale = [p for d in ("src", "tools") for p in (ROOT / d).rglob("*.py")
              if "lab" not in p.relative_to(ROOT).parts and "TRL " + "1.16" in p.read_text()]  # fmt: skip
     assert stale == []
 

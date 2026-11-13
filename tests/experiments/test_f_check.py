@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from experiments.phase2 import train_rl
+from objdel.cli.train import rl as train_rl
 from objdel.rl import f_check as fc
 
 BASE = ["--model", "qwen3-vl-2b", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "20"]

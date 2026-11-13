@@ -1,4 +1,4 @@
-"""Vast state under VAST_HOME (default <repo>/experiments/phase2/vast): the ledger, active runs, offers, the allowlist,
+"""Vast state under VAST_HOME (default <repo>/ops/vast): the ledger, active runs, offers, the allowlist,
 and the money: what runs accrue, what was spent, what Vast billed."""
 
 import contextlib
@@ -30,10 +30,10 @@ SECRET_RE = re.compile(r"AGE-SECRET-KEY-|ghp_|github_pat_|PRIVATE KEY|Bearer ")
 
 
 def home() -> Path:
-    """The Vast state folder: VAST_HOME, else <repo>/experiments/phase2/vast (ledger, active runs, allowlist, offers,
+    """The Vast state folder: VAST_HOME, else <repo>/ops/vast (ledger, active runs, allowlist, offers,
     known_hosts; watchdog.sh ships from the code tree: remote.watchdog_script), never this package's folder (spend()
     would read $0 there)."""
-    return Path(os.environ.get("VAST_HOME", repo_root() / "experiments/phase2/vast"))
+    return Path(os.environ.get("VAST_HOME", repo_root() / "ops/vast"))
 
 
 @contextlib.contextmanager

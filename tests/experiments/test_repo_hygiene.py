@@ -31,7 +31,7 @@ def test_r5_test_golden_is_committed_and_holds_only_its_three_keys():
     assert set(json.loads((GOLDENS / "r5_test_items.meta.json").read_text())) == {"numpy", "machine"}
 
 
-CLIS = ("final_eval", "ceiling", "outline_lengths")
+CLIS = ("objdel.cli.eval.run", "objdel.cli.eval.ceiling", "tools.model.outline_lengths")
 
 
 def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
@@ -40,7 +40,7 @@ def test_clis_run_isolated_from_a_planted_module_in_the_cwd(tmp_path):
 
     (tmp_path / "json.py").write_text("raise SystemExit('planted json.py ran')\n")
     for name in CLIS:
-        r = subprocess.run([sys.executable, "-I", "-m", f"experiments.phase2.{name}", "--help"], cwd=tmp_path,
+        r = subprocess.run([sys.executable, "-I", "-m", name, "--help"], cwd=tmp_path,
                            capture_output=True, text=True)
         assert r.returncode == 0 and "usage" in r.stdout, (name, r.stderr)
 
@@ -80,7 +80,7 @@ STALE = ("experiments/phase0", "experiments/phase1/lab", "experiments/phase2/lab
 
 def _exempt(f: str) -> bool:
     name = f.rsplit("/", 1)[-1]
-    return (f.startswith(EXEMPT_DOCS) or "/impl/" in f or f.startswith("experiments/phase2/perf/")
+    return (f.startswith(EXEMPT_DOCS) or "/impl/" in f or f.startswith(("experiments/phase2/perf/", "results/"))
             or (f.startswith("experiments/phase") and f.count("/") == 2 and name.endswith(".md")))  # fmt: skip
 
 
@@ -132,9 +132,10 @@ def test_retired_trees_hold_nothing():
     for p in RETIRED:
         assert tracked(p) == [] and not (ROOT / p).exists(), p
     probe = ("import importlib, sys\n"
-             "mods = 'build_data build_targets fetch_lidc_pixels prepare_rl eval_run bench.xarch_hashes'\n"
+             "mods = 'data.store data.targets data.fetch_lidc data.prepare eval.score'\n"
              "for m in mods.split():\n"
-             "    importlib.import_module('experiments.phase1.' + m)\n"
+             "    importlib.import_module('objdel.cli.' + m)\n"
+             "importlib.import_module('tools.xarch.xarch_hashes')\n"
              "assert not [n for n in sys.modules if n.endswith('.lab') or '.lab.' in n]\n"
              "for m in ('experiments.phase0', 'experiments.phase1.lab', 'experiments.phase2.lab'):\n"
              "    try:\n        importlib.import_module(m)\n    except ModuleNotFoundError:\n        continue\n"
@@ -177,7 +178,7 @@ def test_fixtures_moved_and_digest_inline():
     assert (fx / "vast_snapshot.json").is_file() and list(fx.glob("topo_probe_v3e_seed*.json"))
     for f in fx.glob("*.json"):
         json.loads(f.read_text(), parse_constant=lambda c, f=f: pytest.fail(f"{f.name}: {c}"))
-    digest = re.search(r"sha256:[0-9a-f]{64}", (ROOT / "experiments/phase2/docker/Dockerfile.phase2").read_text())[0]
+    digest = re.search(r"sha256:[0-9a-f]{64}", (ROOT / "ops/docker/Dockerfile.phase2").read_text())[0]
     assert digest in (ROOT / "tests/infra/test_vast.py").read_text()
 
 
@@ -203,7 +204,7 @@ def test_import_scanner_reports_each_kind(tmp_path):
 def test_no_live_file_names_a_retired_tree(tmp_path):
     """CT-15. The files that implement this rule name the trees on purpose: this test and the final sweep with its
     test (the sweep's own SELF set; importing it would make this test import experiments)."""
-    checkers = {"tests/experiments/test_repo_hygiene.py", "experiments/phase2/tools/final_sweep.py",
+    checkers = {"tests/experiments/test_repo_hygiene.py", "tools/sweep.py",
                 "tests/experiments/test_final_sweep.py"}
     live = [f for f in tracked() if f.endswith((".py", ".md", ".yaml", ".yml", ".toml", ".txt", "Makefile", ".sh"))
             and not f.startswith("archive/") and f not in checkers]  # fmt: skip
@@ -227,7 +228,7 @@ def test_make_preflight_default_config_loads_as_a_run_spec():
 
 
 def test_train_sft_names_its_loader_load_items():
-    from experiments.phase2 import train_sft
+    from objdel.cli.train import sft as train_sft
 
     assert callable(sft_train.load_items) and not hasattr(train_sft, "preload")
 
@@ -254,7 +255,7 @@ def test_no_dead_code():
 def test_vulture_is_pinned_and_configured():
     cfg = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert "vulture==2.16" in cfg["project"]["optional-dependencies"]["dev"]
-    assert cfg["tool"]["vulture"]["paths"] == ["src", "experiments", "tests"]
+    assert cfg["tool"]["vulture"]["paths"] == ["src", "tools", "tests"]
     assert not (ROOT / "tests" / "vulture_whitelist.py").exists()
     assert re.search(r"^dead:.*\n\t\$\(PY\) -m vulture$", (ROOT / "Makefile").read_text(), re.M)
 

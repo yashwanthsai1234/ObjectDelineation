@@ -2,11 +2,12 @@
 restarting on weak hosts; each venv now installs in four layers."""
 
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DOCKER = ROOT / "experiments" / "phase2" / "docker"
+DOCKER = ROOT / "ops" / "docker"
 LOCKS = DOCKER / "locks"
 
 
@@ -118,3 +119,11 @@ def test_image_workflow_is_manual_pinned_and_pushes_with_the_repo_token():
     assert 'build_images.sh --push "$WHICH"' in wf and "options: [phase2, vllm_native]" in on
     runs = re.findall(r"run: (.*)", wf)
     assert not any("${{" in r for r in runs)  # inputs reach the shell through env, never pasted into the script
+
+
+def test_build_script_finds_the_repo_two_levels_up():
+    """build_images.sh's ROOT is a fixed depth (ops/docker/ -> the root): the build context and locks live under it."""
+    line = next(ln for ln in (DOCKER / "build_images.sh").read_text().splitlines() if ln.startswith("HERE="))
+    out = subprocess.run(["bash", "-c", line + '; echo "$ROOT"', str(DOCKER / "build_images.sh")], capture_output=True,
+                         text=True, check=True).stdout.strip()
+    assert Path(out) == ROOT.resolve()

@@ -68,7 +68,7 @@ def test_nothing_from_docs_ships(code):
 
 # ------------------------------------------------------------------ S14: the old-engine tar ships (D-G7, D8)
 
-BOX = ROOT / "experiments/cuda_checker/run_box.sh"
+BOX = ROOT / "ops/box/run_box.sh"
 TAR = ("old_engine.tar", "old_engine.tar.sha256")
 TAR_PATHS = ("cuda", "src", "CMakeLists.txt", "pyproject.toml", "Makefile", "README.md")
 
@@ -81,8 +81,8 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
 def _tagged_repo(tmp_path: Path, tag: bool = True) -> Path:
     """A tmp git repo with a copy of run_box.sh, the paths old-engine-tar archives and (tag) a pre-d2 tag."""
     r = tmp_path / "repo"
-    (r / "experiments/cuda_checker").mkdir(parents=True)
-    shutil.copy(BOX, r / "experiments/cuda_checker/run_box.sh")
+    (r / "ops/box").mkdir(parents=True)
+    shutil.copy(BOX, r / "ops/box/run_box.sh")
     for p in TAR_PATHS:
         f = r / p / "x.txt" if p in ("cuda", "src") else r / p
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -135,7 +135,7 @@ def test_make_old_engine_tar_needs_the_tag_and_writes_both_root_files(tmp_path):
 def test_gpu_check_without_the_tar_stops_before_the_toolkit(tmp_path):
     r = _tagged_repo(tmp_path)
     env = {**os.environ, "OBJDEL_RUN_DIR": str(tmp_path / "run"), "OBJDEL_DATA_ROOT": str(tmp_path)}
-    box = ["bash", "experiments/cuda_checker/run_box.sh", "--gpu-check"]
+    box = ["bash", "ops/box/run_box.sh", "--gpu-check"]
     for args in ([], ["--dry"]):  # the box mode always needs the tar; the dry run needs it once pre-d2 exists
         p = subprocess.run([*box, *args], cwd=r, env=env, capture_output=True, text=True)
         assert p.returncode == 1 and "old_engine.tar missing" in p.stderr and "uv pip install" not in p.stdout

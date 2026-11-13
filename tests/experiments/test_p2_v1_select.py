@@ -13,8 +13,8 @@ import pytest
 
 pytest.importorskip("trl")
 
-from experiments.phase2 import g_probe as GP  # noqa: E402
-from experiments.phase2 import select_ckpt as SC  # noqa: E402
+from objdel.cli.train import probe as GP  # noqa: E402
+from objdel.cli.train import select as SC  # noqa: E402
 from objdel.policy import evaluate  # noqa: E402
 from objdel.policy import sampler as V  # noqa: E402
 from objdel.rl import probe as P  # noqa: E402

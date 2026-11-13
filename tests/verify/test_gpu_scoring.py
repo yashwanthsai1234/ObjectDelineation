@@ -290,5 +290,5 @@ def test_every_scoring_chain_builds_and_checks_the_cuda_checker_first():
     gpu, train, select, probe = P.chain(ROOT / "specs/r1_qwen3vl2b.yaml", "r1")
     assert gpu[:2] == ["bash", "-c"] and "run_box.sh --build-only && " in gpu[2]
     assert gpu[2].endswith("tests/verify/test_gpu_scoring.py")  # this file, on the GPU build, before training
-    assert [train[1], select[1], probe[1]] == ["experiments.phase2.train_sft", "experiments.phase2.select_ckpt",
-                                               "experiments.phase2.g_probe"]
+    assert [train[1], select[1], probe[1]] == ["objdel.cli.train.sft", "objdel.cli.train.select",
+                                               "objdel.cli.train.probe"]

@@ -15,11 +15,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from experiments.phase2.perf import make_a_goldens as GOLD
 from objdel.geom import engine as _gpucheck
 from objdel.verify import ceiling
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
+from tests.goldens import make_a_goldens as GOLD
 
 ROOT = Path(__file__).resolve().parents[2]
 PREPARED = Path(os.environ.get("OBJDEL_PREPARED", ROOT / "data" / "prepared"))  # the box's prepared root
@@ -80,7 +80,7 @@ def test_g03_device_bytes(monkeypatch):
 def test_g04_legacy_ceiling(split, legacy, found, n_found, tmp_path, clean_store):
     """G04 (A-G2): the legacy LOO d_max values of the ceiling CLI on the shifted view are the old ceiling's, on all
     items and on R5's found items (K-mean IoU_tc >= 0.1)."""
-    from experiments.phase2 import ceiling as CLI
+    from objdel.cli.eval import ceiling as CLI
     from objdel.verify import stats as signal
 
     view = ROOT / "data" / "eval_views" / f"lidc-{split}-shifted"
@@ -127,7 +127,7 @@ def test_g02a_rescore(folder, tmp_path, clean_store):
     run = _need(A3 / folder)
     doc = json.loads((run / "final_eval.json").read_text())
     view = _need(VIEWS / Path(doc["view"]).name)
-    from experiments.phase2 import final_eval as CLI
+    from objdel.cli.eval import run as CLI
 
     CLI.main(["--rescore", str(run), "--view", str(view), "--split", doc["split"], "--out", str(tmp_path)])
     for a, b in zip(_jsonl(run / "metrics.jsonl"), _jsonl(tmp_path / "metrics.jsonl"), strict=True):
@@ -147,7 +147,7 @@ def test_g05_outline_lengths(tmp_path):
     for p in (prep, *views):
         _need(p / "manifest.json")
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    subprocess.run([sys.executable, "-I", "-m", "experiments.phase2.outline_lengths", "--train", prep, "--views",
+    subprocess.run([sys.executable, "-I", "-m", "tools.model.outline_lengths", "--train", prep, "--views",
                     *views, "--model", "qwen3-vl-2b", "--datasets", "lidc", "--splits", "train", "--out", tmp_path],
                    cwd=ROOT, check=True, capture_output=True)
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -192,7 +192,7 @@ def test_g07_repeat(tmp_path):
 
     ckpt = os.environ.get("OBJDEL_G07_CKPT")
     assert ckpt, "set OBJDEL_G07_CKPT to the checkpoint folder"
-    final_eval = [sys.executable, "-I", "-m", "experiments.phase2.final_eval", "--view", PREPARED]
+    final_eval = [sys.executable, "-I", "-m", "objdel.cli.eval.run", "--view", PREPARED]
     runs = [tmp_path / n for n in "ab"]
     for out in runs:
         subprocess.run([*final_eval, "--ckpt", ckpt, "--seed", "11", "--limit", "16",

@@ -38,23 +38,23 @@ cov: $(EXT_STAMP) ## run the fast suite with a line-coverage report of src/objde
 CONFIG ?= specs/b1_rows.yaml
 MODEL_REF ?= svenk029/objdel-sft@b1-rows
 preflight: $(EXT_STAMP) ## prove data, checker and code on the Mac before renting a GPU (CONFIG=... [BUNDLE_DIR=...]); launch needs its stamp
-	$(PY) -I -m experiments.phase2.preflight --config $(CONFIG) $(if $(BUNDLE_DIR),--bundle-dir $(BUNDLE_DIR))
+	$(PY) -I -m objdel.cli.box.preflight --config $(CONFIG) $(if $(BUNDLE_DIR),--bundle-dir $(BUNDLE_DIR))
 
 smoke:            ## the CPU smoke test: train -> select on a tiny model (preflight's last check)
 	$(PY) -m pytest -q -p no:cacheprovider tests/experiments/test_p2_scripts.py::test_cpu_smoke_train_then_select
 
-lint:             ## lint library, tests and experiments, then the import-layer contracts
-	$(PY) -m ruff check src tests experiments
+lint:             ## lint library, tests, tools and ops, then the import-layer contracts
+	$(PY) -m ruff check src tests tools ops
 	.venv/bin/lint-imports --no-logo
 
 dead:             ## list unused code (vulture, [tool.vulture] in pyproject.toml)
 	$(PY) -m vulture
 
 sweep:            ## final sweep: stale names, orphans, doc links, docstrings, dead code (exit 1 on a hard finding)
-	$(PY) -I -m experiments.phase2.tools.final_sweep
+	$(PY) -I -m tools.sweep
 
 fmt:              ## auto-fix lint issues
-	$(PY) -m ruff check src tests experiments --fix
+	$(PY) -m ruff check src tests tools ops --fix
 
 wheels:           ## build manylinux x86-64 + aarch64 wheels in Docker with cibuildwheel (build/wheelhouse)
 	uvx cibuildwheel==4.3.1 --platform linux --output-dir build/wheelhouse
@@ -66,7 +66,7 @@ cuda:             ## rebuild objdel._gpucheck with nvcc (CUDA box; nvcc = $CUDAC
 	@mkdir -p build && touch $(EXT_STAMP)
 
 gpu-check:        ## the GPU check chain on a CUDA box (run_box.sh --gpu-check); DRY=1 prints it and collects its tests
-	PY=$(PY) bash experiments/cuda_checker/run_box.sh --gpu-check $(if $(DRY),--dry)
+	PY=$(PY) bash ops/box/run_box.sh --gpu-check $(if $(DRY),--dry)
 
 .PHONY: old-engine-tar
 old-engine-tar:   ## the pre-D2 engine (owner's tag pre-d2) as old_engine.tar + .sha256 in the repo root, for D-G7 on the box
@@ -83,4 +83,4 @@ docs-serve:       ## serve the docs site locally
 headline:         ## copy the headline test and validation metrics into reference/headline.json (RUN=r5, or TEST=... VAL=...)
 	@test -n "$(RUN)$(TEST)" || { echo "headline: give RUN=<id>, or TEST=<final_eval.json> and VAL=<final_eval.json>"; exit 2; }
 	@test -n "$(RUN)" -o -n "$(VAL)" || { echo "headline: TEST needs VAL"; exit 2; }
-	$(PY) -I -m experiments.phase2.headline $(if $(RUN),--run $(RUN),--test $(TEST) --val $(VAL)) --model-ref $(MODEL_REF)
+	$(PY) -I -m objdel.cli.eval.headline $(if $(RUN),--run $(RUN),--test $(TEST) --val $(VAL)) --model-ref $(MODEL_REF)

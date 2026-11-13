@@ -1,4 +1,4 @@
-"""experiments.phase2.build_rl_rows (Implementation.md B1.4) on the test_data_quality fixture store: 30 synthetic train
+"""objdel.cli.data.rl_rows (Implementation.md B1.4) on the test_data_quality fixture store: 30 synthetic train
 items, the val and test views, one 13-step block of 2 rows (shares 0.5 / 0.5 / 0, seed 4, draws 1, weight 1), so the
 off-centre rows are the train shifted law and every hard gate passes on a clean build."""
 import io
@@ -21,7 +21,7 @@ from objdel.data import windows as Wn
 
 @pytest.fixture
 def run(world, tmp_path, monkeypatch):  # noqa: F811
-    from experiments.phase2 import build_rl_rows as R
+    from objdel.cli.data import rl_rows as R
     from objdel.data import splits
     from objdel.policy import models
     stub_ceiling(monkeypatch, [0.9, 0.8])
@@ -115,7 +115,7 @@ def test_exclude_is_required(run):
 
 
 def test_choose_prefers_no_reuse_then_smallest_passing():
-    R = __import__("experiments.phase2.build_rl_rows", fromlist=["choose"])
+    R = __import__("objdel.cli.data.rl_rows", fromlist=["choose"])
     t = {1: {"ok": False, "max_reuse": None}, 2: {"ok": True, "max_reuse": 3}, 4: {"ok": True, "max_reuse": 1},
          8: {"ok": True, "max_reuse": 1}}
     assert R.choose(t) == 4
@@ -125,7 +125,7 @@ def test_choose_prefers_no_reuse_then_smallest_passing():
 
 def test_hash_gate_rebuilds_a_rows_root(built, world):  # noqa: F811
     """verify_target_hashes follows source_item_id: a rows root keys records by window id, several per store item."""
-    from experiments.phase2 import verify_target_hashes as V
+    from tools.data import verify_target_hashes as V
     assert V.main([str(built.out / "manifest.json"), "--store", str(world.store), "--procs", "1"]) == 0
     m = json.loads((built.out / "manifest.json").read_text())
     m["sets"]["lidc/train"]["target_set_sha256"] = "0" * 64
@@ -187,7 +187,7 @@ TOKEN = "hf_secretTokenValue123"
 
 
 def push(monkeypatch, root, hub):
-    from experiments.phase2 import hf_push
+    from objdel.cli.hub import push as hf_push
     from objdel.infra import hf
     monkeypatch.setattr(hf, "api", lambda token: hub if token == TOKEN else None)
     monkeypatch.setattr(sys, "stdin", io.StringIO(TOKEN + "\n"))

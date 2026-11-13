@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from experiments.phase2 import prereg as P
+from objdel.cli.train import prereg as P
 from objdel.verify import stats as S
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -179,7 +179,7 @@ def test_spearman_equals_scipy():
 
 
 def test_scripts_help():
-    for mod in ("experiments.phase2.prereg",):
+    for mod in ("objdel.cli.train.prereg",):
         r = subprocess.run([sys.executable, "-m", mod, "--help"], capture_output=True, text=True, cwd=ROOT)
         assert r.returncode == 0 and "usage" in r.stdout.lower()
 

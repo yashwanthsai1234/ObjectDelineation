@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PATH_RE = re.compile(r"tests/[\w/]+\.py(?:::\w+)?")
-SOURCES = ("pyproject.toml", "Makefile", ".github", "experiments", "specs", "src")
+SOURCES = ("pyproject.toml", "Makefile", ".github", "ops", "tools", "specs", "src")
 
 
 def live_files() -> list[Path]:

@@ -1,4 +1,4 @@
-"""B1.6: reference/frozen_views.json (experiments.phase2.freeze_views): one entry per frozen view with its content
+"""B1.6: reference/frozen_views.json (objdel.cli.data.freeze): one entry per frozen view with its content
 hash, target-set hash, build arguments, generator commit, render files and known label issues (I05, I38)."""
 import hashlib
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from experiments.phase2 import freeze_views as FV
+from objdel.cli.data import freeze as FV
 from objdel.core.io import code_sha, git_sha
 from objdel.data import quality as Q
 from objdel.data import store
@@ -21,7 +21,7 @@ KEYS = {"view", "items", "content_sha256", "target_set_sha256", "seed", "kinds",
 @pytest.fixture(scope="module")
 def view(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     root = tmp_path_factory.mktemp("frozen")
     store.write(synthetic_items(("train", "val")), root / "store")
     BE.build(root / "store", root / "out", ("lidc",), "val", procs=1, kinds=("shifted", "edge"))

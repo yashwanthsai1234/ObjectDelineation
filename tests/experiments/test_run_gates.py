@@ -1,7 +1,7 @@
-"""experiments.phase2.run_gates: the Gate B1 / B3 CLI on planted final_eval folders gives the library's verdict."""
+"""objdel.cli.eval.gates: the Gate B1 / B3 CLI on planted final_eval folders gives the library's verdict."""
 import json
 
-from experiments.phase2 import run_gates
+from objdel.cli.eval import gates as run_gates
 from objdel.verify import rungates as G
 from tests.verify.test_rungates import FROZEN, converted, world
 

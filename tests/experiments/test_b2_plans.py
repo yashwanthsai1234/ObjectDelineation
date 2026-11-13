@@ -21,22 +21,22 @@ def after(step: list[str], flag: str) -> str:
 
 def test_b2_fp16_is_the_b1_recipe_with_fp16_numerics():
     build, g08b, train = steps("b2_fp16.yaml")
-    b1 = next(s for s in steps("b1_rows.yaml") if s[:3] == ["~", "-m", "experiments.phase2.train_rl"])
+    b1 = next(s for s in steps("b1_rows.yaml") if s[:3] == ["~", "-m", "objdel.cli.train.rl"])
     assert build == steps("b1_rows.yaml")[0]  # the CUDA build of b1_rows.yaml step 0, else CPU scoring
     assert g08b[-1] == "tests/experiments/test_trl_adapter_equivalence.py::test_g08b_fp16_dtype" and "gpu" in g08b
-    assert train[:2] == ["-m", "experiments.phase2.train_rl"]
+    assert train[:2] == ["-m", "objdel.cli.train.rl"]
     assert after(train, "--numerics") == "fp16-seqmask" and "--numerics" not in b1
     for flag in ("--ckpt", "--train", "--lr", "--rows-revision", "--rows-manifest-sha256"):
         assert after(train, flag) == after(b1, flag)  # same start model, rows root and LR as B1
     assert (after(train, "--steps"), after(train, "--save-steps")) == ("60", "60") and "--shared-prefix" in train
     assert after(train, "--out") == "/workspace/runs/r/b2-fp16"
-    assert not [s for s in steps("b2_fp16.yaml") if "experiments.phase2.final_eval" in s]  # no eval
+    assert not [s for s in steps("b2_fp16.yaml") if "objdel.cli.eval.run" in s]  # no eval
     assert "--grpo" not in train and "--heldout" not in train
 
 
 def test_the_train_step_parses_with_train_rl():
     pytest.importorskip("trl")
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     a = train_rl.parse(steps("b2_fp16.yaml")[2][2:])
     assert a.numerics == "fp16-seqmask" and a.steps == 60 and a.save_steps == 60 and a.shared_prefix and a.lr == 5e-5

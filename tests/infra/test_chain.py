@@ -45,7 +45,7 @@ def test_spec_chain_equals_the_plan_it_replaced(plan):
             continue
         assert a != b, f"{plan} step {i} is equal now: drop it from SAME_STAGE"
         a, b = (x[x[0] == "~":] for x in (a, b))
-        cls = next(S.STAGE_CLASSES[k] for k, m in S.MODULE.items() if a[1] == f"experiments.phase2.{m}")
+        cls = next(S.STAGE_CLASSES[k] for k, m in S.MODULE.items() if a[1] == m)
         assert S.same_stage(S.cli_parse(cls, a[2:]), S.cli_parse(cls, b[2:])), (plan, i)
 
 
@@ -80,7 +80,7 @@ def test_chain_refuses_an_old_schema_plan(tmp_path):
     from pydantic import ValidationError
 
     old = tmp_path / "r2_qwen3vl2b.yaml"
-    old.write_text('steps:\n  - ["-m", "experiments.phase2.g_probe", "--model", "qwen3-vl-2b"]\n')
+    old.write_text('steps:\n  - ["-m", "objdel.cli.train.probe", "--model", "qwen3-vl-2b"]\n')
     with pytest.raises(ValidationError):
         C.chain(old, "x")
     cfg = tmp_path / "r1_qwen3vl2b.yaml"

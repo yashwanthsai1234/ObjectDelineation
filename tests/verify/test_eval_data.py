@@ -85,7 +85,7 @@ def test_audit_flags_each_r3_adversary_on_real_items(models, name):
 
 
 def test_eval_run_cli_end_to_end(frames, store_dir, tmp_path):
-    """experiments.phase1.eval_run in a fresh -I interpreter: JSONL of the raters' own targets -> report files."""
+    """objdel.cli.eval.score in a fresh -I interpreter: JSONL of the raters' own targets -> report files."""
     picked = [f for f in frames if f[1] == "lidc"][:3]
     rows = []
     for item_id, ds, masks, _ in picked:
@@ -96,7 +96,7 @@ def test_eval_run_cli_end_to_end(frames, store_dir, tmp_path):
         rows.append({"item_id": item_id, "samples": texts, "truncated": [False] * len(texts)})
     (tmp_path / "c.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     args = ["--completions", tmp_path / "c.jsonl", "--out", tmp_path / "out", "--store", store_dir, "--procs", "1"]
-    subprocess.run([sys.executable, "-I", "-m", "experiments.phase1.eval_run", *map(str, args)],
+    subprocess.run([sys.executable, "-I", "-m", "objdel.cli.eval.score", *map(str, args)],
                    cwd=Path(__file__).resolve().parents[2], check=True, capture_output=True)
     report = json.loads((tmp_path / "out" / "report.json").read_text())
     assert report["audit"]["fired"] == [] and set(report["summary"]["datasets"]) == {"lidc"}

@@ -202,7 +202,7 @@ def test_view_rows_on_the_real_view_builder(tmp_path, synthetic_items, disc_mask
     every row."""
     from objdel.data.store import Item
     from objdel.data.targets import augment
-    build = pytest.importorskip("experiments.phase2.build_views")
+    build = pytest.importorskip("objdel.cli.data.views")
     rng = np.random.default_rng(1)
     speck = np.zeros((100, 100), bool)
     speck[50:52, 50:52] = True  # 4 px < min_area 5: abstains from the topology vote

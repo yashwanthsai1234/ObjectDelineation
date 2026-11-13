@@ -10,7 +10,7 @@ import pytest
 torch = pytest.importorskip("torch")
 from safetensors.torch import save_file  # noqa: E402
 
-from experiments.phase2 import merge_rounding as mr  # noqa: E402
+from tools.studies import merge_rounding as mr  # noqa: E402
 
 W = torch.ones(2, 2, dtype=torch.bfloat16)
 D = torch.tensor([[2.0**-10, 0.0], [0.0, 2.0**-6]])

@@ -5,7 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from experiments.phase2.reward_lab_v5 import (
+from objdel.verify.reward.spec import REWARD_V5
+from tools.studies.reward_lab_v5 import (
     allmiss_grad_share,
     b3_grpo,
     lab_gate,
@@ -15,7 +16,6 @@ from experiments.phase2.reward_lab_v5 import (
     variance_share,
     write_grpo,
 )
-from objdel.verify.reward.spec import REWARD_V5
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -189,6 +189,6 @@ def test_u52_u71_b3_config_gets_beta_and_adam_eps_from_one_r(tmp_path):
     from tests.experiments.test_move_invariance import grpo_config_dict
 
     argv = to_argv(train, "rd", "data")
-    cfg = grpo_config_dict(argv[argv.index("experiments.phase2.train_rl") + 1:], save_strategy="steps",
+    cfg = grpo_config_dict(argv[argv.index("objdel.cli.train.rl") + 1:], save_strategy="steps",
                            save_steps=50, shuffle_dataset=False)
     assert cfg["adam_epsilon"] == 2.5e-9 and cfg["beta"] == 0.0

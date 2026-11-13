@@ -7,13 +7,13 @@ import json
 import numpy as np
 import pytest
 
-from experiments.phase2 import profile as PS
 from objdel.sft import train as sft_train
+from tools.profiling import profile as PS
 
 
 def test_rl_arms_are_short_g_probe_runs_of_256_answers(tmp_path):
     cmd = PS.arm_cmd("mb32", ckpt="CK", prepared="PREP", probe="VIEW", out=tmp_path)
-    assert cmd[:3] == ["-I", "-m", "experiments.phase2.g_probe"] and "--ckpt" in cmd and "CK" in cmd
+    assert cmd[:3] == ["-I", "-m", "objdel.cli.train.probe"] and "--ckpt" in cmd and "CK" in cmd
     grpo = json.loads(cmd[cmd.index("--grpo") + 1])
     assert grpo["max_steps"] == PS.STEPS and grpo["logging_steps"] == 1
     assert grpo["per_device_train_batch_size"] * grpo["gradient_accumulation_steps"] == 256
@@ -110,7 +110,7 @@ def test_memcheck_has_its_sanitizer_and_fails_loudly():
     instrumented API call"); the 13.4.92 wheel ran memcheck and initcheck on 40 GPU tests, 0 errors."""
     from objdel.core.provenance import repo_root
 
-    box = (repo_root() / "experiments/cuda_checker/run_box.sh").read_text()
+    box = (repo_root() / "ops/box/run_box.sh").read_text()
     assert '"cuda-toolkit[nvcc,cccl,nvtx]==13.0.3" "nvidia-cuda-sanitizer-api==13.4.92"' in box
     assert "sanitizer]" not in box
 

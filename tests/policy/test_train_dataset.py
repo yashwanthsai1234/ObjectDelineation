@@ -196,7 +196,7 @@ def test_every_process_pool_spawns():
     import re
 
     root = Path(__file__).resolve().parents[2]
-    files = sorted([*(root / "src").rglob("*.py"), *(root / "experiments").rglob("*.py")])
+    files = sorted([*(root / "src").rglob("*.py"), *(root / "tools").rglob("*.py")])
     bad = [f"{p.relative_to(root)}:{n}" for p in files for n, line in enumerate(p.read_text().splitlines(), 1)
            if re.search(r"\bPool\(", line) and 'get_context("spawn").Pool(' not in line and "`" not in line]
     assert bad == []
@@ -236,7 +236,7 @@ def test_targets_score_as_perfect_answers(prepared):
 @pytest.mark.parametrize("dataset", ["riga", "lidc"])
 def test_r1_round_trip_on_the_prepared_train_set(dataset):
     if not (PREPARED / "manifest.json").is_file():
-        pytest.skip(f"no prepared set at {PREPARED} (run experiments/phase1/prepare_rl.py)")
+        pytest.skip(f"no prepared set at {PREPARED} (run src/objdel/cli/data/prepare.py)")
     m = json.loads((PREPARED / "manifest.json").read_text())
     rel = f"{dataset}/train.jsonl"
     assert hashlib.sha256((PREPARED / rel).read_bytes()).hexdigest() == m["files"][rel]["sha256"]

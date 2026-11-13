@@ -1,6 +1,6 @@
 """SFT with WSD decay branches: one stable run, then one decay continuation per branch.
 
-`train(stage)` runs one objdel.core.spec.SftStage; experiments/phase2/train_sft.py is its CLI. The stage is frozen, so
+`train(stage)` runs one objdel.core.spec.SftStage; src/objdel/cli/train/sft.py is its CLI. The stage is frozen, so
 resolve() returns a resolved copy.
 
 Schedule: warmup 3 % of the stable steps, constant LR, and per branch point b (epochs, default 0.5 / 1 / 2) a linear

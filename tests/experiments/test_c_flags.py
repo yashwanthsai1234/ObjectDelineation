@@ -12,7 +12,7 @@ BASE = ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", 
 
 
 def test_train_rl_flags_default_off():
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     a = train_rl.parse(BASE)
     assert (a.fast_sync, a.group_requests, a.no_ckpt_layers) == (False, False, 0)
@@ -24,7 +24,7 @@ def test_train_rl_flags_default_off():
 
 def test_no_ckpt_layers_is_a_range_checked_count_with_no_clamp(capsys):
     """U-CF1 / U-CO3: 0..28 (Qwen3-VL-2B's text decoder layers, its model entry); -1 and 29 exit 2."""
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     qwen = ["--model", "qwen3-vl-2b", *BASE[2:]]
     assert train_rl.parse([*qwen, "--no-ckpt-layers", "28"]).no_ckpt_layers == 28
@@ -106,7 +106,7 @@ def test_no_ckpt_layers_changes_exactly_k_layers_and_neither_logprobs_nor_grads(
 def test_gpu_pixels_flag_choices_and_default(capsys):
     """U-CF1 / C1: --gpu-pixels is off or auto (default off until the gate passes, so B1's control path stays),
     --allow-cpu-pixels is off; another value exits 2."""
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     a = train_rl.parse(BASE)
     assert (a.gpu_pixels, a.allow_cpu_pixels) == ("off", False)

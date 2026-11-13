@@ -12,7 +12,7 @@ USE = re.compile(r"\b_gpucheck\.([A-Za-z]\w*)\b")
 
 
 def test_engine_covers_every_extension_name_the_repo_uses():
-    files = [p for d in ("src", "tests", "experiments") for p in (ROOT / d).rglob("*.py")]
+    files = [p for d in ("src", "tests", "tools", "ops") for p in (ROOT / d).rglob("*.py")]
     used = {n for p in files for n in USE.findall(p.read_text())} - {"py"}  # "_gpucheck.py": a file name in prose
     assert used - set(engine.__all__) == set()
     assert all(hasattr(ext, n) and getattr(engine, n) is getattr(ext, n) for n in engine.__all__)

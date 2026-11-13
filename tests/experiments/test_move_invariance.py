@@ -205,11 +205,12 @@ def grpo_config_dict(argv: list[str], **over) -> dict:
 def configs_golden() -> dict[str, dict]:
     """Golden 6: the resolved GRPOConfig of (a) the train_rl stage of b1_rows.yaml, (b) a G-probe with default
     arguments; both on qwen3-vl-2b. (a) adds what train_rl.main adds for a schedule root."""
+    from objdel.core.spec import MODULE
     from objdel.infra.vast import chain as C
 
     steps = C.chain(ROOT / "specs/b1_rows.yaml", "x")
-    stage = next(s for s in steps if "experiments.phase2.train_rl" in s)
-    argv = stage[stage.index("experiments.phase2.train_rl") + 1:]
+    stage = next(s for s in steps if MODULE["rl"] in s)
+    argv = stage[stage.index(MODULE["rl"]) + 1:]
     a_over = {"save_strategy": "steps", "save_steps": 50, "shuffle_dataset": False}
     probe = ["--model", "qwen3-vl-2b", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "20"]
     return {"train_rl_b1_rows": grpo_config_dict(argv, **a_over), "g_probe_default": grpo_config_dict(probe)}
@@ -249,13 +250,25 @@ def golden(name: str = "invariance.json") -> dict:
 ROWS_780 = (("34213dceb068128f1a1abf9c67aa65dd59bc1220", "1d6c9c93809c59270f9c0ce35915fb8c867c53d3"),
             ("472738141f47bb0f1bdb1e98c679076cb73b979a4b8e256d7e2051c63e352fb4",
              "a0f2c1d212b8c685e2b85aaac1aa9fa3de9c004ab310af13412d5aa630d4a6b9"))
+# {old: new} of the modules and box scripts that left experiments/ (owner decision D4, 2026-11-11: the command modules
+# into objdel.cli, run as `python -I -m objdel.cli.<group>.<command>`; the tool scripts into tools/, the box scripts
+# into ops/)
+MODULE_MOVES = {"experiments.phase2.train_rl": "objdel.cli.train.rl",
+                "experiments.phase2.train_sft": "objdel.cli.train.sft",
+                "experiments.phase2.select_ckpt": "objdel.cli.train.select",
+                "experiments.phase2.g_probe": "objdel.cli.train.probe",
+                "experiments.phase2.final_eval": "objdel.cli.eval.run",
+                "experiments.phase2.c_speed_check": "tools.studies.c_speed_check",
+                "experiments/phase2/docker/nsys_capture.sh": "tools/profiling/nsys_capture.sh",
+                "experiments/phase2/docker/env_check.sh": "ops/docker/env_check.sh",
+                "experiments/cuda_checker/run_box.sh": "ops/box/run_box.sh"}
 
 
 def later_edits(argvs: list[list[str]]) -> list[list[str]]:
     """Golden 5's argv lists with the edits of later commits, applied like a module rename: the test files a later
     commit moved get their new path (golden()["renamed_paths"]: {old: new}; E5 splits test_train_fast.py), and the
     flags a later commit deleted go, each with its value (golden()["dropped_flags"]: {module: [flag, ...]}; E4 step 3
-    deletes final_eval's --train)."""
+    deletes final_eval's --train), and the moved modules and scripts get their new name last (MODULE_MOVES)."""
     dropped, renamed, out = golden()["dropped_flags"], golden()["renamed_paths"], []
     for argv in argvs:
         a = list(argv)
@@ -280,6 +293,8 @@ def later_edits(argvs: list[list[str]]) -> list[list[str]]:
         if "/workspace/runs/x/b1-rows" in a and "--steps" in a and "--budget-usd" in a:
             a[a.index("--steps") + 1] = "780"
             a[a.index("--budget-usd") + 1] = "8.0"
+        for was, now in MODULE_MOVES.items():
+            a = [x.replace(was, now) for x in a]
         out.append(a)
     return out
 

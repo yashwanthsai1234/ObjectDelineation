@@ -255,7 +255,7 @@ def built(tmp_path_factory, synthetic_items):
     the prepared records (every synthetic LIDC item but z002 has pixels). LIDC only: the builders' worker processes
     see the library's datasets, not the tests' second one."""
     pytest.importorskip("datasets")
-    from experiments.phase2 import build_eval_views as BE
+    from objdel.cli.data import eval_views as BE
     from objdel.data import prepare as data_prepare
     from objdel.data import store
     from objdel.data.targets.build import target_set_hash
@@ -279,7 +279,7 @@ def built(tmp_path_factory, synthetic_items):
 
 
 def _verify(root, manifests):
-    from experiments.phase2 import verify_target_hashes as V
+    from tools.data import verify_target_hashes as V
     return V.main([*map(str, manifests), "--store", str(root / "store"), "--procs", "2"])
 
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from objdel.core.hashing import file_sha256
 from objdel.core.io import git_sha
 
-CODE = ("src/objdel/**/*.py", "src/objdel/*.cpp", "cpp/**/*.hpp", "cuda/*.h", "cuda/*.cpp", "experiments/phase2/*.py",
+CODE = ("src/objdel/**/*.py", "src/objdel/*.cpp", "cpp/**/*.hpp", "cuda/*.h", "cuda/*.cpp", "tools/**/*.py",
         "CMakeLists.txt", "pyproject.toml")  # everything that runs on the box
 
 

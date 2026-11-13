@@ -1,6 +1,6 @@
 """Vast AI operations: the CLI, `python -I -m objdel.infra.vast <cmd>`. Every
 decision and every command is built here or in objdel.infra.vast (offers, ledger, remote, chain); the `*.sh` files in
-experiments/phase2/vast/ are symlinks to the one shim `vast.sh` (the link's name is the command), and `watchdog.sh`
+ops/vast/ are symlinks to the one shim `vast.sh` (the link's name is the command), and `watchdog.sh`
 there is the only logic that runs on the box.
 
     offers.sh GPU [--disk GB] [--pick OFFER_ID|top]            search (US/CA hosts), top 5; --pick saves it
@@ -24,7 +24,7 @@ Costs are dph_total x time plus a bandwidth estimate (DOWN_GB once, UP_GB_PER_H 
 teardown saves the raw charges and records what Vast billed beside that estimate (`billed`).
 
 Environment: VAST_HOME (ledger.csv, active_runs.json, offers/, .vast-allowlist; default:
-<repo>/experiments/phase2/vast), VAST_RUNS (pull target, default <repo>/runs), DRY_RUN=1 (ssh, rsync and `vastai
+<repo>/ops/vast), VAST_RUNS (pull target, default <repo>/runs), DRY_RUN=1 (ssh, rsync and `vastai
 create` / `destroy` are printed, never run; `vastai` calls that only read still run, so tests put a fake one on
 PATH), VAST_POLL_S, VAST_LAUNCH_TIMEOUT_S. Secrets live in the macOS keychain and are read with `security`:
 objdel-vast-scoped (scoped API key, passed to vastai as VAST_API_KEY), objdel-ghcr-read (read-only GHCR PAT, Vast
@@ -46,6 +46,7 @@ from pathlib import Path
 from objdel.core import datasets
 from objdel.core.io import code_sha, git_sha, read_json
 from objdel.core.provenance import repo_root
+from objdel.core.spec import CLI as CLI_PACKAGE
 from objdel.core.spec import load_spec
 from objdel.infra import hf
 from objdel.infra.errors import InfraError
@@ -216,7 +217,7 @@ def cmd_sync_up(a) -> None:
     if a.code_only:  # a code fix mid-session: the bundle is already on the box
         return ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], detail="code only")
     # GPU check before the bundle (a busy, power-capped card was once found only after a 12 min upload)
-    check = f"bash experiments/phase2/docker/image_check.sh /workspace/runs/{a.run_id}/image_check.json"
+    check = f"bash ops/docker/image_check.sh /workspace/runs/{a.run_id}/image_check.json"
     remote(run, f"cd /workspace/src && {check}")
     rsync(run, *map(str, files), f"{host}/workspace/data/")
     remote(run, f"cd /workspace/data && sha256sum -c {name}.sha256 && mkdir -p {a.bundle} && tar -xf {name} -C "
@@ -224,11 +225,15 @@ def cmd_sync_up(a) -> None:
     ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], bundle=name)
 
 
+# The modules run.sh runs by name: a command module (objdel.cli.<group>.<command>) or a tool script (tools.*)
+RUNNABLE = re.compile(rf"{re.escape(CLI_PACKAGE)}\.\w+\.\w+|tools(\.\w+)+")
+
+
 def cmd_run(a) -> None:
-    """MODULE [ARGS] runs one module (experiments.phase2.*, or xarch_hashes); a run spec specs/<name>.yaml runs
-    its `chain` under one cap, refused on the box while a G-vision reference it reads is missing.
-    Each job has its own tmux session and log (<run_id>-<name>, <name>.log), so a second job can run beside the
-    first."""
+    """MODULE [ARGS] runs one module (RUNNABLE); a run spec specs/<name>.yaml runs its `chain` under one cap,
+    refused on the box while a G-vision reference it reads is missing.
+    Each job has its own tmux session and log (<run_id>-<name>, <name>.log; a module's name is its last two parts,
+    e.g. train_rl), so a second job can run beside the first."""
     run, guard = get_run(a.run_id), []
     if a.module.endswith(".yaml") and a.args:  # a trailing --cap-hours would be silently ignored
         raise InfraError(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
@@ -239,10 +244,11 @@ def cmd_run(a) -> None:
         guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run train_sft "
                  f"--vision-reference-only first' >&2; false; }}; }}"
                  for r in vision_refs(repo_root() / a.module, a.run_id)]  # fmt: skip
-    elif re.fullmatch(r"experiments\.phase2\.\w+|experiments\.phase1\.bench\.xarch_hashes", a.module):
-        stages, name = [["-m", a.module, *a.args]], a.module.rsplit(".", 1)[1]
+    elif RUNNABLE.fullmatch(a.module):
+        stages, name = [["-m", a.module, *a.args]], "_".join(a.module.split(".")[-2:])
     else:
-        raise InfraError("module must be experiments.phase2.<script> or a run spec specs/<name>.yaml")
+        raise InfraError(f"module must be {CLI_PACKAGE}.<group>.<command>, a tool script or a run spec "
+                         "specs/<name>.yaml")
     cap = int(min(a.cap_hours * 3600, run["deadline"] - time.time() - MARGIN_S))
     if cap <= 0:
         raise InfraError("no time left before the instance cap")
@@ -317,7 +323,7 @@ def cmd_push_hf(a) -> None:
     path, out, rl = push_target(load_spec(repo_root() / a.config), a.run_id)
     kind = "--rl" if rl else "--run"
     token = hf_token()
-    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_push {kind} {path} "
+    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m {CLI_PACKAGE}.hub.push {kind} {path} "
            f"--repo {hf.REPO} --revision {out}")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
 
@@ -358,7 +364,7 @@ def cmd_fetch_hf(a) -> None:
     rev, name = a.rows or (a.revision, a.name)
     if "/" in name or ".." in name or name in ("", "."):
         raise InfraError(f"fetch_hf: folder name {name!r} may not hold / or ..")
-    pull = (f"cd /workspace/src && /opt/venv/bin/python -I -m experiments.phase2.hf_pull --repo {hf.REPO} "
+    pull = (f"cd /workspace/src && /opt/venv/bin/python -I -m {CLI_PACKAGE}.hub.pull --repo {hf.REPO} "
             f"--revision {shlex.quote(rev)}")
     if a.rows:
         pin = rows_pin(rev)  # refuses a revision no plan pins, or pins twice

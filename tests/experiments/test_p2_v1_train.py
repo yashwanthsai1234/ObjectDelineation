@@ -111,7 +111,7 @@ def _tiny_args(TS, tmp_path, synthetic_items, model_path=None, **kw):
     """The SftStage of a CPU run on a 2-epoch synthetic view (branches 0.5 / 1 at 10 steps/epoch unless overridden)."""
     from test_p2_scripts import CPU_SFT, _tiny_vlm
 
-    from experiments.phase2 import build_views as BV
+    from objdel.cli.data import views as BV
     from objdel.data import store
 
     store.write(synthetic_items(("train",), unanimous=True), tmp_path / "store")

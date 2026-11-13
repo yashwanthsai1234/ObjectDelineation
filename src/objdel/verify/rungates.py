@@ -1,5 +1,5 @@
 """Gate B1 and Gate B3 (Implementation.md B.6.2) on the runs' per-item values, and the after-V1 decision table
-(front section 1.1, B.4.1) as a pure function of the Gate B1 rule results. The CLI is experiments/phase2/run_gates.py.
+(front section 1.1, B.4.1) as a pure function of the Gate B1 rule results. The CLI is src/objdel/cli/eval/gates.py.
 
 Inputs per run: final_eval's `items.jsonl` (the K-mean IoU_tc and legal share per item; any other column, a medoid
 for one, is ignored) and `final_eval.json` (`view`, `view_content_sha256`); per view the frozen view's records

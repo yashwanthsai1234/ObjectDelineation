@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from experiments.phase2.b2_summary import restart_preset, start_preset
+from tools.studies.b2_summary import restart_preset, start_preset
 
 CF = lambda opsm05=0.01, clamp=0.005, ess_e=0.9: {  # noqa: E731  medians over B1 steps 50-260
     "cf/opsm_share@0.5": opsm05, "cf/tok_clamp2_share": clamp, "cf/ess_E@0.1": ess_e}

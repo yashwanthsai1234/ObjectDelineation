@@ -4,7 +4,7 @@ compute: {gpu: RTX_5090, cap_hours: 6.0}
 stages:
 - kind: cmd
   name: gpu_scorers
-  argv: [bash, -c, 'bash experiments/cuda_checker/run_box.sh --build-only && /opt/venv/bin/python -m pytest -q -p no:cacheprovider
+  argv: [bash, -c, 'bash ops/box/run_box.sh --build-only && /opt/venv/bin/python -m pytest -q -p no:cacheprovider
       tests/verify/test_gpu_scoring.py']
 - kind: sft
   name: train

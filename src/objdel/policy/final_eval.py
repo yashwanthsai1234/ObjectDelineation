@@ -1,5 +1,5 @@
 """Final evaluation of a tuned model on a whole split: K samples per item, scored by the checker. The CLI is
-experiments/phase2/final_eval.py; the flags are an objdel.core.spec.EvalStage.
+src/objdel/cli/eval/run.py; the flags are an objdel.core.spec.EvalStage.
 
 Samples every RL-eligible item of the view's <split> records with objdel.policy.sampler.VllmSampler (T = 1, the
 checkpoint's stop ids, `--adapter` served unmerged, each request seeded by request_seed(seed, item_id)), then scores
@@ -127,7 +127,7 @@ def hash_view(view: Path, out: Path, commits: dict[str, str]) -> None:
     (target_set,) = [s["target_set_sha256"] for s in sets.values()]
     _write(out, json.dumps({
         "view": str(view), "items": len(_view_records(view)), "content_sha256": Q.view_content_sha256(view),
-        "target_set_sha256": target_set, "generator_commit": commits["experiments/phase2/build_eval_views.py"],
+        "target_set_sha256": target_set, "generator_commit": commits["src/objdel/cli/data/eval_views.py"],
         "render_files": commits, "r5_commit": None,
         "note": "r5_commit not recorded: no file under runs/r5/ holds a code commit. Equal to the R5 box view by "
                 "code identity, not measured"}, indent=1))

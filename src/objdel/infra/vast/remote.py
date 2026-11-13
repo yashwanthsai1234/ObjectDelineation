@@ -14,24 +14,24 @@ import sys
 import time
 
 from objdel.core.provenance import repo_root
+from objdel.core.spec import CLI
 from objdel.infra.errors import InfraError
 from objdel.infra.vast.ledger import accrued, active, home, ledger, locked, update_active
 
 
 def watchdog_script():
     """The onstart watchdog, from the code tree being launched (never from VAST_HOME, which holds state)."""
-    return repo_root() / "experiments/phase2/vast/watchdog.sh"
+    return repo_root() / "ops/vast/watchdog.sh"
 
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")  # Vast label, shell, tmux name, local path; onstart size
 BAD_STATUS = ("exited", "unknown", "offline")  # never reach running
-# sync_up runs it on the box after the install: library modules and the box stack only, no tests.* or experiments.*
+# sync_up runs it on the box after the install: library modules and the box stack only, no tests.* or tools.*
 IMPORT_CHECK = ("import objdel.geom.engine, objdel.verify, objdel.rl.trl_adapter, objdel.policy.sampler, pydantic, "
                 "vllm")  # vllm and the sampler: the vllm_native image, one venv 
 # The one list of live CLI modules; the CLI smoke and import tests and the module-string gate read it
-LIVE_CLIS = tuple(f"experiments.phase1.{m}" for m in ("build_data", "build_targets", "fetch_lidc_pixels",
-                                                      "prepare_rl")) + tuple(
-    f"experiments.phase2.{m}" for m in ("build_views", "build_eval_views", "train_sft", "select_ckpt", "train_rl",
-                                        "g_probe", "final_eval", "preflight", "hf_push", "hf_pull"))
+LIVE_CLIS = tuple(f"{CLI}.{m}" for m in ("data.store", "data.targets", "data.fetch_lidc", "data.prepare", "data.views",
+                                         "data.eval_views", "train.sft", "train.select", "train.rl", "train.probe",
+                                         "eval.run", "box.preflight", "hub.push", "hub.pull"))
 # MARGIN_S: run.sh's timeout ends this long before the watchdog cap, leaving time for the last pull. GRACE_S: sweep
 # never closes a run younger than this as vanished (it may not be listed yet). PULL_S: added to --cap-hours, as the
 # watchdog counts from launch; a measured 5.88 GB image pull took 5.7 min.
@@ -180,16 +180,16 @@ def get_run(run_id: str) -> dict:
 
 
 def code_files() -> list[str]:
-    """The code snapshot (tracked and new files), without the roots data/, docs/, archive/ and .claude/, lab or results
-    dirs, or RIGA-derived tables; only files on disk (rsync --files-from aborts on a missing one).
+    """The code snapshot (tracked and new files), without the roots data/, docs/, archive/ and .claude/, the checker's
+    raw results (results/checker/; its record results/checker.md ships, the checker eval writes into it), or
+    RIGA-derived tables; only files on disk (rsync --files-from aborts on a missing one).
     tests/ ships: the chain runs tests/verify/test_gpu_scoring.py on the box. The records the box reads (final_eval's
     frozen view hashes, val_half's table; LIDC ids, counts and hashes, no pixels, no RIGA) are in reference/.
     docs/ is local only: nothing in it ships."""
     git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole
     files = subprocess.run(git, cwd=repo_root(), capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
     riga = re.compile(r"riga[^/]*\.(csv|jsonl?)$", re.I)
-    drop = re.compile(r"^(data|docs|archive|\.claude)/|^experiments/[^/]+/(lab|results)/|"
-                      r"^experiments/phase2/vast/\.lock$", re.I)
+    drop = re.compile(r"^(data|docs|archive|\.claude)/|^results/checker/|^ops/vast/\.lock$", re.I)
     files = [f for f in dict.fromkeys(files)
              if not riga.search(f) and not drop.search(f) and (repo_root() / f).is_file()]
     if "tests/verify/test_gpu_scoring.py" not in files:  # the chain runs it on the box before any scoring stage

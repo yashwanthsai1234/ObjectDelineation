@@ -1,12 +1,9 @@
-"""Every Phase 1 script has a command line: `--help` prints usage and exits 0 without touching data (B4-7). D3 (S03)
-adds the other non-lab scripts that import objdel.geom or objdel.data.targets: experiments/phase1/bench,
-experiments/cuda_checker (not compare.py, a helper module) and experiments/phase2. The Phase 0 scripts fail before
-their command line on names removed in Phase 1 (topology.BG4, reward.AnnotatorSet; CLEAN's to archive), so for them
-only the names they take from the objdel.geom and objdel.data.targets packages are checked.
+"""Every script has a command line: `--help` prints usage and exits 0 without touching data (B4-7): the command
+modules of objdel.cli and every script under tools/.
 
 Scripts run as modules in an isolated interpreter, as docs/contributing.md prescribes for anything that reads data/
-(`python -I -m experiments.phase1.<script>`; -I drops the current directory from sys.path, so this also checks that
-the editable install makes `experiments` importable). One `-I` subprocess runs every script through `runpy`, so the
+(`python -I -m tools.<folder>.<script>`; -I drops the current directory from sys.path, so this also checks that
+the editable install makes `tools` importable). One `-I` subprocess runs every script through `runpy`, so the
 heavy imports (torch, TRL) are paid once. A script whose optional extra is not installed (the CI `python` job has
 only `[dev]`) is skipped, not failed.
 
@@ -21,9 +18,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = [f"experiments.{d.replace('/', '.')}.{p.stem}"
-           for d in ("phase1", "phase1/bench", "cuda_checker", "phase2")
-           for p in sorted((ROOT / "experiments" / d).glob("*.py")) if p.stem not in ("__init__", "compare")]
+SCRIPTS = [".".join(p.relative_to(root).with_suffix("").parts)
+           for root, pattern in ((ROOT, "tools/**/*.py"), (ROOT / "src", "objdel/cli/*/*.py"))
+           for p in sorted(root.glob(pattern)) if p.stem != "__init__"]
 OPTIONAL = {"torch", "transformers", "trl", "datasets", "peft", "accelerate", "pydicom", "pylidc"}  # extras
 
 RUNNER = """
@@ -55,9 +52,8 @@ def helps(tmp_path_factory):
 
 
 def test_scripts_found():
-    assert {f"experiments.phase1.{s}" for s in ("eval_run", "prepare_rl", "build_data")} | {
-        "experiments.cuda_checker.eval", "experiments.phase2.verify_target_hashes",
-        "experiments.phase2.final_eval"} <= set(SCRIPTS)
+    assert {f"objdel.cli.{s}" for s in ("eval.score", "data.prepare", "data.store", "eval.run")} | {
+        "tools.checker.eval", "tools.data.verify_target_hashes"} <= set(SCRIPTS)
 
 
 @pytest.mark.parametrize("script", SCRIPTS)

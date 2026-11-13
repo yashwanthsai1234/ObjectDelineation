@@ -2,7 +2,7 @@
 
 import json
 
-from experiments.phase2 import headline as H
+from objdel.cli.eval import headline as H
 
 KEYS = ("iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote")
 

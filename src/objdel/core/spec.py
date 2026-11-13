@@ -283,7 +283,11 @@ class CmdStage(StageBase, frozen=True, extra="forbid"):  # escape hatch: a liter
 Stage = Annotated[RlStage | SftStage | SelectStage | ProbeStage | EvalStage | CmdStage, Field(discriminator="kind")]
 STAGE_CLASSES = {c.model_fields["kind"].default: c for c in (RlStage, SftStage, SelectStage, ProbeStage, EvalStage,
                                                               CmdStage)}
-MODULE = {"rl": "train_rl", "sft": "train_sft", "select": "select_ckpt", "probe": "g_probe", "eval": "final_eval"}
+# The package of the command-line modules (`python -I -m objdel.cli.<group>.<command>`, or `objdel <group> <command>`)
+# and the module each stage kind runs; the box chain, preflight and the Vast CLI read both.
+CLI = "objdel.cli"
+MODULE = {k: f"{CLI}.{m}" for k, m in {"rl": "train.rl", "sft": "train.sft", "select": "train.select",
+                                       "probe": "train.probe", "eval": "eval.run"}.items()}
 
 # The order of the flags in today's plans; `views` stands for the interleaved view, split and out of an eval stage.
 TRAINER_ORDER = ("fast_sync", "group_requests", "no_ckpt_layers", "runaway_cap", "profile_window", "trace",
@@ -443,12 +447,12 @@ def _value(v, rd: str, data: str) -> list[str]:
 
 
 def to_argv(stage: Stage, rd: str, data: str) -> list[str]:
-    """The argv of a stage on the box: `~` first when soft, then `-m experiments.phase2.<module>` and the flags that
+    """The argv of a stage on the box: `~` first when soft, then `-m <MODULE of its kind>` and the flags that
     the spec sets (in FLAG_ORDER), or a cmd stage's argv. {rd} and {data} are filled in string fields."""
     if stage.kind == "cmd":
         body = [fill(x, rd, data) for x in stage.argv]
     else:
-        body = ["-m", f"experiments.phase2.{MODULE[stage.kind]}"]
+        body = ["-m", MODULE[stage.kind]]
         for name in FLAG_ORDER[stage.kind]:
             v = None if name == "views" else getattr(stage, name)
             if name == "views":

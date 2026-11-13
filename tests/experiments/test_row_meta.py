@@ -168,7 +168,7 @@ def test_generate_marks_vision_answers_and_check_rope_steps(monkeypatch, every, 
 def test_train_rl_and_g_probe_carry_check_rope_every(capsys):
     from pathlib import Path
 
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
 
     with pytest.raises(SystemExit):
         train_rl.main(["--help"])

@@ -5,10 +5,11 @@ import json
 
 import pytest
 
-from experiments.phase2 import runaway_cut, train_rl
+from objdel.cli.train import rl as train_rl
 from objdel.rl import config as configs
 from objdel.rl import run as rl_run
 from objdel.rl import runaway
+from tools.studies import runaway_cut
 
 
 def test_caps_hand_values_min_with_limit_and_end_token_counted():

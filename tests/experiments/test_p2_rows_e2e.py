@@ -1,4 +1,4 @@
-"""experiments.phase2.build_rl_rows end to end (Implementation.md B.9 E03, E06, E07, E08) on the test_data_quality
+"""objdel.cli.data.rl_rows end to end (Implementation.md B.9 E03, E06, E07, E08) on the test_data_quality
 fixture store, through the `run` fixture of test_p2_rows (one 13-step block of 2 rows)."""
 import hashlib
 import json

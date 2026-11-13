@@ -179,10 +179,10 @@ def test_stratified_bootstrap_equals_power_c2():
     assert np.allclose(got, ref, rtol=0, atol=1e-12)
 
 
-@pytest.mark.parametrize("script", ["probes", "baselines"])
-def test_cli_help(script):
+@pytest.mark.parametrize("module", ["data.probes", "eval.baselines"])
+def test_cli_help(module):
     out = subprocess.run(
-        [sys.executable, "-I", "-m", f"experiments.phase2.{script}", "--help"],
+        [sys.executable, "-I", "-m", f"objdel.cli.{module}", "--help"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -192,7 +192,7 @@ def test_cli_help(script):
 
 
 def test_baselines_prior_on_fixture(tmp_path, disc_mask):
-    from experiments.phase2 import baselines
+    from objdel.cli.eval import baselines
     from objdel.verify.reward.cache import ExpertCache
 
     recs = []

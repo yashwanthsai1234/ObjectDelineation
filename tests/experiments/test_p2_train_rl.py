@@ -1,4 +1,4 @@
-"""experiments.phase2.train_rl: the full GRPO run. It trains for --steps, saves a resumable checkpoint every
+"""objdel.cli.train.rl: the full GRPO run. It trains for --steps, saves a resumable checkpoint every
 --save-steps, resumes from the last one (a Vast box can die mid-run), and leaves the tuned model as a plain merged
 model folder (the layout train_sft's branches use, so select_ckpt and vLLM read it unchanged)."""
 
@@ -29,7 +29,7 @@ def test_full_rl_saves_resumes_and_leaves_a_merged_tuned_model(tmp_path, synthet
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
 
     def run(steps, *extra):
-        r = _module("experiments.phase2.train_rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
+        r = _module("objdel.cli.train.rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
                     str(tmp_path / "prepared"), "--out", str(out), "--steps", str(steps), "--save-steps", "1",
                     "--grpo", json.dumps(GRPO_SMOKE), *extra, env=env)
         assert r.returncode == 0, r.stderr[-4000:]
@@ -69,7 +69,7 @@ def test_full_rl_runs_with_the_shared_prefix_forward(tmp_path, synthetic_items):
     store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
     data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
-    r = _module("experiments.phase2.train_rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
+    r = _module("objdel.cli.train.rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
                 str(tmp_path / "prepared"), "--out", str(out), "--steps", "2", "--save-steps", "100",
                 "--grpo", json.dumps(GRPO_SMOKE), "--shared-prefix", env=env)  # fmt: skip
     assert r.returncode == 0, r.stderr[-4000:]
@@ -92,7 +92,7 @@ def spy(self, completions, completion_ids, key, *a, **k):
             f.write(json.dumps(sorted(set(key))) + "\\n")
     return orig(self, completions, completion_ids, key, *a, **k)
 rewards.TRLReward._terms = spy
-from experiments.phase2 import train_rl
+from objdel.cli.train import rl as train_rl
 sys.exit(train_rl.main(sys.argv[2:]))
 """
 
@@ -225,7 +225,7 @@ def stub(tmp_path, monkeypatch):
     import multiprocessing
     import multiprocessing.pool
 
-    from experiments.phase2 import train_rl
+    from objdel.cli.train import rl as train_rl
     from objdel.rl import build
     from objdel.rl import rows as rl_rows
     from objdel.verify import store as serve
@@ -312,7 +312,7 @@ def test_train_rl_source_names_no_pool():
     """CT-34 static part and the CLEAN-G17 source gate."""
     import ast
 
-    src = (ROOT / "experiments/phase2/train_rl.py").read_text() + (ROOT / "src/objdel/rl/run.py").read_text()
+    src = (ROOT / "src/objdel/cli/train/rl.py").read_text() + (ROOT / "src/objdel/rl/run.py").read_text()
     names = {n.id for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Name)}
     names |= {n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute)}
     assert not names & {"Pool", "pool"}
