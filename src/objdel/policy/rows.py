@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core import datasets
+from objdel.core.hashing import pixels_sha256  # noqa: F401 (tests read policy.rows.pixels_sha256)
 from objdel.core.io import read_json, read_jsonl
 from objdel.data.prepare import image_matches
 from objdel.policy.prompt import _user

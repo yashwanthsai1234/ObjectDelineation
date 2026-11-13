@@ -34,15 +34,14 @@ gate (a) = simple controls answered (1, 0) >= 95 %; hole recall is reported agai
 import time
 from pathlib import Path
 
-import cv2
 import numpy as np
-from PIL import Image
 from scipy import ndimage, stats
 
 from objdel.core.hashing import pixels_sha256
 from objdel.core.io import read_json, read_jsonl, write_json, write_jsonl
+from objdel.data.prepare import write_png
 from objdel.data.targets.build import build_target
-from objdel.data.targets.frame import DIVISORS, LUNG_WINDOW
+from objdel.data.targets.frame import DIVISORS, LUNG_WINDOW, rgb
 from objdel.geom.shape import canonicalize, to_mask
 from objdel.geom.text import GRID, parse, serialize
 from objdel.geom.topology import min_area, signature, size_filter
@@ -362,8 +361,7 @@ def render(gt, patch, rng, image_side=512):
     noisy = bg * (1 - alpha) + hu * alpha + rng.normal(0, rng.uniform(10, 30), bg.shape)
     lo, hi = LUNG_WINDOW
     u8 = np.clip(np.rint((noisy - lo) / (hi - lo) * 255), 0, 255).astype(np.uint8)
-    img = Image.fromarray(np.repeat(u8[..., None], 3, -1)).resize((image_side,) * 2, Image.Resampling.BICUBIC)
-    return np.asarray(img)
+    return rgb(u8[None], image_side)
 
 
 def _write(out, name, split, items, patch_list, seed, meta):
@@ -374,9 +372,7 @@ def _write(out, name, split, items, patch_list, seed, meta):
         g, patch = patch_list[rng.integers(len(patch_list))]
         img = render(it["gt"], patch, rng)
         iid = f"lidc/{name}/{split}/{k:05d}"
-        path = out / "images" / (iid + ".png")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        write_png(out / "images" / (iid + ".png"), img)
         S = it["S"]
         recs.append(
             {

@@ -67,6 +67,14 @@ def image_matches(path, sha: str) -> bool:
     return im is not None and pixels_sha256(im) == sha
 
 
+def write_png(path, rgb: np.ndarray) -> None:
+    """Write uint8 RGB (H, W, 3) as a PNG at `path` (cv2, RGB -> BGR), making its folder; OSError when cv2 fails."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):  # cv2 reports failure by value
+        raise OSError(f"{path}: cv2.imwrite failed")
+
+
 def _prepare(job) -> dict:
     """One framed item -> its record; writes its image and caches under out. The job carries the structure names, so a
     worker never reads the dataset registry."""
@@ -80,10 +88,7 @@ def _prepare(job) -> dict:
         except ValueError as e:
             targets.append(None)
             errors.append([item_id, rater, str(e)])
-    path = Path(out, "images", item_id + ".png")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(path), cv2.cvtColor(f.image, cv2.COLOR_RGB2BGR)):  # cv2 reports failure by value
-        raise OSError(f"{path}: cv2.imwrite failed")
+    write_png(Path(out, "images", item_id + ".png"), f.image)
     rec = {"item_id": item_id, "group_id": group_id, "W": f.W, "H": f.H, "box": list(map(int, f.box)),
            "scale": f.scale, "raters": list(raters), "targets": targets, "rl": rl_eligible(raters),
            "disagreement": False, "image_sha256": pixels_sha256(f.image), "caches": {}, "errors": errors}
