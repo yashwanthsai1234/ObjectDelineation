@@ -12,3 +12,16 @@ def test_write_json_keeps_the_manifest_bytes(tmp_path):
     assert (tmp_path / "new" / "m.json").read_text() == want
     assert [p.name for p in (tmp_path / "new").iterdir()] == ["m.json"]
     assert read_json(str(tmp_path / "new" / "m.json")) == doc
+
+
+def test_hashing_helpers_agree(tmp_path):
+    import hashlib
+
+    import numpy as np
+
+    from objdel.core.hashing import bytes_sha256, file_sha256, pixels_sha256
+
+    (tmp_path / "f").write_bytes(b"abc")
+    assert bytes_sha256(b"abc") == file_sha256(tmp_path / "f") == hashlib.sha256(b"abc").hexdigest()
+    a = np.arange(6, dtype=np.uint8).reshape(2, 3)
+    assert pixels_sha256(a) == bytes_sha256(repr(a.shape).encode() + a.tobytes())

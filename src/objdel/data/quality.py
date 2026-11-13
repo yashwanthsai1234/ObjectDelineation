@@ -36,7 +36,6 @@ References:
 - DICOM ImagePositionPatient (0020,0032): https://dicom.innolitics.com/ciods/ct-image/image-plane/00200032
 - Two-sample Kolmogorov-Smirnov: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ks_2samp.html
 """
-import hashlib
 import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -49,7 +48,7 @@ import numpy as np
 import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
-from objdel.core.hashing import file_sha256, pixels_sha256
+from objdel.core.hashing import bytes_sha256, file_sha256, pixels_sha256
 from objdel.core.io import read_json, read_jsonl
 from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store, windows
@@ -462,7 +461,7 @@ def view_content_sha256(view_dir) -> str:
     recs = [r for f in sorted(Path(view_dir, "lidc").glob("*.jsonl")) for r in read_jsonl(f)]
     lines = [json.dumps([r["item_id"], (r.get("view") or {}).get("offset"), (r.get("view") or {}).get("side"),
                          r["image_sha256"]]) for r in recs]
-    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+    return bytes_sha256("\n".join(lines).encode())
 
 
 def target_set_sha256(view_dir) -> str:

@@ -25,7 +25,6 @@ refused.
 """
 import argparse
 import collections
-import hashlib
 import json
 import os
 import platform
@@ -39,6 +38,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from objdel.core.hashing import file_sha256
 from objdel.core.provenance import repo_root
 from objdel.geom import engine as _gpucheck
 from objdel.geom.topology import betti
@@ -65,7 +65,7 @@ def check_data(data: Path) -> dict:
     if "no RIGA" not in man.get("licence", ""):
         raise SystemExit(f"refused: {data}/manifest.json does not declare the set LIDC-only")
     for name, want in man["files"].items():
-        h = hashlib.sha256((data / name).read_bytes()).hexdigest()
+        h = file_sha256(data / name)
         if h != want:
             raise SystemExit(f"{data / name}: SHA-256 {h} != manifest {want}")
     return man

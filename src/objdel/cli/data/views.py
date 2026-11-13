@@ -28,7 +28,6 @@ archive/phase2_lab/A4, archive/phase2_lab/B1 shifts
 - multiprocessing.Pool.imap (ordered results): https://docs.python.org/3/library/multiprocessing.html
 """
 import argparse
-import hashlib
 import json
 import time
 from collections import Counter
@@ -40,6 +39,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core import datasets
+from objdel.core.hashing import bytes_sha256, file_sha256
 from objdel.core.io import write_json
 from objdel.data import store
 from objdel.data.targets import augment
@@ -93,7 +93,7 @@ def _item(job):
                 stats[f"exact/{op}"] += all(np.array_equal(to_mask(t.objs[n], S, S).mask, src[n]) for n in names)
                 stats[f"side/{S}"] += 1
                 rows.append(row)
-    return it.item_id, rows, stats, hashlib.sha256(ctx.read_bytes()).hexdigest()
+    return it.item_id, rows, stats, file_sha256(ctx)
 
 
 def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nonsimple_repeat=4, procs=2,
@@ -114,7 +114,7 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
     rows.sort(key=lambda r: (r["epoch"], r["item_id"], r["rater_index"], r["rep"]))
     text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
     (out / "rows.jsonl").write_text(text)
-    sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest() if p and Path(p).is_file() else None  # noqa: E731
+    sha = lambda p: file_sha256(Path(p)) if p and Path(p).is_file() else None  # noqa: E731
     entry = datasets.get(dataset)
     per_op = {op: {k: stats[f"{k}/{op}"] for k in ("rows", "exact", "error")} for op in entry.ops}
     manifest = {
@@ -130,7 +130,7 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
                    "nonsimple_rows": sum(not r["simple"] for r in rows), "errors": stats["errors"],
                    "fallback_windows": stats["fallback"], "per_op": per_op,
                    "side": {k.split("/")[1]: v for k, v in sorted(stats.items()) if k.startswith("side/")}},
-        "view_hash": hashlib.sha256(text.encode()).hexdigest(), "contexts": contexts}
+        "view_hash": bytes_sha256(text.encode()), "contexts": contexts}
     write_json(out / "manifest.json", manifest)
     ctx = [Path(out, "context", i + ".npz") for i in contexts]
     report = {"view": out.name, "wall_s": round(time.time() - t0, 1),

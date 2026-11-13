@@ -13,7 +13,6 @@ sync_up checks that and SHA256SUMS on the box.
 """
 
 import argparse
-import hashlib
 import io
 import json
 import sys
@@ -21,7 +20,7 @@ import tarfile
 from pathlib import Path
 
 from objdel.core import datasets
-from objdel.core.hashing import file_sha256
+from objdel.core.hashing import bytes_sha256, file_sha256
 from objdel.core.io import read_json
 from objdel.core.provenance import repo_root
 from objdel.infra.errors import InfraError
@@ -83,7 +82,7 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
 
 def sha(p: Path | bytes) -> str:
     """SHA-256 hex of a file or of bytes."""
-    return hashlib.sha256(p).hexdigest() if isinstance(p, bytes) else file_sha256(p)
+    return bytes_sha256(p) if isinstance(p, bytes) else file_sha256(p)
 
 
 def write_tar(fileobj, files: list[tuple[str, Path | bytes]]) -> None:

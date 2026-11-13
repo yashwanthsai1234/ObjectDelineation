@@ -14,7 +14,6 @@ References:
 """
 import argparse
 import csv
-import hashlib
 import json
 import shutil
 import time
@@ -22,6 +21,7 @@ from collections import Counter
 from multiprocessing import get_context
 from pathlib import Path
 
+from objdel.core.hashing import pixels_sha256
 from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store
 from objdel.data.store import Item
@@ -98,7 +98,7 @@ def main(argv=None):
                                           {"items": 1, "with_image": it.image is not None, **f}.items()})
                     stats["split_of"][it.item_id] = split
                     if it.image is not None:
-                        stats["image_sha"][it.item_id] = hashlib.sha256(it.image.tobytes()).hexdigest()
+                        stats["image_sha"][it.item_id] = pixels_sha256(it.image)
                     yield it
 
         if out.exists():

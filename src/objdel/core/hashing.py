@@ -1,6 +1,11 @@
-"""The two SHA-256 helpers every module shares (no heavy imports, so any module may use them)."""
+"""The SHA-256 helpers every module shares (no heavy imports, so any module may use them)."""
 
 import hashlib
+
+
+def bytes_sha256(data: bytes) -> str:
+    """SHA-256 hex digest of the bytes."""
+    return hashlib.sha256(data).hexdigest()
 
 
 def file_sha256(path) -> str:

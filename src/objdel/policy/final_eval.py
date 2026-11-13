@@ -123,11 +123,10 @@ def check_view(view: Path, dataset: str, split: str) -> None:
 def hash_view(view: Path, out: Path, commits: dict[str, str]) -> None:
     """--hash-view: the view's identity record (the pre-rental record); `commits`: the last commit of each
     file that renders it (freeze_views.render_files)."""
-    sets = read_json(view / "manifest.json")["sets"]
-    (target_set,) = [s["target_set_sha256"] for s in sets.values()]
     _write(out, json.dumps({
         "view": str(view), "items": len(_view_records(view)), "content_sha256": Q.view_content_sha256(view),
-        "target_set_sha256": target_set, "generator_commit": commits["src/objdel/cli/data/eval_views.py"],
+        "target_set_sha256": Q.target_set_sha256(view),
+        "generator_commit": commits["src/objdel/cli/data/eval_views.py"],
         "render_files": commits, "r5_commit": None,
         "note": "r5_commit not recorded: no file under runs/r5/ holds a code commit. Equal to the R5 box view by "
                 "code identity, not measured"}, indent=1))

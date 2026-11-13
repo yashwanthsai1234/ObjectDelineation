@@ -19,7 +19,6 @@ References:
 - multiprocessing.Pool.imap (ordered results, chunksize): https://docs.python.org/3/library/multiprocessing.html
 """
 import argparse
-import hashlib
 import json
 import platform
 import time
@@ -31,6 +30,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core import datasets
+from objdel.core.hashing import file_sha256
 from objdel.data import store
 from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
@@ -126,7 +126,7 @@ def main():
     manifest = {"config": {"build": BuildConfig().__dict__,
                            "frames": {k: d.frame.__dict__ for k, d in datasets.DATASETS.items()}},
                 "versions": {"python": platform.python_version(), **{p: version(p) for p in PINS}},
-                "store_manifest_sha256": hashlib.sha256((Path(a.store) / "manifest.json").read_bytes()).hexdigest(),
+                "store_manifest_sha256": file_sha256(Path(a.store) / "manifest.json"),
                 "files": {}}
     summary, all_rows = {}, []
     t0 = time.time()

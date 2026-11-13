@@ -26,7 +26,6 @@ other views, G-vision, prior or gates, and --vision / --no-vision are refused.
 
 import argparse
 import contextlib
-import hashlib
 import json
 import os
 import signal
@@ -38,6 +37,7 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json, read_jsonl
 from objdel.policy import evaluate
 from objdel.policy.errors import Refusal
@@ -137,7 +137,7 @@ def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: flo
     until TRIES of them finish no new item."""
     want = Counter({p["id"]: p["n"] for p in read_jsonl(prompts)})
     cmd, meta = sampler_cmd(kind, prompts, model, comps, extra), comps.with_suffix(".meta.json")
-    stamp = {"prompts_sha256": hashlib.sha256(prompts.read_bytes()).hexdigest(), "cmd": cmd}
+    stamp = {"prompts_sha256": file_sha256(prompts), "cmd": cmd}
     if not (meta.is_file() and read_json(meta) == stamp):
         comps.unlink(missing_ok=True)  # another sampling's completions: never resumed
         meta.write_text(json.dumps(stamp) + "\n")

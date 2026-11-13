@@ -29,7 +29,6 @@ and the CI [dev] job run without the train extra (BK4-2). Reads untrusted data: 
 References: experiments/phase2/PLAN.md §5.0, §5.1; A4 §2.5 proposal 1; objdel.data.prepare.prepare (layout).
 """
 import argparse
-import hashlib
 import json
 import platform
 from dataclasses import replace
@@ -39,6 +38,7 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.core import datasets as registry
+from objdel.core.hashing import bytes_sha256, file_sha256
 from objdel.core.io import write_json
 from objdel.data import store
 from objdel.data.targets import augment
@@ -104,10 +104,10 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
                 triples = [(r["item_id"], k, t) for r in recs for k, t in zip(r["raters"], r["targets"], strict=True)
                            if t]
                 m = {"view": name, "seed": seed, "kinds": list(kinds),
-                     "store_manifest_sha256": hashlib.sha256(Path(store_root, "manifest.json").read_bytes()).hexdigest(),
+                     "store_manifest_sha256": file_sha256(Path(store_root, "manifest.json")),
                      "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
                      "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
-                     "files": {rel: {"sha256": hashlib.sha256(text.encode()).hexdigest()}},
+                     "files": {rel: {"sha256": bytes_sha256(text.encode())}},
                      "sets": {f"{ds}/{split}": {
                          "items": len(recs), "skipped_no_image": 0, "targets": len(triples),
                          "target_set_sha256": target_set_hash(triples),

@@ -19,7 +19,6 @@ on any mismatch. Writes nothing. Reads untrusted data: run with python -I.
 Test surface: kept by the CLEAN16 decision (2026-11-10); only tests import it, so a change here is checked there.
 """
 import argparse
-import hashlib
 import json
 from itertools import batched
 from multiprocessing import get_context
@@ -27,6 +26,7 @@ from pathlib import Path
 
 from objdel.cli.data.eval_views import _rotated
 from objdel.core import datasets
+from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json
 from objdel.data import store
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
@@ -76,7 +76,7 @@ def check(path, store_root, pool) -> list[tuple[str, str, str]]:
     """(name, recorded, rebuilt) per target set of one manifest."""
     path = Path(path)
     m = read_json(path)
-    have = hashlib.sha256(Path(store_root, "manifest.json").read_bytes()).hexdigest()
+    have = file_sha256(Path(store_root, "manifest.json"))
     if m["store_manifest_sha256"] != have:
         return [(f"{path} store", m["store_manifest_sha256"], have)]
     if "sets" in m:

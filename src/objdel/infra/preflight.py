@@ -43,7 +43,7 @@ import types
 from dataclasses import dataclass
 from pathlib import Path
 
-from objdel.core.hashing import file_sha256
+from objdel.core.hashing import bytes_sha256, file_sha256
 from objdel.core.io import read_json
 from objdel.core.provenance import repo_root
 
@@ -137,7 +137,7 @@ def hashes(cfg: Path) -> dict:
             if (p := local(t)) is not None and (p / "manifest.json").is_file():
                 manifests.append(file_sha256(p / "manifest.json"))
     return {"code": code_hashes()["objdel_and_script_sha256"], "config": file_sha256(cfg),
-            "data": hashlib.sha256("".join(views + exams + manifests).encode()).hexdigest()}  # fmt: skip
+            "data": bytes_sha256("".join(views + exams + manifests).encode())}  # fmt: skip
 
 
 def stamp_path(cfg: Path) -> Path:

@@ -24,7 +24,6 @@ Upload (B1.4 step 5, owner-run, before any rental): objdel.cli.hub.push --rows R
 with python -I.
 """
 import argparse
-import hashlib
 import json
 import platform
 import shutil
@@ -40,6 +39,7 @@ from pathlib import Path
 
 import numpy as np
 
+from objdel.core.hashing import bytes_sha256, file_sha256
 from objdel.core.io import write_json
 from objdel.core.provenance import repo_root
 from objdel.data import quality as Q
@@ -50,10 +50,6 @@ ROOT = repo_root()
 REF = ROOT / "reference"
 DRAWS_OPTIONS = (1, 2, 4, 8)
 BUILD_DIRS = ("caches", "images", "lidc")  # what a build writes before its manifest
-
-
-def _sha(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def target_law(pool) -> tuple[np.ndarray, list[float]]:
@@ -119,7 +115,7 @@ def files_digest(root: Path) -> tuple[int, str]:
     """(count, SHA-256 of the newline-joined sorted relative paths) of the root's files without manifest.json."""
     rel = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
     rel = [r for r in rel if r != "manifest.json"]
-    return len(rel), _sha("\n".join(rel).encode())
+    return len(rel), bytes_sha256("\n".join(rel).encode())
 
 
 def build(a) -> int:
@@ -177,10 +173,10 @@ def build(a) -> int:
 
     plan = {"steps": a.steps, "planned_steps": a.steps, "block_steps": a.block_steps, "per_step": a.per_step,
             "seed": a.seed, "draws": draws, "shares": shares, "target_law": a.target_law,
-            "target_sha256": _sha(np.ascontiguousarray(target, "<f8").tobytes()),
-            "ids_sha256": _sha("\n".join(ids).encode()), "dropped": dict(pool.dropped),
+            "target_sha256": bytes_sha256(np.ascontiguousarray(target, "<f8").tobytes()),
+            "ids_sha256": bytes_sha256("\n".join(ids).encode()), "dropped": dict(pool.dropped),
             "disagreement_weight": a.disagreement_weight, "disagreement_max_reuse": table[draws]["max_reuse"],
-            "exclusions_sha256": _sha(exclude_bytes), "excluded_ids": sorted(excluded),
+            "exclusions_sha256": bytes_sha256(exclude_bytes), "excluded_ids": sorted(excluded),
             "draws_table": {str(d): {k: v for k, v in r.items() if k != "scheduled"} for d, r in table.items()}}
     report = Q.audit(out, *models.tokenizer(a.model), a.store, a.eval_views, a.val_view, a.exclude, a.review,
                      a.frozen, a.series_z, a.audit_out, plan=plan)
@@ -196,10 +192,10 @@ def build(a) -> int:
     uniq = list(recs.values())
     triples = [(r["item_id"], k, t) for r in uniq for k, t in zip(r["raters"], r["targets"], strict=True) if t]
     m = {"view": out.name, "seed": a.seed,
-         "store_manifest_sha256": _sha(Path(a.store, "manifest.json").read_bytes()),
+         "store_manifest_sha256": file_sha256(Path(a.store, "manifest.json")),
          "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
          "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
-         "files": {rel: {"sha256": _sha(text.encode())}},
+         "files": {rel: {"sha256": bytes_sha256(text.encode())}},
          "sets": {"lidc/train": {
              "items": len(rows), "windows": len(uniq), "skipped_no_image": 0, "targets": len(triples),
              "target_set_sha256": target_set_hash(triples),
@@ -213,7 +209,7 @@ def build(a) -> int:
          "schedule": plan | {"gates": [asdict(g) for g in gs], "files_count": count, "files_sha256": digest}}
     write_json(out / "manifest.json", m)
     print(json.dumps({"root": str(out), "rows": len(rows), "windows": len(uniq), "files_count": count,
-                      "files_sha256": digest, "manifest_sha256": _sha((out / "manifest.json").read_bytes()), "draws": draws,
+                      "files_sha256": digest, "manifest_sha256": file_sha256(out / "manifest.json"), "draws": draws,
                       "materialize_s": round(t_mat), "total_s": round(time.time() - t0)}, indent=1))
     return 0
 

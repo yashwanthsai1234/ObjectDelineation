@@ -36,7 +36,6 @@ TRL's log. --reward v5 trains on reward v5 and adds callbacks.LocGuard (stop and
 """
 
 import gc
-import hashlib
 import json
 import math
 import numbers
@@ -46,6 +45,7 @@ import sys
 import time
 from pathlib import Path
 
+from objdel.core.hashing import bytes_sha256
 from objdel.core.io import plain, read_json, write_atomic
 from objdel.rl import build
 
@@ -147,11 +147,6 @@ def session_budget(a, environ=os.environ):
     return BudgetStop(got["rate_usd_per_h"], a.budget_usd, got["session_start"], fixed_usd=got["fixed_usd"] or 0.0)
 
 
-def _sha(b: bytes) -> str:
-    """SHA-256 hex digest of bytes."""
-    return hashlib.sha256(b).hexdigest()
-
-
 def rows_schedule(root: Path, manifest_sha256: str | None) -> dict | None:
     """The manifest's `schedule` (None for a root without one), after checking the manifest's SHA-256 against the
     pinned value; a schedule root needs it."""
@@ -162,8 +157,8 @@ def rows_schedule(root: Path, manifest_sha256: str | None) -> dict | None:
         raise ValueError(f"{root}/manifest.json: `schedule` needs steps, per_step, block_steps and ids_sha256")
     if schedule is not None and manifest_sha256 is None:
         raise ValueError(f"{root}: a rows root with a schedule needs --rows-manifest-sha256")
-    if manifest_sha256 is not None and _sha(raw) != manifest_sha256:
-        raise ValueError(f"{root}/manifest.json SHA-256 {_sha(raw)} is not --rows-manifest-sha256 {manifest_sha256}")
+    if manifest_sha256 is not None and (got := bytes_sha256(raw)) != manifest_sha256:
+        raise ValueError(f"{root}/manifest.json SHA-256 {got} is not --rows-manifest-sha256 {manifest_sha256}")
     return schedule
 
 
@@ -173,7 +168,7 @@ def check_rows(keys, schedule: dict) -> None:
     keys, n = list(keys), schedule["steps"] * schedule["per_step"]
     if len(keys) != n:
         raise ValueError(f"rows: {len(keys)} rows, the schedule holds steps x per_step = {n}")
-    if _sha("\n".join(keys).encode()) != schedule["ids_sha256"]:
+    if bytes_sha256("\n".join(keys).encode()) != schedule["ids_sha256"]:
         raise ValueError("rows: ids_sha256 differs from the schedule's (a row dropped, swapped or reordered)")
 
 

@@ -1,10 +1,11 @@
 """JSON and JSONL reading, atomic file writing and the git code identity, shared (no heavy imports)."""
 
-import hashlib
 import json
 import os
 import subprocess
 from pathlib import Path
+
+from objdel.core.hashing import bytes_sha256
 
 
 def read_jsonl(path) -> list[dict]:
@@ -17,7 +18,7 @@ def write_jsonl(path, rows) -> str:
     """rows as sorted-key JSON lines to path; the SHA-256 hex digest of the text written."""
     text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
     Path(path).write_text(text)
-    return hashlib.sha256(text.encode()).hexdigest()
+    return bytes_sha256(text.encode())
 
 
 def write_atomic(path, text: str) -> None:
@@ -75,7 +76,7 @@ def git_sha(root, required: bool = True) -> str | None:
             return head
         new = sorted(_git(("ls-files", "-z", "--others", "--exclude-standard"), root).split(b"\0")[:-1])
         d = _git(("diff", "HEAD"), root) + b"".join(p + b"\n" for p in new)
-        return f"{head}-dirty-{hashlib.sha256(d).hexdigest()[:12]}"
+        return f"{head}-dirty-{bytes_sha256(d)[:12]}"
 
     return _or_none(sha, required)
 
