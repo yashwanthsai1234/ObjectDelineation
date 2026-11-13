@@ -13,9 +13,11 @@ import subprocess
 import sys
 import time
 
+from objdel.core.io import git_files
 from objdel.core.provenance import repo_root
 from objdel.core.spec import CLI
-from objdel.infra.errors import InfraError
+from objdel.infra.errors import InfraError, redact
+from objdel.infra.secrets import require as secret  # noqa: F401  (re-exported: vast.__main__ and the tests)
 from objdel.infra.vast.ledger import accrued, active, home, ledger, locked, update_active
 
 
@@ -38,28 +40,29 @@ LIVE_CLIS = tuple(f"{CLI}.{m}" for m in ("data.store", "data.targets", "data.fet
 MARGIN_S = GRACE_S = PULL_S = 600
 # Not pulled, and ignored by the watchdog's "nothing newer than PULLED_OK" (it gets this list in the onstart env):
 # full checkpoints with optimizer state (29 GB; branches/ is model-only and is pulled) and the pull's own markers.
-PULL_EXCLUDE = ("rolling/", "decay/", "stable/", "PULLED_OK", "PULLED_OK.next")
+PULL_EXCLUDE = ("rolling/", "decay/", "stable/", "ckpt/", "PULLED_OK", "PULLED_OK.next")
+# File names that never ship in the code snapshot, tracked or not
+SECRET_NAME = re.compile(r"^(\.secrets|\.env|id_rsa|id_ed25519|\.netrc$)|\.(pem|key)$", re.I)
+# Box paths and the box python, one place (the box image fixes them)
+BOX_SRC = "/workspace/src"
+BOX_PY = "/opt/venv/bin/python -I"
+# The box sends nothing to vLLM, Hugging Face or any DO_NOT_TRACK-aware library
+BOX_ENV = "VLLM_NO_USAGE_STATS=1 DO_NOT_TRACK=1 HF_HUB_DISABLE_TELEMETRY=1"
 ONSTART_MAX = 4048  # Vast API spec
 VAST_TIMEOUT_S = 120  # one `vastai` call: its API answers in seconds; a longer wait is a hang
 # One ssh or rsync call. rsync also stops on 300 s without data (--timeout), so this only bounds a transfer that
 # trickles on: 1 h moves a 3 GB model-only branch at 0.85 MB/s, and teardown makes up to 3 pulls.
 SH_TIMEOUT_S = 3600
-SSH_OPTS = ("StrictHostKeyChecking=accept-new", "ConnectTimeout=30", "ServerAliveInterval=30", "ServerAliveCountMax=4")
+# ForwardAgent=no: a hostile box never gets our ssh-agent. No IdentitiesOnly: no key is pinned, the agent holds it.
+SSH_OPTS = ("StrictHostKeyChecking=accept-new", "ForwardAgent=no", "ConnectTimeout=30", "ServerAliveInterval=30",
+            "ServerAliveCountMax=4")
 BACKOFF_CAP_S = 60
 SPENDING = ("create", "destroy")  # the vastai verbs that rent or destroy an instance
 
 
-def secret(service: str) -> str:
-    """objdel.infra.secrets: <repo>/.secrets, else the macOS keychain; InfraError when neither has it."""
-    from objdel.infra import secrets
-
-    try:
-        value = secrets.get(service)
-    except PermissionError as e:
-        raise InfraError(str(e)) from e
-    if not value:
-        raise InfraError(f"secret {service} missing: not in {secrets.path()}, not in the keychain")
-    return value
+def box_run_dir(run_id: str) -> str:
+    """A run's folder on the box."""
+    return f"/workspace/runs/{run_id}"
 
 
 def dry_run() -> bool:
@@ -92,7 +95,7 @@ def vast(*args: str, tries: int = 1):
             # an API error exits 0 with empty stdout
             if not p.returncode and (p.stdout.strip() or "--raw" not in args):
                 return json.loads(p.stdout) if "--raw" in args else p.stdout
-            why = p.stderr.strip()[-300:]
+            why = redact(p.stderr.strip()[-300:])
         if i < tries - 1:
             time.sleep(backoff_s(i))
     raise InfraError(f"vastai {args[:2]} failed: {why}")
@@ -108,9 +111,9 @@ def sh(cmd: list[str], stdin: str | None = None, what: str = "") -> None:
         p = subprocess.run(cmd, input=stdin, text=True, stdin=None if stdin else subprocess.DEVNULL,
                            timeout=SH_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        raise InfraError(f"{cmd[0]} timed out after {SH_TIMEOUT_S} s: {shlex.join(cmd[-2:])[:160]}") from None
+        raise InfraError(f"{cmd[0]} timed out after {SH_TIMEOUT_S} s: {redact(shlex.join(cmd[-2:]))[:160]}") from None
     if p.returncode:
-        raise InfraError(f"{cmd[0]} failed: {shlex.join(cmd[-2:])[:160]}")
+        raise InfraError(f"{cmd[0]} failed: {redact(shlex.join(cmd[-2:]))[:160]}")
 
 
 def ssh(run: dict) -> list[str]:
@@ -127,7 +130,9 @@ def remote(run: dict, command: str, stdin: str | None = None, what: str = "") ->
 def rsync(run: dict, *paths: str, opts: tuple = ()) -> None:
     """paths: sources, then the destination (two sources once made the .sha256 the destination). Stops after 300 s
     without data; a partly sent file is kept for the next try."""
-    sh(["rsync", "-az", "--timeout=300", "--partial", "--exclude=data/raw/", *opts, "-e", shlex.join(ssh(run)), *paths])
+    # --safe-links: a link that points outside the copied tree (planted by a host, or ours) is skipped, never followed
+    sh(["rsync", "-az", "--timeout=300", "--partial", "--safe-links", "--exclude=data/raw/", *opts, "-e",
+        shlex.join(ssh(run)), *paths])
 
 
 def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None:
@@ -159,7 +164,7 @@ def onstart_cmd(run_id: str, cap_s: int, created: float | None = None, idle_s: i
     b64 = base64.b64encode(gzip.compress(watchdog_script().read_bytes(), mtime=0)).decode()
     created = int(created or time.time())
     env = (f"RUN_ID={run_id} WATCHDOG_CAP_S={cap_s} WATCHDOG_IDLE_S={idle_s} WATCHDOG_CREATED={created} "
-           f"WATCHDOG_PULLED_OK=/workspace/runs/{run_id}/PULLED_OK WATCHDOG_SKIP={','.join(PULL_EXCLUDE)}")  # fmt: skip
+           f"WATCHDOG_PULLED_OK={box_run_dir(run_id)}/PULLED_OK WATCHDOG_SKIP={','.join(PULL_EXCLUDE)}")  # fmt: skip
     k = "/root/.ssh/authorized_keys"  # some hosts write it with a foreign owner and sshd refuses it (vast-cli #336)
     fix = (f"(for i in $(seq 60); do [ -f {k} ] && chown root:root {k} && chmod 600 {k} && chmod 700 /root/.ssh "
            f"&& chmod go-w /root; sleep 2; done) & ")
@@ -180,18 +185,23 @@ def get_run(run_id: str) -> dict:
 
 
 def code_files() -> list[str]:
-    """The code snapshot (tracked and new files), without the roots data/, docs/, archive/ and .claude/, the checker's
+    """The code snapshot (tracked and new files, but never a secret-shaped name, an untracked top-level .md or a link
+    out of the tree), without the roots data/, docs/, archive/ and .claude/, the checker's
     raw results (results/checker/; its record results/checker.md ships, the checker eval writes into it), or
     RIGA-derived tables; only files on disk (rsync --files-from aborts on a missing one).
     tests/ ships: the chain runs tests/verify/test_gpu_scoring.py on the box. The records the box reads (final_eval's
     frozen view hashes, val_half's table; LIDC ids, counts and hashes, no pixels, no RIGA) are in reference/.
     docs/ is local only: nothing in it ships."""
-    git = ["git", "ls-files", "-z", "-co", "--exclude-standard"]  # -z: paths with spaces stay whole
-    files = subprocess.run(git, cwd=repo_root(), capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
+    root = repo_root()
+    files = git_files(root, "-co", "--exclude-standard")  # NUL split: paths with spaces stay whole
+    tracked = set(git_files(root))
     riga = re.compile(r"riga[^/]*\.(csv|jsonl?)$", re.I)
     drop = re.compile(r"^(data|docs|archive|\.claude)/|^results/checker/|^ops/vast/\.lock$", re.I)
+    # never a secret-shaped name, and never an untracked note at the top level (HANDOVER.md reached a box once)
     files = [f for f in dict.fromkeys(files)
-             if not riga.search(f) and not drop.search(f) and (repo_root() / f).is_file()]
+             if not riga.search(f) and not drop.search(f) and not SECRET_NAME.search(f.rsplit("/", 1)[-1])
+             and not (f not in tracked and "/" not in f and f.endswith(".md")) and (root / f).is_file()
+             and (root / f).resolve().is_relative_to(root.resolve())]  # a link out of the tree never ships
     if "tests/verify/test_gpu_scoring.py" not in files:  # the chain runs it on the box before any scoring stage
         raise InfraError("tests/verify/test_gpu_scoring.py missing from the code snapshot")
     return files

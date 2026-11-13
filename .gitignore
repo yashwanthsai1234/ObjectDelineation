@@ -10,7 +10,7 @@ coverage.xml
 htmlcov/
 
 # Data: downloaded, large and licensed separately. Never commit.
-/data/
+/data
 
 # Build output
 /build/
@@ -49,6 +49,13 @@ CLAUDE.md
 
 # Local secrets (objdel.infra.secrets): never committed, never shipped
 /.secrets
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.netrc
 /ops/vast/known_hosts
 /ops/vast/*.launchd.log
 

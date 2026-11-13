@@ -22,7 +22,7 @@ import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 
-from objdel.core.io import read_json
+from objdel.core.io import git_files, read_json
 from objdel.core.provenance import repo_root
 
 ROOT = repo_root()
@@ -70,9 +70,7 @@ class Ctx:
 
 
 def public_files(root: Path) -> list[str]:
-    out = subprocess.run(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"], capture_output=True,
-                         text=True, check=True).stdout.split("\0")
-    return [f for f in out if f and (root / f).is_file()]
+    return [f for f in git_files(root, "-co", "--exclude-standard") if f and (root / f).is_file()]
 
 
 def live(f: str) -> bool:
@@ -312,8 +310,7 @@ def vulture_src(ctx: Ctx) -> list[Finding]:
 def record(root: Path) -> dict:
     """The CLEAN0 step 2 record of the tree now (fingerprint and counts); a failed import leaves the key out."""
     rec: dict = {}
-    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, text=True,
-                             check=True).stdout.split("\0")[:-1]
+    tracked = git_files(root)
     rec.update(tracked=len(tracked), lab=sum("/lab/" in x for x in tracked),
                phase0=sum(x.startswith(RETIRED_TREES[0] + "/") for x in tracked))
     try:

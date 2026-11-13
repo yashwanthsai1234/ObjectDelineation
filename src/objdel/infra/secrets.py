@@ -1,8 +1,9 @@
 """Local secrets for every phase: <repo>/.secrets first, then the macOS keychain.
 
 .secrets holds one `name=value` per line (# comments); the names are the keychain service names
-(objdel-hf-write, objdel-vast-scoped, ...). It is git-ignored, never sent to a rented box (sync_up ships tracked
-files only) and refused unless only the owner can read it (chmod 600). OBJDEL_SECRETS overrides its path (tests).
+(objdel-hf-write, objdel-vast-scoped, ...). It is git-ignored, never sent to a rented box (the sync_up code snapshot
+drops secret-shaped names) and refused unless only the owner can read it (chmod 600). OBJDEL_SECRETS overrides its
+path (tests).
 Values are never printed.
 """
 
@@ -12,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 from objdel.core.provenance import repo_root
+from objdel.infra.errors import InfraError
 
 
 def path() -> Path:
@@ -37,3 +39,15 @@ def get(name: str) -> str | None:
     except FileNotFoundError:  # not macOS
         return None
     return r.stdout.strip() or None if r.returncode == 0 else None
+
+
+def require(service: str) -> str:
+    """The secret `service` (get); InfraError when .secrets is open to others or
+    neither .secrets nor the keychain has it."""
+    try:
+        value = get(service)
+    except PermissionError as e:
+        raise InfraError(str(e)) from e
+    if not value:
+        raise InfraError(f"secret {service} missing: not in {path()}, not in the keychain")
+    return value

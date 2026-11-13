@@ -22,7 +22,7 @@ def main(argv=None) -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--allow", help="only repo paths matching this pattern (kept under --out at their repo paths)")
     a = ap.parse_args(argv)
-    token = sys.stdin.readline().strip() or sys.exit("hf_pull: no token on stdin")
+    token = hf.stdin_token("hf_pull")
     return hf.pull(a.repo, a.revision, a.out, a.allow, token)
 
 

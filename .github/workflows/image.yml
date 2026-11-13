@@ -31,6 +31,8 @@ jobs:
       IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/objdel-gpu
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
       - name: Free disk (the build peaks near 35 GB; the runner image ships ~30 GB of SDKs we never use)
         run: |
           df -h /

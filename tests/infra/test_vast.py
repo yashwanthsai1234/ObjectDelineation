@@ -131,8 +131,7 @@ class Env:
         for t in ("vastai", "ssh", "rsync", "security", "curl", "nvidia-smi", "osascript"):
             (bin_ / t).symlink_to(src)
         self.state(offers=[offer(), offer(112, dph_total=0.70), offer(113, hosting_type=1, dph_total=0.9)])
-        self.allow(image="ghcr.io/owner/objdel-vast:p2-abc@sha256:" + "0" * 64, ghcr_user="owner",
-                   riga_permission={"granted": False, "evidence": ""})
+        self.allow(image="ghcr.io/owner/objdel-vast:p2-abc@sha256:" + "0" * 64, ghcr_user="owner")
         for f in ("bundle-lidc.tar", "bundle-lidc.tar.sha256"):
             (self.bundles / f).write_text("x")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("VAST", "DRY_RUN"))}
@@ -1592,3 +1591,50 @@ def test_onstart_ships_the_code_trees_watchdog_not_vast_homes(tmp_path, monkeypa
     monkeypatch.setenv("VAST_HOME", str(tmp_path))
     b64 = re.search(r"printf %s (\S+) \| base64 -d \| gunzip >", RM.onstart_cmd("r1", 7200)).group(1)
     assert gzip.decompress(base64.b64decode(b64)).decode() == (VAST / "watchdog.sh").read_text()
+
+
+def test_code_snapshot_never_ships_secret_names_or_untracked_notes(tmp_path, monkeypatch):
+    """S3: new untracked code ships; a secret-shaped name, an untracked top-level .md and a link out of the tree never
+    do. A tracked top-level .md (README.md) ships."""
+    keep = ["tests/verify/test_gpu_scoring.py", "src/new.py", "README.md", "pyproject.toml", "docs_x/a.md"]
+    drop = [".secrets", ".secrets.bak", ".env", ".env.prod", "k.pem", "src/a.key", "id_rsa", "id_rsa.pub",
+            "id_ed25519", ".netrc"]  # fmt: skip
+    _git_repo(tmp_path, [*keep, *drop])
+    subprocess.run(["git", "add", "README.md", "pyproject.toml", "tests/verify/test_gpu_scoring.py"], cwd=tmp_path,
+                   check=True)
+    (tmp_path / "HANDOVER.md").write_text("x")  # untracked note at the top level
+    (tmp_path / "src/out.py").symlink_to(tmp_path.parent)  # points outside the tree
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    assert sorted(RM.code_files()) == sorted(keep)
+
+
+def test_box_commands_turn_telemetry_off_and_ssh_never_forwards_the_agent():
+    """S7, S8: the box env holds the three switches; every ssh call sets ForwardAgent=no."""
+    assert set(RM.BOX_ENV.split()) == {"VLLM_NO_USAGE_STATS=1", "DO_NOT_TRACK=1", "HF_HUB_DISABLE_TELEMETRY=1"}
+    assert "ForwardAgent=no" in RM.SSH_OPTS
+    assert "ckpt/" in RM.PULL_EXCLUDE
+
+
+def test_error_text_hides_tokens():
+    """S10: token-shaped strings in an error built from a command line are redacted."""
+    from objdel.infra.errors import redact
+
+    t = "hf_" + "a" * 34
+    assert t not in redact(f"ssh failed: login -p {'b' * 44} {t} ghp_{'c' * 36} token {'d' * 40}")
+    assert redact("ssh root@1.2.3.4 -p 2222") == "ssh root@1.2.3.4 -p 2222"
+
+
+def test_sync_up_refuses_a_bundle_link_out_of_its_folder(tmp_path, monkeypatch):
+    """S9: a bundle file that is a link pointing outside the bundle folder is refused before any send."""
+    import argparse
+
+    from objdel.infra.vast import __main__ as M
+
+    (tmp_path / "outside").write_text("secret")
+    b = tmp_path / "b"
+    b.mkdir()
+    (b / "bundle-x.tar").symlink_to(tmp_path / "outside")
+    (b / "bundle-x.tar.sha256").write_text("x")
+    monkeypatch.setattr(M, "get_run", lambda _: {"ip": "1.2.3.4", "port": 22, "instance": 1})
+    with pytest.raises(M.InfraError, match="link that points outside"):
+        M.cmd_sync_up(argparse.Namespace(run_id="r1", bundle="x", bundle_dir=b, code_only=False))

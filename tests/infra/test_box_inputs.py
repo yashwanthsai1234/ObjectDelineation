@@ -99,9 +99,9 @@ def test_code_files_ship_the_untracked_tar(tmp_path, monkeypatch):
     for f in (*TAR, "tests/verify/test_gpu_scoring.py"):
         (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / f).write_text("x")
-    listed = "\0".join([*TAR, "tests/verify/test_gpu_scoring.py", "data/lidc/x.npz"]) + "\0"
+    listed = [*TAR, "tests/verify/test_gpu_scoring.py", "data/lidc/x.npz"]
     monkeypatch.setattr(P, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(P.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=listed))
+    monkeypatch.setattr(P, "git_files", lambda root, *flags: [] if flags == () else listed)
     assert P.code_files() == [*TAR, "tests/verify/test_gpu_scoring.py"]
 
 

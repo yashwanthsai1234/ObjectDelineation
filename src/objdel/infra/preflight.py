@@ -392,11 +392,12 @@ def rows_revision(s: Inputs) -> list[str]:
 
     from objdel.infra import secrets
     from objdel.infra.hf import REPO, ROWS_TAR, rows_tar
+    from objdel.infra.hf import api as hf_api
 
-    bad, token = [], secrets.get("objdel-hf-write")
+    bad, token = [], secrets.require("objdel-hf-write")
     for st in s.rows:
         root, want, rev = local(st.train), st.rows_manifest_sha256, st.rows_revision
-        prefix, api = f"rows/{root.name}/", hub.HfApi(token=token)
+        prefix, api = f"rows/{root.name}/", hf_api(token)
         remote = sorted(f[len(prefix):] for f in api.list_repo_files(REPO, revision=rev) if f.startswith(prefix))
         if remote != sorted([ROWS_TAR, "manifest.json"]):
             bad.append(f"{REPO}@{rev} {prefix}: holds {remote[:3]} ({len(remote)} files), not {ROWS_TAR} and "

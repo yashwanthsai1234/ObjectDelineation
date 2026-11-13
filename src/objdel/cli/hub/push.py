@@ -33,7 +33,7 @@ def main(argv=None) -> int:
     ap.add_argument("--revision", required=True, help="the repo branch, e.g. r1-qwen3vl2b")
     ap.add_argument("--view", type=Path, help="local copy of the training view (default: the manifest's path)")
     a = ap.parse_args(argv)
-    token = sys.stdin.readline().strip() or sys.exit("hf_push: no token on stdin")
+    token = hf.stdin_token("hf_push")
     try:
         if a.rows:
             return hf.push_rows(a.rows, a.repo, a.revision, token)

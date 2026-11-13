@@ -70,6 +70,9 @@ from objdel.infra.vast.ledger import (
 from objdel.infra.vast.offers import is_raw, offer_cols, query, reasons
 from objdel.infra.vast.remote import (
     BAD_STATUS,
+    BOX_ENV,
+    BOX_PY,
+    BOX_SRC,
     GRACE_S,
     IMPORT_CHECK,
     MARGIN_S,
@@ -77,6 +80,7 @@ from objdel.infra.vast.remote import (
     PULL_S,
     RUN_ID_RE,
     alert,
+    box_run_dir,
     code_files,
     destroy,
     dry_run,
@@ -207,18 +211,21 @@ def cmd_sync_up(a) -> None:
     files = [a.bundle_dir / name, a.bundle_dir / f"{name}.sha256"]
     if any(map(is_raw, [a.bundle_dir, *files])):
         raise InfraError("refusing to send anything under data/raw")
+    for f in files:  # a link planted in the bundle folder could send a file from outside it
+        if f.is_symlink() and not f.resolve().is_relative_to(a.bundle_dir.resolve()):
+            raise InfraError(f"refusing to send {f}: a link that points outside {a.bundle_dir}")
     lst, sha = home() / "code_files.txt", git_sha(repo_root())
     lst.write_text("\n".join(code_files()) + "\n")
     host = f"root@{run['ip']}:"
-    rsync(run, f"{repo_root()}/", f"{host}/workspace/src/", opts=(f"--files-from={lst}",))
-    remote(run, f"printf '%s\\n' {shlex.quote(sha)} > /workspace/src/CODE_SHA")  # the box has no .git
-    remote(run, "cd /workspace/src && uv pip install --python /opt/venv/bin/python --no-deps --no-build-isolation -e ."
-                f" && cd / && /opt/venv/bin/python -I -c {shlex.quote(IMPORT_CHECK)}")  # fmt: skip
+    rsync(run, f"{repo_root()}/", f"{host}{BOX_SRC}/", opts=(f"--files-from={lst}",))
+    remote(run, f"printf '%s\\n' {shlex.quote(sha)} > {BOX_SRC}/CODE_SHA")  # the box has no .git
+    remote(run, f"cd {BOX_SRC} && uv pip install --python /opt/venv/bin/python --no-deps --no-build-isolation -e ."
+                f" && cd / && {BOX_PY} -c {shlex.quote(IMPORT_CHECK)}")  # fmt: skip
     if a.code_only:  # a code fix mid-session: the bundle is already on the box
         return ledger(event="sync", run_id=a.run_id, instance_id=run["instance"], detail="code only")
     # GPU check before the bundle (a busy, power-capped card was once found only after a 12 min upload)
-    check = f"bash ops/docker/image_check.sh /workspace/runs/{a.run_id}/image_check.json"
-    remote(run, f"cd /workspace/src && {check}")
+    check = f"bash ops/docker/image_check.sh {box_run_dir(a.run_id)}/image_check.json"
+    remote(run, f"cd {BOX_SRC} && {check}")
     rsync(run, *map(str, files), f"{host}/workspace/data/")
     remote(run, f"cd /workspace/data && sha256sum -c {name}.sha256 && mkdir -p {a.bundle} && tar -xf {name} -C "
                 f"{a.bundle} && cd {a.bundle} && sha256sum -c --quiet SHA256SUMS")  # fmt: skip
@@ -239,8 +246,8 @@ def cmd_run(a) -> None:
         raise InfraError(f"flags go before the config (run.sh RUN_ID [--cap-hours H] CONFIG); got {' '.join(a.args)}")
     if a.module.endswith(".yaml"):
         stages, name = chain(repo_root() / a.module, a.run_id), Path(a.module).stem
-        guard = [f"/opt/venv/bin/python -I -m objdel.infra.vast run_spec {shlex.quote(a.module)} "
-                 f"/workspace/runs/{a.run_id}/run_spec.json"]  # the spec, code and versions, before any stage
+        guard = [f"{BOX_PY} -m objdel.infra.vast run_spec {shlex.quote(a.module)} "
+                 f"{box_run_dir(a.run_id)}/run_spec.json"]  # the spec, code and versions, before any stage
         guard += [f"{{ test -f {r} || {{ echo 'missing G-vision reference {r}: run train_sft "
                  f"--vision-reference-only first' >&2; false; }}; }}"
                  for r in vision_refs(repo_root() / a.module, a.run_id)]  # fmt: skip
@@ -255,16 +262,16 @@ def cmd_run(a) -> None:
 
     def job(s: list[str]) -> str:  # "~": a failure is logged and the chain goes on
         soft = s[0] == "~"
-        cmd = shlex.join(s[soft:]) if s[soft] == "bash" else f"/opt/venv/bin/python -I {shlex.join(s[soft:])}"
+        cmd = shlex.join(s[soft:]) if s[soft] == "bash" else f"{BOX_PY} {shlex.join(s[soft:])}"
         return f"{{ {cmd} || echo {shlex.quote('step failed, continuing: ' + cmd)}; }}" if soft else cmd
 
-    rd = f"/workspace/runs/{a.run_id}"
+    rd = box_run_dir(a.run_id)
     jobs = " && ".join([*guard, *map(job, stages)])
     # the session clock of train_rl --budget-usd (callbacks.BudgetStop): accrued(run, t) = fixed + rate x hours
     rate, fixed = run["dph"] + run.get("inet_up_cost", 0) * UP_GB_PER_H, run.get("inet_down_cost", 0) * DOWN_GB
     clock = f"OBJDEL_SESSION_START={run['started']!r} OBJDEL_RATE_USD_PER_H={rate!r} OBJDEL_FIXED_USD={fixed!r}"
     # EXIT is removed first: the watchdog's idle destroy needs it; `;` keeps cd/export in this shell
-    inner = (f"cd /workspace/src && export OBJDEL_RUN_DIR={rd} {clock} && mkdir -p {rd} && rm -f {rd}/EXIT "
+    inner = (f"cd {BOX_SRC} && export {BOX_ENV} OBJDEL_RUN_DIR={rd} {clock} && mkdir -p {rd} && rm -f {rd}/EXIT "
              "|| exit 1; "
              f"(while :; do date -u +%s > {rd}/HEARTBEAT; sleep 60; done) & "
              f"timeout -k 120 {cap}s bash -c {shlex.quote(jobs)} > {rd}/{name}.log 2>&1; "
@@ -299,7 +306,7 @@ def cmd_pull(a) -> None:
         with pull_lock(run_id):  # a teardown's pull or a second pull would race on PULLED_OK.next
             run, dst = get_run(run_id), Path(os.environ.get("VAST_RUNS", repo_root() / "runs")) / run_id
             dst.mkdir(parents=True, exist_ok=True)
-            rd = f"/workspace/runs/{run_id}"
+            rd = box_run_dir(run_id)
             remote(run, f"touch {rd}/PULLED_OK.next")
             rsync(run, f"root@{run['ip']}:{rd}/", f"{dst}/", opts=tuple(f"--exclude={x}" for x in PULL_EXCLUDE))
             remote(run, f"mv {rd}/PULLED_OK.next {rd}/PULLED_OK")
@@ -309,10 +316,10 @@ def hf_token() -> str:
     """The HF write token, refused unless it is fine-grained with write on the one repo only (it goes to a rented
     box over ssh stdin)."""
     token = secret("objdel-hf-write")
-    if bad := hf.token_problems(hf.whoami(token), hf.REPO):
-        raise InfraError(f"secret objdel-hf-write (.secrets or keychain) is too broad for a rented box: "
-                         f"{'; '.join(bad)}. Recreate it at huggingface.co/settings/tokens as fine-grained with only "
-                         f"{hf.REPO}: write (no other boxes ticked)")
+    hf.require_scoped_token(token, hf.REPO,
+                            "secret objdel-hf-write (.secrets or keychain) is too broad for a rented box",
+                            f". Recreate it at huggingface.co/settings/tokens as fine-grained with only {hf.REPO}: "
+                            "write (no other boxes ticked)")
     return token
 
 
@@ -323,7 +330,7 @@ def cmd_push_hf(a) -> None:
     path, out, rl = push_target(load_spec(repo_root() / a.config), a.run_id)
     kind = "--rl" if rl else "--run"
     token = hf_token()
-    cmd = (f"cd /workspace/src && /opt/venv/bin/python -I -m {CLI_PACKAGE}.hub.push {kind} {path} "
+    cmd = (f"cd {BOX_SRC} && {BOX_ENV} {BOX_PY} -m {CLI_PACKAGE}.hub.push {kind} {path} "
            f"--repo {hf.REPO} --revision {out}")  # fmt: skip
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
 
@@ -364,7 +371,7 @@ def cmd_fetch_hf(a) -> None:
     rev, name = a.rows or (a.revision, a.name)
     if "/" in name or ".." in name or name in ("", "."):
         raise InfraError(f"fetch_hf: folder name {name!r} may not hold / or ..")
-    pull = (f"cd /workspace/src && /opt/venv/bin/python -I -m {CLI_PACKAGE}.hub.pull --repo {hf.REPO} "
+    pull = (f"cd {BOX_SRC} && {BOX_ENV} {BOX_PY} -m {CLI_PACKAGE}.hub.pull --repo {hf.REPO} "
             f"--revision {shlex.quote(rev)}")
     if a.rows:
         pin = rows_pin(rev)  # refuses a revision no plan pins, or pins twice
@@ -372,11 +379,11 @@ def cmd_fetch_hf(a) -> None:
             raise InfraError(f"--rows {rev}: the plans that pin it name {len(found)} datasets (need exactly one)")
         box = BOX_DATA.format(dataset=found.pop())
         d = f"{box}/rows/{name}"
-        cmd = (f"{pull} --out {box} --allow {shlex.quote(f'rows/{name}/**')} && /opt/venv/bin/python "
-               f"-I -c {shlex.quote(UNTAR)} {shlex.quote(f'{d}/{hf.ROWS_TAR}')} {shlex.quote(d)} && "
-               f"/opt/venv/bin/python -I -c {shlex.quote(ROWS_CHECK)} {shlex.quote(d)} {pin}")
+        cmd = (f"{pull} --out {box} --allow {shlex.quote(f'rows/{name}/**')} && {BOX_PY} "
+               f"-c {shlex.quote(UNTAR)} {shlex.quote(f'{d}/{hf.ROWS_TAR}')} {shlex.quote(d)} && "
+               f"{BOX_PY} -c {shlex.quote(ROWS_CHECK)} {shlex.quote(d)} {pin}")
     else:
-        cmd = f"{pull} --out /workspace/runs/{a.run_id}/{name}"
+        cmd = f"{pull} --out {box_run_dir(a.run_id)}/{name}"
     run, token = get_run(a.run_id), hf_token()
     remote(run, cmd, token + "\n", "HF token from objdel.infra.secrets")
 

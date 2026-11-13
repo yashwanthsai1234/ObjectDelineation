@@ -1,5 +1,5 @@
 """Phase C box tests (plan C.9.4). G-RC0 and G-GR1 load the start checkpoint `$OBJDEL_RUN_DIR/ckpt` (HF revision
-`rl-full-3ep`, fetched by the plan's item 0) on the pinned vLLM and run by node id in their own plan steps; U-RC6 checks
+`b1-rows`, fetched by the plan's item 0) on the pinned vLLM and run by node id in their own plan steps; U-RC6 checks
 on the Mac that the same model's config, tokenizer and processor load (marker `data`: network and an HF token).
 `gpu` tests skip on the CPU build; a missing checkpoint fails them, never skips."""
 
@@ -13,7 +13,7 @@ from objdel.geom import engine as _gpucheck
 from objdel.infra.hf import REPO
 
 CUDA = pytest.mark.skipif(_gpucheck.build() != "cuda", reason="CPU build: the CUDA build runs on the box")
-REVISION = "rl-full-3ep"
+REVISION = "b1-rows"
 FILES = ("config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json", "processor_config.json",
          "chat_template.jinja")  # what U-RC6 downloads: no weights
 PROMPT = "Describe a nodule in one sentence."
@@ -36,7 +36,7 @@ def check_model_files(path):
 
 @pytest.mark.data
 def test_vllm_check_model_loads(tmp_path):
-    """U-RC6: the model of G-RC0 and G-GR1 (HF revision rl-full-3ep) loads on the Mac from its small files only."""
+    """U-RC6: the model of G-RC0 and G-GR1 (HF revision b1-rows) loads on the Mac from its small files only."""
     from huggingface_hub import get_token, snapshot_download
 
     token = get_token()
