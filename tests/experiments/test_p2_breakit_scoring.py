@@ -17,7 +17,6 @@ from objdel.cli.eval import baselines
 from objdel.cli.train import prereg as P
 from objdel.core.hashing import file_sha256
 from objdel.data import probes
-from objdel.data.targets.build import build_target
 from objdel.policy import evaluate
 from objdel.policy import sampler as V
 from objdel.sft import select as sft_select
@@ -27,6 +26,7 @@ from objdel.verify import store as serve
 from objdel.verify.metrics import _ged, metrics, min_mode_retention, summarize, tv_js
 from objdel.verify.reward.cache import ExpertCache
 from tests.support.shapes import disc as disc_hw
+from tests.support.targets import rater_texts
 
 ROOT = Path(__file__).resolve().parents[2]
 VIEWS = ROOT / "data" / "eval_views"
@@ -40,9 +40,7 @@ def disk(cy, cx, r, side=SIDE):
 
 def item():
     raters = {"nodule": np.stack([disk(25, 25, 10), disk(25, 26, 11), disk(24, 25, 9)])}
-    ma = {"nodule": ExpertCache.build(raters["nodule"]).min_area}
-    texts = [build_target({"nodule": m}, ("nodule",), min_area=ma).text for m in raters["nodule"]]
-    return raters, texts
+    return raters, rater_texts(raters)
 
 
 def m_of(samples, truncated=None, tokens=None):

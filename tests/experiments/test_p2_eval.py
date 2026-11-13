@@ -13,11 +13,10 @@ from scipy import ndimage
 from scipy.optimize import linear_sum_assignment, linprog
 
 from objdel.core.datasets import structure
-from objdel.data.targets.build import build_target, min_areas
 from objdel.verify import gates
 from objdel.verify.metrics import hm_iou, metrics, min_mode_retention, summarize, tv_js
-from objdel.verify.reward.cache import ExpertCache
 from tests.support.shapes import disc as disc_hw
+from tests.support.targets import rater_texts
 
 S = 50
 
@@ -28,9 +27,7 @@ def disk(cy, cx, r, side=S):
 
 def raters_and_targets():
     raters = {"nodule": np.stack([disk(25, 25, 12), disk(25, 27, 14), disk(24, 25, 11) & ~disk(24, 25, 3)])}
-    ma = {"nodule": ExpertCache.build(raters["nodule"]).min_area}
-    texts = [build_target({"nodule": m}, ("nodule",), min_area=ma).text for m in raters["nodule"]]
-    return raters, texts
+    return raters, rater_texts(raters)
 
 
 # ---------------------------------------------------------------- HM-IoU
@@ -184,8 +181,7 @@ def test_nsd_in_metrics_is_one_on_the_raters_own_targets():
     riga = {"disc": np.stack([disk(50, 50, r, 100) for r in (30, 32)]),
             "cup": np.stack([disk(50, 51, r, 100) for r in (12, 14)])}
     names = ("disc", "cup")
-    ma = min_areas(riga)
-    t = [build_target({n: riga[n][r] for n in names}, names, min_area=ma).text for r in range(2)]
+    t = rater_texts(riga, names)
     m = metrics(t, riga, 100, 100, names)
     assert all(m["objects"][n]["nsd"] == [1.0, 1.0] for n in names)
     assert {n: structure(n).nsd_tau for n in ("nodule", "disc", "cup")} == {"nodule": 2.0, "disc": 9.0, "cup": 16.0}
@@ -407,8 +403,7 @@ def _rows(frames):
     for item_id, fr in sorted(frames.items()):
         names = tuple(fr["masks"])
         k = len(fr["masks"][names[0]])
-        ma = min_areas(fr["masks"])
-        texts = [build_target({n: fr["masks"][n][r] for n in names}, names, min_area=ma).text for r in range(k)]
+        texts = rater_texts(fr["masks"], names)
         out.append({"item_id": item_id, "samples": (texts * 2)[:max(2, k)]})
     return out
 

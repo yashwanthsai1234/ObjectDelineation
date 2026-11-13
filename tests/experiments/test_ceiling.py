@@ -11,6 +11,7 @@ from objdel.verify import ceiling as C
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
 from tests.support.shapes import annulus, rect_mask
+from tests.support.targets import mask_text
 
 H = W = 64
 
@@ -99,9 +100,7 @@ def test_k2_both_empty_scores_one_not_nan():
 
 def text_of(mask):
     """The repo's target text of a mask (exact for LIDC nodules)."""
-    from objdel.data.targets.build import build_target, min_areas
-
-    return build_target({"nodule": mask}, ("nodule",), None, min_areas({"nodule": mask[None]})).text
+    return mask_text(mask)
 
 
 def test_identical_doctors_score_one():

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from objdel.core.hashing import file_sha256
+from tests.support.targets import rater_texts
 
 pytest.importorskip("datasets")
 pytest.importorskip("trl")
@@ -19,7 +20,7 @@ pytest.importorskip("trl")
 from objdel.core import datasets  # noqa: E402
 from objdel.data import prepare as data_prepare  # noqa: E402
 from objdel.data import store  # noqa: E402
-from objdel.data.targets.build import build_target, min_areas  # noqa: E402
+from objdel.data.targets.build import build_target  # noqa: E402
 from objdel.geom.shape import canonicalize, to_mask  # noqa: E402
 from objdel.geom.text import parse, serialize  # noqa: E402
 from objdel.policy import models as policy_models  # noqa: E402
@@ -37,8 +38,7 @@ from objdel.verify import store as verify_store  # noqa: E402
 def _target(disc, dataset, *discs):
     names = datasets.get(dataset).names
     stacks = {n: np.stack([disc(50, 50, *d) for d in ds]) for n, ds in zip(names, discs, strict=True)}
-    ma = min_areas(stacks)
-    return [build_target({n: stacks[n][r] for n in names}, names, None, ma).text for r in range(len(discs[0]))]
+    return rater_texts(stacks, names)
 
 
 def _row(i, item, dataset, rater, target, op="id", rep=0, simple=True):
