@@ -1,6 +1,7 @@
 """Break-it B1: geometry wiring (parser, checker, topology, targets) under adversarial input.
 
-Tests named `b1_<n>` reproduce confirmed breakdowns, now fixed (experiments/phase1/impl/breakit/B1_geometry.md);
+Tests named `b1_<n>` reproduce confirmed breakdowns, now fixed
+(docs/archive/experiments/phase1/impl/breakit/B1_geometry.md);
 the others are attacks that held. All are kept as regression tests.
 """
 import random

@@ -20,7 +20,7 @@
 //    edge in raster order) and canonical start in closed form from the labels, its rank by a popcount scan (no sort);
 //  * crack tracing from seeds over boundary edges only, corners written in place: work ~ words + runs + edges.
 //
-// Host side (issues CK-1 to CK-3 of experiments/phase2/perf/issues.md): per lane one stream, device arenas and two
+// Host side (issues CK-1 to CK-3 of docs/archive/experiments/phase2/perf/issues.md): per lane one stream, device arenas and two
 // staging buffers (pinned host memory). Device memory (arenas, tables) comes from the engine's own stream-ordered pool
 // (D5c: allocated and freed in stream order, no device-wide sync; the process's default pool is never touched); an
 // arena grows to the next power of two and is never freed per call. The staging buffers are sized once, in the first

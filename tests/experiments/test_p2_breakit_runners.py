@@ -1,5 +1,6 @@
 """Break-it BK3 (Phase 2 Stage 1): the runner pipeline train_sft -> select_ckpt -> g_probe, its YAML configs and the
-configs / vision pieces it wires. Real defects are strict xfails "BK3-<n>" (experiments/phase2/impl/BK3.md);
+configs / vision pieces it wires. Real defects are strict xfails "BK3-<n>"
+(docs/archive/experiments/phase2/impl/BK3.md);
 passing guards stay. Slow tests train a tiny random Qwen3-VL on the CPU (test_p2_scripts._tiny_vlm, no download).
 """
 

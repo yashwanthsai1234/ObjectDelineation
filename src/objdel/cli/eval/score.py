@@ -18,9 +18,9 @@ the probes and G-vision and is made by select_ckpt), decided per dataset (--data
 on); per-item results go to items.jsonl. Reads untrusted data: run with python -I.
 
 References:
-- Metrics, audit and gates: objdel.verify.metrics, objdel.data.audit, objdel.verify.gates (plan §4.7, §7, §9; experiments/phase1/impl/M8_eval.md).
-- Training frame: objdel.data.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: experiments/phase2/
-  EXECUTION.md §4 C-VIEW; single-rater items and prepared caches: experiments/phase1/impl/ISSUES.md I45, plan D25.
+- Metrics, audit and gates: objdel.verify.metrics, objdel.data.audit, objdel.verify.gates (plan §4.7, §7, §9; docs/archive/experiments/phase1/impl/M8_eval.md).
+- Training frame: objdel.data.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: docs/archive/experiments/phase2/
+  EXECUTION.md §4 C-VIEW; single-rater items and prepared caches: docs/archive/experiments/phase1/impl/ISSUES.md I45, plan D25.
 - Process pool: https://docs.python.org/3/library/multiprocessing.html#multiprocessing.pool.Pool ; JSON without NaN
   (allow_nan=False): https://docs.python.org/3/library/json.html#json.dump
 - python -I (isolated mode) for untrusted data: https://docs.python.org/3/using/cmdline.html#cmdoption-I

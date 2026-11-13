@@ -1,6 +1,6 @@
 """objdel.verify.store (M3, plan D14): preloaded caches, CacheRef, TRLReward on
 preloaded caches, and the K3/K4 harness. CI-safe: a mini prepared layout is written from the conftest synthetic items
-(no datasets, no torch); the real-data K3 run is evidence in experiments/phase2/impl/M3.md."""
+(no datasets, no torch); the real-data K3 run is evidence in docs/archive/experiments/phase2/impl/M3.md."""
 
 import hashlib
 import json

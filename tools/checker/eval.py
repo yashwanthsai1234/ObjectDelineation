@@ -39,6 +39,7 @@ import cv2
 import numpy as np
 
 from objdel.core.hashing import file_sha256
+from objdel.core.io import git
 from objdel.core.provenance import repo_root
 from objdel.geom import engine as _gpucheck
 from objdel.geom.topology import betti
@@ -265,8 +266,7 @@ def host_info():
     if shutil.which("nvidia-smi"):
         gpu = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
                              capture_output=True, text=True).stdout.strip()
-    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True,
-                            text=True).stdout.strip()
+    commit = git("rev-parse", "--short", "HEAD", root=ROOT, required=False) or ""
     return {"build": _gpucheck.build(), "devices": _gpucheck.device_count(), "gpu": gpu,
             "machine": f"{platform.system()} {platform.machine()}", "cpu_count": os.cpu_count(),
             "python": platform.python_version(), "numpy": np.__version__, "opencv": cv2.__version__, "commit": commit,

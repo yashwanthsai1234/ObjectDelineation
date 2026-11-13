@@ -1,5 +1,5 @@
 // nanobind binding of cuda/gpucheck.h as objdel._gpucheck (CPU build by default; `make cuda` builds it with nvcc).
-// Inputs are the packed arrays of data/checker_eval (experiments/cuda_checker/prepare_data.py); they are checked here
+// Inputs are the packed arrays of data/checker_eval; they are checked here
 // with gpucheck.h's caps before the GIL is released, so bad input raises ValueError and never reaches the kernels.
 // The GIL is released during the checker call (other Python threads run; gpucheck's mutex orders concurrent calls)
 // and taken back before the result arrays are made. References: https://nanobind.readthedocs.io/en/latest/ndarray.html

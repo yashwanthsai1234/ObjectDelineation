@@ -1,6 +1,6 @@
 """Data-backed reward-v4 gates (plan §7: K8, K8b, K9, R3, R4, R5 and the M6 local-gradient rate).
 
-Full-size runs (all fixture items, AB arms, K3/K4) are in experiments/phase1/reward_gates.py; these tests run the
+Full-size runs (all fixture items, AB arms, K3/K4) were a phase 1 script, now archived; these tests run the
 same harness on the 239 full-LIDC train disagreement items and on LIDC fixtures plus a RIGA subsample."""
 import numpy as np
 import pytest

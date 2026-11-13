@@ -1,4 +1,5 @@
-"""perf fixes F1-F3 (experiments/phase2/perf/fix_test.md): G-probe generates with vLLM colocate, the GRPO step keeps
+"""perf fixes F1-F3 (docs/archive/experiments/phase2/perf/fix_test.md):
+G-probe generates with vLLM colocate, the GRPO step keeps
 256 answers in larger micro-batches, and the per-micro-batch host syncs are off."""
 
 from pathlib import Path
@@ -76,7 +77,8 @@ def test_g_probe_takes_the_profile_arm_flags(capsys):
 
 
 def test_grpo_config_keeps_the_p1_measured_choice():
-    """P1 on an RTX 5090 (2026-11-06, experiments/phase2/perf/p1_results.md): micro-batch 16 x 16 at 44.3 s/step beat
+    """P1 on an RTX 5090 (2026-11-06, docs/archive/experiments/phase2/perf/p1_results.md):
+    micro-batch 16 x 16 at 44.3 s/step beat
     32 x 8 (59.1); no checkpointing ran out of 31.45 GiB; compiled layers (47.9) and CUDA Graphs (crash) stay off."""
     from objdel.rl import config as rl_config
 

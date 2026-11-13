@@ -6,7 +6,7 @@
 // checker it replaced (polycore, archive/cpu_checker), checker.polygonize and the host scorer
 // (docs/research/notes/gpu_scoring.md).
 //
-// Inputs are packed like data/checker_eval (experiments/cuda_checker): many shapes or masks per call, one
+// Inputs are packed like data/checker_eval: many shapes or masks per call, one
 // kernel launch per stage. Inputs must already be checked (caps, offsets): the binding does that with the check_*
 // functions below. Calls are serialized by one mutex (the device memory, staging buffers and streams are shared and
 // grow-only), so any thread may call them.
