@@ -139,7 +139,6 @@ def load_items(cfg: dict, model: str | None, dataset: str) -> dict:
 def vision_reference(args) -> int:
     """projector_distance of the base model on the fixed set, CPU float32 -> vision.reference."""
     import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor
 
     from objdel.core import datasets
     from objdel.policy import models as policy_models
@@ -148,8 +147,7 @@ def vision_reference(args) -> int:
     if not (args.vision and isinstance(args.vision["reference"], str)):
         raise ValueError("--vision-reference-only writes vision.reference: set it to a .json path")
     src = args.model_path or policy_models.get(args.model).hf_id
-    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model))
-    model = AutoModelForImageTextToText.from_pretrained(src, dtype=torch.float32).eval()
+    model, proc = policy_models.load_pair(src, dtype=torch.float32, proc_kw=policy_models.processor_kwargs(args.model))
     dataset = read_json(Path(args.view, "manifest.json"))["dataset"]  # the training view's
     items, sha = vision.fixed_set(args.vision["prepared"], dataset)
     d = vision.projector_distance(model, proc, [it["image"] for it in items[: vision.N_IMAGES]],
@@ -327,7 +325,7 @@ def train(args) -> int:
     """One SFT run of an objdel.core.spec.SftStage."""
     os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")  # read at the first CUDA allocation
     import torch
-    from transformers import AutoProcessor, TrainerCallback
+    from transformers import TrainerCallback
 
     from objdel.policy import models as policy_models
     from objdel.sft import rows as dataset
@@ -346,7 +344,7 @@ def train(args) -> int:
     man = resume_manifest(args, out, view)
     write_json(out / "manifest.json", man)
     src = args.model_path or policy_models.get(args.model).hf_id
-    proc = AutoProcessor.from_pretrained(src, **policy_models.processor_kwargs(args.model))
+    proc = policy_models.processor(args.model, src)
     base = Base(src, proc, torch.bfloat16)  # the frozen LoRA base
     rows = dataset.view_rows(args.view, proc.tokenizer, policy_models.get(args.model).max_completion, a0=args.a0)
     epochs = list(rows["epoch"])

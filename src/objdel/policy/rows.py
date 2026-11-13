@@ -86,3 +86,10 @@ def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: in
              "H": r["H"], "names": list(datasets.get(dataset).names),
              **({"kind": r["view"]["kind"], "cell": r["cell"]} if "cell" in r else {})}
             for r in _verified(root, recs) for _ in range(oversample if r["disagreement"] else 1)]
+
+
+def as_dataset(rows: list[dict]):
+    """Prompt rows as a datasets.Dataset whose image column (paths) decodes to PIL images on access (TRL's input)."""
+    from datasets import Dataset, Image
+
+    return Dataset.from_list(rows).cast_column("image", Image())

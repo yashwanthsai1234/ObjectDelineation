@@ -109,6 +109,26 @@ def processor_kwargs(model: str) -> dict:
     return dict(get(model).processor)
 
 
+def processor(model: str, path=None):
+    """The processor at path (default: the entry's hub id) with the entry's keywords; .tokenizer for the tokenizer.
+    AutoProcessor is imported here, so a test patching it at class level reaches every caller."""
+    from transformers import AutoProcessor
+
+    return AutoProcessor.from_pretrained(get(model).hf_id if path is None else path, **processor_kwargs(model))
+
+
+def load_pair(path, *, dtype, device=None, proc_kw=None, **load):
+    """(model, processor) of a checkpoint for inference: the model in dtype (moved to device when given; `load` =
+    more from_pretrained keywords), in eval mode, and its processor with proc_kw (None: the saved processor as is).
+    Each caller passes its own dtype: G-vision is a recorded fp32 CPU measurement, the HF sampler runs bf16 on CUDA."""
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    model = AutoModelForImageTextToText.from_pretrained(path, dtype=dtype, **load)
+    if device is not None:
+        model = model.to(device)
+    return model.eval(), AutoProcessor.from_pretrained(path, **(proc_kw or {}))
+
+
 def adapted(base, adapter_dir, dtype=None):
     """The base weights at `base` with the LoRA adapter at `adapter_dir` (a PeftModel, not merged); dtype None loads
     the base at the library default."""

@@ -91,8 +91,7 @@ def export_prompts(rows, path, model: str, n: int, processor=None, stop_ids=None
     max_tokens: a completion cap below the model's budget (the CPU smoke), else the entry's max_completion."""
     kw = models.processor_kwargs(model)
     if processor is None:
-        from transformers import AutoProcessor
-        processor = AutoProcessor.from_pretrained(models.get(model).hf_id, **kw)
+        processor = models.processor(model)
     if hasattr(rows, "cast_column"):  # a datasets.Dataset: paths, not decoded images
         from datasets import Image
         rows = rows.cast_column("image", Image(decode=False))
@@ -298,12 +297,11 @@ def load(path, device: str):
     """(model, processor): library generation defaults, never the card's; left padding for batches. CUDA samples in
     bf16 whatever the checkpoint holds (full FT saves fp32), the dtype of D13's vLLM path; CPU runs use fp32."""
     import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor, GenerationConfig
+    from transformers import GenerationConfig
 
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    model = AutoModelForImageTextToText.from_pretrained(path, dtype=dtype).to(device).eval()
+    model, proc = models.load_pair(path, dtype=dtype, device=device, proc_kw={"padding_side": "left"})
     model.generation_config = GenerationConfig()
-    proc = AutoProcessor.from_pretrained(path, padding_side="left")
     if proc.tokenizer.padding_side != "left":
         raise Refusal(f"sampler: {path}: the tokenizer pads on the {proc.tokenizer.padding_side}")
     return model, proc

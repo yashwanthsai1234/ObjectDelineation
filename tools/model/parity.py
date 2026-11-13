@@ -55,14 +55,14 @@ def load(model_dir, prompts: dict, dtype: str):
     """(model, processor) of model_dir in dtype, on CUDA when there is one (call it after the sampler child has
     exited), the processor with the prompts' one processor configuration."""
     import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    from objdel.policy.models import load_pair
 
     kwargs = {json.dumps(x["processor_kwargs"], sort_keys=True) for x in prompts.values()}
     if len(kwargs) != 1:
         raise SystemExit("parity: one processor configuration per prompts file")
-    processor = AutoProcessor.from_pretrained(model_dir, **json.loads(kwargs.pop()))
-    model = AutoModelForImageTextToText.from_pretrained(model_dir, dtype=getattr(torch, dtype))
-    return model.to("cuda" if torch.cuda.is_available() else "cpu").eval(), processor
+    return load_pair(model_dir, dtype=getattr(torch, dtype), device="cuda" if torch.cuda.is_available() else "cpu",
+                     proc_kw=json.loads(kwargs.pop()))
 
 
 def compare(model_dir, prompts_path, comps_path, dtype: str, teach=None) -> dict:

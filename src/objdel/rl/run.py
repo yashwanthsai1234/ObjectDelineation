@@ -200,7 +200,6 @@ def heldout_rows(view: Path, n: int, dataset: str):
     """n val-shape items of an eval view (a seeded draw in record order), as GRPO rows: val-select items never enter
     training's held-out curve."""
     import numpy as np
-    from datasets import Dataset, Image
 
     from objdel.data.splits import val_half
     from objdel.policy import rows as policy_rows
@@ -212,7 +211,7 @@ def heldout_rows(view: Path, n: int, dataset: str):
         raise ValueError(f"--heldout {view}: no val-shape RL item")
     if n < len(rows):
         rows = [rows[i] for i in sorted(np.random.default_rng(0).choice(len(rows), n, replace=False))]
-    return Dataset.from_list(rows).cast_column("image", Image())
+    return policy_rows.as_dataset(rows)
 
 
 def save_final(model, proc, out: Path) -> None:
@@ -276,12 +275,9 @@ def merge_last(a) -> int:
     if last is None:
         print(f"--merge-last: no checkpoint in {out / 'trainer'}", file=sys.stderr)
         return 1
-    from transformers import AutoProcessor
-
     from objdel.policy import models as policy_models
 
-    model = policy_models.adapted(a.ckpt, last)
-    save_final(model, AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)), out)
+    save_final(policy_models.adapted(a.ckpt, last), policy_models.processor(a.model, a.ckpt), out)
     return save_json(out / "rl.json", {
         "model": a.model, "steps": step, "partial": True, "merged_from": last,
         "ckpt": str(a.ckpt),
@@ -292,13 +288,11 @@ def merge_last(a) -> int:
 def with_caps(train, a):
     """C11: the rows plus a `cap` column (FastGRPO sends it as each prompt's max_tokens); T_i from the row's own
     record."""
-    from transformers import AutoProcessor
-
     from objdel.policy import models as policy_models
     from objdel.policy import rows as policy_rows
     from objdel.rl import runaway
 
-    tok = AutoProcessor.from_pretrained(a.ckpt, **policy_models.processor_kwargs(a.model)).tokenizer
+    tok = policy_models.processor(a.model, a.ckpt).tokenizer
     caps = runaway.row_caps(train["key"], policy_rows.records(a.train, a.dataset, "train"),
                             lambda text: policy_rows.target_tokens(tok, text),
                             a.grpo.get("max_completion_length", policy_models.get(a.model).max_completion),

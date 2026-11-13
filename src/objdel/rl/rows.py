@@ -3,12 +3,12 @@ the image check)."""
 
 from datasets import Dataset, Image
 
-from objdel.policy.rows import prompts
+from objdel.policy.rows import as_dataset, prompts
 
 
 def prompt_rows(root, dataset: str, split: str, rl_only: bool = True, oversample: int = 1) -> Dataset:
     """prompts() as a datasets.Dataset with decoded images (TRL GRPO)."""
-    return Dataset.from_list(prompts(root, dataset, split, rl_only, oversample)).cast_column("image", Image())
+    return as_dataset(prompts(root, dataset, split, rl_only, oversample))
 
 
 def grpo_rows(root, dataset: str, split: str, oversample: int = 1) -> Dataset:

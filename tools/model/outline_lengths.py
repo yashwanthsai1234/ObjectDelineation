@@ -142,10 +142,8 @@ def main():
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    from transformers import AutoProcessor
-
     # the tokenizer does not depend on the dataset's image size: one load (export_prompts' call)
-    tok = AutoProcessor.from_pretrained(configs.get(a.model).hf_id, **configs.processor_kwargs(a.model)).tokenizer
+    tok = configs.processor(a.model).tokenizer
     doc = {"model": a.model} | report(a.train, a.views, a.datasets, a.splits, tokens_of(tok), a.answers)
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "outline_lengths.json").write_text(json.dumps(doc, indent=1))

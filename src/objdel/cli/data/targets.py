@@ -45,8 +45,8 @@ _TOK = {}
 
 def _tokens(text):
     if not _TOK:
-        from transformers import AutoTokenizer
-        _TOK.update({k: AutoTokenizer.from_pretrained(v.hf_id) for k, v in MODELS.items()})
+        from objdel.policy.models import tokenizer
+        _TOK.update({k: tokenizer(k)[0] for k in MODELS})
     return {k: len(t(text, add_special_tokens=False)["input_ids"]) for k, t in _TOK.items()}
 
 

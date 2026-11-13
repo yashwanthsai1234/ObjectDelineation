@@ -7,7 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from datasets import Dataset, Image
+from datasets import Dataset
 from PIL import Image as PILImage
 
 from objdel.core import datasets
@@ -15,7 +15,7 @@ from objdel.core.io import read_json
 from objdel.geom.shape import canonicalize
 from objdel.geom.text import parse, serialize
 from objdel.policy.prompt import _user
-from objdel.policy.rows import _image, _verified, records, target_tokens
+from objdel.policy.rows import _image, _verified, as_dataset, records, target_tokens
 from objdel.verify.store import voting
 
 
@@ -30,7 +30,7 @@ def sft_rows(root, dataset: str, split: str, tokenizer=None, max_tokens: int | N
             answer = {"role": "assistant", "content": [{"type": "text", "text": text}]}
             rows.append({"messages": [_user(dataset), answer], "image": _image(root, r["item_id"]),
                          "key": r["item_id"], "rater": rater})
-    return Dataset.from_list(rows).cast_column("image", Image())
+    return as_dataset(rows)
 
 
 class _Render:

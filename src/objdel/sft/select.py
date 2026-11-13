@@ -240,12 +240,11 @@ def vision_check(branch: Path, cfg: dict | None) -> dict:
     """G-vision on the CPU in float32 ; not measured (pass None, so it fails) under --no-vision."""
     if cfg is None:
         return {"pass": None, "measured": False}
-    from transformers import AutoModelForImageTextToText, AutoProcessor
-
+    from objdel.policy import models as policy_models
     from objdel.sft.train import vision_check as check
 
-    model = AutoModelForImageTextToText.from_pretrained(branch, dtype="float32", device_map="cpu")
-    return check(model, AutoProcessor.from_pretrained(branch), cfg)
+    # the saved processor as is (train_sft wrote it with the run's keywords)
+    return check(*policy_models.load_pair(branch, dtype="float32", device_map="cpu"), cfg)
 
 
 def judge(a, sel: dict, out: Path, baselines) -> dict:
