@@ -7,15 +7,16 @@ import json
 import numpy as np
 import pytest
 
+from tests.support.tiny_models import tiny_llama
+
 torch = pytest.importorskip("torch")
 pytest.importorskip("trl")
 
 import pandas as pd  # noqa: E402
 from accelerate.data_loader import prepare_data_loader  # noqa: E402
 from datasets import Dataset  # noqa: E402
-from tokenizers import Tokenizer, models, pre_tokenizers  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
-from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast  # noqa: E402
+from transformers import LlamaForCausalLM  # noqa: E402
 from trl import GRPOConfig, GRPOTrainer  # noqa: E402
 from trl.trainer.utils import RepeatSampler  # noqa: E402
 
@@ -69,15 +70,9 @@ def fake_score_batch(jobs):
 
 @pytest.fixture(scope="module")
 def tiny(tmp_path_factory):
-    vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "prompt", *map(str, range(40))])}
-    tk = Tokenizer(models.WordLevel(vocab, unk_token="<pad>"))
-    tk.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
-    tok = PreTrainedTokenizerFast(tokenizer_object=tk, pad_token="<pad>", eos_token="<eos>", padding_side="left")
-    torch.manual_seed(0)
-    cfg = LlamaConfig(vocab_size=len(vocab), hidden_size=16, intermediate_size=32, num_hidden_layers=1,
-                      num_attention_heads=2, num_key_value_heads=2, pad_token_id=0, eos_token_id=1, bos_token_id=1)
+    model, tok = tiny_llama()
     path = tmp_path_factory.mktemp("tiny") / "model"
-    LlamaForCausalLM(cfg).save_pretrained(path)  # TRL loads the KL reference model from the policy's path
+    model.save_pretrained(path)  # TRL loads the KL reference model from the policy's path
     return path, tok
 
 

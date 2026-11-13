@@ -26,6 +26,7 @@ from objdel.verify.reward.cache import ExpertCache, StaleCacheError, rl_eligible
 from objdel.verify.reward.score import NUMERIC, rater_answers, score_batch, score_completion, score_many, score_mask
 from objdel.verify.reward.spec import CACHE_SPEC, REWARD_V4, TERMS, fingerprint
 from tests.support.outlines import square_ring
+from tests.support.proc import run_isolated
 
 
 def disk(n, r, cy=None, cx=None):
@@ -192,7 +193,7 @@ def test_cache_build_is_deterministic_across_interpreters(three):
     code = ("import numpy as np\nfrom objdel.verify.reward.cache import ExpertCache\n"
             "y, x = np.mgrid[:60, :60]\nd = np.hypot(y - 29.5, x - 29.5)\n"
             "print(ExpertCache.build(np.stack([d <= 18, d <= 19, d <= 20])).digest)")
-    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
+    out = run_isolated(code=code, check=True)
     assert out.stdout.strip() == c.digest == ExpertCache.build(st_).digest
 
 

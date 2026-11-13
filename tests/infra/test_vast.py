@@ -32,6 +32,7 @@ from objdel.infra.vast import chain as CH
 from objdel.infra.vast import ledger as LG
 from objdel.infra.vast import offers as OF
 from objdel.infra.vast import remote as RM
+from tests.support.proc import run_isolated
 
 ROOT = Path(__file__).resolve().parents[2]
 VAST = ROOT / "ops" / "vast"
@@ -1088,8 +1089,7 @@ def test_bundle_real_lidc_selection():
 
 
 def test_bundle_help():
-    p = subprocess.run([sys.executable, "-I", "-m", "objdel.infra.bundle", "--help"], capture_output=True,
-                       text=True)  # fmt: skip
+    p = run_isolated("-m", "objdel.infra.bundle", "--help")
     assert p.returncode == 0 and "usage" in p.stdout
 
 

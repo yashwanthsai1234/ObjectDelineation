@@ -15,6 +15,7 @@ from scipy.optimize import linear_sum_assignment, linprog
 from objdel.core.datasets import structure
 from objdel.verify import gates
 from objdel.verify.metrics import hm_iou, metrics, min_mode_retention, summarize, tv_js
+from tests.support.proc import run_isolated
 from tests.support.shapes import disc as disc_hw
 from tests.support.targets import rater_texts
 
@@ -618,15 +619,13 @@ def test_vision_decision_rule(ratio, tv_black, tv_other, action):
 
 
 def test_vision_module_imports_without_torch():
-    import subprocess
-    import sys
     code = ("import sys\n"
             "class Block:\n"
             "    def find_spec(self, name, path=None, target=None):\n"
             "        if name.split('.')[0] in ('torch', 'transformers'): raise ImportError(name)\n"
             "sys.meta_path.insert(0, Block())\n"
             "from objdel.policy import vision; print(vision.decide(1, 1, 1)['action'])")
-    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
+    out = run_isolated(code=code, check=True)
     assert out.stdout.strip() == "ok"
 
 

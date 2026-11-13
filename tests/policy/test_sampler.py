@@ -3,7 +3,6 @@ the vLLM request builder, HfSampler on a tiny offline model, the child-process e
 trl.trainer, no vllm)."""
 import json
 import os
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -16,6 +15,7 @@ from objdel.policy import models as configs
 from objdel.policy import models as rewards
 from objdel.policy import sampler as S
 from objdel.policy.errors import Refusal
+from tests.support.proc import run_isolated
 
 ROOT = Path(__file__).resolve().parents[2]
 VIEW = ROOT / "data/eval_views/lidc-val-shifted"
@@ -135,13 +135,12 @@ def test_vllm_sampler_serves_an_adapter_unmerged(monkeypatch, tmp_path):
 def test_import_loads_neither_trl_trainer_nor_vllm():
     code = ("import sys, objdel.policy.sampler, objdel.policy.evaluate\n"
             "print(sorted(m for m in sys.modules if m.startswith(('trl.trainer', 'vllm'))))")
-    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
+    out = run_isolated(code=code, check=True)
     assert out.stdout.strip() == "[]"
 
 
 def test_help_runs_without_vllm():
-    out = subprocess.run([sys.executable, "-I", "-m", "objdel.policy.sampler", "--help"], capture_output=True,
-                         text=True, check=True)
+    out = run_isolated("-m", "objdel.policy.sampler", "--help", check=True)
     assert "--kind" in out.stdout and "--logprobs" in out.stdout and "--batch_items" in out.stdout
 
 

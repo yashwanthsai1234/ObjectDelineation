@@ -1,8 +1,6 @@
 """The verifier service API (E7), CPU build: one scoring path with the trainer's reward."""
 import dataclasses
 import json
-import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -19,6 +17,7 @@ from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_batch
 from objdel.verify.reward.spec import REWARD_V4, fingerprint
 from tests.support.outlines import outline_text, square_ring
+from tests.support.proc import run_isolated
 from tests.support.shapes import rect_mask
 
 
@@ -196,7 +195,7 @@ def test_verifier_borders_and_sizes(big_root):
 def test_verify_api_is_stdlib_only():
     """I26: the library API loads neither pydantic, torch nor fastapi; its dataclasses are frozen."""
     code = "import sys, objdel.verify.api\nprint(sorted({'pydantic', 'torch', 'fastapi'} & set(sys.modules)))"
-    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True).stdout
+    out = run_isolated(code=code, check=True).stdout
     assert out.strip() == "[]"
     for obj, field in ((ScoreItem("a", KEY, "", False), "text"), (ScoreResult("a", 1.0, {}, {}, None), "reward"),
                        (Stamp("1.0", "reward_v4", "f", "cpu", "0"), "checker_build")):

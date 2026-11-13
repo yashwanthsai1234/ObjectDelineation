@@ -20,6 +20,7 @@ from objdel.policy import evaluate as EV
 from objdel.policy import final_eval as FE
 from objdel.verify import stats as S
 from tests.support.prepared import prepare_items
+from tests.support.proc import run_isolated
 
 ROOT = Path(__file__).resolve().parents[2]
 CI_KEYS = {"mean", "ci95_nodule", "ci95_patient", "ci95_item", "higher_is_better"}
@@ -513,7 +514,7 @@ def test_rescore_loads_no_model(ev, tmp_path, monkeypatch):
             f"{str(tmp_path / 're')!r}])\n"
             "print(sorted(m for m in ('torch', 'vllm', 'transformers', 'trl', 'objdel.cli.train.probe')"
             " if m in sys.modules))\n")
-    p = subprocess.run([sys.executable, "-I", "-c", code], cwd=ROOT, check=True, capture_output=True, text=True)
+    p = run_isolated(code=code, cwd=ROOT, check=True)
     assert p.stdout.splitlines()[-1] == "[]" and (tmp_path / "re" / "final_eval.json").is_file()
 
 

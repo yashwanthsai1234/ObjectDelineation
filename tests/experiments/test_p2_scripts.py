@@ -20,6 +20,7 @@ import pytest
 from objdel.policy import evaluate
 from objdel.sft import select as sft_select
 from objdel.sft import train as sft_train
+from tests.support.proc import run_isolated
 
 ROOT = Path(__file__).resolve().parents[2]
 # the sft stages of the run specs (the old train_sft configs left git in E6.6)
@@ -45,8 +46,7 @@ def sft_stages():
 
 def _module(*args, env=None, timeout=900):
     """python -I -m <args> from the repo root, output captured."""
-    return subprocess.run([sys.executable, "-I", "-m", *args], cwd=ROOT, env=env, capture_output=True, text=True,
-                          timeout=timeout)
+    return run_isolated("-m", *args, cwd=ROOT, env=env, timeout=timeout)
 
 
 @pytest.mark.parametrize("script", ["sft", "select", "probe", "rl"])
