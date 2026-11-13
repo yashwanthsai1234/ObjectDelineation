@@ -132,7 +132,7 @@ def pack_objects(objs: Sequence[tuple[list[Part], int, int]]) -> tuple[np.ndarra
 
 
 def defects_of(row) -> dict[str, int]:
-    """{defect: count} of the nonzero counts of one engine result row (r["defects"][i]), in DEFECTS order."""
+    """{defect: count} of the nonzero counts of one engine result row (`r["defects"][i]`), in DEFECTS order."""
     return {d: int(c) for d, c in zip(_gpucheck.DEFECTS, row.tolist(), strict=True) if c}
 
 

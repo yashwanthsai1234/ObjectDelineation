@@ -26,7 +26,7 @@ with no admissible shifted (or uncrowded edge) window keeps the policy frame and
 also counts padded windows. objdel.data.prepare is imported only when building, so --help
 and the CI [dev] job run without the train extra (BK4-2). Reads untrusted data: run with python -I.
 
-References: docs/archive/experiments/phase2/PLAN.md §5.0, §5.1; A4 §2.5 proposal 1; objdel.data.prepare.prepare (layout).
+References: docs/research/records/phase2/PLAN.md §5.0, §5.1; A4 §2.5 proposal 1; objdel.data.prepare.prepare (layout).
 """
 import argparse
 import json

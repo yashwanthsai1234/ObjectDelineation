@@ -1,4 +1,4 @@
-"""C3 (docs/archive/experiments/phase2/perf/implementation.md;
+"""C3 (docs/research/records/phase2/perf/implementation.md;
 issues RL-5, CK-5): one CUDA checker call per reward call, which
 checks and scores every answer on the device (objdel.geom.engine.score_polygons); no mask comes back to the host."""
 import json

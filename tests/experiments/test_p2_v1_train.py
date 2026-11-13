@@ -180,7 +180,8 @@ def test_resume_refuses_a_lost_stable_copy(TS, tmp_path, synthetic_items):
 def test_a_vision_abort_in_a_decay_saves_no_branch(TS, tmp_path, synthetic_items, monkeypatch):
     """G-vision aborts inside branch e0.5's decay: the branch is unfinished, so branches/e0.5 must not exist."""
     out = tmp_path / "o"
-    monkeypatch.setattr(TS, "load_items", lambda cfg, model, dataset: {"items": [], "set_sha256": "s", "reference": 1.0})
+    monkeypatch.setattr(TS, "load_items",
+                        lambda cfg, model, dataset: {"items": [], "set_sha256": "s", "reference": 1.0})
     monkeypatch.setattr(TS, "vision_check", lambda model, proc, vis: {
         "action": "abort" if (out / "decay").exists() else "ok", "ratio": 0.1, "tv": 0.001})
     a = _tiny_args(TS, tmp_path, synthetic_items, vision={"prepared": "p", "reference": 1.0}, rolling_minutes=0.0)

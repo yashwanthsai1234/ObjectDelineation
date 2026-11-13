@@ -1,4 +1,4 @@
-"""C2 (docs/archive/experiments/phase2/perf/implementation.md;
+"""C2 (docs/research/records/phase2/perf/implementation.md;
 issues CK-1 to CK-3): the checker returns the even-odd mask only,
 bit-packed per row as uint32 words (LSB = leftmost pixel), and objdel.geom.shape unpacks it. The references here are
 independent of the code under test: masks packed bit by bit in Python, and the results of the archived CPU checker

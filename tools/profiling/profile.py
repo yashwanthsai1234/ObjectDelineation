@@ -1,4 +1,4 @@
-"""GPU profile of the RL step (perf D1, docs/archive/experiments/phase2/perf/implementation.md): short g_probe runs on R1's
+"""GPU profile of the RL step (perf D1, docs/research/records/phase2/perf/implementation.md): short g_probe runs on R1's
 selected branch, one process per arm, nvidia-smi sampled alongside. Replaces profile_sft (no SFT runs: owner).
 
     python -I -m tools.profiling.profile --ckpt CKPT --prepared PREP --probe VIEW --out DIR [--arms fast mb32]

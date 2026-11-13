@@ -1,5 +1,5 @@
 """Break-it B2 (reward, TRL wiring, eval): reproducers of the confirmed breakdowns, now fixed (ids B2-<n>, see
-docs/archive/experiments/phase1/impl/breakit/B2_reward.md)
+docs/research/records/phase1/impl/breakit/B2_reward.md)
 and the robustness checks that held (plain tests). No data needed."""
 import hashlib
 import json

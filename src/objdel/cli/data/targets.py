@@ -10,8 +10,8 @@ screened models. Writes <out>/<dataset>/<split>.jsonl (item_id, rater, W, H, box
 Reads untrusted data: run with python -I.
 
 References:
-- Plan §4.4 (SFT targets, D11) and §7 (K5-K7, R1): docs/archive/experiments/phase1/PLAN.md; implementation note
-  docs/archive/experiments/phase1/impl/M5_targets.md. The target algorithms and their sources: objdel.data.targets (build, simplify).
+- Plan §4.4 (SFT targets, D11) and §7 (K5-K7, R1): docs/research/records/phase1/PLAN.md; implementation note
+  docs/research/records/phase1/impl/M5_targets.md. The target algorithms and their sources: objdel.data.targets (build, simplify).
 - Tokenizers (answer length without special tokens): transformers AutoTokenizer.from_pretrained and
   PreTrainedTokenizer.__call__(add_special_tokens=False):
   https://huggingface.co/docs/transformers/main/en/model_doc/auto ,

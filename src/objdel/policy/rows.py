@@ -34,7 +34,7 @@ from objdel.core.io import read_json, read_split
 from objdel.data.prepare import image_matches
 from objdel.policy.prompt import _user
 
-DISAGREEMENT_OVERSAMPLE = 4  # decided in docs/archive/experiments/phase1/impl/M7_train.md
+DISAGREEMENT_OVERSAMPLE = 4  # decided in docs/research/records/phase1/impl/M7_train.md
 
 
 def check_root(root, dataset: str, split: str) -> None:

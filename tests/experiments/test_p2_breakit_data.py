@@ -1,7 +1,7 @@
 """Break-it BK1 (Phase 2 Stage 1): the data path store -> objdel.data.targets.frame (offset / side / window) -> augment
 (ops, render, contexts) -> build_views / build_eval_views -> dataset.view_rows (lazy render, A0, length, max_tokens,
 hash check) -> TRL vision collator -> vast/bundle. A test marked xfail(strict) exposes a defect recorded in
-docs/archive/experiments/phase2/impl/BK1.md;
+docs/research/records/phase2/impl/BK1.md;
 every other test is a regression guard. CI tests use synthetic items; tests marked `data` read data/store and
 data/views (skipped when absent)."""
 import hashlib

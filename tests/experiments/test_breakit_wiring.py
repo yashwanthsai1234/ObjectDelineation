@@ -7,7 +7,7 @@ tiny offline Llama, char-level tokenizer, a scripted policy that emits rater tar
 an empty answer) -> TRL's held-out evaluation -> the same completions through src/objdel/cli/eval/score.py
 (store frames, eval.metrics) -> eval.gates.phase2_entry.
 Tests `b4_<n>` reproduce the confirmed breakdowns, now fixed
-(docs/archive/experiments/phase1/impl/breakit/B4_wiring.md).
+(docs/research/records/phase1/impl/breakit/B4_wiring.md).
 """
 import ast
 import json

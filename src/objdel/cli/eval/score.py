@@ -13,14 +13,14 @@ objdel.verify.store.loader(root), default objdel.verify.store.cache_loader). Ite
 scored by the reward (no rater-pair tolerance) and are skipped and counted (I45). Scored by objdel.verify.metrics with
 the dataset's schema. The report holds the per-dataset summary, the hack audit (against the baseline report's
 audit, normally the SFT checkpoint, for the component alarm), the skipped items and the Phase 2 entry gates measurable
-on this one view (objdel.verify.gates.phase2_entry with report["views"][--view]; the full decision needs every view,
+on this one view (objdel.verify.gates.phase2_entry with `report["views"][--view]`; the full decision needs every view,
 the probes and G-vision and is made by select_ckpt), decided per dataset (--datasets: the datasets the model is judged
 on); per-item results go to items.jsonl. Reads untrusted data: run with python -I.
 
 References:
-- Metrics, audit and gates: objdel.verify.metrics, objdel.data.audit, objdel.verify.gates (plan §4.7, §7, §9; docs/archive/experiments/phase1/impl/M8_eval.md).
-- Training frame: objdel.data.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: docs/archive/experiments/phase2/
-  EXECUTION.md §4 C-VIEW; single-rater items and prepared caches: docs/archive/experiments/phase1/impl/ISSUES.md I45, plan D25.
+- Metrics, audit and gates: objdel.verify.metrics, objdel.data.audit, objdel.verify.gates (plan §4.7, §7, §9; docs/research/records/phase1/impl/M8_eval.md).
+- Training frame: objdel.data.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: docs/research/records/phase2/
+  EXECUTION.md §4 C-VIEW; single-rater items and prepared caches: docs/research/records/phase1/impl/ISSUES.md I45, plan D25.
 - Process pool: https://docs.python.org/3/library/multiprocessing.html#multiprocessing.pool.Pool ; JSON without NaN
   (allow_nan=False): https://docs.python.org/3/library/json.html#json.dump
 - python -I (isolated mode) for untrusted data: https://docs.python.org/3/using/cmdline.html#cmdoption-I

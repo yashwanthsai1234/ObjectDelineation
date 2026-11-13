@@ -1,6 +1,6 @@
 """Break-it BK2 (Phase 2 Stage 1, wave 2): the scoring and decision path, JSONL bridge -> serve -> metrics / summarize
 -> probes -> signal -> prereg -> gates.phase2_entry -> select_ckpt / eval_run. Findings are recorded in
-docs/archive/experiments/phase2/impl/BK2.md;
+docs/research/records/phase2/impl/BK2.md;
 a real defect is an xfail(strict=True) "BK2-<n>", every other test is a guard that passes today.
 Real-data tests are marked `data` (data/eval_views)."""
 

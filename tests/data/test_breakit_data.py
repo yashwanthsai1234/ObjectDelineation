@@ -1,5 +1,5 @@
 """Break-it B3 (data, targets, prepared set): reproducers of the confirmed breakdowns, now fixed (ids B3-<n>, see
-docs/archive/experiments/phase1/impl/breakit/B3_data.md) and the robustness checks that held (plain tests).
+docs/research/records/phase1/impl/breakit/B3_data.md) and the robustness checks that held (plain tests).
 
 Data-backed tests read data/store, data/prepared (skipped when absent) and only touch a few
 rows each, so they stay fast."""
