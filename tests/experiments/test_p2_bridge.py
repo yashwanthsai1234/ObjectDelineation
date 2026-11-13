@@ -175,6 +175,7 @@ def test_logprob_parity_on_a_tiny_model(tmp_path):
     from trl.data_utils import prepare_multimodal_messages
 
     from objdel.policy import sampler as sample
+    from objdel.policy import vision
     from objdel.policy.prompt import _user
     from tools.model import parity
 
@@ -195,8 +196,7 @@ def test_logprob_parity_on_a_tiny_model(tmp_path):
         n = enc["input_ids"].shape[1]
         for k in range(2):
             ids = rng.integers(10, 1000, 6).tolist()
-            kw = dict(enc, input_ids=torch.cat([enc["input_ids"], torch.tensor([ids])], 1),
-                      attention_mask=torch.ones(1, n + len(ids), dtype=torch.long))
+            kw = vision.extend(enc, torch.tensor([ids]))  # every per-token field, mm_token_type_ids too
             with torch.no_grad():
                 lp = torch.log_softmax(model(**kw).logits[0, n - 1:-1].float(), -1)[range(len(ids)), ids]
             comps.append({"id": r["key"], "k": k, "text": "", "token_ids": ids, "finish_reason": "length",
