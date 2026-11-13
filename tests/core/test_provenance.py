@@ -11,8 +11,8 @@ from objdel.core import provenance
 
 SRC = Path(provenance.__file__).resolve().parents[1]  # src/objdel (this test's own path search is allowed)
 E0_FILES = 73  # code_hashes()["files"] at be52b1c [plan E2.5 step 5]
-# __file__-relative roots not yet on repo_root(), each with the task that removes it
-PENDING = {"data/splits.py": "val_halves.json path; not an E2-owned file"}
+# __file__-relative roots not yet on repo_root(), each with the task that removes it (none left)
+PENDING: dict[str, str] = {}
 
 
 def _copy_module(dest: Path):
@@ -106,3 +106,31 @@ def test_file_root_guard_sees_a_planted_violation(tmp_path):
     bad.write_text("from pathlib import Path\nA = Path(__file__).resolve().parents[2]\n"
                    "B = Path(__file__).parent / 'x'\nC = Path(__file__).with_name('y')\n")
     assert _file_roots(bad) == [2, 3, 4]
+
+
+def test_reference_dir_data_root_and_run_dir_follow_the_environment(tmp_path, monkeypatch):
+    (tmp_path / "pyproject.toml").write_text("")
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    assert provenance.reference_dir() == tmp_path / "reference"
+    for var, get, default in (("OBJDEL_DATA_ROOT", provenance.data_root, "data"),
+                              ("OBJDEL_RUN_DIR", provenance.run_dir, "runs")):
+        monkeypatch.delenv(var, raising=False)
+        assert get() == Path(default) and get("other") == Path("other")
+        monkeypatch.setenv(var, "")  # an empty value counts as unset
+        assert get() == Path(default)
+        monkeypatch.setenv(var, "/x/y")
+        assert get() == Path("/x/y") and get("other") == Path("/x/y")
+
+
+def test_val_halves_are_read_from_the_repo_root_the_environment_names(tmp_path, monkeypatch):
+    from objdel.data import splits
+
+    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "reference").mkdir()
+    (tmp_path / "reference" / "val_halves.json").write_text('{"halves": {"LIDC-IDRI-0001": "shape"}}')
+    monkeypatch.setenv("OBJDEL_REPO", str(tmp_path))
+    splits._val_halves.cache_clear()
+    try:
+        assert splits.val_half("LIDC-IDRI-0001") == "shape"
+    finally:
+        splits._val_halves.cache_clear()

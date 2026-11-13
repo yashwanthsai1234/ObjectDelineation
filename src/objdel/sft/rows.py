@@ -1,7 +1,6 @@
 """SFT rows (sft_rows) and the frozen view rows (view_rows) from the prepared set (objdel.policy.rows holds the
 records and the image check)."""
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -11,6 +10,7 @@ from datasets import Dataset
 from PIL import Image as PILImage
 
 from objdel.core import datasets
+from objdel.core.hashing import bytes_sha256, file_sha256
 from objdel.core.io import read_json
 from objdel.geom.shape import canonicalize
 from objdel.geom.text import parse, serialize
@@ -81,7 +81,7 @@ def _contexts(view_dir: Path, manifest: dict, items: set[str]) -> None:
         raise ValueError(f"{view_dir}: manifest.json has no context hashes (rebuild the view)")
     for item in sorted(items):
         path = view_dir / "context" / f"{item}.npz"
-        if item not in want or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != want[item]:
+        if item not in want or not path.is_file() or file_sha256(path) != want[item]:
             raise ValueError(f"{path}: context missing or not the one the manifest records")
 
 
@@ -97,7 +97,7 @@ def view_rows(view_dir, tokenizer=None, max_tokens: int | None = None, a0: bool 
     view_dir = Path(view_dir)
     text = (view_dir / "rows.jsonl").read_bytes()
     manifest = read_json(view_dir / "manifest.json")
-    if hashlib.sha256(text).hexdigest() != manifest["view_hash"]:
+    if bytes_sha256(text) != manifest["view_hash"]:
         raise ValueError(f"{view_dir}: rows.jsonl does not hash to the manifest's view_hash")
     rows = []
     for spec in map(json.loads, text.splitlines()):

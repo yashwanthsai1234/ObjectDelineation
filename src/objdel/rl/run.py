@@ -35,8 +35,8 @@ rows provenance, timing, `report` (run_report: the clipped_ratio slope, the trun
 TRL's log. --reward v5 trains on reward v5 and adds callbacks.LocGuard (stop and save; loc_guard_stopped).
 """
 
+import functools
 import gc
-import hashlib
 import json
 import math
 import numbers
@@ -46,36 +46,37 @@ import sys
 import time
 from pathlib import Path
 
-from objdel.core.io import plain, read_json, write_atomic
+from objdel.core.hashing import bytes_sha256
+from objdel.core.io import plain, read_json, write_json
+from objdel.policy.errors import Refusal, exits_on_refusal
 from objdel.rl import build
 
+usage = functools.partial(Refusal.usage, "train_rl")
 
+
+@exits_on_refusal
 def checked(a):
     """The RlStage `a` with f_check resolved (--f-check, --no-f-check, else on under the f_check.PRESETS), after the
     rules that need objdel.rl (numerics preset names, the --grpo keys train_rl owns); exit 2 on a broken one."""
     from objdel.rl import config as configs
     from objdel.rl import f_check
 
-    def error(msg: str):
-        print(f"train_rl: error: {msg}", file=sys.stderr)
-        sys.exit(2)
-
     numerics = a.numerics or configs.DEFAULT_NUMERICS
     if numerics not in configs.NUMERICS:
-        error(f"--numerics {a.numerics}: one of {sorted(configs.NUMERICS)}")
+        raise usage(f"--numerics {a.numerics}: one of {sorted(configs.NUMERICS)}")
     if a.f_check and numerics not in f_check.PRESETS:
-        error(f"--f-check: only under --numerics {' or '.join(f_check.PRESETS)}, not {numerics}")
+        raise usage(f"--f-check: only under --numerics {' or '.join(f_check.PRESETS)}, not {numerics}")
     a = a.model_copy(update={"f_check": a.f_check or (numerics in f_check.PRESETS and not a.no_f_check)})
     if a.f_check and numerics == "lora-seqmask" and not a.merge_last and a.b1_adapter is None:
-        error("--f-check under --numerics lora-seqmask needs --b1-adapter (the comparator's B1 adapter)")
+        raise usage("--f-check under --numerics lora-seqmask needs --b1-adapter (the comparator's B1 adapter)")
     if a.opsm_start_delta is not None and (numerics != "bf16-tis-opsm" or a.opsm_start_delta <= 0):
-        error("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
+        raise usage("--opsm-start-delta is a float > 0, valid only with --numerics bf16-tis-opsm")
     if "off_policy_mask_threshold" in a.grpo:
-        error("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
+        raise usage("--grpo cannot set off_policy_mask_threshold: use --opsm-start-delta")
     if a.grpo.get("logging_steps", 1) != 1:  # seq_gaps and cut_seq_gaps need one block per step
-        error("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
+        raise usage("--grpo logging_steps: must stay 1 (seq_gaps.f32 holds one block per optimizer step)")
     if (why := stage_refusal(a.model, a.dataset, a.no_ckpt_layers)) is not None:
-        error(why)
+        raise usage(why)
     return a
 
 
@@ -154,11 +155,6 @@ def session_budget(a, environ=os.environ):
     return BudgetStop(got["rate_usd_per_h"], a.budget_usd, got["session_start"], fixed_usd=got["fixed_usd"] or 0.0)
 
 
-def _sha(b: bytes) -> str:
-    """SHA-256 hex digest of bytes."""
-    return hashlib.sha256(b).hexdigest()
-
-
 def rows_schedule(root: Path, manifest_sha256: str | None) -> dict | None:
     """The manifest's `schedule` (None for a root without one), after checking the manifest's SHA-256 against the
     pinned value; a schedule root needs it."""
@@ -169,8 +165,8 @@ def rows_schedule(root: Path, manifest_sha256: str | None) -> dict | None:
         raise ValueError(f"{root}/manifest.json: `schedule` needs steps, per_step, block_steps and ids_sha256")
     if schedule is not None and manifest_sha256 is None:
         raise ValueError(f"{root}: a rows root with a schedule needs --rows-manifest-sha256")
-    if manifest_sha256 is not None and _sha(raw) != manifest_sha256:
-        raise ValueError(f"{root}/manifest.json SHA-256 {_sha(raw)} is not --rows-manifest-sha256 {manifest_sha256}")
+    if manifest_sha256 is not None and (got := bytes_sha256(raw)) != manifest_sha256:
+        raise ValueError(f"{root}/manifest.json SHA-256 {got} is not --rows-manifest-sha256 {manifest_sha256}")
     return schedule
 
 
@@ -180,7 +176,7 @@ def check_rows(keys, schedule: dict) -> None:
     keys, n = list(keys), schedule["steps"] * schedule["per_step"]
     if len(keys) != n:
         raise ValueError(f"rows: {len(keys)} rows, the schedule holds steps x per_step = {n}")
-    if _sha("\n".join(keys).encode()) != schedule["ids_sha256"]:
+    if bytes_sha256("\n".join(keys).encode()) != schedule["ids_sha256"]:
         raise ValueError("rows: ids_sha256 differs from the schedule's (a row dropped, swapped or reordered)")
 
 
@@ -354,8 +350,7 @@ def finite(x):
 def save_json(path: Path, doc: dict, keys: tuple[str, ...]) -> int:
     """Strict JSON (numpy values as plain numbers and lists) to path, through write_atomic; prints doc's `keys` on
     one line. A NaN or inf anywhere raises ValueError before anything is written (U25)."""
-    text = json.dumps(doc, indent=1, allow_nan=False, default=plain) + "\n"
-    write_atomic(path, text)
+    write_json(path, doc, sort_keys=False, strict=True, default=plain)
     print(json.dumps({k: doc[k] for k in keys if k in doc}, ensure_ascii=False, default=plain))
     return 0
 

@@ -1,4 +1,4 @@
-"""Gate harness for reward v4 (tests and experiments/phase1/reward_gates.py): fixture loaders, controlled mask
+"""Gate harness for reward v4 (tests): fixture loaders, controlled mask
 perturbations, realistic honest GRPO rollouts, the adversary suite, K9 pairs and cluster-bootstrap CIs.
 
 Ported from the lab (archive/phase1_lab/t_reward: rewardcore/perturb.py, scripts/honest.py,

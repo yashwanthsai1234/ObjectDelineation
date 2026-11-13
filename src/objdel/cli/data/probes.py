@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from objdel.core.io import read_jsonl, write_json
+from objdel.core.provenance import EVAL_VIEWS, STORE
 from objdel.data import probes as P
 
 
@@ -58,8 +59,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build")
-    b.add_argument("--store", default="data/store")
-    b.add_argument("--out", default="data/eval_views")
+    b.add_argument("--store", default=STORE)
+    b.add_argument("--out", default=EVAL_VIEWS)
     b.add_argument("--n-test", type=int, default=1000)
     b.add_argument("--n-train", type=int, default=0, help="probe-train items (20000 for the capacity run)")
     b.add_argument("--only", choices=("precision", "topology"))

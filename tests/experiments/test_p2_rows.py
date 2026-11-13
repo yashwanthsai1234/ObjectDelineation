@@ -14,7 +14,7 @@ import cv2
 import pytest
 from test_data_quality import PLAN, SHARES, Tok, all_items, stub_ceiling, world, write_store  # noqa: F401
 
-from objdel.core.hashing import pixels_sha256
+from objdel.core.hashing import bytes_sha256, pixels_sha256
 from objdel.data import quality as Q
 from objdel.data import windows as Wn
 
@@ -59,7 +59,7 @@ def test_manifest_and_rows_follow_the_schedule(built, world):  # noqa: F811
     recs = Q.records(built.out)
     want = [w.window_id for w in world.sched]  # the same pool and schedule arguments as the fixture's
     assert [r["item_id"] for r in recs] == want
-    assert s["ids_sha256"] == built.R._sha("\n".join(want).encode())
+    assert s["ids_sha256"] == bytes_sha256("\n".join(want).encode())
     assert {k: s[k] for k in ("steps", "planned_steps", "block_steps", "per_step", "seed", "draws")} == {
         "steps": 13, "planned_steps": 13, "block_steps": 13, "per_step": 2, "seed": 4, "draws": 1}
     for k in ("shares", "target_law", "target_sha256", "dropped", "disagreement_weight", "disagreement_max_reuse",
@@ -67,7 +67,7 @@ def test_manifest_and_rows_follow_the_schedule(built, world):  # noqa: F811
         assert k in s
     assert all(g["ok"] for g in s["gates"] if g["hard"])
     assert (s["files_count"], s["files_sha256"]) == built.R.files_digest(built.out)
-    assert m["files"]["lidc/train.jsonl"]["sha256"] == built.R._sha((built.out / "lidc/train.jsonl").read_bytes())
+    assert m["files"]["lidc/train.jsonl"]["sha256"] == bytes_sha256((built.out / "lidc/train.jsonl").read_bytes())
 
 
 def test_each_window_has_its_own_png_and_caches_and_they_load(built):
@@ -219,6 +219,27 @@ def test_i21_rows_upload_goes_to_the_one_place_with_the_manifest_last(built, tmp
     out, err = capsys.readouterr()
     assert f"rows_revision: {'b' * 40}" in out and f"rows_manifest_sha256: {file_sha256(root / 'manifest.json')}" in out
     assert TOKEN not in out + err
+
+
+def test_rows_tar_and_files_digest_keep_the_posix_string_order(tmp_path):
+    """Pinned hashes: a tree with `a-b/x` and `a/x` (string order and Path order differ) packs and digests in the
+    order the pre-files_under code gave: sorted by the relative posix string, manifest.json left out."""
+    import tarfile
+
+    from objdel.cli.data import rl_rows
+    from objdel.infra import hf
+    root = tmp_path / "root"
+    for rel in ("a/x", "a-b/x", "manifest.json", "lidc/train.jsonl"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(rel)
+    old = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+    old = [r for r in old if r != "manifest.json"]
+    assert old == ["a-b/x", "a/x", "lidc/train.jsonl"]
+    assert rl_rows.files_digest(root) == (3, bytes_sha256("\n".join(old).encode()))
+    buf = io.BytesIO()
+    hf.rows_tar(root, buf)
+    with tarfile.open(fileobj=io.BytesIO(buf.getvalue())) as tf:
+        assert tf.getnames() == old
 
 
 def test_i21_nothing_is_uploaded_after_a_hard_gate_failure(run, world, monkeypatch, capsys):  # noqa: F811

@@ -27,6 +27,7 @@ reference/frozen_views.json, and --split must name a set of the view (the test v
 run before any model load or rescoring; a failed one raises Refusal. Reads untrusted data: run with python -I.
 """
 
+import functools
 import json
 import sys
 import time
@@ -35,9 +36,9 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.hashing import file_sha256
-from objdel.core.io import code_sha, read_json, read_jsonl
+from objdel.core.io import code_sha, read_json, read_jsonl, read_jsonl_glob, write_jsonl
 from objdel.core.io import write_atomic as _write
-from objdel.core.provenance import repo_root
+from objdel.core.provenance import reference_dir, repo_root
 from objdel.data import quality as Q
 from objdel.geom import engine as _gpucheck
 from objdel.policy.errors import Refusal
@@ -45,7 +46,7 @@ from objdel.policy.evaluate import METRICS, evaluate, per_item, score_items, sum
 from objdel.verify import device
 from objdel.verify import stats as signal
 
-FROZEN_VIEWS = repo_root() / "reference/frozen_views.json"  # /workspace/src on the box
+FROZEN_VIEWS = reference_dir() / "frozen_views.json"  # /workspace/src on the box
 
 RUN_KEYS = ("ckpt", "view", "split", "K", "seed")
 SAMPLER_LABEL = "VllmSampler; sampler not box-verified (E-G10 open)"  # written into every result
@@ -91,12 +92,12 @@ def view_manifest_sha256(view: Path) -> str:
 
 def _view_records(view: Path) -> list[dict]:
     """Every record of the view, file by file in name order."""
-    return [r for f in sorted(Path(view).glob("*/*.jsonl")) for r in read_jsonl(f)]
+    return read_jsonl_glob(view, "*/*.jsonl")
 
 
 def frozen_entry(view_name: str) -> dict | None:
     """The view's frozen_views.json entry, or None (no entry, or no file)."""
-    return read_json(FROZEN_VIEWS).get(view_name) if FROZEN_VIEWS.is_file() else None
+    return read_json(FROZEN_VIEWS, {}).get(view_name)
 
 
 def check_view(view: Path, dataset: str, split: str) -> None:
@@ -123,19 +124,13 @@ def check_view(view: Path, dataset: str, split: str) -> None:
 def hash_view(view: Path, out: Path, commits: dict[str, str]) -> None:
     """--hash-view: the view's identity record (the pre-rental record); `commits`: the last commit of each
     file that renders it (freeze_views.render_files)."""
-    sets = read_json(view / "manifest.json")["sets"]
-    (target_set,) = [s["target_set_sha256"] for s in sets.values()]
     _write(out, json.dumps({
         "view": str(view), "items": len(_view_records(view)), "content_sha256": Q.view_content_sha256(view),
-        "target_set_sha256": target_set, "generator_commit": commits["src/objdel/cli/data/eval_views.py"],
+        "target_set_sha256": Q.target_set_sha256(view),
+        "generator_commit": commits["src/objdel/cli/data/eval_views.py"],
         "render_files": commits, "r5_commit": None,
         "note": "r5_commit not recorded: no file under runs/r5/ holds a code commit. Equal to the R5 box view by "
                 "code identity, not measured"}, indent=1))
-
-
-def _lines(rows: list[dict]) -> str:
-    """Rows as JSON lines."""
-    return "".join(json.dumps(r) + "\n" for r in rows)
 
 
 def resummarize(run: Path, out: Path, store: Path) -> None:
@@ -188,8 +183,8 @@ def write_scored(view: Path, dataset: str, split: str, out: Path, results: list[
     doc = run | summarize(items, groups) | {"noise_floor": noise_floor(results, groups), "partial": False,
                                             "engine": engine_record()}
     doc["seconds"] = run["seconds"] | {"total": time.time() - t0}
-    _write(out / "metrics.jsonl", _lines(results))
-    _write(out / "items.jsonl", _lines(items))
+    write_jsonl(out / "metrics.jsonl", results, sort_keys=False, atomic=True)
+    write_jsonl(out / "items.jsonl", items, sort_keys=False, atomic=True)
     _write(out / "final_eval.json", json.dumps(doc, indent=1, allow_nan=False))
     print("FINAL_EVAL", split, json.dumps({m: round(doc[m]["mean"], 4) for m in METRICS if m in doc}),
           "items", doc["items"], f"s {doc['seconds']['total']:.0f}")  # fmt: skip
@@ -209,7 +204,7 @@ def rescore(src: Path, view: Path, dataset: str, split: str, out: Path) -> None:
     from objdel.verify import store as serve
 
     f = src / "final_eval.json"
-    old = read_json(f) if f.exists() else {}
+    old = read_json(f, {})
     if "view_manifest_sha256" not in old:
         raise Refusal(f"rescore: {f} is missing or has no view_manifest_sha256")
     if old["view_manifest_sha256"] != view_manifest_sha256(view):
@@ -221,31 +216,31 @@ def rescore(src: Path, view: Path, dataset: str, split: str, out: Path) -> None:
     run = ({k: old[k] for k in ("ckpt", "K", "seed", "sampler") if k in old} | _identity(view, split)
            | {"rescored_from": str(src), "seconds": {}})
     serve.preload(view, [dataset])
-    _write(out / "answers.jsonl", _lines(answers))
+    write_jsonl(out / "answers.jsonl", answers, sort_keys=False, atomic=True)
     start_scoring()
     results, _ = score_items(rows, {d["item_id"]: d for d in answers}, view.resolve())
     write_scored(view, dataset, split, out, results, run, t0)
 
 
+usage = functools.partial(Refusal.usage, "final_eval")
+
+
 def run(a) -> None:
     """--rescore, or sample and score every view of the EvalStage `a` (module docstring); exit 2 on a bad flag."""
-    def error(msg: str):
-        raise Refusal(f"final_eval: error: {msg}", 2)
-
     for name in ("adapter_config.json", "adapter_model.safetensors") if a.adapter else ():
         if not (Path(a.adapter) / name).is_file():
-            error(f"--adapter {a.adapter}: {name} is missing")
+            raise usage(f"--adapter {a.adapter}: {name} is missing")
     views, splits = [Path(v) for v in a.view], list(a.split) or ["val"] * len(a.view)
     outs = [Path(o) for o in a.out] if len(a.out) == len(views) else [Path(a.out[0]) / v.resolve().name for v in views]
     for view, split in zip(views, splits, strict=True):
         check_view(view, a.dataset, split)
     if len({o.resolve() for o in outs}) != len(outs):
-        error("two views write the same --out folder: give distinct --view directory names or one --out each")
+        raise usage("two views write the same --out folder: give distinct --view directory names or one --out each")
     if a.rescore:
         if outs[0].resolve() == Path(a.rescore).resolve():
-            error("--out must not be the --rescore folder")
+            raise usage("--out must not be the --rescore folder")
         if len(views) != 1:
-            error("--rescore takes one --view")
+            raise usage("--rescore takes one --view")
         return rescore(Path(a.rescore), views[0], a.dataset, splits[0], outs[0])
 
     import torch
@@ -270,7 +265,7 @@ def run(a) -> None:
                       **{k: d[k] for k in ("samples", "truncated", "tokens")}}
                      for r, d in zip(rows, answers, strict=True)]
             run["seconds"] = {"load_and_sample": time.time() - t0}
-            _write(out / "answers.jsonl", _lines(lines))
+            write_jsonl(out / "answers.jsonl", lines, sort_keys=False, atomic=True)
             _write(out / "final_eval.json", json.dumps(run | {"partial": True}, indent=1))
             start_scoring()
 

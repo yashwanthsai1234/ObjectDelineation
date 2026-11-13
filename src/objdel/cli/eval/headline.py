@@ -10,11 +10,10 @@ Refuses (exit 1, writes nothing) on a missing file, a wrong split, no view, mixe
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
-from objdel.core.io import read_json
+from objdel.core.io import read_json, write_json
 
 METRICS = ("iou_tc", "f5", "precision_vote", "recall_vote", "dice_vote", "legal")
 
@@ -64,8 +63,7 @@ def main(argv=None) -> int:
     run_id = a.run or (a.test.parts[1] if a.test.parts[:1] == ("runs",) else "")  # runs/<id>/...
     doc = {"run": run_id, "model_ref": a.model_ref, **run, "ci_unit": unit, "test": test,
            "val": val}  # fmt: skip
-    a.out.parent.mkdir(parents=True, exist_ok=True)
-    a.out.write_text(json.dumps(doc, indent=1) + "\n")
+    write_json(a.out, doc, sort_keys=False)
     return 0
 
 

@@ -6,7 +6,8 @@ rows mixed) -> the production TRLReward on the prepared caches inside a real TRL
 tiny offline Llama, char-level tokenizer, a scripted policy that emits rater targets, a truncated target, junk and
 an empty answer) -> TRL's held-out evaluation -> the same completions through src/objdel/cli/eval/score.py
 (store frames, eval.metrics) -> eval.gates.phase2_entry.
-Tests `b4_<n>` reproduce the confirmed breakdowns, now fixed (experiments/phase1/impl/breakit/B4_wiring.md).
+Tests `b4_<n>` reproduce the confirmed breakdowns, now fixed
+(docs/archive/experiments/phase1/impl/breakit/B4_wiring.md).
 """
 import ast
 import json

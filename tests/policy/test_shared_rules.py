@@ -2,6 +2,7 @@
 outline length rule (MT-06) and the answers row and completions grouping (MT-08)."""
 import pytest
 
+from objdel.core.io import write_jsonl
 from objdel.policy import rows as policy_rows
 from objdel.policy import sampler as S
 
@@ -51,7 +52,7 @@ def test_samples_and_import_share_one_checked_grouping(tmp_path):
     assert [s.item_id for s in got] == ["b", "a"]  # line order
     assert got[1].row() == {"item_id": "a", "samples": ["a0", "a1"], "truncated": [True, False], "tokens": [2, 2]}
     path = tmp_path / "c.jsonl"
-    S.write(recs, path)
+    write_jsonl(path, recs, sort_keys=False)
     assert S.import_completions(path, {7}, n=2) == [s.row() for s in got[::-1]]  # first-seen order
     with pytest.raises(ValueError, match="k = 0 twice"):
         S.samples(lines, [*recs, _rec("a", 0)], {7})

@@ -18,7 +18,6 @@ Both loaders parse only records files whose SHA-256 is the manifest's (`_rl_reco
 Several roots (prepared val plus eval views) share item ids, so a CacheRef always names its root.
 """
 
-import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +25,7 @@ from functools import lru_cache, partial
 from pathlib import Path
 
 from objdel.core import datasets
+from objdel.core.hashing import bytes_sha256
 from objdel.core.io import read_json
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import rater_answers
@@ -95,7 +95,7 @@ def _rl_records(root: Path, files: dict, rels: Iterable[str]) -> dict[str, dict[
     digests = {}
     for rel in rels:
         data = (root / rel).read_bytes()
-        if files.get(rel, {}).get("sha256") != hashlib.sha256(data).hexdigest():
+        if files.get(rel, {}).get("sha256") != bytes_sha256(data):
             raise ValueError(f"{root / rel}: SHA-256 differs from manifest.json")
         digests |= {r["item_id"]: r["caches"] for r in map(json.loads, data.splitlines()) if r["rl"]}
     return digests

@@ -17,9 +17,10 @@ import sys
 from pathlib import Path
 
 from objdel.infra import hf
-from objdel.infra.errors import InfraError
+from objdel.infra.errors import InfraError, exits
 
 
+@exits("hf_push")
 def main(argv=None) -> int:
     """The hf_push CLI (--run, --rl, --rows or --card-only, --repo, --revision, --view, --headline; the token on stdin)."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -34,16 +35,13 @@ def main(argv=None) -> int:
     ap.add_argument("--view", type=Path, help="local copy of the training view (default: the manifest's path)")
     a = ap.parse_args(argv)
     token = hf.stdin_token("hf_push")
-    try:
-        if a.rows:
-            return hf.push_rows(a.rows, a.repo, a.revision, token)
-        if a.card_only:
-            if not a.headline:
-                raise InfraError("--card-only needs --headline")
-            return hf.card_only(a.repo, a.revision, a.headline, token)
-        return hf.push(a.run, a.rl, a.repo, a.revision, a.view, token)
-    except InfraError as e:
-        sys.exit(f"hf_push: {e}")
+    if a.rows:
+        return hf.push_rows(a.rows, a.repo, a.revision, token)
+    if a.card_only:
+        if not a.headline:
+            raise InfraError("--card-only needs --headline")
+        return hf.card_only(a.repo, a.revision, a.headline, token)
+    return hf.push(a.run, a.rl, a.repo, a.revision, a.view, token)
 
 
 if __name__ == "__main__":

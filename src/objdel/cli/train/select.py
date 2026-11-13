@@ -16,18 +16,16 @@ import sys
 
 from objdel.cli.eval import baselines
 from objdel.cli.train import prereg
-from objdel.policy.errors import Refusal
+from objdel.policy.errors import exits_on_refusal
 
 
+@exits_on_refusal
 def main(argv=None) -> int:
     """CLI: the SelectStage of the flags (or of --spec/--stage) -> objdel.sft.select.run with prereg and baselines."""
     from objdel.core.spec import SelectStage, cli_stage
     from objdel.sft.select import run
 
-    try:
-        return run(cli_stage(SelectStage, sys.argv[1:] if argv is None else argv), prereg, baselines)
-    except Refusal as e:
-        raise e.system_exit() from None
+    return run(cli_stage(SelectStage, argv), prereg, baselines)
 
 
 if __name__ == "__main__":

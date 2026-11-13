@@ -36,7 +36,6 @@ References:
 - DICOM ImagePositionPatient (0020,0032): https://dicom.innolitics.com/ciods/ct-image/image-plane/00200032
 - Two-sample Kolmogorov-Smirnov: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ks_2samp.html
 """
-import hashlib
 import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -49,9 +48,9 @@ import numpy as np
 import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
-from objdel.core.hashing import file_sha256, pixels_sha256
-from objdel.core.io import read_json, read_jsonl
-from objdel.core.provenance import repo_root
+from objdel.core.hashing import bytes_sha256, file_sha256, pixels_sha256
+from objdel.core.io import read_json, read_jsonl_glob, read_split
+from objdel.core.provenance import reference_dir, repo_root
 from objdel.data import lidc, splits, store, windows
 from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
 
@@ -168,7 +167,7 @@ class Gate:
 
 def records(rows_root) -> list[dict]:
     """The rows root's records (lidc/train.jsonl), in schedule order."""
-    return read_jsonl(Path(rows_root, "lidc", "train.jsonl"))
+    return read_split(rows_root, "lidc", "train")
 
 
 def crop32(image: np.ndarray, ub) -> np.ndarray:
@@ -257,8 +256,8 @@ def leakage(store_root, review: Mapping[str, str], exclusions: Mapping, out) -> 
 
 def view_image_hashes(eval_views_root) -> set[str]:
     """image_sha256 of every record of every val and test view under `eval_views_root`."""
-    return {r["image_sha256"] for p in sorted(Path(eval_views_root).glob("*/lidc/*.jsonl"))
-            if p.stem in ("val", "test") for r in read_jsonl(p)}
+    return {r["image_sha256"] for split in ("val", "test")
+            for r in read_jsonl_glob(eval_views_root, f"*/lidc/{split}.jsonl")}
 
 
 def rows_leakage(rows_root, store_root, view_hashes: set[str], excluded: frozenset[str]) -> dict:
@@ -332,7 +331,7 @@ def view_windows(view_dir, store_root) -> list[Window]:
     """The windows of a shifted eval view as Window objects (geometry only; DG16): kind "shifted", draw 0."""
     view_dir = Path(view_dir)
     split = read_json(view_dir / "manifest.json")["view"].split("-")[1]
-    recs = {r["item_id"]: r for r in read_jsonl(view_dir / "lidc" / f"{split}.jsonl")}
+    recs = {r["item_id"]: r for r in read_split(view_dir, "lidc", split)}
     out = []
     for it in store.load("lidc", split, store_root):
         if r := recs.get(it.item_id):
@@ -459,10 +458,10 @@ def view_content_sha256(view_dir) -> str:
     """Content hash: SHA-256 of the newline-joined JSON tuples [item_id, view.offset, view.side, image_sha256]
     of the view's LIDC records in file order (a prepared root without windows has null offset and side). Manifest
     versions and the reward fingerprint do not enter it."""
-    recs = [r for f in sorted(Path(view_dir, "lidc").glob("*.jsonl")) for r in read_jsonl(f)]
+    recs = read_jsonl_glob(view_dir, "lidc/*.jsonl")
     lines = [json.dumps([r["item_id"], (r.get("view") or {}).get("offset"), (r.get("view") or {}).get("side"),
                          r["image_sha256"]]) for r in recs]
-    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+    return bytes_sha256("\n".join(lines).encode())
 
 
 def target_set_sha256(view_dir) -> str:
@@ -547,10 +546,6 @@ def _train_sha(store_root) -> str:
     return read_json(Path(store_root, "manifest.json"))["files"]["lidc/train.parquet"]["sha256"]
 
 
-def _json_or_empty(path) -> dict:
-    return read_json(path) if Path(path).is_file() else {}
-
-
 def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, exclusions=None, review=None,
           frozen_views=None, series_z=None, out=None, plan=None) -> dict:
     """The report that `gates` reads, for the rows root `rows` (the audit_data and build_rl_rows scripts, and
@@ -561,11 +556,11 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
     runs/b1/series_z.json and runs/b1/audit (DG3 PNGs). `plan`: the schedule dict (build_rl_rows passes it before the
     manifest exists); default the manifest's `schedule`."""
     root = repo_root()
-    ref = root / "reference"
+    ref = reference_dir()
     rows, store_root, eval_views = Path(rows), Path(store_root), Path(eval_views)
     exclusions = Path(exclusions or ref / "train_exclusions.json")
     plan = plan or read_json(rows / "manifest.json")["schedule"]
-    ex = _json_or_empty(exclusions)
+    ex = read_json(exclusions, {})
     pool = windows.pool(store.load("lidc", "train", store_root), plan["draws"], plan["seed"],
                         frozenset(plan["excluded_ids"]))
     by_id = {w.window_id: w for w in pool.windows}
@@ -577,7 +572,7 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
     wn = window_checks(rows, store_root)
     z = Path(series_z or root / "runs/b1/series_z.json")
     return {
-        "leakage": leakage(store_root, _json_or_empty(review or ref / "neardup_review.json"), ex,
+        "leakage": leakage(store_root, read_json(review or ref / "neardup_review.json", {}), ex,
                            out or root / "runs/b1/audit"),
         "rows": rows_leakage(rows, store_root, view_image_hashes(eval_views), frozenset(ex))
         | {"exclusions_stale": plan["exclusions_sha256"] != file_sha256(exclusions)},
@@ -585,7 +580,7 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
         "schedule": sched | {"unknown": len(recs) - len(scheduled)},
         "tokens": tokens(rows, tokenizer, limit),
         "agreement": agreement(rows, wn["low_contrast"]),
-        "frozen": frozen(eval_views, _json_or_empty(frozen_views or ref / "frozen_views.json")),
+        "frozen": frozen(eval_views, read_json(frozen_views or ref / "frozen_views.json", {})),
         "z": dg17(read_json(z), ex, _train_sha(store_root))
         if z.is_file() else [f"no contour-to-slice report {z}: run check_series_z"],
     }

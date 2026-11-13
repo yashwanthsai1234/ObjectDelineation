@@ -10,8 +10,8 @@ screened models. Writes <out>/<dataset>/<split>.jsonl (item_id, rater, W, H, box
 Reads untrusted data: run with python -I.
 
 References:
-- Plan §4.4 (SFT targets, D11) and §7 (K5-K7, R1): experiments/phase1/PLAN.md; implementation note
-  experiments/phase1/impl/M5_targets.md. The target algorithms and their sources: objdel.data.targets (build, simplify).
+- Plan §4.4 (SFT targets, D11) and §7 (K5-K7, R1): docs/archive/experiments/phase1/PLAN.md; implementation note
+  docs/archive/experiments/phase1/impl/M5_targets.md. The target algorithms and their sources: objdel.data.targets (build, simplify).
 - Tokenizers (answer length without special tokens): transformers AutoTokenizer.from_pretrained and
   PreTrainedTokenizer.__call__(add_special_tokens=False):
   https://huggingface.co/docs/transformers/main/en/model_doc/auto ,
@@ -19,7 +19,6 @@ References:
 - multiprocessing.Pool.imap (ordered results, chunksize): https://docs.python.org/3/library/multiprocessing.html
 """
 import argparse
-import hashlib
 import json
 import platform
 import time
@@ -31,6 +30,9 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core import datasets
+from objdel.core.hashing import file_sha256
+from objdel.core.io import write_json
+from objdel.core.provenance import STORE
 from objdel.data import store
 from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
@@ -120,7 +122,7 @@ def summarize(rows, frames):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--store", default="data/store")
+    ap.add_argument("--store", default=STORE)
     ap.add_argument("--out", default="data/targets")
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()
@@ -128,7 +130,7 @@ def main():
     manifest = {"config": {"build": BuildConfig().__dict__,
                            "frames": {k: d.frame.__dict__ for k, d in datasets.DATASETS.items()}},
                 "versions": {"python": platform.python_version(), **{p: version(p) for p in PINS}},
-                "store_manifest_sha256": hashlib.sha256((Path(a.store) / "manifest.json").read_bytes()).hexdigest(),
+                "store_manifest_sha256": file_sha256(Path(a.store) / "manifest.json"),
                 "files": {}}
     summary, all_rows = {}, []
     t0 = time.time()
@@ -156,8 +158,8 @@ def main():
     manifest["target_set_sha256"] = target_set_hash(all_rows)
     summary["wall_s"] = round(time.time() - t0, 1)
     summary["target_set_sha256"] = manifest["target_set_sha256"]
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
-    (out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
+    write_json(out / "manifest.json", manifest)
+    write_json(out / "summary.json", summary, sort_keys=False)
     print(json.dumps(summary, indent=1))
 
 

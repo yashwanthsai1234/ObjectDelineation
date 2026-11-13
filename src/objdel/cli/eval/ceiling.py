@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from objdel.core import datasets
+from objdel.core.io import read_jsonl, write_jsonl
 from objdel.policy import rows as dataset
 from objdel.verify import ceiling
 from objdel.verify import store as serve
@@ -58,8 +59,7 @@ def main(argv=None) -> None:
     recs = [r for r in dataset.records(a.view, ds, a.split) if r["rl"]]
     ans = {}
     if a.answers:
-        with open(a.answers) as f:
-            ans = {d["item_id"]: (d["samples"], d["truncated"]) for d in map(json.loads, f)}
+        ans = {d["item_id"]: (d["samples"], d["truncated"]) for d in read_jsonl(a.answers)}
         lost = [r["item_id"] for r in recs if r["item_id"] not in ans]
         if lost:
             raise ValueError(f"{len(lost)} items of the view have no answers in {a.answers}: {lost}")
@@ -70,7 +70,7 @@ def main(argv=None) -> None:
     doc = {"view": str(a.view), "split": a.split, "answers": a.answers and str(a.answers),
            **ceiling.summarize(rows, {r["item_id"]: r["group_id"] for r in recs}), "seconds": time.time() - t0}
     a.out.mkdir(parents=True, exist_ok=True)
-    (a.out / "ceiling_items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    write_jsonl(a.out / "ceiling_items.jsonl", rows, sort_keys=False)
     (a.out / "ceiling.json").write_text(json.dumps(doc, indent=1))
     s = doc["all"]
     print("CEILING", a.split, "items", s["n"], "doctor", round(s["doctor"][0], 4), "legacy item",

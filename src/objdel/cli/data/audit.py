@@ -10,27 +10,27 @@ On the Mac the manifest's exclusions_sha256 must equal the SHA-256 of the curren
 objdel.verify.ceiling (A2). Reads untrusted data: run with python -I.
 """
 import argparse
-import json
 from dataclasses import asdict
 from pathlib import Path
 
-from objdel.core.provenance import repo_root
+from objdel.core.io import write_json
+from objdel.core.provenance import EVAL_VIEWS, SERIES_Z, STORE, reference_dir, repo_root
 from objdel.data import quality as Q
 
 ROOT = repo_root()
-REF = ROOT / "reference"
+REF = reference_dir()
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--rows", type=Path, required=True)
-    ap.add_argument("--store", type=Path, default=ROOT / "data/store")
-    ap.add_argument("--eval-views", type=Path, default=ROOT / "data/eval_views", help="val and test views (DG1b, DG15)")
+    ap.add_argument("--store", type=Path, default=ROOT / STORE)
+    ap.add_argument("--eval-views", type=Path, default=ROOT / EVAL_VIEWS, help="val and test views (DG1b, DG15)")
     ap.add_argument("--val-view", type=Path, default=None, help="DG16 only (default <eval-views>/lidc-val-shifted)")
     ap.add_argument("--exclusions", type=Path, default=REF / "train_exclusions.json")
     ap.add_argument("--review", type=Path, default=REF / "neardup_review.json")
     ap.add_argument("--frozen", type=Path, default=REF / "frozen_views.json")
-    ap.add_argument("--series-z", type=Path, default=ROOT / "runs/b1/series_z.json")
+    ap.add_argument("--series-z", type=Path, default=ROOT / SERIES_Z)
     ap.add_argument("--model", default="qwen3-vl-2b", help="tokenizer and token limit of DG12")
     ap.add_argument("--out", type=Path, default=ROOT / "runs/b1/audit", help="near-duplicate PNGs (DG3)")
     ap.add_argument("--json", type=Path, default=None)
@@ -46,7 +46,7 @@ def main(argv=None) -> int:
     bad = Q.failures(gs)
     print(f"AUDIT {'FAILED: ' + ', '.join(g.name for g in bad) if bad else 'PASSED'} ({a.rows})")
     if a.json:
-        a.json.write_text(json.dumps({"gates": [asdict(g) for g in gs], "report": report}, indent=1) + "\n")
+        write_json(a.json, {"gates": [asdict(g) for g in gs], "report": report}, sort_keys=False)
     return 1 if bad else 0
 
 

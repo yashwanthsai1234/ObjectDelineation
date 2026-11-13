@@ -16,16 +16,17 @@ import json
 from pathlib import Path
 
 from objdel.core.io import read_json
+from objdel.core.provenance import SERIES_Z, STORE
 from objdel.data import lidc, quality
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--store", type=Path, default=Path("data/store"))
+    ap.add_argument("--store", type=Path, default=Path(STORE))
     ap.add_argument("--xml", type=Path, default=Path("data/raw/lidc_xml"))
     ap.add_argument("--slices", type=Path, default=Path("data/lidc_slices"), help="fetch sidecars <series>.json")
     ap.add_argument("--exclusions", type=Path, default=Path("reference/train_exclusions.json"))
-    ap.add_argument("--out", type=Path, default=Path("runs/b1/series_z.json"))
+    ap.add_argument("--out", type=Path, default=Path(SERIES_Z))
     ap.add_argument("--previous", type=Path, help="the report before a rebuild of the store")
     ap.add_argument("--dicom", type=Path, help="step 2: folder of <series>/*.dcm headers")
     ap.add_argument("--drop-train-hits", action="store_true")
@@ -36,7 +37,7 @@ def main(argv=None) -> int:
     r["store_sha256"] = {sp: quality.file_sha256(a.store / "lidc" / f"{sp}.parquet") for sp in ("val", "test")}
     if previous and previous["store_sha256"] != r["store_sha256"]:
         raise SystemExit("the val or test store changed since --previous: the frozen views pair on those items")
-    exclusions = read_json(a.exclusions) if a.exclusions.exists() else {}
+    exclusions = read_json(a.exclusions, {})
     if a.drop_train_hits:
         today = datetime.date.today().isoformat()
         for s in quality.train_hits_not_excluded(r, exclusions):

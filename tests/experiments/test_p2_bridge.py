@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from objdel.core.io import write_jsonl
 from objdel.policy.errors import Refusal
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -112,7 +113,7 @@ def test_round_trip_and_truncation_is_the_rewards_rule(V, rows, tmp_path):
     outs = [types.SimpleNamespace(outputs=[completion(f"t{i}{k}", ids, f) for k, (ids, f) in enumerate(
         [([5, 1], "stop"), ([5, 6], "length"), ([], "length"), ([7, 2], "stop")] * 2)]) for i in range(2)]
     out = tmp_path / "completions.jsonl"
-    V.write(V.outputs(lines, outs), out)
+    write_jsonl(out, V.outputs(lines, outs), sort_keys=False)
     recs = [json.loads(line) for line in out.read_text().splitlines()]
     assert set(recs[0]) == {"id", "k", "text", "token_ids", "finish_reason"} and len(recs) == 16
     got = sample.import_completions(out, stop)

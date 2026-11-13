@@ -15,14 +15,16 @@ the pre-registered record (prereg: G_PROBE, g_probe) from here.
 import sys
 
 from objdel.cli.train import prereg
+from objdel.policy.errors import exits_on_refusal
 
 
+@exits_on_refusal  # an uncaught Refusal was a traceback; it is now a message and exit code
 def main(argv=None) -> int:
     """CLI: the ProbeStage of the flags (or of --spec/--stage) -> objdel.rl.probe.run with the pre-registered record."""
     from objdel.core.spec import ProbeStage, cli_stage
     from objdel.rl.probe import run
 
-    return run(cli_stage(ProbeStage, sys.argv[1:] if argv is None else argv), prereg)
+    return run(cli_stage(ProbeStage, argv), prereg)
 
 
 if __name__ == "__main__":

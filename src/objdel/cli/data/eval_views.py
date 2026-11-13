@@ -26,10 +26,9 @@ with no admissible shifted (or uncrowded edge) window keeps the policy frame and
 also counts padded windows. objdel.data.prepare is imported only when building, so --help
 and the CI [dev] job run without the train extra (BK4-2). Reads untrusted data: run with python -I.
 
-References: experiments/phase2/PLAN.md §5.0, §5.1; A4 §2.5 proposal 1; objdel.data.prepare.prepare (layout).
+References: docs/archive/experiments/phase2/PLAN.md §5.0, §5.1; A4 §2.5 proposal 1; objdel.data.prepare.prepare (layout).
 """
 import argparse
-import hashlib
 import json
 import platform
 from dataclasses import replace
@@ -39,7 +38,9 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.core import datasets as registry
-from objdel.core.io import write_json
+from objdel.core.hashing import file_sha256
+from objdel.core.io import write_json, write_jsonl
+from objdel.core.provenance import EVAL_VIEWS, STORE
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import target_set_hash
@@ -98,16 +99,15 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
                 recs = []
                 for chunk in batched(((str(out), it, kind, seed) for it in its), 12):  # bounds parent memory
                     recs += pool.map(_record, chunk)
-                text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in recs)
                 rel = f"{ds}/{split}.jsonl"
-                (out / rel).write_text(text)
+                sha = write_jsonl(out / rel, recs)
                 triples = [(r["item_id"], k, t) for r in recs for k, t in zip(r["raters"], r["targets"], strict=True)
                            if t]
                 m = {"view": name, "seed": seed, "kinds": list(kinds),
-                     "store_manifest_sha256": hashlib.sha256(Path(store_root, "manifest.json").read_bytes()).hexdigest(),
+                     "store_manifest_sha256": file_sha256(Path(store_root, "manifest.json")),
                      "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
                      "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
-                     "files": {rel: {"sha256": hashlib.sha256(text.encode()).hexdigest()}},
+                     "files": {rel: {"sha256": sha}},
                      "sets": {f"{ds}/{split}": {
                          "items": len(recs), "skipped_no_image": 0, "targets": len(triples),
                          "target_set_sha256": target_set_hash(triples),
@@ -134,8 +134,8 @@ def _kinds(text: str) -> tuple[str, ...]:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--store", default="data/store")
-    ap.add_argument("--out", default="data/eval_views")
+    ap.add_argument("--store", default=STORE)
+    ap.add_argument("--out", default=EVAL_VIEWS)
     ap.add_argument("--datasets", default="lidc")
     ap.add_argument("--split", default="val")
     ap.add_argument("--seed", type=int, default=0)

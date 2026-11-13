@@ -30,6 +30,25 @@ def repo_root() -> Path:
     raise FileNotFoundError(f"no parent of {here} holds pyproject.toml and src/objdel: set OBJDEL_REPO")
 
 
+STORE, EVAL_VIEWS, PREPARED = "data/store", "data/eval_views", "data/prepared"  # default CLI folders, under the repo
+SERIES_Z = "runs/b1/series_z.json"
+
+
+def reference_dir() -> Path:
+    """The repo's reference/ folder (the pinned JSON records)."""
+    return repo_root() / "reference"
+
+
+def data_root(default: str = "data") -> Path:
+    """The Mac value of {data}: $OBJDEL_DATA_ROOT (empty counts as unset), else `default`."""
+    return Path(os.environ.get("OBJDEL_DATA_ROOT") or default)
+
+
+def run_dir(default: str = "runs") -> Path:
+    """The runs folder: $OBJDEL_RUN_DIR (empty counts as unset), else `default`."""
+    return Path(os.environ.get("OBJDEL_RUN_DIR") or default)
+
+
 def code_hashes() -> dict:
     """SHA-256 over (path, file SHA-256) of every CODE file, the git code identity (objdel.core.io.git_sha; None without
     .git) and the file count."""

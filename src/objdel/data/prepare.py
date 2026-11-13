@@ -20,7 +20,6 @@ References:
 - Python multiprocessing Pool: https://docs.python.org/3/library/multiprocessing.html
 """
 
-import hashlib
 import json
 import platform
 from collections.abc import Iterable, Mapping
@@ -32,7 +31,7 @@ from pathlib import Path
 import cv2
 
 from objdel.core import datasets
-from objdel.core.hashing import pixels_sha256
+from objdel.core.hashing import bytes_sha256, pixels_sha256
 from objdel.core.io import read_json, write_json, write_jsonl
 from objdel.data import store
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
@@ -116,7 +115,7 @@ def prepare(store_root, out_root, splits: Iterable[str] = ("train", "val"), proc
     out.mkdir(parents=True, exist_ok=True)
     store_manifest = Path(store_root, "manifest.json").read_bytes()
     held = {rel.split("/")[0] for rel in json.loads(store_manifest)["files"]}
-    manifest = {"store_manifest_sha256": hashlib.sha256(store_manifest).hexdigest(),
+    manifest = {"store_manifest_sha256": bytes_sha256(store_manifest),
                 "reward_fingerprint": fingerprint(), "prompts": dict(prompts),
                 "versions": {"python": platform.python_version(), **{p: version(p) for p in _PINS}},
                 "files": {}, "sets": {}}

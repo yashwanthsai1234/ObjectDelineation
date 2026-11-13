@@ -39,7 +39,6 @@ import os
 import re
 import shlex
 import signal
-import sys
 import time
 from pathlib import Path
 
@@ -49,7 +48,7 @@ from objdel.core.provenance import repo_root
 from objdel.core.spec import CLI as CLI_PACKAGE
 from objdel.core.spec import load_spec
 from objdel.infra import hf
-from objdel.infra.errors import InfraError
+from objdel.infra.errors import InfraError, exits
 from objdel.infra.vast.chain import BOX_DATA, chain, push_target, vision_refs
 from objdel.infra.vast.ledger import (
     ALARM,
@@ -86,6 +85,7 @@ from objdel.infra.vast.remote import (
     dry_run,
     get_run,
     onstart_cmd,
+    poll_s,
     remote,
     rsync,
     secret,
@@ -192,7 +192,7 @@ def cmd_launch(a) -> None:
             if status in BAD_STATUS or time.time() - t0 > timeout:
                 why = status if status in BAD_STATUS else "timeout"
                 raise InfraError(f"instance {iid} {why} before running; destroyed")
-            time.sleep(float(os.environ.get("VAST_POLL_S", 10)))
+            time.sleep(poll_s())
     except (Exception, KeyboardInterrupt):  # an interrupt is a KeyboardInterrupt (signal handlers above)
         for s in sigs:
             signal.signal(s, signal.SIG_IGN)
@@ -459,6 +459,7 @@ CLI = {  # subcommand -> its arguments, in order
 }  # fmt: skip
 
 
+@exits("vast")
 def main(argv: list[str] | None = None) -> None:
     """The vast CLI: one subcommand per shell shim (CLI table)."""
     ap = argparse.ArgumentParser(prog="vast", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
@@ -468,10 +469,7 @@ def main(argv: list[str] | None = None) -> None:
         for name, kw in args.items():
             p.add_argument(name, **kw)
     a = ap.parse_args(argv)
-    try:
-        globals()[f"cmd_{a.cmd}"](a)
-    except InfraError as e:
-        sys.exit(f"vast: {e}")
+    globals()[f"cmd_{a.cmd}"](a)
 
 
 if __name__ == "__main__":

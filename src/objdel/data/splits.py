@@ -20,9 +20,9 @@ import functools
 import hashlib
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
 
 from objdel.core.io import read_json
+from objdel.core.provenance import reference_dir
 
 LIDC_FRACTIONS = (("train", 0.7), ("val", 0.1), ("test", 0.2))
 VAL_HALVES = (("shape", 0.5), ("select", 0.5))
@@ -110,7 +110,7 @@ def val_half_table(records, max_s=1000) -> dict:
 
 @functools.cache
 def _val_halves() -> dict:
-    return read_json(Path(__file__).resolve().parents[3] / "reference/val_halves.json")["halves"]
+    return read_json(reference_dir() / "val_halves.json")["halves"]
 
 
 def val_half(group_id: str) -> str:

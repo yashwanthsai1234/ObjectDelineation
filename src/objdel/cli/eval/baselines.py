@@ -28,9 +28,10 @@ import numpy as np
 from scipy.stats import binomtest
 
 from objdel.core import datasets
+from objdel.core.io import read_split
+from objdel.core.provenance import PREPARED
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
-from objdel.policy.rows import records as _records
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_mask
 
@@ -45,7 +46,7 @@ def _caches(root, rec):
 def fit_prior(root, dataset, split="train"):
     """{S: {structure: median equivalent diameter}} of the certified targets (>= 5 px) per frame side."""
     by = {}
-    for r in _records(root, dataset, split):
+    for r in read_split(root, dataset, split):
         for t in r["targets"]:
             p = parse(t, datasets.get(dataset).names) if t else None
             for n, parts in p.objs.items() if p and p.ok else ():
@@ -63,7 +64,7 @@ def _disc(S, d):
 def _score_rows(root, dataset, split, predict, every=1):
     """[{"item_id", "iou_tc": {structure: v}}] of predict(rec, caches) -> {structure: mask} on RL items."""
     rows = []
-    for i, rec in enumerate(r for r in _records(root, dataset, split) if r["rl"]):
+    for i, rec in enumerate(r for r in read_split(root, dataset, split) if r["rl"]):
         if i % every:
             continue
         caches = _caches(root, rec)
@@ -175,7 +176,7 @@ def main():
             "rescaled=data/eval_views/lidc-val-rescaled",
         ],
     )
-    ap.add_argument("--prepared", default="data/prepared", help="centred train records the prior is fit on")
+    ap.add_argument("--prepared", default=PREPARED, help="centred train records the prior is fit on")
     ap.add_argument("--datasets", nargs="+", default=sorted(datasets.DATASETS))
     ap.add_argument("--models", nargs="+", default=["prior", "medsam", "sam2"])
     ap.add_argument("--split", default="val")

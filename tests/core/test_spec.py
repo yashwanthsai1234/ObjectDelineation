@@ -1,5 +1,6 @@
 """E6: the run spec (objdel.core.spec): strict loading, one definition of each flag, and a CLI round trip."""
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -273,3 +274,21 @@ def test_run_level_settings_fill_the_stages_that_leave_them_unset(tmp_path):
     plain, same = (load(tmp_path, doc(RL, EVAL, **kw)) for kw in ({"model": "qwen3-vl-2b", "dataset": "lidc"}, {}))
     assert not {"model", "dataset"} & plain.stages[1].model_fields_set  # the eval stage's defaults: not copied
     assert [S.to_argv(x, RD, DATA) for x in plain.stages] == [S.to_argv(x, RD, DATA) for x in same.stages]
+
+
+def test_cli_parse_exit_on_error_false_raises_a_value_error_not_a_system_exit(capsys):
+    ok = ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "2"]
+    with pytest.raises(SystemExit) as e:  # the default: argparse's exit 2 on an unknown flag
+        S.cli_parse(S.RlStage, [*ok, "--no-such-flag"])
+    assert e.value.code == 2
+    for bad in (["--no-such-flag"], ["--steps", "x"], ["--steps", "0"]):
+        with pytest.raises(ValueError):  # pydantic-settings' SettingsError or a ValidationError
+            S.cli_parse(S.RlStage, [*ok, *bad], exit_on_error=False)
+    assert S.cli_parse(S.RlStage, ok, exit_on_error=False).steps == 2
+    capsys.readouterr()
+
+
+def test_cli_parse_and_cli_stage_read_sys_argv_without_argv(monkeypatch):
+    ok = ["--model", "m", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "3"]
+    monkeypatch.setattr(sys, "argv", ["prog", *ok])
+    assert S.cli_parse(S.RlStage).steps == 3 and S.cli_stage(S.RlStage).steps == 3

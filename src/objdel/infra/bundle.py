@@ -13,18 +13,15 @@ sync_up checks that and SHA256SUMS on the box.
 """
 
 import argparse
-import hashlib
 import io
-import json
-import sys
 import tarfile
 from pathlib import Path
 
 from objdel.core import datasets
-from objdel.core.hashing import file_sha256
-from objdel.core.io import read_json
+from objdel.core.hashing import bytes_sha256, file_sha256
+from objdel.core.io import json_text, read_json
 from objdel.core.provenance import repo_root
-from objdel.infra.errors import InfraError
+from objdel.infra.errors import InfraError, exits
 from objdel.infra.vast.offers import is_raw
 
 LIDC_EVAL = datasets.LIDC.exams  # the LIDC bundle's exam views (each dataset's are its entry's `exams`)
@@ -47,7 +44,7 @@ def manifest(ds: str, prep: Path) -> bytes:
     m["files"], m["sets"] = ({k: v for k, v in m[s].items() if k.startswith(f"{ds}/")} for s in ("files", "sets"))
     if missing := [k for k in m["files"] if not (prep / k).is_file()]:
         raise InfraError(f"prepared/manifest.json lists missing files: {missing}")
-    return (json.dumps(m, indent=1, sort_keys=True) + "\n").encode()
+    return json_text(m).encode()
 
 
 def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[str, Path | bytes]]:
@@ -83,7 +80,7 @@ def members(ds: str, data: Path, views: list[str] | None = None) -> list[tuple[s
 
 def sha(p: Path | bytes) -> str:
     """SHA-256 hex of a file or of bytes."""
-    return hashlib.sha256(p).hexdigest() if isinstance(p, bytes) else file_sha256(p)
+    return bytes_sha256(p) if isinstance(p, bytes) else file_sha256(p)
 
 
 def write_tar(fileobj, files: list[tuple[str, Path | bytes]]) -> None:
@@ -112,6 +109,7 @@ def build(ds: str, data: Path, out: Path, views: list[str] | None = None) -> Pat
     return target
 
 
+@exits("vast")  # the prefix this CLI has always printed
 def main(argv: list[str] | None = None) -> None:
     """The bundle CLI (dataset, --view, --data, --out)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -120,10 +118,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--data", type=Path, default=repo_root() / "data")
     ap.add_argument("--out", type=Path, default=repo_root() / "build" / "bundles")
     a = ap.parse_args(argv)
-    try:
-        build(a.dataset, a.data, a.out, a.view)
-    except InfraError as e:
-        sys.exit(f"vast: {e}")
+    build(a.dataset, a.data, a.out, a.view)
 
 
 if __name__ == "__main__":

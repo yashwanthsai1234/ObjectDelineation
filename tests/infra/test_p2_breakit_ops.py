@@ -1,5 +1,6 @@
 """Break-it BK4 (Phase 2 Stage 1): Vast operations and the CI `[dev]`-only job. Real defects are strict xfails
-(`BK4-<n>` in experiments/phase2/impl/BK4.md); the rest are guards that pass today. No real Vast call: the fake
+(`BK4-<n>` in
+docs/archive/experiments/phase2/impl/BK4.md); the rest are guards that pass today. No real Vast call: the fake
 executables of tests/infra/test_vast.py, extended with two knobs (a transient vastai failure, a running reply without
 ports)."""
 

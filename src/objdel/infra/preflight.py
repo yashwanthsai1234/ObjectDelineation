@@ -43,9 +43,9 @@ import types
 from dataclasses import dataclass
 from pathlib import Path
 
-from objdel.core.hashing import file_sha256
-from objdel.core.io import read_json
-from objdel.core.provenance import repo_root
+from objdel.core.hashing import bytes_sha256, file_sha256
+from objdel.core.io import read_json, read_jsonl
+from objdel.core.provenance import data_root, repo_root, run_dir
 
 CHECKER_TESTS = ["tests/geom/test_checker.py", "tests/geom/test_checker_oracle.py", "tests/geom/test_checker_host.py",
                  "tests/geom/test_topology.py", "tests/geom/test_geometry.py", "tests/geom/test_geometry_mask.py",
@@ -77,11 +77,6 @@ def rows_name(template: str) -> str | None:
     """<name> of a `{data}/rows/<name>` box path, else None."""
     m = re.fullmatch(r"\{data\}/rows/([^/]+)", template)
     return m[1] if m and m[1] not in (".", "..") else None
-
-
-def data_root() -> Path:
-    """The Mac value of {data}: $OBJDEL_DATA_ROOT, else data."""
-    return Path(os.environ.get("OBJDEL_DATA_ROOT") or "data")
 
 
 def local(template: str) -> Path | None:
@@ -137,12 +132,12 @@ def hashes(cfg: Path) -> dict:
             if (p := local(t)) is not None and (p / "manifest.json").is_file():
                 manifests.append(file_sha256(p / "manifest.json"))
     return {"code": code_hashes()["objdel_and_script_sha256"], "config": file_sha256(cfg),
-            "data": hashlib.sha256("".join(views + exams + manifests).encode()).hexdigest()}  # fmt: skip
+            "data": bytes_sha256("".join(views + exams + manifests).encode())}  # fmt: skip
 
 
 def stamp_path(cfg: Path) -> Path:
     """runs/preflight/<spec>.json under $OBJDEL_RUN_DIR (as train_sft); the stamp records the spec's path."""
-    return repo_root() / os.environ.get("OBJDEL_RUN_DIR", "runs") / "preflight" / f"{Path(cfg).stem}.json"
+    return repo_root() / run_dir() / "preflight" / f"{Path(cfg).stem}.json"
 
 
 def refusal(cfg: Path) -> str | None:
@@ -167,11 +162,6 @@ def refusal(cfg: Path) -> str | None:
 
 
 # --- DATA ---------------------------------------------------------------------------------------------------------
-
-
-def lines(path):
-    """The JSON records of a JSONL file."""
-    return [json.loads(x) for x in Path(path).read_text().splitlines()]
 
 
 def given_inputs(s: Inputs) -> list[str]:
@@ -225,7 +215,7 @@ def view_integrity(s: Inputs) -> list[str]:
 
     bad = []
     for vdir in s.views:
-        man, rows = read_json(vdir / "manifest.json"), lines(vdir / "rows.jsonl")
+        man, rows = read_json(vdir / "manifest.json"), read_jsonl(vdir / "rows.jsonl")
         if file_sha256(vdir / "rows.jsonl") != man["view_hash"]:
             bad.append(f"{vdir}/rows.jsonl does not match the manifest's view_hash")
         try:
@@ -252,14 +242,14 @@ def patients(s: Inputs) -> list[str]:
         ds, x)}
     val, bad = {r["group_id"] for r in policy_rows.records(s.root / "prepared", ds, "val")}, []
     for t in s.views:
-        train_items = {r["item_id"] for r in lines(t / "rows.jsonl")}
+        train_items = {r["item_id"] for r in read_jsonl(t / "rows.jsonl")}
         train_groups, series = {group.get(i) for i in train_items}, {i.split("/")[1] for i in train_items}
         if None in train_groups:
             bad.append(f"{sum(i not in group for i in train_items)} training items have no patient")
         if shared := train_groups & val:
             bad.append(f"{len(shared)} patients in training and prepared val, e.g. {sorted(shared)[:3]}")
         for v in s.dataset.exams:
-            rows = lines(s.root / "eval_views" / v / ds / "val.jsonl")
+            rows = read_jsonl(s.root / "eval_views" / v / ds / "val.jsonl")
             shared = train_groups & {r["group_id"] for r in rows}
             if shared or series & {r["item_id"].split("/")[1] for r in rows}:
                 bad.append(f"{v}: {len(shared)} patients also in training, e.g. {sorted(shared)[:3]}")
@@ -271,7 +261,7 @@ def exam_props(root: Path, v: str, dataset: str) -> list[dict]:
     from objdel.data import coverage as C
 
     out = []
-    for r in lines(root / "eval_views" / v / dataset / "val.jsonl"):
+    for r in read_jsonl(root / "eval_views" / v / dataset / "val.jsonl"):
         out += [p for t in r["targets"] if (p := C.props(t, r["W"], r["view"].get("op", "id")))]
     return out
 
@@ -282,7 +272,7 @@ def coverage(s: Inputs) -> list[str]:
 
     bad = []
     for t in s.views:
-        train = [p for r in lines(t / "rows.jsonl") if r["epoch"] == 0
+        train = [p for r in read_jsonl(t / "rows.jsonl") if r["epoch"] == 0
                  and (p := C.props(r["target"], r["side"], r["op"]))]  # fmt: skip
         td = C.distribution(train)
         for v in s.dataset.exams:
@@ -309,7 +299,7 @@ def ct_window(s: Inputs) -> list[str]:
         return []
     bad = []
     for t in s.views:
-        w = np.array([r["window"] for r in lines(t / "rows.jsonl")])
+        w = np.array([r["window"] for r in read_jsonl(t / "rows.jsonl")])
         bad += [f"{t}: training rows with lo >= hi"] if (w[:, 0] >= w[:, 1]).any() else []
         for i, name in enumerate(("lo", "hi")):
             lo, hi = np.percentile(w[:, i], [1, 99])
@@ -326,7 +316,7 @@ def targets(s: Inputs) -> list[str]:
 
     bad, names = [], list(s.dataset.names)
     for t in s.views:
-        for r in lines(t / "rows.jsonl"):
+        for r in read_jsonl(t / "rows.jsonl"):
             p = parse(r["target"], names)
             if not p.ok or not all(to_mask(p.objs[n], r["side"], r["side"]).legal for n in names):
                 bad.append(f"{r['row_id']}: {p.error or 'illegal'}")
@@ -356,8 +346,8 @@ def rl_stages(spec) -> list:
             out.append(st)
         elif words is not None:
             try:
-                out.append(S.cli_parse(S.RlStage, words).model_copy(update={"name": st.name}))
-            except SystemExit as e:
+                out.append(S.cli_parse(S.RlStage, words, exit_on_error=False).model_copy(update={"name": st.name}))
+            except ValueError as e:
                 raise ValueError(f"stage {st.name}: its train_rl words do not parse as an rl stage") from e
     return out
 

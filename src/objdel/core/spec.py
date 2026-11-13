@@ -482,11 +482,14 @@ def _views(s: EvalStage, rd: str, data: str) -> list[str]:
     return out
 
 
-def cli_parse(cls: type[Stage], argv: Sequence[str]) -> Stage:
-    """The stage a CLI reads from its flags, in the one parser form (kebab flags, bare boolean flags). "toggle", not
-    True: True gives argparse's BooleanOptionalAction, which reads every --no-* option as False (--no-vision)."""
-    return CliApp.run(cls, cli_args=list(argv),
-                      cli_settings_source=CliSettingsSource(cls, cli_kebab_case=True, cli_implicit_flags="toggle"))
+def cli_parse(cls: type[Stage], argv: Sequence[str] | None = None, *, exit_on_error: bool = True) -> Stage:
+    """The stage a CLI reads from its flags (argv: sys.argv[1:] when None), in the one parser form (kebab flags, bare
+    boolean flags). "toggle", not True: True gives argparse's BooleanOptionalAction, which reads every --no-* option as
+    False (--no-vision). A bad flag exits 2 as argparse does; with exit_on_error=False it raises a ValueError
+    (pydantic-settings' SettingsError, or the ValidationError of a bad value) and --help is not read."""
+    argv = sys.argv[1:] if argv is None else list(argv)
+    source = CliSettingsSource(cls, cli_kebab_case=True, cli_implicit_flags="toggle", cli_exit_on_error=exit_on_error)
+    return CliApp.run(cls, cli_args=argv, cli_settings_source=source)
 
 
 def same_stage(a: Stage, b: Stage) -> bool:
@@ -494,11 +497,11 @@ def same_stage(a: Stage, b: Stage) -> bool:
     return a.model_dump(exclude={"name", "soft"}) == b.model_dump(exclude={"name", "soft"})
 
 
-def cli_stage(cls: type[Stage], argv: Sequence[str]) -> Stage:
+def cli_stage(cls: type[Stage], argv: Sequence[str] | None = None) -> Stage:
     """The stage a CLI runs. `--spec PATH --stage NAME [--rd RD] [--data DATA]` takes the stage NAME of a spec file
     with {rd} and {data} filled (default runs/<spec name> and data, the Mac folders); any other argv is the CLI's own
     flags (cli_parse). A broken rule exits 2 with the reason, as an argparse error does."""
-    argv = list(argv)
+    argv = sys.argv[1:] if argv is None else list(argv)
     try:
         if argv[:1] == ["--spec"]:
             ap = argparse.ArgumentParser(prog=cls.__name__)

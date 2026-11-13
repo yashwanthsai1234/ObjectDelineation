@@ -1,4 +1,5 @@
-"""M4b probe tests (PLAN §7 M4, probe parts): objdel.data.probes and the experiments/phase2 probes / baselines CLIs.
+"""M4b probe tests (PLAN §7 M4, probe parts): objdel.data.probes and the
+objdel.cli.data.probes and objdel.cli.eval.baselines CLIs.
 
 Synthetic tests build small probe directories on synthetic lung patches; the `data` tests use the real store."""
 

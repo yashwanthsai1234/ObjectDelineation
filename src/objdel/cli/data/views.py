@@ -23,12 +23,11 @@ outside the view (the bundle stays deterministic, BK1-7). Default 3 epochs: R1's
 (S1-8). Reads untrusted data: run with python -I.
 
 References:
-- plan experiments/phase2/PLAN.md D9, D10, D11, §6.0; promoted from archive/phase2_lab/B3/dihedral.py (P3) and
+- plan docs/archive/experiments/phase2/PLAN.md D9, D10, D11, §6.0; promoted from archive/phase2_lab/B3/dihedral.py (P3) and
 archive/phase2_lab/A4, archive/phase2_lab/B1 shifts
 - multiprocessing.Pool.imap (ordered results): https://docs.python.org/3/library/multiprocessing.html
 """
 import argparse
-import hashlib
 import json
 import time
 from collections import Counter
@@ -40,7 +39,9 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core import datasets
-from objdel.core.io import write_json
+from objdel.core.hashing import file_sha256
+from objdel.core.io import write_json, write_jsonl
+from objdel.core.provenance import PREPARED, STORE
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import BuildConfig, build_target, min_areas
@@ -93,7 +94,7 @@ def _item(job):
                 stats[f"exact/{op}"] += all(np.array_equal(to_mask(t.objs[n], S, S).mask, src[n]) for n in names)
                 stats[f"side/{S}"] += 1
                 rows.append(row)
-    return it.item_id, rows, stats, hashlib.sha256(ctx.read_bytes()).hexdigest()
+    return it.item_id, rows, stats, file_sha256(ctx)
 
 
 def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nonsimple_repeat=4, procs=2,
@@ -112,9 +113,8 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
             rows += rs
             stats.update(st)
     rows.sort(key=lambda r: (r["epoch"], r["item_id"], r["rater_index"], r["rep"]))
-    text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
-    (out / "rows.jsonl").write_text(text)
-    sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest() if p and Path(p).is_file() else None  # noqa: E731
+    view_hash = write_jsonl(out / "rows.jsonl", rows)
+    sha = lambda p: file_sha256(Path(p)) if p and Path(p).is_file() else None  # noqa: E731
     entry = datasets.get(dataset)
     per_op = {op: {k: stats[f"{k}/{op}"] for k in ("rows", "exact", "error")} for op in entry.ops}
     manifest = {
@@ -130,16 +130,15 @@ def build(store_root, out, dataset="lidc", split="train", epochs=3, seed=0, nons
                    "nonsimple_rows": sum(not r["simple"] for r in rows), "errors": stats["errors"],
                    "fallback_windows": stats["fallback"], "per_op": per_op,
                    "side": {k.split("/")[1]: v for k, v in sorted(stats.items()) if k.startswith("side/")}},
-        "view_hash": hashlib.sha256(text.encode()).hexdigest(), "contexts": contexts}
+        "view_hash": view_hash, "contexts": contexts}
     write_json(out / "manifest.json", manifest)
     ctx = [Path(out, "context", i + ".npz") for i in contexts]
     report = {"view": out.name, "wall_s": round(time.time() - t0, 1),
               "parent_cpu_s": round(time.process_time() - cpu0, 1), "procs": procs, "context_files": len(ctx),
-              "context_mb": round(sum(p.stat().st_size for p in ctx) / 2**20, 1), "rows_mb": round(len(text) / 2**20,
-                  1),
+              "context_mb": round(sum(p.stat().st_size for p in ctx) / 2**20, 1), "rows_mb": round((out / "rows.jsonl").stat().st_size / 2**20, 1),
               "exact_share": sum(v["exact"] for v in per_op.values()) / max(len(rows), 1)}
     report_path(out).parent.mkdir(exist_ok=True)
-    report_path(out).write_text(json.dumps(report, indent=1) + "\n")
+    write_json(report_path(out), report, sort_keys=False)
     return manifest
 
 
@@ -150,8 +149,8 @@ def report_path(out) -> Path:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--store", default="data/store")
-    ap.add_argument("--prepared", default="data/prepared")
+    ap.add_argument("--store", default=STORE)
+    ap.add_argument("--prepared", default=PREPARED)
     ap.add_argument("--out", required=True, help="e.g. data/views/lidc-bundle-v3")
     ap.add_argument("--dataset", default="lidc", choices=sorted(datasets.DATASETS))
     ap.add_argument("--split", default="train")

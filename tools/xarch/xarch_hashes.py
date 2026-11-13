@@ -63,7 +63,7 @@ SEED = 20261019
 # keypoint_dups, the split assignment) are compared exactly; splits are computed once and pinned by the store
 # manifest. --strict (x86 run-to-run) accepts nothing. Every other section has been identical on arm64 and x86-64
 # since F1-F3 (frame.image / png: Pillow bicubic; caches, reward.*, eval: scipy EDT and frozen S_m), so a difference
-# there is a regression; the diagnosis history is in experiments/phase1/impl/M9_x86.md.
+# there is a regression; the diagnosis history is in docs/archive/experiments/phase1/impl/M9_x86.md.
 CAUSES = {  # why each accepted section differs (M9_x86.md finding 4)
     "splits.descriptor": "np.linalg.norm: float32 BLAS sdot kernels differ per arch [F4, skipped]",
     "splits.ncc_values": "FFT rounding; the decisions are splits.ncc_pairs",

@@ -26,7 +26,6 @@ other views, G-vision, prior or gates, and --vision / --no-vision are refused.
 
 import argparse
 import contextlib
-import hashlib
 import json
 import os
 import signal
@@ -38,7 +37,8 @@ from pathlib import Path
 
 import numpy as np
 
-from objdel.core.io import read_json, read_jsonl
+from objdel.core.hashing import file_sha256
+from objdel.core.io import read_json, read_jsonl, read_jsonl_cut, write_json, write_jsonl
 from objdel.policy import evaluate
 from objdel.policy.errors import Refusal
 
@@ -96,12 +96,7 @@ def complete(comps: Path, want: Counter) -> bool:
 
 def finished(comps: Path, want: Counter) -> int:
     """Prompt ids with all their n completions, cut lines skipped (progress of a resumable child)."""
-    got = Counter()
-    for x in comps.read_text().splitlines() if comps.exists() else []:
-        try:
-            got[json.loads(x)["id"]] += 1
-        except (ValueError, KeyError, TypeError):
-            continue
+    got = Counter(c["id"] for _, c in read_jsonl_cut(comps, ("id",)))
     return sum(got[i] == n for i, n in want.items())
 
 
@@ -137,7 +132,7 @@ def run_sampler(kind: str, prompts: Path, model: Path, comps: Path, timeout: flo
     until TRIES of them finish no new item."""
     want = Counter({p["id"]: p["n"] for p in read_jsonl(prompts)})
     cmd, meta = sampler_cmd(kind, prompts, model, comps, extra), comps.with_suffix(".meta.json")
-    stamp = {"prompts_sha256": hashlib.sha256(prompts.read_bytes()).hexdigest(), "cmd": cmd}
+    stamp = {"prompts_sha256": file_sha256(prompts), "cmd": cmd}
     if not (meta.is_file() and read_json(meta) == stamp):
         comps.unlink(missing_ok=True)  # another sampling's completions: never resumed
         meta.write_text(json.dumps(stamp) + "\n")
@@ -188,7 +183,7 @@ def score_view(a, branch: Path, view: Path, out: Path, k: int) -> dict:
 
     rows = evaluate.eval_rows(view, a.dataset, a.items)
     results, groups = evaluate.score_items(rows, sample_view(a, branch, rows, out, k), view.resolve())
-    (out / "items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in results))
+    write_jsonl(out / "items.jsonl", results, sort_keys=False)
     iou = {r["item_id"]: {n: float(np.mean(o["iou_tc"])) for n, o in r["objects"].items()} for r in results}
     return {"summary": summarize(results), "panel": signal.panel(groups), "iou": iou}
 
@@ -277,8 +272,7 @@ def judge(a, sel: dict, out: Path, baselines) -> dict:
 
 def dump(path: Path, doc: dict) -> None:
     """Indented JSON to path (parents created)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc, indent=1, default=str) + "\n")
+    write_json(path, doc, sort_keys=False, default=str)
 
 
 def topology_only(a, out: Path) -> int:

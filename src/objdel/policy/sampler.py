@@ -16,7 +16,7 @@ child. Completions go to the evaluation harness as rows {"item_id", "samples": [
 - Truncation is the reward's rule: models.truncated on the stop ids (`stop_ids(path, proc)` for a checkpoint).
 - export_prompts / import_completions: the JSONL bridge to the sampler child (prompt text, image path, processor
   kwargs minus padding_side, every sampling field and n; completions come back as token ids). export reads TRL's
-  completions tables back into rows; write(rows, path) writes JSONL.
+  completions tables back into rows.
 - main: the child-process entry, `python -I -m objdel.policy.sampler --kind vllm|hf --prompts P --model DIR --out C`
   (CUDA untouched in the parent; the caller sets a timeout, kills the process group and resumes).
 
@@ -41,9 +41,9 @@ import pandas as pd
 from trl.data_utils import prepare_multimodal_messages
 
 from objdel.core import datasets
-from objdel.core.io import read_jsonl
+from objdel.core.io import read_jsonl, read_jsonl_cut, write_json, write_jsonl
 from objdel.policy import models
-from objdel.policy.errors import Refusal
+from objdel.policy.errors import Refusal, exits_on_refusal
 from objdel.verify.reward.spec import REWARD_V4
 
 G = REWARD_V4.group
@@ -73,14 +73,6 @@ def export(paths: Iterable, keys: Iterable[str] | None = None) -> list[dict]:
     return rows
 
 
-def write(rows: Iterable[dict], path) -> None:
-    """Write rows as JSON lines to `path`, creating its folder."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
-
-
 def _path(image) -> str:
     return image if isinstance(image, str) else image["path"]
 
@@ -98,7 +90,8 @@ def export_prompts(rows, path, model: str, n: int, processor=None, stop_ids=None
         rows = rows.cast_column("image", Image(decode=False))
     sampling = params_for(model, n=n, seed=seed, stop_token_ids=None if stop_ids is None else sorted(stop_ids),
                           max_tokens=max_tokens)
-    write(prompt_lines(rows, processor, kw, {k: v for k, v in sampling.items() if k != "n"}, n), path)
+    one = {k: v for k, v in sampling.items() if k != "n"}
+    write_jsonl(path, prompt_lines(rows, processor, kw, one, n), sort_keys=False)
 
 
 def prompt_lines(rows, processor, processor_kwargs: dict, sampling: dict, n: int) -> list[dict]:
@@ -378,12 +371,8 @@ class HfSampler(Sampler):
 def todo(out: Path, bs: list[list[tuple[int, dict]]]) -> list:
     """Resume: rewrite `out` with the lines of every whole finished batch and return the other batches."""
     have = {}
-    for x in out.read_text().splitlines() if out.exists() else []:
-        try:
-            c = json.loads(x)
-            have.setdefault((c["id"], c["k"]), x)
-        except (ValueError, KeyError, TypeError):
-            continue  # a line cut by a kill
+    for x, c in read_jsonl_cut(out, ("id", "k")):  # a line cut by a kill is skipped
+        have.setdefault((c["id"], c["k"]), x)
     keys = [[(p["id"], k) for _, p in b for k in range(p["n"])] for b in bs]
     done = [all(key in have for key in ks) for ks in keys]
     out.write_text("".join(have[key] + "\n" for ks, d in zip(keys, done, strict=True) if d for key in ks))
@@ -393,10 +382,10 @@ def todo(out: Path, bs: list[list[tuple[int, dict]]]) -> list:
 def _main_vllm(a, lines: list[dict]) -> None:
     s = VllmSampler(a.model, a.entry, a.gpu_memory_utilization, a.max_model_len, dtype=a.dtype, seed=a.seed,
                     logprobs=a.logprobs)
-    write(s.records(lines), a.out)
+    write_jsonl(a.out, s.records(lines), sort_keys=False)
     meta = {"vllm": s.vllm.__version__, "model": str(a.model), "prompts": len(lines),
             "sampling_params": sorted(s.sampling_params)}
-    Path(str(a.out) + ".meta.json").write_text(json.dumps(meta, indent=1) + "\n")
+    write_json(str(a.out) + ".meta.json", meta, sort_keys=False)
     print(json.dumps(meta), file=sys.stderr)
 
 
@@ -424,6 +413,7 @@ def _main_hf(a, lines: list[dict]) -> None:
             "length_share": sum(c["finish_reason"] == "length" for c in recs) / n if n else None}) + "\n")  # fmt: skip
 
 
+@exits_on_refusal
 def main(argv=None) -> None:
     """Child-process entry (module docstring). Input: export_prompts' lines. Output: one record per completion (vLLM:
     written once at the end, with <out>.meta.json holding every distinct SamplingParams as vLLM built it; HF: appended
@@ -448,10 +438,7 @@ def main(argv=None) -> None:
     a = ap.parse_args(argv)
     if a.kind == "vllm" and a.entry is None and None in (a.gpu_memory_utilization, a.max_model_len):
         ap.error("--kind vllm: pass --entry or both --gpu-memory-utilization and --max-model-len")
-    try:
-        (_main_vllm if a.kind == "vllm" else _main_hf)(a, read_jsonl(a.prompts))
-    except Refusal as e:
-        raise e.system_exit() from None
+    (_main_vllm if a.kind == "vllm" else _main_hf)(a, read_jsonl(a.prompts))
 
 
 if __name__ == "__main__":

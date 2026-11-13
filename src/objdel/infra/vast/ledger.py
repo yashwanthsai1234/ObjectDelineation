@@ -11,11 +11,11 @@ import time
 from pathlib import Path
 
 from objdel.core.io import read_json, write_atomic
-from objdel.core.provenance import repo_root
+from objdel.core.provenance import reference_dir, repo_root
 from objdel.infra.errors import InfraError
 
 # The money guard: alarm at ALARM USD, refuse past HARD_STOP USD; the owner edits them in reference/spend_limits.json
-ALARM, HARD_STOP = (float(read_json(repo_root() / "reference/spend_limits.json")[k]) for k in ("alarm_usd",
+ALARM, HARD_STOP = (float(read_json(reference_dir() / "spend_limits.json")[k]) for k in ("alarm_usd",
                                                                                               "hard_stop_usd"))
 # $/GB ceiling, up and down (over 2x the median of the five cards, $4-13.65/TB). Estimate: image 7.5 GB + bundle 2 GB
 # + model downloads once; checkpoint pulls of 3-5 GB per 20 min.
@@ -86,8 +86,7 @@ def ledger(**row) -> None:
 
 def load(name: str) -> dict:
     """A JSON state file under VAST_HOME ({} when absent): active_runs.json, .vast-allowlist, offers/<id>.json."""
-    f = home() / name
-    return read_json(f) if f.exists() else {}
+    return read_json(home() / name, {})
 
 
 def active(update: dict | None = None) -> dict:

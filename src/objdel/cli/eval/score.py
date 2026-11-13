@@ -18,9 +18,9 @@ the probes and G-vision and is made by select_ckpt), decided per dataset (--data
 on); per-item results go to items.jsonl. Reads untrusted data: run with python -I.
 
 References:
-- Metrics, audit and gates: objdel.verify.metrics, objdel.data.audit, objdel.verify.gates (plan §4.7, §7, §9; experiments/phase1/impl/M8_eval.md).
-- Training frame: objdel.data.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: experiments/phase2/
-  EXECUTION.md §4 C-VIEW; single-rater items and prepared caches: experiments/phase1/impl/ISSUES.md I45, plan D25.
+- Metrics, audit and gates: objdel.verify.metrics, objdel.data.audit, objdel.verify.gates (plan §4.7, §7, §9; docs/archive/experiments/phase1/impl/M8_eval.md).
+- Training frame: objdel.data.targets.frame (EXECUTION.md §3, M5); prepared layout and eval views: docs/archive/experiments/phase2/
+  EXECUTION.md §4 C-VIEW; single-rater items and prepared caches: docs/archive/experiments/phase1/impl/ISSUES.md I45, plan D25.
 - Process pool: https://docs.python.org/3/library/multiprocessing.html#multiprocessing.pool.Pool ; JSON without NaN
   (allow_nan=False): https://docs.python.org/3/library/json.html#json.dump
 - python -I (isolated mode) for untrusted data: https://docs.python.org/3/using/cmdline.html#cmdoption-I
@@ -32,6 +32,8 @@ from multiprocessing import get_context
 from pathlib import Path
 
 from objdel.core import datasets as registry
+from objdel.core.io import read_jsonl, write_json, write_jsonl
+from objdel.core.provenance import STORE
 from objdel.data import store
 from objdel.data.audit import hack_audit
 from objdel.data.targets.frame import frame
@@ -173,19 +175,16 @@ def markdown(report: dict, title: str) -> str:
 
 
 def write(report: dict, results: list[dict], out: Path, title: str) -> None:
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "report.json").write_text(json.dumps(report, indent=1, allow_nan=False) + "\n")
+    write_json(out / "report.json", report, sort_keys=False, strict=True)
     (out / "report.md").write_text(markdown(report, title))
-    with open(out / "items.jsonl", "w") as f:
-        for r in results:
-            f.write(json.dumps(r, allow_nan=False) + "\n")
+    write_jsonl(out / "items.jsonl", results, sort_keys=False, allow_nan=False)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--completions", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--store", type=Path, default=Path("data/store"))
+    ap.add_argument("--store", type=Path, default=Path(STORE))
     ap.add_argument("--prepared", type=Path, help="prepared-layout directory (eval view): its records and caches")
     ap.add_argument("--view", default="shifted", choices=("centred", "shifted", "rescaled"))
     ap.add_argument("--split", default="val")
@@ -193,7 +192,7 @@ def main():
     ap.add_argument("--datasets", nargs="+", help="datasets the model is judged on (default: those evaluated)")
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()
-    rows = [json.loads(line) for line in a.completions.read_text().splitlines() if line.strip()]
+    rows = read_jsonl(a.completions, skip_blank=True)
     ids = [r["item_id"] for r in rows]
     frames = load_prepared(a.prepared, a.split, ids) if a.prepared else load_frames(a.store, a.split, ids)
     results = evaluate(rows, frames, a.procs)
