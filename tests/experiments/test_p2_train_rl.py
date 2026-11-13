@@ -66,7 +66,7 @@ def test_full_rl_runs_with_the_shared_prefix_forward(tmp_path, synthetic_items):
     prepare_items(synthetic_items(("train", "val"), unanimous=True), tmp_path)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
     r = run_module("objdel.cli.train.rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
-                str(tmp_path / "prepared"), "--out", str(out), "--steps", "2", "--save-steps", "100",
+                str(tmp_path / "prepared"), "--out", str(out), "--steps", "2", "--save-steps", "2",
                 "--grpo", json.dumps(GRPO_SMOKE), "--shared-prefix", env=env)  # fmt: skip
     assert r.returncode == 0, r.stderr[-4000:]
     doc = json.loads((out / "rl.json").read_text())
@@ -185,7 +185,7 @@ def test_heldout_curve_logs_eval_iou_and_allmiss(tmp_path, rows_run):
     """I44: with --heldout, FastGRPO runs TRL's evaluation on val-shape items of the view every --heldout-every
     steps and rl.json holds eval/iou_tc and eval/allmiss_share per evaluation."""
     out = tmp_path / "h"
-    r, calls = rows_run.run(out, "--steps", "2", "--save-steps", "100", "--heldout", str(rows_run.prepared),
+    r, calls = rows_run.run(out, "--steps", "2", "--save-steps", "2", "--heldout", str(rows_run.prepared),
                             "--heldout-items", "64", "--heldout-every", "2")
     assert r.returncode == 0, r.stderr[-4000:]
     doc = json.loads((out / "rl.json").read_text())
