@@ -14,18 +14,15 @@ import pytest
 from test_p2_scripts import GRPO_SMOKE, ROOT, _module, _tiny_vlm
 
 from objdel.rl import run as rl_run
+from tests.support.prepared import prepare_items
 
 
 @pytest.mark.slow
 def test_full_rl_saves_resumes_and_leaves_a_merged_tuned_model(tmp_path, synthetic_items):
     pytest.importorskip("trl")
-    from objdel.data import prepare as data_prepare
-    from objdel.data import store
-    from objdel.policy import prompt as policy_prompt
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")  # LoRA (configs.lora), like the real run
-    store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val"), unanimous=True), tmp_path)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
 
     def run(steps, *extra):
@@ -61,13 +58,9 @@ def test_full_rl_runs_with_the_shared_prefix_forward(tmp_path, synthetic_items):
     """--shared-prefix: TRL's real loop (generation, old/ref passes, update micro-batches of whole groups) on the
     packed forward, to a merged tuned model."""
     pytest.importorskip("trl")
-    from objdel.data import prepare as data_prepare
-    from objdel.data import store
-    from objdel.policy import prompt as policy_prompt
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
-    store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val"), unanimous=True), tmp_path)
     out, env = tmp_path / "rl", os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
     r = _module("objdel.cli.train.rl", "--model", "qwen3-vl-2b", "--ckpt", str(model), "--train",
                 str(tmp_path / "prepared"), "--out", str(out), "--steps", "2", "--save-steps", "100",
@@ -105,13 +98,9 @@ def rows_run(tmp_path, synthetic_items):
     pytest.importorskip("trl")
     from test_train_rl_guards import SMOKE, schedule_root
 
-    from objdel.data import prepare as data_prepare
-    from objdel.data import store
-    from objdel.policy import prompt as policy_prompt
 
     model = _tiny_vlm(tmp_path / "tiny", "qwen3-vl-2b")
-    store.write(synthetic_items(("train", "val"), unanimous=True), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val"), unanimous=True), tmp_path)
     root, keys, sha = schedule_root(tmp_path / "prepared", tmp_path / "rows")
     env = os.environ | {"HF_HUB_OFFLINE": "1", "CUDA_VISIBLE_DEVICES": ""}
 

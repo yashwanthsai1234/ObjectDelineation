@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from objdel.core.hashing import file_sha256
+from tests.support.prepared import prepare_items
 from tests.support.targets import rater_texts
 
 pytest.importorskip("datasets")
@@ -371,8 +372,7 @@ def test_qwen3_vl_trains_with_trls_own_template():
 @pytest.fixture(scope="module")
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep9")
-    store.write(synthetic_items(), root / "store")
-    data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(), root, splits=("train",), out="out")
     return root / "out"
 
 

@@ -25,6 +25,7 @@ from objdel.data.targets.frame import CLEARANCE, FrameConfig, centred, crowded, 
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.geom.topology import signature
+from tests.support.prepared import prepare_items
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
@@ -409,14 +410,10 @@ def test_view_rows_refuse_an_edited_context(bk_views, D, tmp_path):
 def bundled(tmp_path_factory, synthetic_items):
     pytest.importorskip("datasets")
     from objdel.cli.data import views as BV
-    from objdel.data import prepare as data_prepare
     from objdel.infra import bundle as B
-    from objdel.policy import prompt as policy_prompt
     root = tmp_path_factory.mktemp("bk1bundle")
     data = root / "data"
-    store.write(synthetic_items(("train", "val")), root / "store")
-    # both datasets, as data/prepared does
-    data_prepare.prepare(root / "store", data / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val")), root, out="data/prepared")  # both datasets, as data/prepared does
     BV.build(root / "store", data / "views" / "lidc-train", procs=1)
     for n in B.LIDC_EVAL:
         (data / "eval_views" / n).mkdir(parents=True)

@@ -20,6 +20,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.support.prepared import prepare_items
+
 ROOT = Path(__file__).resolve().parents[2]
 PREPARED = ROOT / "data" / "prepared"
 G = 8
@@ -45,10 +47,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
     from transformers import LlamaForCausalLM
     from trl import GRPOTrainer
 
-    from objdel.data import prepare as data_prepare
-    from objdel.data import store
     from objdel.policy import models as policy_models
-    from objdel.policy import prompt as policy_prompt
     from objdel.policy import rows as policy_rows
     from objdel.rl import config as configs
     from objdel.rl import reward as rl_reward
@@ -56,9 +55,7 @@ def chain(tmp_path_factory, synthetic_items, char_model):
     from objdel.verify import store as verify_store
 
     work = tmp_path_factory.mktemp("b4")
-    store.write(synthetic_items(("train", "val"), unanimous=True), work / "store")
-    data_prepare.prepare(work / "store", work / "prep", splits=("train", "val"), procs=1,
-                         prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val"), unanimous=True), work, splits=("train", "val"), out="prep")
     recs = {r["item_id"]: r for d in ("riga", "lidc") for s in ("train",
         "val") for r in policy_rows.records(work / "prep", d, s)}
     path, tok = char_model

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from objdel.core.hashing import file_sha256
+from tests.support.prepared import prepare_items
 
 pytest.importorskip("pyarrow")
 pytest.importorskip("datasets")
@@ -31,9 +32,7 @@ PREPARED = Path(__file__).resolve().parents[2] / "data" / "prepared"
 @pytest.fixture(scope="module")
 def prepared(tmp_path_factory, synthetic_items):
     root = tmp_path_factory.mktemp("prep")
-    store.write(synthetic_items(), root / "store")
-    manifest = data_prepare.prepare(root / "store", root / "out", splits=("train",), procs=1,
-        prompts=policy_prompt.PROMPTS)
+    manifest = prepare_items(synthetic_items(), root, splits=("train",), out="out")
     return root, manifest
 
 

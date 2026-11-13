@@ -19,6 +19,7 @@ from objdel.core.hashing import file_sha256
 from objdel.policy import evaluate as EV
 from objdel.policy import final_eval as FE
 from objdel.verify import stats as S
+from tests.support.prepared import prepare_items
 
 ROOT = Path(__file__).resolve().parents[2]
 CI_KEYS = {"mean", "ci95_nodule", "ci95_patient", "ci95_item", "higher_is_better"}
@@ -173,14 +174,9 @@ def test_outputs_are_json_native():
 
 def test_group_id_stays_out_of_the_prompt_rows(tmp_path, synthetic_items):
     """U50: TRL forwards extra prompt columns to the reward functions, so group_id comes from the records."""
-    from objdel.data import prepare as data_prepare
-    from objdel.data import store
-    from objdel.policy import prompt as policy_prompt
     from objdel.policy import rows as policy_rows
 
-    store.write(synthetic_items(), tmp_path / "store")
-    data_prepare.prepare(tmp_path / "store", tmp_path / "out", splits=("train",), procs=1,
-        prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(), tmp_path, splits=("train",), out="out")
     rows = policy_rows.prompts(tmp_path / "out", "lidc", "train", rl_only=False)
     assert rows and all("group_id" not in r for r in rows)
     recs = policy_rows.records(tmp_path / "out", "lidc", "train")

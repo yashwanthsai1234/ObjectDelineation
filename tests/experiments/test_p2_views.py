@@ -19,6 +19,7 @@ from objdel.data.targets.frame import CLEARANCE, DIVISORS, LUNG_WINDOW, FrameCon
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.geom.topology import signature
+from tests.support.prepared import prepare_items
 
 INVERSE = {"id": "id", "r90": "r270", "r180": "r180", "r270": "r90", "fh": "fh", "fv": "fv", "tr": "tr", "at": "at"}
 
@@ -713,12 +714,9 @@ def val_view(tmp_path_factory, synthetic_items):
     """The prepared root (centred frames of train and val) and the shifted val view of the same val items."""
     pytest.importorskip("datasets")
     from objdel.cli.data import eval_views as BE
-    from objdel.data import prepare as data_prepare
-    from objdel.policy import prompt as policy_prompt
 
     root = tmp_path_factory.mktemp("val_view")
-    store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val"), unanimous=True), root)
     BE.build(root / "store", root / "views", ("lidc",), "val", seed=0, procs=1)
     return root / "prepared", root / "views" / "lidc-val-shifted"
 

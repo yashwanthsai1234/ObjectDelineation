@@ -9,6 +9,7 @@ import pytest
 
 from objdel.core.hashing import file_sha256
 from objdel.rl import run as rl_run
+from tests.support.prepared import prepare_items
 
 H = 3600.0
 
@@ -282,13 +283,9 @@ def prepared(tmp_path_factory, synthetic_items):
     """The synthetic_items fixture, not `from conftest import`: tests/verify has its own conftest, and the module
     name `conftest` is whichever one pytest loaded last."""
     pytest.importorskip("datasets")
-    from objdel.data import prepare as data_prepare
-    from objdel.data import store
-    from objdel.policy import prompt as policy_prompt
 
     root = tmp_path_factory.mktemp("rows")
-    store.write(synthetic_items(("train", "val"), unanimous=True), root / "store")
-    data_prepare.prepare(root / "store", root / "prepared", procs=1, prompts=policy_prompt.PROMPTS)
+    prepare_items(synthetic_items(("train", "val"), unanimous=True), root)
     return root / "prepared"
 
 
