@@ -80,9 +80,38 @@ def as_mask(mask, ndim: int = 2) -> np.ndarray:
     return np.ascontiguousarray(m, bool)  # x != 0 by value
 
 
+def foreground_box(mask: np.ndarray) -> tuple[int, int, int, int]:
+    """Half-open foreground box (x0, y0, x1, y1) of a 2-D mask (any nonzero value is foreground); ValueError when
+    it has no foreground."""
+    ys, xs = np.nonzero(mask.any(1))[0], np.nonzero(mask.any(0))[0]
+    if not ys.size:
+        raise ValueError("the mask has no foreground")
+    return int(xs[0]), int(ys[0]), int(xs[-1]) + 1, int(ys[-1]) + 1
+
+
 def bbox(m: np.ndarray) -> tuple[int, int, int, int]:
     """Foreground bounding box (x, y, w, h) of an as_mask mask; (0, 0, 0, 0) if it has no foreground."""
     return cv2.boundingRect(m.view(np.uint8))  # box of the non-zero pixels
+
+
+def equivalent_radius(area):
+    """The radius of the disc of the same area: sqrt(area / pi)."""
+    return np.sqrt(area / np.pi)
+
+
+def equivalent_diameter(area):
+    """The diameter of the disc of the same area: 2 * sqrt(area / pi)."""
+    return 2 * equivalent_radius(area)
+
+
+def iou(inter: int, union: int) -> float:
+    """inter / union; 1.0 when the union is empty (two empty masks agree)."""
+    return 1.0 if union == 0 else inter / union
+
+
+def mask_iou(a: np.ndarray, b: np.ndarray) -> float:
+    """IoU of two bool masks, pixels counted on the host; 1.0 for two empty masks."""
+    return iou(np.count_nonzero(a & b), np.count_nonzero(a | b))
 
 
 def pack_masks(ms: Sequence[np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -131,6 +160,11 @@ def betti(mask) -> tuple[int, int]:
 def min_area(union_area: int) -> int:
     """The size filter of every topology signature: max(5 px, ceil(0.5 % of the rater union's area))."""
     return max(5, -(-int(union_area) // 200))  # integer ceil(union_area / 200)
+
+
+def union_min_area(stack: np.ndarray) -> int:
+    """The reward's size rule of one structure's rater stack (k, H, W): min_area of the raters' union pixel count."""
+    return min_area(int(stack.any(0).sum()))
 
 
 def filtered(masks: Sequence, min_area) -> list[tuple[np.ndarray, int, int]]:

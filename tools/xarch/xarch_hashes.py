@@ -46,11 +46,11 @@ import numpy as np
 from objdel.core import datasets
 from objdel.data import splits
 from objdel.data.store import Item
-from objdel.data.targets.build import BuildConfig, build_target, target_set_hash
+from objdel.data.targets.build import BuildConfig, rater_targets, target_set_hash
 from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_masks
 from objdel.geom.text import parse, serialize
-from objdel.geom.topology import betti, instance_topology, min_area, signature, size_filter
+from objdel.geom.topology import betti, instance_topology, signature, size_filter
 from objdel.verify.metrics import metrics
 from objdel.verify.reward.advantages import advantages_v4, topology_reward
 from objdel.verify.reward.cache import ExpertCache
@@ -258,7 +258,7 @@ def run() -> dict:
         sec["frame.image"].append(_h(it.item_id, f.image))
         ok, png = cv2.imencode(".png", cv2.cvtColor(f.image, cv2.COLOR_RGB2BGR))  # as data.prepare writes it
         sec["png"].append(_h(it.item_id, bool(ok), png))
-        ma = {n: min_area(int(s.any(0).sum())) for n, s in f.masks.items()}
+        ma, built = rater_targets(f.masks, names, len(it.raters), BuildConfig())
         for n, s in f.masks.items():
             for r, m in enumerate(s):
                 t = instance_topology(m)
@@ -266,17 +266,15 @@ def run() -> dict:
                                           [signature(m, a) for a in (0, 5, 20, ma[n])], size_filter(m, ma[n])))
                 sec["polygonize"].append(_h(it.item_id, n, r, [(rg.pts, rg.hole) for rg in polygonize(m)]))
         texts = []
-        for r, rater in enumerate(it.raters):
-            src = {n: f.masks[n][r] for n in names}
-            try:
-                tg = build_target(src, names, BuildConfig(), ma)
-                info = {k: v for k, v in tg.info.items() if k != "time"}
-                sec["targets"].append(_h(it.item_id, rater, tg.text, json.dumps(_exact(info), sort_keys=True)))
-                texts.append(tg.text)
-                rows.append((it.item_id, rater, tg.text))
-            except ValueError as e:
-                sec["targets"].append(_h(it.item_id, rater, "error", str(e)))
+        for rater, tg in zip(it.raters, built, strict=True):
+            if isinstance(tg, ValueError):
+                sec["targets"].append(_h(it.item_id, rater, "error", str(tg)))
                 texts.append(None)
+                continue
+            info = {k: v for k, v in tg.info.items() if k != "time"}
+            sec["targets"].append(_h(it.item_id, rater, tg.text, json.dumps(_exact(info), sort_keys=True)))
+            texts.append(tg.text)
+            rows.append((it.item_id, rater, tg.text))
         caches = {n: ExpertCache.build(f.masks[n]) for n in names}
         for n, c in caches.items():
             sec["caches"].append(_h(it.item_id, n, c.tau, c.t5, c.min_area, c.rater_sigs, c.voters, c.box,

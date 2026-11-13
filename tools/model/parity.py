@@ -27,9 +27,9 @@ SEQ_P99 = 0.5  # report-only (D13, 2026-11-05)
 
 def encode(processor, x: dict):
     """The processor on an exported prompt's text and image: the prompt ids TRL GRPO builds (B5: equal to vLLM's)."""
-    from PIL import Image
+    from objdel.policy.rows import rgb
 
-    image = Image.open(x["image"]).convert("RGB")
+    image = rgb(x["image"])
     return processor(text=[x["prompt"]], images=[[image]], add_special_tokens=False, return_tensors="pt")
 
 

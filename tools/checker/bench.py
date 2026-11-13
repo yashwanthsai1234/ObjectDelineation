@@ -89,12 +89,6 @@ def device_name() -> str:
     return q.stdout.strip() or "unknown"
 
 
-def pack(masks) -> tuple:
-    hw = np.array([m.shape for m in masks], np.int32).reshape(-1, 2)
-    start = np.cumsum([0, *(m.size for m in masks)], dtype=np.int64)
-    return np.concatenate([m.ravel() for m in masks]).astype(np.uint8), hw, start
-
-
 def lesion_frames(n: int, side: int = 512) -> tuple:
     """n frames, each with two filled ellipses (radii 6-60 px), one in three with an elliptic hole; seed SEED."""
     rng = np.random.default_rng(SEED)

@@ -20,10 +20,8 @@ References:
 """
 import argparse
 import json
-import platform
 import time
 from collections import Counter
-from importlib.metadata import version
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -34,11 +32,12 @@ from objdel.core.hashing import file_sha256
 from objdel.core.io import write_json
 from objdel.core.provenance import STORE
 from objdel.data import store
-from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
+from objdel.data.prepare import versions
+from objdel.data.targets.build import BuildConfig, rater_targets, target_set_hash
 from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse, serialize
-from objdel.geom.topology import signature
+from objdel.geom.topology import mask_iou, signature
 from objdel.policy.models import MODELS  # the three screened models; their tokenizers measure answer lengths
 
 PINS = ("numpy", "numba", "opencv-python-headless", "objdel", "transformers")
@@ -59,23 +58,20 @@ def _job(job):
     item_id, ds, raters, masks = job
     names = datasets.get(ds).names
     W = next(iter(masks.values())).shape[2]
-    ma = min_areas(masks)
+    ma, built = rater_targets(masks, names, len(raters), BuildConfig())
     rows = []
-    for r, rater in enumerate(raters):
+    for r, (rater, t) in enumerate(zip(raters, built, strict=True)):
         src = {n: masks[n][r] for n in names}
         row = {"item_id": item_id, "rater": rater, "W": W}
-        try:
-            t = build_target(src, names, BuildConfig(), ma)
-        except ValueError as e:
-            rows.append({**row, "error": str(e)})
+        if isinstance(t, ValueError):
+            rows.append({**row, "error": str(t)})
             continue
         p = parse(t.text, names)
         row.update(text=t.text, parse=p.ok, time=t.info["time"], tokens=_tokens(t.text), obj={})
         for n in names:
             g = to_mask(p.objs[n], W, W)
-            u = np.count_nonzero(g.mask | src[n])
             row["obj"][n] = {
-                "legal": g.legal, "iou": 1.0 if u == 0 else np.count_nonzero(g.mask & src[n]) / u,
+                "legal": g.legal, "iou": mask_iou(g.mask, src[n]),
                 "k5": signature(g.mask, ma[n]) == signature(src[n], ma[n]),
                 "raw": signature(g.mask) == signature(src[n]), "tau": t.info[n]["tau"],
                 "vertices": t.info[n]["vertices"], "tokens": _tokens(serialize({n: p.objs[n]}, (n,)))}
@@ -129,7 +125,7 @@ def main():
     out = Path(a.out)
     manifest = {"config": {"build": BuildConfig().__dict__,
                            "frames": {k: d.frame.__dict__ for k, d in datasets.DATASETS.items()}},
-                "versions": {"python": platform.python_version(), **{p: version(p) for p in PINS}},
+                "versions": versions(PINS),
                 "store_manifest_sha256": file_sha256(Path(a.store) / "manifest.json"),
                 "files": {}}
     summary, all_rows = {}, []

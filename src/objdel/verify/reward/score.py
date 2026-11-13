@@ -41,9 +41,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from objdel.geom import engine as _gpucheck
-from objdel.geom.shape import pack_objects
+from objdel.geom.shape import defects_of, pack_objects
 from objdel.geom.text import GRID, parse
-from objdel.verify.reward.cache import ExpertCache, device_many
+from objdel.geom.topology import as_mask, pack_masks
+from objdel.verify.reward.cache import ExpertCache, device_many, joint_voters
 from objdel.verify.reward.spec import REWARD_V5
 
 NUMERIC = ("format_ok", "legal", "iou_tc", "iou_min", "f5", "g_area", "topo_any", "topo_freq", "sig_id", "loc")
@@ -96,12 +97,9 @@ def _object(r: dict, i: int, cache: ExpertCache) -> ObjectTerms:
 def score_mask(mask: np.ndarray, cache: ExpertCache) -> ObjectTerms:
     """Terms of one object's mask (H, W) against its cache, on the device (for masks that do not come from a
     completion: baselines, reward gates)."""
-    m = np.ascontiguousarray(mask, dtype=bool)
-    if m.shape != cache.union.shape:
-        raise ValueError(f"mask shape {m.shape} != cache shape {cache.union.shape}")
-    H, W = m.shape
-    r = _gpucheck.score_masks(m.view(np.uint8).reshape(-1), np.array([[H, W]], np.int32),
-                              np.array([0, H * W], np.int64), np.array([cache.device()], np.int64))
+    if np.shape(mask) != cache.union.shape:
+        raise ValueError(f"mask shape {np.shape(mask)} != cache shape {cache.union.shape}")
+    r = _gpucheck.score_masks(*pack_masks([as_mask(mask)]), np.array([cache.device()], np.int64))
     return _object(r, 0, cache)
 
 
@@ -117,7 +115,7 @@ def rater_answers(caches: Mapping[str, ExpertCache], names: Sequence[str]) -> di
     if len(set(ks.values())) != 1:
         raise ValueError(f"the caches of one item need the same raters, got rater counts {ks}")
     k = ks[names[0]]
-    vote = [r for r in range(k) if all(r in caches[n].voters for n in names)] or range(k)
+    vote = joint_voters({n: caches[n].rater_sigs for n in names}, k)
     out: dict[tuple, list[int]] = {}
     for r in vote:
         out.setdefault(tuple(caches[n].rater_sigs[r] for n in names), []).append(r)
@@ -158,9 +156,8 @@ def _combine(names, caches, answers, r: dict, idx) -> tuple[dict, dict[str, Obje
     """A parsed completion's terms from its objects' rows idx of the device result r."""
     legal, defects, terms = True, {}, {}
     for n, i in zip(names, idx, strict=True):
-        for d, c in zip(_gpucheck.DEFECTS, r["defects"][i].tolist(), strict=True):
-            if c:
-                legal, defects[d] = False, defects.get(d, 0) + c
+        for d, c in defects_of(r["defects"][i]).items():
+            legal, defects[d] = False, defects.get(d, 0) + c
         terms[n] = _object(r, i, caches[n])
     ts = list(terms.values())
     sigs = tuple(t.sig for t in ts)

@@ -30,7 +30,7 @@ from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json
 from objdel.core.provenance import STORE
 from objdel.data import store
-from objdel.data.targets.build import build_target, min_areas, target_set_hash
+from objdel.data.targets.build import rater_targets, target_set_hash
 from objdel.data.targets.frame import frame
 
 MANIFESTS = ("data/prepared/manifest.json", "data/targets/manifest.json",
@@ -46,13 +46,8 @@ def _triples(job) -> list[tuple[str, str, str]]:
         f = _rotated(it, tuple(view["offset"]), view["side"], view["op"])
     else:
         f = frame(it, offset=tuple(view["offset"]), side=view["side"])
-    names, ma, out = datasets.get(it.dataset).names, min_areas(f.masks), []
-    for r, rater in enumerate(it.raters):
-        try:
-            out.append((out_id, rater, build_target({n: f.masks[n][r] for n in names}, names, None, ma).text))
-        except ValueError:
-            pass
-    return out
+    _, built = rater_targets(f.masks, datasets.get(it.dataset).names, len(it.raters))
+    return [(out_id, rater, t.text) for rater, t in zip(it.raters, built, strict=True) if not isinstance(t, ValueError)]
 
 
 def _rebuild(pool, store_root, ds, split, views=None) -> list:

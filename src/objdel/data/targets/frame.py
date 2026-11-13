@@ -54,7 +54,7 @@ from objdel.core import datasets
 from objdel.core.datasets import FrameConfig
 from objdel.data.store import Item
 from objdel.geom.box import boxes_meet
-from objdel.geom.topology import as_mask
+from objdel.geom.topology import as_mask, foreground_box
 
 DIVISORS = tuple(d for d in range(1, 1001) if 1000 % d == 0)
 LUNG_WINDOW = datasets.LIDC.window
@@ -96,10 +96,24 @@ def _blocks(a, f):
 def union_box(item: Item) -> tuple[int, int, int, int]:
     """Half-open (x0, y0, x1, y1) box of every rater's union over all structures; ValueError when empty."""
     union = np.logical_or.reduce([as_mask(s, 3).any(0) for s in item.masks.values()])
-    ys, xs = np.nonzero(union.any(1)), np.nonzero(union.any(0))
-    if not ys[0].size:
+    if not union.any():
         raise ValueError(f"{item.item_id}: no rater drew anything")
-    return int(xs[0][0]), int(ys[0][0]), int(xs[0][-1]) + 1, int(ys[0][-1]) + 1
+    return foreground_box(union)
+
+
+def padded(box, W: int, H: int) -> bool:
+    """The half-open box (x0, y0, x1, y1) reaches outside a W x H slice."""
+    return box[0] < 0 or box[1] < 0 or box[2] > W or box[3] > H
+
+
+def clear(ub, box, c: int = CLEARANCE) -> bool:
+    """Every side of the union box ub lies at least c px inside the box."""
+    return min(ub[0] - box[0], ub[1] - box[1], box[2] - ub[2], box[3] - ub[3]) >= c
+
+
+def extent(box) -> int:
+    """The longer side of a box."""
+    return max(box[2] - box[0], box[3] - box[1])
 
 
 def centred(item: Item, side: int, box=None) -> tuple[int, int]:
@@ -159,8 +173,8 @@ def upscale(image: np.ndarray, side: int | None) -> np.ndarray:
 
 def policy_side(box, cfg: FrameConfig) -> tuple[int, int]:
     """(f, S) of the policy frame of a union box: reduction factor and frame side (module docstring)."""
-    extent = max(box[2] - box[0], box[3] - box[1])
-    need = extent + 2 * max(cfg.margin_px, -(-extent * cfg.margin_pct // 100))
+    e = extent(box)
+    need = e + 2 * max(cfg.margin_px, -(-e * cfg.margin_pct // 100))
     f = -(-need // cfg.max_side)
     return f, min(d for d in DIVISORS if d >= max(-(-need // f), cfg.min_side))
 
@@ -174,7 +188,7 @@ def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: in
     """
     cfg = cfg or datasets.get(item.dataset).frame
     stacks = {n: as_mask(s, 3) for n, s in item.masks.items()}
-    ux0, uy0, ux1, uy1 = ub = union_box(item)
+    ub = union_box(item)
     f, S = policy_side(ub, cfg)
     dx, dy = (int(v) for v in offset)
     moved = (dx, dy) != (0, 0) or side is not None and (side, f) != (S, 1)
@@ -186,10 +200,9 @@ def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: in
     x0, y0 = centred(item, f * S, ub)
     x0, y0 = x0 + dx, y0 + dy
     if moved:
-        c = CLEARANCE
-        if not (ux0 - x0 >= c and uy0 - y0 >= c and x0 + S - ux1 >= c and y0 + S - uy1 >= c):
+        if not clear(ub, (x0, y0, x0 + S, y0 + S)):
             raise ValueError(f"{item.item_id}: the union {ub} is not inside the window {(x0, y0, x0 + S, y0 + S)} "
-                             f"with {c} px clearance")
+                             f"with {CLEARANCE} px clearance")
         if crowded(item, (x0, y0, x0 + S, y0 + S)):
             raise ValueError(f"{item.item_id}: the window {(x0, y0, x0 + S, y0 + S)} meets another outlined nodule")
     masks = {n: _crop(s, x0, y0, f * S) for n, s in stacks.items()}

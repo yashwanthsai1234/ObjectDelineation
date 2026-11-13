@@ -39,7 +39,7 @@ References:
 import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from math import ceil
 from pathlib import Path
 
@@ -49,10 +49,11 @@ import pyarrow.parquet as pq
 from scipy import ndimage as ndi
 
 from objdel.core.hashing import bytes_sha256, file_sha256, pixels_sha256
-from objdel.core.io import read_json, read_jsonl_glob, read_split
+from objdel.core.io import read_json, read_jsonl_glob, read_split, write_json
 from objdel.core.provenance import reference_dir, repo_root
 from objdel.data import lidc, splits, store, windows
-from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
+from objdel.data.prepare import image_matches
+from objdel.data.targets.frame import clear, crowded, extent, frame, hu_window, padded, union_box
 
 from .coverage import cell_coverage, mix_coverage
 from .store import SPLITS
@@ -301,15 +302,15 @@ def window_checks(rows_root, store_root) -> dict:
             continue
         m = it.masks["nodule"]
         H, W = m.shape[-2:]
-        ux0, uy0, ux1, uy1 = union_box(it)
+        ub = union_box(it)
         dark = _contrast(it) < LOW_CONTRAST
         for r in by_src.pop(it.item_id):
             x0, y0, x1, y1 = box = r["box"]
             v = r["view"]
             inside = m[:, max(y0, 0):max(y1, 0), max(x0, 0):max(x1, 0)].sum((1, 2))
             out["inside"] += bool((inside == m.sum((1, 2))).all())
-            out["clear"] += min(ux0 - x0, uy0 - y0, x1 - ux1, y1 - uy1) >= CLEARANCE and not crowded(it, box)
-            out["padded"] += x0 < 0 or y0 < 0 or x1 > W or y1 > H
+            out["clear"] += clear(ub, box) and not crowded(it, box)
+            out["padded"] += padded(box, W, H)
             out["fallback"] += bool(v["fallback"])
             out["kept_side"] += bool(v["kept_side"])
             low += [r["item_id"]] if dark else []
@@ -318,10 +319,9 @@ def window_checks(rows_root, store_root) -> dict:
             except ValueError:
                 bad.add(r["item_id"])
                 continue
-            png = cv2.imread(str(rows_root / "images" / f"{r['item_id']}.png"), cv2.IMREAD_COLOR)
             sha = pixels_sha256(f.image)
-            if (list(f.box) != box or f.W != v["side"] or sha != r["image_sha256"] or png is None
-                    or pixels_sha256(cv2.cvtColor(png, cv2.COLOR_BGR2RGB)) != sha):
+            if (list(f.box) != box or f.W != v["side"] or sha != r["image_sha256"]
+                    or not image_matches(rows_root / "images" / f"{r['item_id']}.png", sha)):
                 bad.add(r["item_id"])
     bad |= {r["item_id"] for rs in by_src.values() for r in rs}  # rows whose source item is not a train item
     return out | {"mismatch": sorted(bad), "low_contrast": sorted(set(low))}
@@ -338,7 +338,7 @@ def view_windows(view_dir, store_root) -> list[Window]:
             bare, ub = replace(it, image=None), union_box(it)
             s0, v = frame(bare).W, r["view"]
             out.append(Window(it.item_id, it.group_id, it.item_id.rsplit("/", 1)[0], "shifted", 0, *v["offset"],
-                              v["side"], s0, offset_of(ub, r["box"]), max(ub[2] - ub[0], ub[3] - ub[1]),
+                              v["side"], s0, offset_of(ub, r["box"]), extent(ub),
                               r["disagreement"]))
     return out
 
@@ -534,6 +534,18 @@ def gates(report: Mapping) -> list[Gate]:
         _hard("DG17", len(z), "== 0", not z),
         _hard("DG18", wn["padded"], "== 0", wn["padded"] == 0),
     ]
+
+
+def print_gates(gs: Sequence[Gate]) -> None:
+    """Print the gate table: name, state (report for a report gate, else ok or FAIL), value and limit."""
+    for g in gs:
+        state = "report" if not g.hard else "ok" if g.ok else "FAIL"
+        print(f"{g.name:6s} {state:6s} {g.value:10.4f}  {g.limit}")
+
+
+def write_audit(path, gs: Sequence[Gate], report: Mapping) -> None:
+    """The audit record {"gates", "report"} as JSON (indent 1, keys in insertion order) at `path`."""
+    write_json(path, {"gates": [asdict(g) for g in gs], "report": report}, sort_keys=False)
 
 
 def failures(gs: Sequence[Gate]) -> list[Gate]:

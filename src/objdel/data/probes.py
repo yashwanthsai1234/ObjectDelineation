@@ -34,18 +34,25 @@ gate (a) = simple controls answered (1, 0) >= 95 %; hole recall is reported agai
 import time
 from pathlib import Path
 
-import cv2
 import numpy as np
-from PIL import Image
 from scipy import ndimage, stats
 
 from objdel.core.hashing import pixels_sha256
 from objdel.core.io import read_json, read_split, write_json, write_jsonl
+from objdel.data.prepare import write_png
 from objdel.data.targets.build import build_target
-from objdel.data.targets.frame import DIVISORS, LUNG_WINDOW
+from objdel.data.targets.frame import DIVISORS, LUNG_WINDOW, rgb
 from objdel.geom.shape import canonicalize, to_mask
 from objdel.geom.text import GRID, parse, serialize
-from objdel.geom.topology import min_area, signature, size_filter
+from objdel.geom.topology import (
+    equivalent_diameter,
+    equivalent_radius,
+    min_area,
+    signature,
+    signatures,
+    size_filter,
+    union_min_area,
+)
 from objdel.verify.reward.cache import boundary  # foreground pixels with a 4-adjacent background pixel
 
 SHAPE = (0.2, 0.15)
@@ -153,7 +160,7 @@ def _finish(gt, family, S, **extra):
         text = build_target({"nodule": gt}, NAMES, min_area={"nodule": ma}).text
     except ValueError:
         return None
-    return {"family": family, "S": S, "gt": gt, "text": text, "diam": float(2 * np.sqrt(gt.sum() / np.pi)), **extra}
+    return {"family": family, "S": S, "gt": gt, "text": text, "diam": float(equivalent_diameter(gt.sum())), **extra}
 
 
 def make_item(family, d, rng, tries=50):
@@ -173,7 +180,7 @@ def make_hole(rec, rng, tries=100):
         outer = _star(0, 0, d / 2, SHAPE, rng)
         th, r = np.arctan2(outer[:, 1], outer[:, 0]), np.hypot(outer[:, 0], outer[:, 1])
         ang = rng.uniform(-np.pi, np.pi)
-        hr = np.sqrt(a / np.pi) * rng.uniform(0.85, 1.1)
+        hr = equivalent_radius(a) * rng.uniform(0.85, 1.1)
         o = off * d / 2 * rng.uniform(0.9, 1.1)
         target = o + hr + wall + rng.uniform(0.3, 1.0)
         w = max(hr + 1.5, 2.0) / max(o + hr, 2.0)
@@ -205,7 +212,7 @@ def make_two(rec, rng, tries=60):
     """
     D, ratio, gap = rec["diam"], rec["part_ratio"], rec["gap"]
     a1 = np.pi * (D / 2) ** 2 / (1 + ratio)
-    d1, d2 = 2 * np.sqrt(a1 / np.pi), 2 * np.sqrt(ratio * a1 / np.pi)
+    d1, d2 = equivalent_diameter(a1), equivalent_diameter(ratio * a1)
     for _ in range(tries):
         ang = rng.uniform(0, 2 * np.pi)
         sep = d1 / 2 + d2 / 2 + max(gap, 1.0) * rng.uniform(0.9, 1.2) + 1
@@ -239,7 +246,7 @@ def geometry(m):
     keep = [i for i in range(1, n + 1) if i not in border]
     rec = {
         "area": int(m.sum()),
-        "diam": float(2 * np.sqrt(m.sum() / np.pi)),
+        "diam": float(equivalent_diameter(m.sum())),
         "n_parts": n_parts,
         "n_holes": len(keep),
         "holes": [],
@@ -249,7 +256,7 @@ def geometry(m):
         ring = ndimage.binary_dilation(hm, structure=C4) & ~hm
         filled = ndimage.binary_fill_holes(parts == int(np.bincount(parts[ring][parts[ring] > 0]).argmax()))
         (fy, fx), (hy, hx) = np.nonzero(filled), np.nonzero(hm)
-        r_eq = np.sqrt(filled.sum() / np.pi)
+        r_eq = equivalent_radius(filled.sum())
         dist_out = ndimage.distance_transform_edt(np.pad(filled, 1))[1:-1, 1:-1]
         rec["holes"].append(
             {
@@ -304,11 +311,11 @@ def lidc_stats(store_root):
     for it in store.load("lidc", "train", store_root):
         f = frame(it)
         st = f.masks["nodule"]
-        ma = min_area(int(st.any(0).sum()))
-        sigs = [signature(m, ma) for m in st]
+        ma = union_min_area(st)
+        sigs = signatures(st, ma)
         vote = voters(sigs)
         for i in vote:
-            if (d := 2 * np.sqrt(st[i].sum() / np.pi)) >= 2.5:
+            if (d := equivalent_diameter(st[i].sum())) >= 2.5:
                 diams.append(float(d))
                 by_w.setdefault(f.W, []).append(float(d))
         if any(sigs[i] != (0,) for i in vote):
@@ -362,8 +369,7 @@ def render(gt, patch, rng, image_side=512):
     noisy = bg * (1 - alpha) + hu * alpha + rng.normal(0, rng.uniform(10, 30), bg.shape)
     lo, hi = LUNG_WINDOW
     u8 = np.clip(np.rint((noisy - lo) / (hi - lo) * 255), 0, 255).astype(np.uint8)
-    img = Image.fromarray(np.repeat(u8[..., None], 3, -1)).resize((image_side,) * 2, Image.Resampling.BICUBIC)
-    return np.asarray(img)
+    return rgb(u8[None], image_side)
 
 
 def _write(out, name, split, items, patch_list, seed, meta):
@@ -374,9 +380,7 @@ def _write(out, name, split, items, patch_list, seed, meta):
         g, patch = patch_list[rng.integers(len(patch_list))]
         img = render(it["gt"], patch, rng)
         iid = f"lidc/{name}/{split}/{k:05d}"
-        path = out / "images" / (iid + ".png")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        write_png(out / "images" / (iid + ".png"), img)
         S = it["S"]
         recs.append(
             {
@@ -617,4 +621,4 @@ def model_centroid_disc(rec, rng):
     unused).
     """
     gt = gt_mask(rec)
-    return _disc_text(*centroid(gt), np.sqrt(gt.sum() / np.pi), rec["W"])
+    return _disc_text(*centroid(gt), equivalent_radius(gt.sum()), rec["W"])

@@ -32,6 +32,7 @@ from objdel.core.io import read_split
 from objdel.core.provenance import PREPARED
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
+from objdel.geom.topology import equivalent_diameter
 from objdel.verify.reward.cache import ExpertCache
 from objdel.verify.reward.score import score_mask
 
@@ -52,7 +53,7 @@ def fit_prior(root, dataset, split="train"):
             for n, parts in p.objs.items() if p and p.ok else ():
                 m = to_mask(parts, r["W"], r["H"]).mask
                 if m.sum() >= 5:
-                    by.setdefault(r["W"], {}).setdefault(n, []).append(2 * np.sqrt(m.sum() / np.pi))
+                    by.setdefault(r["W"], {}).setdefault(n, []).append(equivalent_diameter(m.sum()))
     return {S: {n: float(np.median(v)) for n, v in d.items()} for S, d in by.items()}
 
 
@@ -146,10 +147,10 @@ def _to_frame(mask_img, S):
 
 
 def sam_predict(model, root, dataset, jitter_rng=None):
-    from PIL import Image
+    from objdel.policy.rows import image_path, rgb
 
     def predict(rec, caches):
-        img = np.asarray(Image.open(Path(root, "images", rec["item_id"] + ".png")).convert("RGB"))
+        img = np.asarray(rgb(image_path(root, rec["item_id"])))
         S, k = rec["W"], img.shape[0] / rec["W"]
         out = {}
         for n, c in caches.items():

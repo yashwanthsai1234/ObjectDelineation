@@ -44,6 +44,7 @@ from objdel.core import datasets
 from objdel.core.io import read_jsonl, read_jsonl_cut, write_json, write_jsonl
 from objdel.policy import models
 from objdel.policy.errors import Refusal, exits_on_refusal
+from objdel.policy.rows import rgb
 from objdel.verify.reward.spec import REWARD_V4
 
 G = REWARD_V4.group
@@ -251,10 +252,7 @@ def image_side() -> int:
     return max(d.frame.image_side or d.frame.max_side for d in datasets.DATASETS.values())
 
 
-def _rgb(path):
-    from PIL import Image
-
-    return Image.open(path).convert("RGB")
+_rgb = rgb  # the pinned old name (tests/goldens/phase_e/old_names.json)
 
 
 class VllmSampler(Sampler):

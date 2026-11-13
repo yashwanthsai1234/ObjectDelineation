@@ -25,14 +25,12 @@ with python -I.
 """
 import argparse
 import json
-import platform
 import shutil
 import sys
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
-from importlib.metadata import version
 from itertools import batched
 from multiprocessing import get_context
 from pathlib import Path
@@ -119,7 +117,6 @@ def files_digest(root: Path) -> tuple[int, str]:
 
 def build(a) -> int:
     from objdel.data import prepare as data_prepare
-    from objdel.data.targets.build import target_set_hash
     from objdel.policy import models
     from objdel.policy import prompt as D
     from objdel.verify.reward.spec import fingerprint
@@ -178,29 +175,21 @@ def build(a) -> int:
     report = Q.audit(out, *models.tokenizer(a.model), a.store, a.eval_views, a.val_view, a.exclude, a.review,
                      a.frozen, a.series_z, a.audit_out, plan=plan)
     gs = Q.gates(report)
-    for g in gs:
-        print(f"{g.name:6s} {'report' if not g.hard else 'ok' if g.ok else 'FAIL':6s} {g.value:10.4f}  {g.limit}")
+    Q.print_gates(gs)
     if a.json:
-        write_json(a.json, {"gates": [asdict(g) for g in gs], "report": report}, sort_keys=False)
+        Q.write_audit(a.json, gs, report)
     if bad := Q.failures(gs):
         print(f"GATES FAILED: {', '.join(g.name for g in bad)}; no manifest written ({out})", file=sys.stderr)
         return 1
     count, digest = files_digest(out)
     uniq = list(recs.values())
-    triples = [(r["item_id"], k, t) for r in uniq for k, t in zip(r["raters"], r["targets"], strict=True) if t]
     m = {"view": out.name, "seed": a.seed,
          "store_manifest_sha256": file_sha256(Path(a.store, "manifest.json")),
          "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
-         "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
+         "versions": data_prepare.versions(),
          "files": {rel: {"sha256": sha}},
-         "sets": {"lidc/train": {
-             "items": len(rows), "windows": len(uniq), "skipped_no_image": 0, "targets": len(triples),
-             "target_set_sha256": target_set_hash(triples),
-             "target_errors": [e for r in uniq for e in r["errors"]],
-             "rl_items": sum(r["rl"] for r in rows),
-             "rl_targets": sum(t is not None for r in uniq if r["rl"] for t in r["targets"]),
-             "disagreement_items": sum(r["disagreement"] for r in rows),
-             "kept_side": 0, "fallback": 0, "padded": report["windows"]["padded"],
+         "sets": {"lidc/train": data_prepare.set_summary(rows, uniq=uniq) | {
+             "windows": len(uniq), "kept_side": 0, "fallback": 0, "padded": report["windows"]["padded"],
              "kinds": dict(Counter(r["view"]["kind"] for r in rows)),
              "side": {str(s): n for s, n in sorted(Counter(r["view"]["side"] for r in rows).items())}}},
          "schedule": plan | {"gates": [asdict(g) for g in gs], "files_count": count, "files_sha256": digest}}

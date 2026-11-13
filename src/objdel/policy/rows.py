@@ -26,12 +26,12 @@ reach reward functions: https://huggingface.co/docs/trl/main/en/grpo_trainer).
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 from objdel.core import datasets
-from objdel.core.hashing import pixels_sha256
+from objdel.core.hashing import pixels_sha256  # noqa: F401 (tests read policy.rows.pixels_sha256)
 from objdel.core.io import read_json, read_split
+from objdel.data.prepare import image_matches
 from objdel.policy.prompt import _user
 
 DISAGREEMENT_OVERSAMPLE = 4  # decided in docs/archive/experiments/phase1/impl/M7_train.md
@@ -48,13 +48,23 @@ def check_root(root, dataset: str, split: str) -> None:
 records = read_split  # the rows of `<root>/<dataset>/<split>.jsonl` as dicts
 
 
-def _image(root, item_id: str) -> str:
+def image_path(root, item_id: str) -> str:
+    """The resolved path of the prepared image of `item_id`: <root>/images/<item_id>.png."""
     return str(Path(root, "images", item_id + ".png").resolve())
 
 
+_image = image_path  # the pinned old name (tests/goldens/phase_e/old_names.json)
+
+
+def rgb(path):
+    """The image at `path` as a PIL RGB image (Pillow decode; the processor's input)."""
+    from PIL import Image
+
+    return Image.open(path).convert("RGB")
+
+
 def _check(root, rec: dict) -> None:
-    im = cv2.imread(_image(root, rec["item_id"]), cv2.IMREAD_COLOR)
-    if im is None or pixels_sha256(cv2.cvtColor(im, cv2.COLOR_BGR2RGB)) != rec["image_sha256"]:
+    if not image_matches(image_path(root, rec["item_id"]), rec["image_sha256"]):
         raise ValueError(f"{rec['item_id']}: prepared image missing or not the one recorded (image_sha256)")
 
 
@@ -63,6 +73,11 @@ def _verified(root, recs: list[dict]) -> list[dict]:
     with ThreadPoolExecutor(3) as pool:
         list(pool.map(lambda r: _check(root, r), recs))
     return recs
+
+
+def draw_subset(seq, n: int, seed: int) -> list:
+    """n elements of seq drawn once without replacement with numpy's default_rng(seed), kept in seq order."""
+    return [seq[i] for i in sorted(np.random.default_rng(seed).choice(len(seq), n, replace=False))]
 
 
 def target_tokens(tokenizer, text: str) -> int:
@@ -84,8 +99,7 @@ def prompts(root, dataset: str, split: str, rl_only: bool = True, oversample: in
     kind and cell); other records have no such columns."""
     recs = [r for r in records(root, dataset, split) if r["rl"] or not rl_only]
     if subset and subset[0] < len(recs):
-        n, seed = subset
-        recs = [recs[i] for i in sorted(np.random.default_rng(seed).choice(len(recs), n, replace=False))]
+        recs = draw_subset(recs, *subset)
     return [{"prompt": [_user(dataset)], "image": _image(root, r["item_id"]), "key": r["item_id"], "W": r["W"],
              "H": r["H"], "names": list(datasets.get(dataset).names),
              **({"kind": r["view"]["kind"], "cell": r["cell"]} if "cell" in r else {})}

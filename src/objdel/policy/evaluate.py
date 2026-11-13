@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from objdel.core import datasets
 from objdel.verify import select
 from objdel.verify import stats as signal
 from objdel.verify import store as serve
@@ -46,7 +47,7 @@ def _score(job) -> dict:
     except KeyError as e:
         raise VerifyError("unknown_key", f"not in the view root: {e.args[0]}") from e
     m = metrics(texts, {}, W, H, names, truncated, caches=caches, tokens=tokens)
-    return {"item_id": item_id, "dataset": item_id.split("/")[0], **m}
+    return {"item_id": item_id, "dataset": datasets.of(item_id), **m}
 
 
 def eval_rows(view: Path, dataset: str, items: int | None = None, rl_only: bool = True) -> list[dict]:

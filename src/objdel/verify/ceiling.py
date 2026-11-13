@@ -24,6 +24,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from objdel.geom.topology import mask_iou
 from objdel.verify import stats as signal
 from objdel.verify.reward import score
 from objdel.verify.reward.cache import ExpertCache
@@ -50,17 +51,12 @@ def loo_caches(cache: ExpertCache) -> list[LeaveOut]:
     return out
 
 
-def _iou(a: np.ndarray, b: np.ndarray) -> float:
-    u = np.count_nonzero(a | b)
-    return np.count_nonzero(a & b) / u if u else 1.0
-
-
 def item(cache: ExpertCache, texts: Sequence[str] | None, truncated: Sequence[bool] | None, W: int, H: int,
          name: str = "nodule") -> dict:
     """One item's ceiling row (module docstring); texts = None gives the doctor side only (model keys null)."""
     loos = loo_caches(cache)
     R = cache.raters
-    dmax = [max(_iou(R[lo.index], R[j]) for j in range(cache.k) if j != lo.index) for lo in loos]
+    dmax = [max(mask_iou(R[lo.index], R[j]) for j in range(cache.k) if j != lo.index) for lo in loos]
     row = {"k": cache.k, "n_voters": len(loos), "single": cache.k == 2,
            "doctor": float(np.mean([score.score_mask(R[lo.index], lo.cache).iou_tc for lo in loos])),
            "legacy_dmax": dmax, "legacy_loo_dmax_item": float(np.mean(dmax))}

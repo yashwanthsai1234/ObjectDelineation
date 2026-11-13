@@ -202,7 +202,6 @@ def check_sampler(cfg, schedule: dict, steps: int) -> None:
 def heldout_rows(view: Path, n: int, dataset: str):
     """n val-shape items of an eval view (a seeded draw in record order), as GRPO rows: val-select items never enter
     training's held-out curve."""
-    import numpy as np
 
     from objdel.data.splits import val_half
     from objdel.policy import rows as policy_rows
@@ -213,7 +212,7 @@ def heldout_rows(view: Path, n: int, dataset: str):
     if not rows:
         raise ValueError(f"--heldout {view}: no val-shape RL item")
     if n < len(rows):
-        rows = [rows[i] for i in sorted(np.random.default_rng(0).choice(len(rows), n, replace=False))]
+        rows = policy_rows.draw_subset(rows, n, 0)
     return policy_rows.as_dataset(rows)
 
 

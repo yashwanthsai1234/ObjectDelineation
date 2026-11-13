@@ -82,6 +82,7 @@ import os
 import threading
 import weakref
 from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from functools import cache, cached_property
 from itertools import combinations
 from pathlib import Path
@@ -91,7 +92,7 @@ import numpy as np
 from scipy import integrate, stats
 
 from objdel.geom import engine as _gpucheck
-from objdel.geom.topology import min_area
+from objdel.geom.topology import bbox, min_area
 from objdel.verify.reward.spec import CACHE_SPEC, fingerprint
 
 _CROSS = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
@@ -117,6 +118,12 @@ def voters(sigs) -> tuple[int, ...]:
     """Raters with a topology vote: a non-empty size-filtered signature; every rater when all abstain (module
     docstring)."""
     return tuple(i for i, s in enumerate(sigs) if s) or tuple(range(len(sigs)))
+
+
+def joint_voters(sigs: Mapping[str, Sequence[tuple]], k: int) -> Sequence[int]:
+    """The raters (of k) who vote in every structure ({name: per-rater signatures}); all k when none does."""
+    vs = [voters(s) for s in sigs.values()]
+    return [r for r in range(k) if all(r in v for v in vs)] or range(k)
 
 
 MAX_TABLES = 4096  # resident table sets (device_many); a LIDC cache's set is about 25 KB, so about 100 MB
@@ -290,7 +297,7 @@ class ExpertCache:
         self.n_vote = int(np.count_nonzero(self.vote))
         self.rater_areas = tuple(int(np.count_nonzero(m)) for m in raters)
         self.min_area = min_area(int(np.count_nonzero(self.union)))
-        x, y, w, h = cv2.boundingRect(self.union.view(np.uint8))
+        x, y, w, h = bbox(self.union)
         self.box = (y, y + h, x, x + w)  # union bounding box (empty if the union is empty)
         self.digest = digest or _digest(raters, self.tau, self.t5, fingerprint())
         self._device = None  # handle of the tables on the checker's device

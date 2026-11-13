@@ -39,7 +39,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
-import cv2
 import numpy as np
 
 from objdel.data.targets.simplify import STEPS, lattice_path, simplify, to_grid
@@ -83,7 +82,7 @@ def _rings(mask):
     the rings the same way). The texts cannot change: the ring start key orders vertices by (y, x, d) for any width,
     so a translation keeps every ring's start and order."""
     mask = np.ascontiguousarray(mask, dtype=bool)
-    x0, y0, w, h = cv2.boundingRect(mask.view(np.uint8))
+    x0, y0, w, h = topology.bbox(mask)
     if not w:
         return []
     return [(*lattice_path(r.pts), r.part, r.hole) for r in trace([mask[y0:y0 + h, x0:x0 + w]], [(x0, y0)])[0].rings]
@@ -158,8 +157,7 @@ def _climb(name, rings, ladder, level, ref, min_area, exact, iou_min, W, H):
         if rungs:
             c = _certify([(p, W, H) for _, p in rungs], [ref], [0] * len(rungs), [min_area] * len(rungs))
             for i, (k, parts) in enumerate(rungs):
-                u = int(c["union"][i])
-                iou = 1.0 if u == 0 else int(c["inter"][i]) / u
+                iou = topology.iou(int(c["inter"][i]), int(c["union"][i]))
                 if c["legal"][i] and iou >= iou_min and _sig(c, "sig", i) == _sig(c, "ref_sig", i) and (
                         not exact or c["equal"][i]):
                     return k, parts, iou
@@ -170,7 +168,20 @@ def _climb(name, rings, ladder, level, ref, min_area, exact, iou_min, W, H):
 def min_areas(stacks: Mapping[str, np.ndarray]) -> dict[str, int]:
     """The reward's size rule per structure of one item's rater stacks {name: (k, H, W)}: min_area of the union of
     all raters, as ExpertCache computes it. This is build_target's min_area argument for every rater of the item."""
-    return {n: topology.min_area(int(s.any(0).sum())) for n, s in stacks.items()}
+    return {n: topology.union_min_area(s) for n, s in stacks.items()}
+
+
+def rater_targets(stacks: Mapping[str, np.ndarray], names, k: int, cfg: BuildConfig | None = None
+                  ) -> tuple[dict[str, int], list["Target | ValueError"]]:
+    """(min_areas(stacks), one entry per rater r < k): build_target of rater r's masks of one item's frame stacks
+    {name: (k, H, W)} at that size rule, or the ValueError it raised (each caller handles a failed build its way)."""
+    ma, out = min_areas(stacks), []
+    for r in range(k):
+        try:
+            out.append(build_target({n: stacks[n][r] for n in names}, names, cfg, ma))
+        except ValueError as e:
+            out.append(e.with_traceback(None))  # the frames of the failed build are not kept alive
+    return ma, out
 
 
 def build_target(masks: Mapping[str, np.ndarray], names, cfg: BuildConfig | None = None,

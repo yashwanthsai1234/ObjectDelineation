@@ -27,7 +27,7 @@ from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store
 from objdel.data.store import Item
 from objdel.data.targets.frame import frame
-from objdel.geom.topology import min_area, signature
+from objdel.geom.topology import signatures, union_min_area
 
 REPO = repo_root()
 LAB_SPLIT = REPO / "data" / "fixtures" / "lidc_full_meta.csv"  # the lab's patient split, for the plan's 313 / 251
@@ -43,8 +43,8 @@ def slice_flags(s):
     """Report counts of one slice: readers' per-instance topologies differ under the 5-px filter / the plan's size
     rule (with and without merged-reader clusters), copied layers, and a rater whose size-filtered signature
     is () and whether that rater alone makes the disagreement."""
-    rule = {signature(m, min_area(int(s.stack.any(0).sum()))) for m in s.stack}
-    return {"disagree_5px": len({signature(m, 5) for m in s.stack}) > 1, "disagree_rule": len(rule) > 1,
+    rule = set(signatures(s.stack, union_min_area(s.stack)))
+    return {"disagree_5px": len(set(signatures(s.stack, 5))) > 1, "disagree_rule": len(rule) > 1,
             "disagree_rule_no_dup_reader": len(rule) > 1 and not s.dup_reader,
             "with_copied_raters": bool(s.copied), "copied_layers": len(s.copied), "sub_filter_rater": () in rule,
             "disagree_only_from_sub_filter_rater": len(rule - {()}) == 1 < len(rule)}

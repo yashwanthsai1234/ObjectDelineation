@@ -30,10 +30,7 @@ References: docs/archive/experiments/phase2/PLAN.md §5.0, §5.1; A4 §2.5 propo
 """
 import argparse
 import json
-import platform
 from dataclasses import replace
-from importlib.metadata import version
-from itertools import batched
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -43,8 +40,7 @@ from objdel.core.io import write_json, write_jsonl
 from objdel.core.provenance import EVAL_VIEWS, STORE
 from objdel.data import store
 from objdel.data.targets import augment
-from objdel.data.targets.build import target_set_hash
-from objdel.data.targets.frame import frame, rgb, union_box
+from objdel.data.targets.frame import frame, padded, rgb, union_box
 
 KINDS = ("shifted", "rescaled", "rotated", "edge")  # --kinds default: the first three
 
@@ -78,7 +74,7 @@ def _record(job):
     x0, y0, x1, y1 = f.box
     rec["view"] = {"offset": [dx, dy], "side": S, "kept_side": kept and kind == "rescaled", "fallback": got is None,
                    "op": op if kind == "rotated" else "id",
-                   "offset_frac": offset_of(union_box(bare), f.box), "padded": x0 < 0 or y0 < 0 or x1 > W or y1 > H}
+                   "offset_frac": offset_of(union_box(bare), f.box), "padded": padded(f.box, W, H)}
     return rec
 
 
@@ -96,25 +92,15 @@ def build(store_root, out_root, datasets=("lidc",), split="val", seed=0, procs=2
                 (out / ds).mkdir(parents=True, exist_ok=True)
                 its = [it for i, it in enumerate(store.load(ds, split, store_root))
                        if (limit is None or i < limit) and it.image is not None]
-                recs = []
-                for chunk in batched(((str(out), it, kind, seed) for it in its), 12):  # bounds parent memory
-                    recs += pool.map(_record, chunk)
+                recs = data_prepare.map_batched(pool, _record, ((str(out), it, kind, seed) for it in its))
                 rel = f"{ds}/{split}.jsonl"
                 sha = write_jsonl(out / rel, recs)
-                triples = [(r["item_id"], k, t) for r in recs for k, t in zip(r["raters"], r["targets"], strict=True)
-                           if t]
                 m = {"view": name, "seed": seed, "kinds": list(kinds),
                      "store_manifest_sha256": file_sha256(Path(store_root, "manifest.json")),
                      "reward_fingerprint": fingerprint(), "prompts": D.PROMPTS,
-                     "versions": {"python": platform.python_version(), **{p: version(p) for p in data_prepare._PINS}},
+                     "versions": data_prepare.versions(),
                      "files": {rel: {"sha256": sha}},
-                     "sets": {f"{ds}/{split}": {
-                         "items": len(recs), "skipped_no_image": 0, "targets": len(triples),
-                         "target_set_sha256": target_set_hash(triples),
-                         "target_errors": [e for r in recs for e in r["errors"]],
-                         "rl_items": sum(r["rl"] for r in recs),
-                         "rl_targets": sum(t is not None for r in recs if r["rl"] for t in r["targets"]),
-                         "disagreement_items": sum(r["disagreement"] for r in recs),
+                     "sets": {f"{ds}/{split}": data_prepare.set_summary(recs) | {
                          "kept_side": sum(r["view"]["kept_side"] for r in recs),
                          "fallback": sum(r["view"]["fallback"] for r in recs),
                          "padded": sum(r["view"]["padded"] for r in recs),
