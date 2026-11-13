@@ -67,10 +67,15 @@ def dry_run() -> bool:
     return os.environ.get("DRY_RUN") == "1"
 
 
+def poll_s() -> float:
+    """Seconds between polls: $VAST_POLL_S, else 10."""
+    return float(os.environ.get("VAST_POLL_S", 10))
+
+
 def backoff_s(i: int) -> float:
     """The wait after failed try i: VAST_POLL_S x 2**i, at most BACKOFF_CAP_S, times a random 0.5 to 1.5 (no two
     clients retry in step)."""
-    return min(BACKOFF_CAP_S, float(os.environ.get("VAST_POLL_S", 10)) * 2**i) * random.uniform(0.5, 1.5)
+    return min(BACKOFF_CAP_S, poll_s() * 2**i) * random.uniform(0.5, 1.5)
 
 
 def vast(*args: str, tries: int = 1):
@@ -144,7 +149,7 @@ def destroy(iid: int, run_id: str, event: str, inst: dict | None = None) -> None
     for _ in range(10):
         if all(i["id"] != iid for i in vast("show", "instances", "--raw", tries=3)):
             break
-        time.sleep(float(os.environ.get("VAST_POLL_S", 10)))
+        time.sleep(poll_s())
     else:
         raise InfraError(f"instance {iid} still listed after destroy: destroy it in the console NOW")
     with locked():

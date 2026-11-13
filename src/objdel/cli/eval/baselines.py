@@ -29,6 +29,7 @@ from scipy.stats import binomtest
 
 from objdel.core import datasets
 from objdel.core.io import read_split
+from objdel.core.provenance import PREPARED
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse
 from objdel.verify.reward.cache import ExpertCache
@@ -175,7 +176,7 @@ def main():
             "rescaled=data/eval_views/lidc-val-rescaled",
         ],
     )
-    ap.add_argument("--prepared", default="data/prepared", help="centred train records the prior is fit on")
+    ap.add_argument("--prepared", default=PREPARED, help="centred train records the prior is fit on")
     ap.add_argument("--datasets", nargs="+", default=["lidc"])
     ap.add_argument("--models", nargs="+", default=["prior", "medsam", "sam2"])
     ap.add_argument("--split", default="val")

@@ -50,7 +50,7 @@ from scipy import ndimage as ndi
 
 from objdel.core.hashing import bytes_sha256, file_sha256, pixels_sha256
 from objdel.core.io import read_json, read_jsonl_glob, read_split
-from objdel.core.provenance import repo_root
+from objdel.core.provenance import reference_dir, repo_root
 from objdel.data import lidc, splits, store, windows
 from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
 
@@ -556,7 +556,7 @@ def audit(rows, tokenizer, limit: int, store_root, eval_views, val_view=None, ex
     runs/b1/series_z.json and runs/b1/audit (DG3 PNGs). `plan`: the schedule dict (build_rl_rows passes it before the
     manifest exists); default the manifest's `schedule`."""
     root = repo_root()
-    ref = root / "reference"
+    ref = reference_dir()
     rows, store_root, eval_views = Path(rows), Path(store_root), Path(eval_views)
     exclusions = Path(exclusions or ref / "train_exclusions.json")
     plan = plan or read_json(rows / "manifest.json")["schedule"]

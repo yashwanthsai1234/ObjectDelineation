@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 
 from objdel.core.io import read_json
+from objdel.core.provenance import run_dir
 
 ROOT = Path(__file__).resolve().parents[2]
 STEPS, ITEMS = 4, 8
@@ -147,7 +148,7 @@ def main(argv=None) -> int:
     ap.add_argument("--ckpt", type=Path, required=True)
     ap.add_argument("--prepared", type=Path, required=True)
     ap.add_argument("--probe", type=Path, required=True)
-    ap.add_argument("--out", type=Path, default=Path(os.environ.get("OBJDEL_RUN_DIR", "runs")) / "profile")
+    ap.add_argument("--out", type=Path, default=run_dir() / "profile")
     ap.add_argument("--arms", nargs="+", choices=list(ARMS), default=list(ARMS))
     a = ap.parse_args(argv)
     a.out.mkdir(parents=True, exist_ok=True)

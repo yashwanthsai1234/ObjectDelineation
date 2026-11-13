@@ -41,6 +41,7 @@ import numpy as np
 from objdel.core import datasets
 from objdel.core.hashing import file_sha256
 from objdel.core.io import write_json, write_jsonl
+from objdel.core.provenance import PREPARED, STORE
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import BuildConfig, build_target, min_areas
@@ -148,8 +149,8 @@ def report_path(out) -> Path:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--store", default="data/store")
-    ap.add_argument("--prepared", default="data/prepared")
+    ap.add_argument("--store", default=STORE)
+    ap.add_argument("--prepared", default=PREPARED)
     ap.add_argument("--out", required=True, help="e.g. data/views/lidc-bundle-v3")
     ap.add_argument("--dataset", default="lidc", choices=sorted(datasets.DATASETS))
     ap.add_argument("--split", default="train")

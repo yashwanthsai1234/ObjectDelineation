@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from objdel.core.io import read_json
+from objdel.core.provenance import PREPARED, STORE
 from objdel.data import prepare as data_prepare
 from objdel.policy import prompt as policy_prompt
 from objdel.policy import rows as policy_rows
@@ -43,8 +44,8 @@ def token_budget(out):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--store", default="data/store")
-    ap.add_argument("--out", default="data/prepared")
+    ap.add_argument("--store", default=STORE)
+    ap.add_argument("--out", default=PREPARED)
     ap.add_argument("--splits", default="train,val")
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()

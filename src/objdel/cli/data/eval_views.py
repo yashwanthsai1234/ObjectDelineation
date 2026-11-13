@@ -40,6 +40,7 @@ from pathlib import Path
 from objdel.core import datasets as registry
 from objdel.core.hashing import file_sha256
 from objdel.core.io import write_json, write_jsonl
+from objdel.core.provenance import EVAL_VIEWS, STORE
 from objdel.data import store
 from objdel.data.targets import augment
 from objdel.data.targets.build import target_set_hash
@@ -133,8 +134,8 @@ def _kinds(text: str) -> tuple[str, ...]:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--store", default="data/store")
-    ap.add_argument("--out", default="data/eval_views")
+    ap.add_argument("--store", default=STORE)
+    ap.add_argument("--out", default=EVAL_VIEWS)
     ap.add_argument("--datasets", default="lidc")
     ap.add_argument("--split", default="val")
     ap.add_argument("--seed", type=int, default=0)

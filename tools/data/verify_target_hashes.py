@@ -28,6 +28,7 @@ from objdel.cli.data.eval_views import _rotated
 from objdel.core import datasets
 from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json
+from objdel.core.provenance import STORE
 from objdel.data import store
 from objdel.data.targets.build import build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
@@ -99,7 +100,7 @@ def check(path, store_root, pool) -> list[tuple[str, str, str]]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("manifests", nargs="*", default=MANIFESTS)
-    ap.add_argument("--store", default="data/store")
+    ap.add_argument("--store", default=STORE)
     ap.add_argument("--procs", type=int, default=6)
     a = ap.parse_args(argv)
     bad = 0

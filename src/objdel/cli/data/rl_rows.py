@@ -41,13 +41,13 @@ import numpy as np
 
 from objdel.core.hashing import bytes_sha256, file_sha256
 from objdel.core.io import files_under, write_json, write_jsonl
-from objdel.core.provenance import repo_root
+from objdel.core.provenance import EVAL_VIEWS, SERIES_Z, STORE, reference_dir, repo_root
 from objdel.data import quality as Q
 from objdel.data import store, windows
 from objdel.data.coverage import cell_coverage
 
 ROOT = repo_root()
-REF = ROOT / "reference"
+REF = reference_dir()
 DRAWS_OPTIONS = (1, 2, 4, 8)
 BUILD_DIRS = ("caches", "images", "lidc")  # what a build writes before its manifest
 
@@ -213,7 +213,7 @@ def build(a) -> int:
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--store", type=Path, default=ROOT / "data/store")
+    ap.add_argument("--store", type=Path, default=ROOT / STORE)
     ap.add_argument("--target-law", choices=["train-shifted"], default="train-shifted")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--steps", type=int, required=True)
@@ -227,11 +227,11 @@ def parse_args(argv=None):
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--procs", type=int, default=6)
     ap.add_argument("--exclude", type=Path, required=True, help="train exclusions JSON (no default; none = {})")
-    ap.add_argument("--eval-views", type=Path, default=ROOT / "data/eval_views", help="val and test views")
+    ap.add_argument("--eval-views", type=Path, default=ROOT / EVAL_VIEWS, help="val and test views")
     ap.add_argument("--val-view", type=Path, default=None)
     ap.add_argument("--review", type=Path, default=REF / "neardup_review.json")
     ap.add_argument("--frozen", type=Path, default=REF / "frozen_views.json")
-    ap.add_argument("--series-z", type=Path, default=ROOT / "runs/b1/series_z.json")
+    ap.add_argument("--series-z", type=Path, default=ROOT / SERIES_Z)
     ap.add_argument("--model", default="qwen3-vl-2b", help="tokenizer and token limit of DG12")
     ap.add_argument("--audit-out", type=Path, default=ROOT / "runs/b1/audit", help="near-duplicate PNGs (DG3)")
     ap.add_argument("--json", type=Path, default=None, help="gate report")

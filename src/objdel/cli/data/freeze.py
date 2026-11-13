@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from objdel.core.io import code_sha, git, git_sha, read_json, read_jsonl, write_json
-from objdel.core.provenance import repo_root
+from objdel.core.provenance import SERIES_Z, reference_dir, repo_root
 from objdel.data import quality as Q
 
 ROOT = repo_root()
@@ -66,8 +66,8 @@ def entry(view_dir, known: list[str]) -> dict:
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("views", nargs="*", type=Path)
-    ap.add_argument("--out", type=Path, default=ROOT / "reference/frozen_views.json")
-    ap.add_argument("--known", type=Path, default=ROOT / "runs/b1/series_z.json",
+    ap.add_argument("--out", type=Path, default=reference_dir() / "frozen_views.json")
+    ap.add_argument("--known", type=Path, default=ROOT / SERIES_Z,
                     help="check_series_z report; its known_label_issues (val and test ids)")
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args(argv)

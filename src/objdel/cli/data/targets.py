@@ -32,6 +32,7 @@ import numpy as np
 from objdel.core import datasets
 from objdel.core.hashing import file_sha256
 from objdel.core.io import write_json
+from objdel.core.provenance import STORE
 from objdel.data import store
 from objdel.data.targets.build import BuildConfig, build_target, min_areas, target_set_hash
 from objdel.data.targets.frame import frame
@@ -119,7 +120,7 @@ def summarize(rows, frames):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--store", default="data/store")
+    ap.add_argument("--store", default=STORE)
     ap.add_argument("--out", default="data/targets")
     ap.add_argument("--procs", type=int, default=3)
     a = ap.parse_args()

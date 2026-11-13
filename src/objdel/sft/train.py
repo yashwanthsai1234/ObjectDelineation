@@ -46,7 +46,7 @@ from pathlib import Path
 
 from objdel.core.hashing import file_sha256
 from objdel.core.io import read_json, write_json
-from objdel.core.provenance import code_hashes
+from objdel.core.provenance import code_hashes, data_root, run_dir
 from objdel.policy.errors import Refusal
 
 ABORTED = 3  # exit code of a G-vision abort
@@ -104,8 +104,8 @@ def resolve(args):
     """A copy of the SftStage with every path resolved: data_root ($OBJDEL_DATA_ROOT, else the Vast bundle dir, else
     data) and run_dir ($OBJDEL_RUN_DIR, else runs) when unset; view and vision.prepared under data_root; output_dir and
     a vision.reference JSON under run_dir. The input stage is unchanged."""
-    data = args.data_root or os.environ.get("OBJDEL_DATA_ROOT") or (str(BOX_DATA) if BOX_DATA.is_dir() else "data")
-    runs = args.run_dir if args.run_dir is not None else os.environ.get("OBJDEL_RUN_DIR", "runs")
+    data = args.data_root or str(data_root(str(BOX_DATA) if BOX_DATA.is_dir() else "data"))
+    runs = args.run_dir if args.run_dir is not None else str(run_dir())
     new = {"data_root": data, "run_dir": runs, "view": str(Path(data, args.view)),
            "output_dir": str(Path(runs, args.output_dir))}
     if args.vision:

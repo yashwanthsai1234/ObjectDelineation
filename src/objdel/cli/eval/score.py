@@ -33,6 +33,7 @@ from pathlib import Path
 
 from objdel.core import datasets as registry
 from objdel.core.io import read_jsonl, write_json, write_jsonl
+from objdel.core.provenance import STORE
 from objdel.data import store
 from objdel.data.audit import hack_audit
 from objdel.data.targets.frame import frame
@@ -183,7 +184,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--completions", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--store", type=Path, default=Path("data/store"))
+    ap.add_argument("--store", type=Path, default=Path(STORE))
     ap.add_argument("--prepared", type=Path, help="prepared-layout directory (eval view): its records and caches")
     ap.add_argument("--view", default="shifted", choices=("centred", "shifted", "rescaled"))
     ap.add_argument("--split", default="val")
