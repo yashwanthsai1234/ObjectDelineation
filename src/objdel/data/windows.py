@@ -37,7 +37,7 @@ import numpy as np
 
 from objdel.core import datasets
 from objdel.data.targets import augment
-from objdel.data.targets.frame import CLEARANCE, centred, crowded, frame, union_box
+from objdel.data.targets.frame import centred, clear, crowded, extent, frame, padded, union_box
 from objdel.verify.reward.cache import ExpertCache, rl_eligible
 from objdel.verify.reward.score import rater_answers
 
@@ -122,7 +122,7 @@ def _windows(item, draws: int, seed: int, dropped: dict) -> list[Window]:
     bare = replace(item, image=None)
     f, ub = frame(bare), union_box(bare)
     H, W = next(iter(item.masks.values())).shape[-2:]
-    S0, extent, dis = f.W, max(ub[2] - ub[0], ub[3] - ub[1]), _disagreement(f.masks, item.dataset)
+    S0, ext, dis = f.W, extent(ub), _disagreement(f.masks, item.dataset)
     found = [("centred", 0, (0, 0), S0, f.box)]
     for d in range(draws):
         for kind in ("shifted", "rescaled"):
@@ -137,14 +137,13 @@ def _windows(item, draws: int, seed: int, dropped: dict) -> list[Window]:
             found.append((kind, d, (dx, dy), S, (x + dx, y + dy, x + dx + S, y + dy + S)))
     out = []
     for kind, d, (dx, dy), S, box in found:
-        if box[0] < 0 or box[1] < 0 or box[2] > W or box[3] > H:
+        if padded(box, W, H):
             dropped["padded"] += 1
-        elif kind == "centred" and (crowded(bare, box) or min(ub[0] - box[0], ub[1] - box[1], box[2] - ub[2],
-                                                               box[3] - ub[3]) < CLEARANCE):
+        elif kind == "centred" and (crowded(bare, box) or not clear(ub, box)):
             dropped["centred_none"] += 1  # the policy frame, moved inside the slice or holding another nodule
         else:
             out.append(Window(item.item_id, item.group_id, item.item_id.rsplit("/", 1)[0], kind, d, dx, dy, S, S0,
-                              offset_of(ub, box), extent, dis))
+                              offset_of(ub, box), ext, dis))
     return out
 
 

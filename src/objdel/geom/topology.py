@@ -85,6 +85,16 @@ def bbox(m: np.ndarray) -> tuple[int, int, int, int]:
     return cv2.boundingRect(m.view(np.uint8))  # box of the non-zero pixels
 
 
+def iou(inter: int, union: int) -> float:
+    """inter / union; 1.0 when the union is empty (two empty masks agree)."""
+    return 1.0 if union == 0 else inter / union
+
+
+def mask_iou(a: np.ndarray, b: np.ndarray) -> float:
+    """IoU of two bool masks, pixels counted on the host; 1.0 for two empty masks."""
+    return iou(np.count_nonzero(a & b), np.count_nonzero(a | b))
+
+
 def pack_masks(ms: Sequence[np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """The engine's input layout of as_mask masks: (bytes concatenated, int32 (n, 2) shapes, int64 starts)."""
     start = np.zeros(len(ms) + 1, np.int64)

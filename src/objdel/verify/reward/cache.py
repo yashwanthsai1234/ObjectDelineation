@@ -82,6 +82,7 @@ import os
 import threading
 import weakref
 from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from functools import cache, cached_property
 from itertools import combinations
 from pathlib import Path
@@ -117,6 +118,12 @@ def voters(sigs) -> tuple[int, ...]:
     """Raters with a topology vote: a non-empty size-filtered signature; every rater when all abstain (module
     docstring)."""
     return tuple(i for i, s in enumerate(sigs) if s) or tuple(range(len(sigs)))
+
+
+def joint_voters(sigs: Mapping[str, Sequence[tuple]], k: int) -> Sequence[int]:
+    """The raters (of k) who vote in every structure ({name: per-rater signatures}); all k when none does."""
+    vs = [voters(s) for s in sigs.values()]
+    return [r for r in range(k) if all(r in v for v in vs)] or range(k)
 
 
 MAX_TABLES = 4096  # resident table sets (device_many); a LIDC cache's set is about 25 KB, so about 100 MB

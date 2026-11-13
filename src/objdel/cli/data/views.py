@@ -46,8 +46,8 @@ from objdel.data.targets import augment
 from objdel.data.targets.build import BuildConfig, build_target, min_areas
 from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_mask
-from objdel.geom.topology import signature
-from objdel.verify.reward.cache import voters
+from objdel.geom.topology import signatures
+from objdel.verify.reward.cache import joint_voters
 
 NO_JITTER = {"window": None, "noise_sigma": 0.0, "noise_seed": 0}
 
@@ -60,8 +60,8 @@ def _item(job):
     names = ds.names
     policy = frame(replace(it, image=None))
     ma = min_areas(policy.masks)
-    sigs = {n: [signature(m, ma[n]) for m in policy.masks[n]] for n in names}
-    vote = [r for r in range(len(it.raters)) if all(r in voters(sigs[n]) for n in names)] or range(len(it.raters))
+    sigs = {n: signatures(policy.masks[n], ma[n]) for n in names}
+    vote = joint_voters(sigs, len(it.raters))
     ctx = Path(out, "context", it.item_id + ".npz")
     augment.write_context(ctx, it, policy.box)
     bare, rows, stats = replace(it, image=None), [], Counter()

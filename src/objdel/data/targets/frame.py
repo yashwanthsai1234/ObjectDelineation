@@ -102,6 +102,21 @@ def union_box(item: Item) -> tuple[int, int, int, int]:
     return int(xs[0][0]), int(ys[0][0]), int(xs[0][-1]) + 1, int(ys[0][-1]) + 1
 
 
+def padded(box, W: int, H: int) -> bool:
+    """The half-open box (x0, y0, x1, y1) reaches outside a W x H slice."""
+    return box[0] < 0 or box[1] < 0 or box[2] > W or box[3] > H
+
+
+def clear(ub, box, c: int = CLEARANCE) -> bool:
+    """Every side of the union box ub lies at least c px inside the box."""
+    return min(ub[0] - box[0], ub[1] - box[1], box[2] - ub[2], box[3] - ub[3]) >= c
+
+
+def extent(box) -> int:
+    """The longer side of a box."""
+    return max(box[2] - box[0], box[3] - box[1])
+
+
 def centred(item: Item, side: int, box=None) -> tuple[int, int]:
     """Top-left corner of the policy's window of `side` px around the union (shifted inside the image if it fits)."""
     x0, y0, x1, y1 = box or union_box(item)
@@ -159,8 +174,8 @@ def upscale(image: np.ndarray, side: int | None) -> np.ndarray:
 
 def policy_side(box, cfg: FrameConfig) -> tuple[int, int]:
     """(f, S) of the policy frame of a union box: reduction factor and frame side (module docstring)."""
-    extent = max(box[2] - box[0], box[3] - box[1])
-    need = extent + 2 * max(cfg.margin_px, -(-extent * cfg.margin_pct // 100))
+    e = extent(box)
+    need = e + 2 * max(cfg.margin_px, -(-e * cfg.margin_pct // 100))
     f = -(-need // cfg.max_side)
     return f, min(d for d in DIVISORS if d >= max(-(-need // f), cfg.min_side))
 
@@ -174,7 +189,7 @@ def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: in
     """
     cfg = cfg or datasets.get(item.dataset).frame
     stacks = {n: as_mask(s, 3) for n, s in item.masks.items()}
-    ux0, uy0, ux1, uy1 = ub = union_box(item)
+    ub = union_box(item)
     f, S = policy_side(ub, cfg)
     dx, dy = (int(v) for v in offset)
     moved = (dx, dy) != (0, 0) or side is not None and (side, f) != (S, 1)
@@ -186,10 +201,9 @@ def frame(item: Item, cfg: FrameConfig | None = None, *, offset=(0, 0), side: in
     x0, y0 = centred(item, f * S, ub)
     x0, y0 = x0 + dx, y0 + dy
     if moved:
-        c = CLEARANCE
-        if not (ux0 - x0 >= c and uy0 - y0 >= c and x0 + S - ux1 >= c and y0 + S - uy1 >= c):
+        if not clear(ub, (x0, y0, x0 + S, y0 + S)):
             raise ValueError(f"{item.item_id}: the union {ub} is not inside the window {(x0, y0, x0 + S, y0 + S)} "
-                             f"with {c} px clearance")
+                             f"with {CLEARANCE} px clearance")
         if crowded(item, (x0, y0, x0 + S, y0 + S)):
             raise ValueError(f"{item.item_id}: the window {(x0, y0, x0 + S, y0 + S)} meets another outlined nodule")
     masks = {n: _crop(s, x0, y0, f * S) for n, s in stacks.items()}

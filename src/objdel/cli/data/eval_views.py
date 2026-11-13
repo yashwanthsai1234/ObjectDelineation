@@ -39,7 +39,7 @@ from objdel.core import datasets as registry
 from objdel.core.io import write_json
 from objdel.data import store
 from objdel.data.targets import augment
-from objdel.data.targets.frame import frame, rgb, union_box
+from objdel.data.targets.frame import frame, padded, rgb, union_box
 
 KINDS = ("shifted", "rescaled", "rotated", "edge")  # --kinds default: the first three
 
@@ -73,7 +73,7 @@ def _record(job):
     x0, y0, x1, y1 = f.box
     rec["view"] = {"offset": [dx, dy], "side": S, "kept_side": kept and kind == "rescaled", "fallback": got is None,
                    "op": op if kind == "rotated" else "id",
-                   "offset_frac": offset_of(union_box(bare), f.box), "padded": x0 < 0 or y0 < 0 or x1 > W or y1 > H}
+                   "offset_frac": offset_of(union_box(bare), f.box), "padded": padded(f.box, W, H)}
     return rec
 
 

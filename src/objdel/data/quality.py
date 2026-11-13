@@ -54,7 +54,7 @@ from objdel.core.io import read_json, read_jsonl
 from objdel.core.provenance import repo_root
 from objdel.data import lidc, splits, store, windows
 from objdel.data.prepare import image_matches
-from objdel.data.targets.frame import CLEARANCE, crowded, frame, hu_window, union_box
+from objdel.data.targets.frame import clear, crowded, extent, frame, hu_window, padded, union_box
 
 from .coverage import cell_coverage, mix_coverage
 from .store import SPLITS
@@ -303,15 +303,15 @@ def window_checks(rows_root, store_root) -> dict:
             continue
         m = it.masks["nodule"]
         H, W = m.shape[-2:]
-        ux0, uy0, ux1, uy1 = union_box(it)
+        ub = union_box(it)
         dark = _contrast(it) < LOW_CONTRAST
         for r in by_src.pop(it.item_id):
             x0, y0, x1, y1 = box = r["box"]
             v = r["view"]
             inside = m[:, max(y0, 0):max(y1, 0), max(x0, 0):max(x1, 0)].sum((1, 2))
             out["inside"] += bool((inside == m.sum((1, 2))).all())
-            out["clear"] += min(ux0 - x0, uy0 - y0, x1 - ux1, y1 - uy1) >= CLEARANCE and not crowded(it, box)
-            out["padded"] += x0 < 0 or y0 < 0 or x1 > W or y1 > H
+            out["clear"] += clear(ub, box) and not crowded(it, box)
+            out["padded"] += padded(box, W, H)
             out["fallback"] += bool(v["fallback"])
             out["kept_side"] += bool(v["kept_side"])
             low += [r["item_id"]] if dark else []
@@ -339,7 +339,7 @@ def view_windows(view_dir, store_root) -> list[Window]:
             bare, ub = replace(it, image=None), union_box(it)
             s0, v = frame(bare).W, r["view"]
             out.append(Window(it.item_id, it.group_id, it.item_id.rsplit("/", 1)[0], "shifted", 0, *v["offset"],
-                              v["side"], s0, offset_of(ub, r["box"]), max(ub[2] - ub[0], ub[3] - ub[1]),
+                              v["side"], s0, offset_of(ub, r["box"]), extent(ub),
                               r["disagreement"]))
     return out
 

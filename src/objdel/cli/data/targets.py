@@ -35,7 +35,7 @@ from objdel.data.targets.build import BuildConfig, rater_targets, target_set_has
 from objdel.data.targets.frame import frame
 from objdel.geom.shape import to_mask
 from objdel.geom.text import parse, serialize
-from objdel.geom.topology import signature
+from objdel.geom.topology import mask_iou, signature
 from objdel.policy.models import MODELS  # the three screened models; their tokenizers measure answer lengths
 
 PINS = ("numpy", "numba", "opencv-python-headless", "objdel", "transformers")
@@ -66,9 +66,8 @@ def _job(job):
         row.update(text=t.text, parse=p.ok, time=t.info["time"], tokens=_tokens(t.text), obj={})
         for n in names:
             g = to_mask(p.objs[n], W, W)
-            u = np.count_nonzero(g.mask | src[n])
             row["obj"][n] = {
-                "legal": g.legal, "iou": 1.0 if u == 0 else np.count_nonzero(g.mask & src[n]) / u,
+                "legal": g.legal, "iou": mask_iou(g.mask, src[n]),
                 "k5": signature(g.mask, ma[n]) == signature(src[n], ma[n]),
                 "raw": signature(g.mask) == signature(src[n]), "tau": t.info[n]["tau"],
                 "vertices": t.info[n]["vertices"], "tokens": _tokens(serialize({n: p.objs[n]}, (n,)))}

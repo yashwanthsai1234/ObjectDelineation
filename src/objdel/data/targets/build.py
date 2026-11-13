@@ -158,8 +158,7 @@ def _climb(name, rings, ladder, level, ref, min_area, exact, iou_min, W, H):
         if rungs:
             c = _certify([(p, W, H) for _, p in rungs], [ref], [0] * len(rungs), [min_area] * len(rungs))
             for i, (k, parts) in enumerate(rungs):
-                u = int(c["union"][i])
-                iou = 1.0 if u == 0 else int(c["inter"][i]) / u
+                iou = topology.iou(int(c["inter"][i]), int(c["union"][i]))
                 if c["legal"][i] and iou >= iou_min and _sig(c, "sig", i) == _sig(c, "ref_sig", i) and (
                         not exact or c["equal"][i]):
                     return k, parts, iou

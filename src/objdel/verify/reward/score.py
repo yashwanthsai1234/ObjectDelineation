@@ -44,7 +44,7 @@ from objdel.geom import engine as _gpucheck
 from objdel.geom.shape import pack_objects
 from objdel.geom.text import GRID, parse
 from objdel.geom.topology import as_mask, pack_masks
-from objdel.verify.reward.cache import ExpertCache, device_many
+from objdel.verify.reward.cache import ExpertCache, device_many, joint_voters
 from objdel.verify.reward.spec import REWARD_V5
 
 NUMERIC = ("format_ok", "legal", "iou_tc", "iou_min", "f5", "g_area", "topo_any", "topo_freq", "sig_id", "loc")
@@ -115,7 +115,7 @@ def rater_answers(caches: Mapping[str, ExpertCache], names: Sequence[str]) -> di
     if len(set(ks.values())) != 1:
         raise ValueError(f"the caches of one item need the same raters, got rater counts {ks}")
     k = ks[names[0]]
-    vote = [r for r in range(k) if all(r in caches[n].voters for n in names)] or range(k)
+    vote = joint_voters({n: caches[n].rater_sigs for n in names}, k)
     out: dict[tuple, list[int]] = {}
     for r in vote:
         out.setdefault(tuple(caches[n].rater_sigs[r] for n in names), []).append(r)
