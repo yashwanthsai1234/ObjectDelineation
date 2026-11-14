@@ -841,7 +841,9 @@ R01_GOLDEN = {  # captured on this fixture before B2.1 (commit f5e0a05 + A6), CP
 
 def test_r01_old_sampling_metrics_unchanged(monkeypatch, tmp_path):
     logs = train_logs(tiny_loop_vllm_fake(monkeypatch, tmp_path))
-    assert {k: [h[f"sampling/{k}"] for h in logs] for k in OLD5} == R01_GOLDEN
+    # float32 sums differ by up to ~1e-6 (relative) between macOS arm64 and Linux x86-64 CPU torch
+    assert {k: [h[f"sampling/{k}"] for h in logs] for k in OLD5} == {k: pytest.approx(v, rel=1e-5)
+                                                                    for k, v in R01_GOLDEN.items()}
 
 
 B21_KEYS = ("is_masked_share", "is_clamped_share", "seq_logdiff_mean", "seq_logdiff_max", "tok_absdiff_gt_0.5_share",

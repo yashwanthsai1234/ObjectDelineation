@@ -1,4 +1,8 @@
 """B2.2 fp16 Mac check (U53): a stub model with a vision block, two decoder layers and logits."""
+import pytest
+
+pytest.importorskip("torch")  # the [dev]-only CI job has no ML stack
+
 import torch
 from torch import nn
 

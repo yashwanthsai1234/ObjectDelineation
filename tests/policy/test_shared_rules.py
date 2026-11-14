@@ -1,9 +1,12 @@
 """Shared train/eval rules after the D10 merge of their copies: the teacher-forced batch extension (MT-04), the
 outline length rule (MT-06) and the answers row and completions grouping (MT-08)."""
-import pytest
+import pytest  # noqa: I001
 
 from objdel.core.io import write_jsonl
 from objdel.policy import rows as policy_rows
+pytest.importorskip("pandas")  # the [dev]-only CI job has no ML stack
+pytest.importorskip("trl")  # the [dev]-only CI job has no ML stack
+
 from objdel.policy import sampler as S
 
 torch = pytest.importorskip("torch")

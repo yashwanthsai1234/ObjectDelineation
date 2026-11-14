@@ -17,3 +17,32 @@ def run_module(*args, env=None, timeout=900) -> subprocess.CompletedProcess:
     from tests.support.paths import ROOT
 
     return run_isolated("-m", *args, cwd=ROOT, env=env, timeout=timeout)
+
+
+class InlinePool:
+    """A multiprocessing.Pool stand-in that runs every job in this process, in order: coverage and monkeypatches
+    reach the worker function (a spawned child sees neither)."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def imap(self, fn, jobs, **_):  # chunksize: one process, no chunks
+        return map(fn, jobs)
+
+    def map(self, fn, jobs, **_):
+        return list(map(fn, jobs))
+
+
+class _InlineContext:
+    Pool = InlinePool
+
+
+def inline_context(*_):  # the start method ("spawn") does not apply
+    """Drop-in for multiprocessing.get_context: monkeypatch.setattr(module, "get_context", inline_context)."""
+    return _InlineContext()

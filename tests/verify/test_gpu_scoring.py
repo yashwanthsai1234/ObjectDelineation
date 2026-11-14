@@ -198,9 +198,9 @@ def test_resident_tables_are_bounded_and_rebuild_alike(monkeypatch):
     from objdel.verify.reward import cache as rc
     monkeypatch.setattr(rc, "MAX_TABLES", 2)
     monkeypatch.setattr(rc, "_TABLES", OrderedDict())  # other tests' caches keep their tables
+    gc.collect()  # before the counter: other tests' garbage caches drop their own tables here, not in `dropped`
     dropped, drop = [], _gpucheck.drop_tables
     monkeypatch.setattr(_gpucheck, "drop_tables", lambda h: (dropped.append(h), drop(h)))
-    gc.collect()
     before = _gpucheck.resident()
     cs = [ExpertCache.build(np.stack([disk(20, r + i, 10, 10) for r in (4, 5)])) for i in range(4)]
     want = [(score_mask(c.vote, c), c.rater_sigs, c.perimeter) for c in cs]

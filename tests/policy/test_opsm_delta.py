@@ -3,6 +3,10 @@ import json
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
+
+pytest.importorskip("torch")  # the [dev]-only CI job has no ML stack
+
 import torch
 
 from objdel.policy.callbacks import OpsmDelta

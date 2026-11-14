@@ -76,6 +76,7 @@ def test_b1_rows_holds_the_b1_5_steps_in_order():
 
 
 def test_smoke_node_ids_collect_exactly_two_tests():
+    pytest.importorskip("trl")  # the smoke module skips at import without the training stack: nothing to collect
     smoke = steps("b1_rows.yaml")[2]
     ids = [w for w in smoke if "::" in w]
     r = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", *ids],

@@ -1,12 +1,14 @@
 """B2.2 F step 5, B2.4 rule 0 (U76, Mac twin of G05): the F check record, its pass rules and the `train_rl --f-check`
 flag, with fake probes; then the engine half with a fake vLLM engine (no vLLM on the Mac): the comparator's order,
 prompts, timing and restore, the packed-layout equality, the after-sync probe, way (b) scoring and train_rl's wiring."""
-import json
+import json  # noqa: I001
 from types import SimpleNamespace
 
 import pytest
 
 from objdel.cli.train import rl as train_rl
+pytest.importorskip("transformers")  # the [dev]-only CI job has no ML stack
+
 from objdel.rl import f_check as fc
 
 BASE = ["--model", "qwen3-vl-2b", "--ckpt", "c", "--train", "t", "--out", "o", "--steps", "20"]

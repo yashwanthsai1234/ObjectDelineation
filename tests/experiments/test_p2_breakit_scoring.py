@@ -4,7 +4,7 @@ docs/research/records/phase2/impl/BK2.md;
 a real defect is an xfail(strict=True) "BK2-<n>", every other test is a guard that passes today.
 Real-data tests are marked `data` (data/eval_views)."""
 
-import json
+import json  # noqa: I001
 import shutil
 from pathlib import Path
 
@@ -18,6 +18,9 @@ from objdel.cli.train import prereg as P
 from objdel.core.hashing import file_sha256
 from objdel.data import probes
 from objdel.policy import evaluate
+pytest.importorskip("pandas")  # the [dev]-only CI job has no ML stack
+pytest.importorskip("trl")  # the [dev]-only CI job has no ML stack
+
 from objdel.policy import sampler as V
 from objdel.sft import select as sft_select
 from objdel.verify import gates

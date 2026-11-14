@@ -1,7 +1,7 @@
 """E4: one sampler interface (objdel.policy.sampler): params_for, build_prompt,
 the vLLM request builder, HfSampler on a tiny offline model, the child-process entry and a light import (no
 trl.trainer, no vllm)."""
-import json
+import json  # noqa: I001
 import os
 import sys
 import types
@@ -13,6 +13,9 @@ import pytest
 
 from objdel.policy import models as configs
 from objdel.policy import models as rewards
+pytest.importorskip("pandas")  # the [dev]-only CI job has no ML stack
+pytest.importorskip("trl")  # the [dev]-only CI job has no ML stack
+
 from objdel.policy import sampler as S
 from objdel.policy.errors import Refusal
 from tests.support.paths import ROOT

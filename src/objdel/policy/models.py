@@ -15,9 +15,10 @@ time through `get`.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from peft import LoraConfig
-from transformers.utils import is_torch_bf16_gpu_available
+if TYPE_CHECKING:  # the registry imports without the ML stack (light CI, rl.reward, tools)
+    from peft import LoraConfig
 
 # vision tower + projector of every model (recorded module names in tests/sft/test_p2_train.py)
 VISION = r".*(visual|vision_model|vision_tower|connector|multi_modal_projector).*"
@@ -61,9 +62,11 @@ def get(model: str) -> Model:
     return MODELS[model]
 
 
-def lora(model: str) -> LoraConfig:
+def lora(model: str) -> "LoraConfig":
     """LoRA on the language model's linear layers (vision tower and projector excluded), rank and alpha of the
     model's entry."""
+    from peft import LoraConfig
+
     m = get(model)
     return LoraConfig(r=m.lora_r, lora_alpha=m.lora_alpha, target_modules="all-linear", exclude_modules=m.lora_exclude,
                       task_type="CAUSAL_LM")
@@ -166,6 +169,13 @@ def save_merged(model, proc, dest, adapter_to=None, tmp=None) -> None:
         proc.save_pretrained(t)
 
     replace_dir(write, dest, tmp)
+
+
+def is_torch_bf16_gpu_available() -> bool:
+    """transformers' bf16 check, imported on call (a module name, so tests can patch it)."""
+    from transformers.utils import is_torch_bf16_gpu_available as check
+
+    return check()
 
 
 def _bf16(overrides: dict) -> bool:

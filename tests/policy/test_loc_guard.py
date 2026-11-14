@@ -1,10 +1,12 @@
 """B3.5b: LocGuard stops only on a rising location term with a falling IoU_tc, with a false-stop rate < 1 % on
 flat, autocorrelated per-step means (Implementation.md B3.5b)."""
-import json
+import json  # noqa: I001
 import pathlib
 
 import numpy as np
 import pytest
+pytest.importorskip("transformers")  # the [dev]-only CI job has no ML stack
+
 from transformers import TrainerControl
 
 from objdel.policy.callbacks import LocGuard, slope_nw

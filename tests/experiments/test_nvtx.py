@@ -2,13 +2,15 @@
 callbacks.NvtxSteps (step ranges and the capture window), the build_trainer / train_rl wiring, the `checker` range on
 the reward path, and S12 (`reward` never imports `train`). CUDA and NVTX are fakes (monkeypatch); no GPU."""
 
-import importlib
+import importlib  # noqa: I001
 import json
 import os
 import time
 
 import numpy as np
 import pytest
+pytest.importorskip("torch")  # the [dev]-only CI job has no ML stack
+
 import torch
 
 from objdel.policy import marks as nvtx

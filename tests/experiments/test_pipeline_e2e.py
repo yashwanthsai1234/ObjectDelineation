@@ -2,7 +2,7 @@
 slices): final_eval (full path), then ceiling --answers on its answers.jsonl, then outline_lengths with a stub
 tokenizer. The item counts agree across every file and all JSON dumps with allow_nan=False."""
 
-import json
+import json  # noqa: I001
 
 import numpy as np
 import pytest
@@ -11,6 +11,9 @@ from objdel.cli.eval import ceiling as CEILING
 from objdel.cli.eval import run as CLI
 from objdel.policy import final_eval as FE
 from objdel.policy import rows as policy_rows
+pytest.importorskip("pandas")  # the [dev]-only CI job has no ML stack
+pytest.importorskip("trl")  # the [dev]-only CI job has no ML stack
+
 from objdel.policy.sampler import Sample
 from tests.experiments.test_ceiling import text_of
 from tests.support.shapes import disc as disc_hw

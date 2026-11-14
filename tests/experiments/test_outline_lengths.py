@@ -90,7 +90,8 @@ def test_dataset_names_are_public_with_no_alias():
     """T11.6: target_tokens and voting replace _tokens and _voting; no source still calls the old names."""
     assert callable(policy_rows.target_tokens) and callable(verify_store.voting)
     assert not any(hasattr(m, n) for m in (policy_rows, verify_store) for n in ("_tokens", "_voting"))
-    hits = subprocess.run(["git", "grep", "-nE", r"\b_(tokens|voting)\(", "--", "src", "experiments/phase2"],
+    # [^A-Za-z0-9_] rather than \b: macOS git grep -E does not read \b, so a local pass hid a hit CI found
+    hits = subprocess.run(["git", "grep", "-nE", r"(^|[^A-Za-z0-9_])_(tokens|voting)\(", "--", "src"],
                           cwd=ROOT, capture_output=True, text=True).stdout
     assert hits == ""
 

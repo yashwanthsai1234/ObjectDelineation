@@ -1,13 +1,16 @@
 """E4 / I22: evaluation without a trainer (objdel.policy.evaluate.evaluate). The trainer layer (TRL's GRPOTrainer and
 FastGRPO: __init__ and _generate) is patched to raise; the sampler is a stub and the scoring is real (score_items and
 per_item on the preloaded caches of a tiny view root built in tmp_path)."""
-import ast
+import ast  # noqa: I001
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from objdel.policy import evaluate as EV
+pytest.importorskip("pandas")  # the [dev]-only CI job has no ML stack
+pytest.importorskip("trl")  # the [dev]-only CI job has no ML stack
+
 from objdel.policy.sampler import Sample
 from objdel.verify import store as serve
 from objdel.verify.api import VerifyError

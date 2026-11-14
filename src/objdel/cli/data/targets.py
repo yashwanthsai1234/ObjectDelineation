@@ -44,7 +44,7 @@ PINS = ("numpy", "numba", "opencv-python-headless", "objdel", "transformers")
 _TOK = {}
 
 
-def _tokens(text):
+def _model_tokens(text):
     if not _TOK:
         from objdel.policy.models import tokenizer
         _TOK.update({k: tokenizer(k)[0] for k in MODELS})
@@ -67,14 +67,14 @@ def _job(job):
             rows.append({**row, "error": str(t)})
             continue
         p = parse(t.text, names)
-        row.update(text=t.text, parse=p.ok, time=t.info["time"], tokens=_tokens(t.text), obj={})
+        row.update(text=t.text, parse=p.ok, time=t.info["time"], tokens=_model_tokens(t.text), obj={})
         for n in names:
             g = to_mask(p.objs[n], W, W)
             row["obj"][n] = {
                 "legal": g.legal, "iou": mask_iou(g.mask, src[n]),
                 "k5": signature(g.mask, ma[n]) == signature(src[n], ma[n]),
                 "raw": signature(g.mask) == signature(src[n]), "tau": t.info[n]["tau"],
-                "vertices": t.info[n]["vertices"], "tokens": _tokens(serialize({n: p.objs[n]}, (n,)))}
+                "vertices": t.info[n]["vertices"], "tokens": _model_tokens(serialize({n: p.objs[n]}, (n,)))}
         rows.append(row)
     return rows
 

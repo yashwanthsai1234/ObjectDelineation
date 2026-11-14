@@ -366,8 +366,14 @@ def test_golden_5_chain_argv_of_the_live_plans():
     assert got == want
 
 
-def test_golden_6_resolved_grpo_config():
+def test_golden_6_resolved_grpo_config(monkeypatch):
+    """The golden is the GPU box's config (bf16 on): a CPU-only runner (CI's K13 job) says the same."""
     pytest.importorskip("trl")
+    import transformers.training_args
+
+    from objdel.policy import models
+    for m in (models, transformers.training_args):  # our bf16 rule and TrainingArguments.__post_init__'s check
+        monkeypatch.setattr(m, "is_torch_bf16_gpu_available", lambda: True)
     assert jsonable(configs_golden()) == golden()["grpo_config"]
 
 

@@ -1,6 +1,9 @@
 """Shared pytest setup: data-backed fixtures are optional, so CI (which has no data) skips those tests; synthetic
 items and a tiny offline TRL model shared by the training tests (test_train_*, test_breakit_wiring)."""
+import importlib.util
 import os
+import re
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +26,31 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if item.get_closest_marker("gpu"):
                 item.add_marker(skip)
+
+
+# Import names of the optional extras (train, data, serve) and of what they bring in. CI's [dev]-only job has none of
+# them; a test that fails only because one is not installed in this venv is reported as a skip that names it.
+OPTIONAL = frozenset({"torch", "torchvision", "transformers", "trl", "datasets", "peft", "accelerate", "pandas",
+                      "huggingface_hub", "pydicom", "pylidc", "fastapi", "uvicorn"})
+_NO_MODULE = re.compile(r"No module named '([\w.]+)'|No package metadata was found for ([\w.-]+)")
+
+
+def _absent_optional(exc) -> str | None:
+    """The optional package whose absence caused `exc` (also as a subprocess's stderr), else None."""
+    text = str(exc) + (exc.stderr or "" if isinstance(exc, subprocess.CalledProcessError) else "")
+    names = {(a or b).split(".")[0].replace("-", "_") for a, b in _NO_MODULE.findall(text)}
+    if names and all(n in OPTIONAL and importlib.util.find_spec(n) is None for n in names):
+        return ", ".join(sorted(names))
+    return None
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    report = yield
+    if report.failed and call.excinfo is not None and (missing := _absent_optional(call.excinfo.value)):
+        report.outcome = "skipped"
+        report.longrepr = (str(item.path), item.location[1] or 0, f"Skipped: needs {missing} (not installed here)")
+    return report
 
 
 _UNCHECKED: list[str] = []

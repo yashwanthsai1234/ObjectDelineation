@@ -63,7 +63,7 @@ build = "cp312-*"
 skip = "*-musllinux_*"
 build-verbosity = 1
 test-requires = ["pytest", "hypothesis"]
-test-sources = ["tests", "tools", "pyproject.toml", "CMakeLists.txt"]
+test-sources = ["tests", "tools", "cuda", "pyproject.toml", "CMakeLists.txt"]  # cuda/: tests read gpucheck.cpp
 test-command = "python -m pytest -q -m 'not slow' -p no:cacheprovider tests/geom/test_checker_oracle.py tests/geom/test_cuda_checker.py tests/geom/test_checker_host.py"
 
 [tool.cibuildwheel.linux]
@@ -145,6 +145,7 @@ ignore_names = [
   "_get_train_sampler", "_inner_training_loop", "_generate_single_turn",  # Trainer / GRPOTrainer overrides and fakes
   "cmd_*",  # objdel.infra.vast subcommands, dispatched by name
   "pytest_*",  # pytest hooks in conftest.py, called by name
+  "outcome", "longrepr",  # TestReport fields that conftest's makereport hook sets and pytest's reporter reads
   "pytestmark", "pre_tokenizer", "decoder", "projector_hidden_size", "is_main_process",
   "writeable", "atexit",  # numpy flag (topology.py), atexit hook (cache.py)
   "rid", "multimodal_fields", "has_tool_images", "return_tensors",  # fake signatures that callers use by keyword
@@ -154,6 +155,9 @@ ignore_names = [
   "record_old_names",  # tests/core/test_layers.py: run by hand to re-record a golden (goldens README)
   "current_gradient_accumulation_steps",  # Trainer attribute that the code under test reads
   "TransferSyntaxUID", "MediaStorageSOPInstanceUID", "MediaStorageSOPClassUID",  # pydicom file-meta that save_as reads
+  "SOPClassUID", "Rows", "Columns", "BitsAllocated", "BitsStored", "HighBit", "PixelRepresentation",  # DICOM fields of
+  "PhotometricInterpretation", "SamplesPerPixel", "RescaleIntercept", "RescaleSlope", "SliceThickness",  # the test
+  "PixelData",  # files tests/data/test_cli_data_commands.py builds; pydicom's writer and fetch_lidc read them
 ]
 
 [tool.importlinter]

@@ -363,7 +363,10 @@ def test_rows_revision_compares_the_pinned_hf_revision(rows_cfg, monkeypatch, tm
 
     import huggingface_hub
 
-    from objdel.infra import hf
+    from objdel.infra import hf, secrets
+    fake = secrets.path()  # CI has no keychain: a fake token in the test's own .secrets (FakeHub never checks it)
+    fake.write_text("objdel-hf-write=hf_fake\n")
+    fake.chmod(0o600)
     buf = io.BytesIO()
     hf.rows_tar(rows_cfg.root, buf)
     hub = FakeHub(files, manifest, hashlib.sha256(buf.getvalue()).hexdigest() if tar == "local" else tar)
